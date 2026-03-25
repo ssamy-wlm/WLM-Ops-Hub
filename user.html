@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebLight Media – Team Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Nunito:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #EAEFF5;
+  --bg2: #F0F0F0;
+  --card: #FFFFFF;
+  --sidebar: #FFFFFF;
+  --text: #2D6BB6;
+  --text-dark: #1a3f6f;
+  --text-mid: #4a7abf;
+  --text-light: #87ABD5;
+  --btn: #575757;
+  --btn-hover: #3a3a3a;
+  --accent: #87ABD5;
+  --cream: #FBF1D1;
+  --cream-dark: #f0e0a0;
+  --border: rgba(45,107,182,0.12);
+  --border-hover: rgba(45,107,182,0.3);
+  --shadow: 0 2px 12px rgba(45,107,182,0.08);
+  --shadow-md: 0 4px 24px rgba(45,107,182,0.13);
+  --red: #e05555;
+  --green: #2e9e6e;
+  --orange: #d97706;
+}
+[data-theme="dark"] {
+  --bg:#0f1923;--bg2:#162030;--card:#1e2d3d;--sidebar:#1a2535;
+  --text:#87ABD5;--text-dark:#d0e6ff;--text-mid:#6a9fd8;--text-light:#4a6a8a;
+  --border:rgba(135,171,213,0.12);--border-hover:rgba(135,171,213,0.3);
+  --shadow:0 2px 12px rgba(0,0,0,0.3);--shadow-md:0 4px 24px rgba(0,0,0,0.4);
+}
+[data-theme="navy"] {
+  --bg:#1a3f6f;--bg2:#1f4a82;--card:#1e4080;--sidebar:#162f5e;
+  --text:#87ABD5;--text-dark:#d8eaff;--text-mid:#a0c4e8;--text-light:#6a9abf;
+  --border:rgba(135,171,213,0.15);--border-hover:rgba(135,171,213,0.35);
+  --shadow:0 2px 12px rgba(0,0,0,0.25);--shadow-md:0 4px 24px rgba(0,0,0,0.35);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+
+/* ── LOGIN ── */
+.login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,var(--bg) 0%,#d4e3f5 100%);}
+.login-box{background:var(--card);border-radius:20px;padding:48px 44px;width:420px;box-shadow:var(--shadow-md);border:1px solid var(--border);}
+.login-logo{display:flex;align-items:center;gap:12px;margin-bottom:32px;justify-content:center;}
+.login-logo-icon{width:48px;height:48px;background:linear-gradient(135deg,var(--text),var(--accent));border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Playfair Display',serif;font-size:22px;font-weight:700;}
+.login-logo-name{font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);}
+.login-logo-sub{font-size:11px;color:var(--text-light);letter-spacing:.08em;text-transform:uppercase;}
+.login-title{font-family:'Playfair Display',serif;font-size:24px;color:var(--text-dark);margin-bottom:6px;text-align:center;}
+.login-sub{font-size:13px;color:var(--text-light);text-align:center;margin-bottom:28px;}
+.form-group{margin-bottom:16px;}
+.form-label{display:block;font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px;letter-spacing:.06em;text-transform:uppercase;}
+.form-input{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Nunito',sans-serif;font-size:14px;color:var(--text-dark);background:#fafcff;transition:border-color .2s;}
+.form-input:focus{outline:none;border-color:var(--text);background:#fff;}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:10px;font-family:'Nunito',sans-serif;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:all .2s;}
+.btn-primary{background:var(--btn);color:#fff;width:100%;justify-content:center;margin-top:8px;}
+.btn-primary:hover{background:var(--btn-hover);transform:translateY(-1px);}
+.btn-blue{background:var(--text);color:#fff;}
+.btn-blue:hover{background:var(--text-dark);}
+.btn-outline{background:transparent;color:var(--text);border:1.5px solid var(--border-hover);}
+.btn-outline:hover{background:var(--bg);border-color:var(--text);}
+.btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
+.btn-danger:hover{background:#fcd4d4;}
+.btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
+.btn-green{background:#e8f8f0;color:var(--green);border:1px solid rgba(46,158,110,.2);}
+
+/* ── APP SHELL ── */
+.app{display:none;min-height:100vh;}
+.app.visible{display:flex;}
+.sidebar{width:240px;min-height:100vh;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:50;box-shadow:2px 0 12px rgba(45,107,182,.06);}
+.sidebar-logo{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+.sidebar-logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--text),var(--accent));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Playfair Display',serif;font-size:16px;font-weight:700;flex-shrink:0;}
+.sidebar-logo-name{font-family:'Playfair Display',serif;font-size:14px;color:var(--text-dark);line-height:1.2;}
+.sidebar-logo-sub{font-size:9px;color:var(--text-light);letter-spacing:.06em;text-transform:uppercase;}
+.sidebar-nav{flex:1;padding:14px 10px;overflow-y:auto;}
+.nav-group-label{font-size:10px;font-weight:700;color:var(--text-light);letter-spacing:.12em;text-transform:uppercase;padding:14px 10px 6px;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text-mid);transition:all .15s;margin-bottom:2px;}
+.nav-item:hover{background:var(--bg);color:var(--text-dark);}
+.nav-item.active{background:linear-gradient(90deg,rgba(45,107,182,.12),rgba(45,107,182,.05));color:var(--text);border-left:3px solid var(--text);}
+.nav-item .ni{font-size:16px;flex-shrink:0;width:20px;text-align:center;}
+.sidebar-user{padding:14px 16px;border-top:1px solid var(--border);}
+.sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--text),var(--accent));display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
+.avatar img{width:100%;height:100%;object-fit:cover;}
+.su-name{font-size:13px;font-weight:700;color:var(--text-dark);line-height:1.2;}
+.su-role{font-size:10.5px;color:var(--text-light);}
+.su-actions{display:flex;gap:4px;margin-top:8px;}
+.su-btn{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;}
+.su-btn:hover{background:var(--bg2);color:var(--text);}
+.main{margin-left:240px;flex:1;min-height:100vh;display:flex;flex-direction:column;}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40;}
+.topbar-title{font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);}
+.topbar-sub{font-size:12px;color:var(--text-light);margin-top:1px;}
+.topbar-right{display:flex;align-items:center;gap:12px;}
+.notif-btn{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;position:relative;}
+.notif-dot{width:8px;height:8px;background:var(--red);border-radius:50%;position:absolute;top:6px;right:6px;border:2px solid var(--card);}
+.content{padding:28px 32px;flex:1;}
+.card{background:var(--card);border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);}
+.card-header{padding:18px 22px 0;display:flex;align-items:center;justify-content:space-between;}
+.card-title{font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);}
+.card-sub{font-size:12px;color:var(--text-light);margin-top:2px;}
+.card-body{padding:18px 22px;}
+.ops-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
+.ops-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px;}
+.stat-card{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:20px;box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s;}
+.stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
+.stat-label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+.stat-value{font-family:'Playfair Display',serif;font-size:28px;color:var(--text-dark);}
+.stat-sub{font-size:12px;color:var(--text-light);margin-top:4px;}
+.status-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;}
+.badge-working{background:#e8f8f0;color:var(--green);}
+.badge-pending{background:#fff8e8;color:var(--orange);}
+.badge-issue{background:#fde8e8;color:var(--red);}
+.badge-blue{background:rgba(45,107,182,.1);color:var(--text);}
+.pulse-card{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:20px;margin-bottom:18px;}
+.pulse-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.pulse-title{font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);}
+.pulse-user{display:flex;align-items:center;gap:12px;background:var(--bg);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+.pulse-name{font-size:14px;font-weight:700;color:var(--text-dark);}
+.pulse-role{font-size:12px;color:var(--text-light);}
+.pulse-msg{text-align:center;padding:14px;background:rgba(45,107,182,.06);border-radius:10px;font-size:13px;color:var(--text-mid);font-style:italic;}
+.eod-section{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:20px;margin-bottom:18px;}
+.eod-empty{text-align:center;padding:24px;color:var(--text-light);font-size:13px;}
+.coc-item{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;background:var(--bg);margin-bottom:8px;}
+.coc-icon{width:34px;height:34px;border-radius:50%;background:var(--text);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;flex-shrink:0;}
+.coc-role{font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;}
+.coc-name{font-size:13px;font-weight:700;color:var(--text-dark);}
+.urgent-coc{background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.2);}
+.roadmap-section{background:var(--cream);border:1px solid var(--cream-dark);border-radius:14px;padding:20px;}
+.roadmap-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:14px;}
+.roadmap-phase{margin-bottom:14px;}
+.roadmap-phase-title{font-size:12px;font-weight:700;color:var(--btn);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em;}
+.roadmap-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:4px;}
+.roadmap-dot{width:6px;height:6px;background:var(--text);border-radius:50%;margin-top:5px;flex-shrink:0;}
+.report-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:10px;padding:4px;margin-bottom:20px;width:fit-content;}
+.report-tab{padding:7px 18px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-mid);transition:all .15s;}
+.report-tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 6px rgba(45,107,182,.1);}
+.report-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.report-metric{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;text-align:center;}
+.rm-val{font-family:'Playfair Display',serif;font-size:26px;color:var(--text-dark);margin-bottom:4px;}
+.rm-label{font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;}
+.rm-change{font-size:11px;margin-top:4px;font-weight:600;}
+.rm-up{color:var(--green);}
+.rm-down{color:var(--red);}
+.week-card{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:12px;}
+.wk-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+.wk-num{width:32px;height:32px;background:var(--text);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;}
+.wk-date{font-size:14px;font-weight:700;color:var(--text-dark);}
+.wk-conv{font-size:12px;color:var(--text-light);background:var(--bg);padding:3px 10px;border-radius:20px;}
+.wk-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;}
+.wk-stat{text-align:center;}
+.wk-stat-val{font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);}
+.wk-stat-label{font-size:10px;color:var(--text-light);}
+.wk-note{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:6px 0;border-top:1px solid var(--border);}
+.note-win{color:var(--green);}
+.note-issue{color:var(--red);}
+.blocker-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
+.bstat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;text-align:center;}
+.bstat-val{font-family:'Playfair Display',serif;font-size:24px;color:var(--text-dark);margin-bottom:4px;}
+.bstat-label{font-size:11px;color:var(--text-light);}
+.bstat.warn{border-color:rgba(217,119,6,.3);background:#fffbf0;}
+.bstat.crit{border-color:rgba(224,85,85,.3);background:#fff8f8;}
+.blocker-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:10px;transition:box-shadow .2s;}
+.blocker-item:hover{box-shadow:var(--shadow-md);}
+.blocker-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.blocker-title{font-size:14px;font-weight:700;color:var(--text-dark);flex:1;}
+.blocker-desc{font-size:13px;color:var(--text-mid);margin-bottom:10px;}
+.blocker-meta{display:flex;gap:10px;font-size:11px;color:var(--text-light);}
+.goal-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:10px;}
+.goal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.goal-title{font-size:14px;font-weight:700;color:var(--text-dark);}
+.goal-bar-wrap{background:var(--bg2);border-radius:20px;height:8px;margin-bottom:6px;}
+.goal-bar{height:8px;border-radius:20px;background:linear-gradient(90deg,var(--text),var(--accent));transition:width .5s;}
+.goal-vals{display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);}
+.brand-section{margin-bottom:20px;}
+.brand-cat-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+.brand-item{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:10px;margin-bottom:6px;}
+.brand-do{background:rgba(46,158,110,.07);border:1px solid rgba(46,158,110,.15);}
+.brand-dont{background:rgba(224,85,85,.07);border:1px solid rgba(224,85,85,.15);}
+.brand-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.brand-text{font-size:13px;color:var(--text-dark);}
+.brand-sub{font-size:11.5px;color:var(--text-mid);margin-top:2px;}
+.dr-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:10px;}
+.dr-area{font-size:14px;font-weight:700;color:var(--text-dark);}
+.dr-desc{font-size:13px;color:var(--text-mid);}
+.infra-card{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:10px;}
+.cred-item{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);}
+.cred-item:last-child{border-bottom:none;}
+.cred-name{font-size:13px;font-weight:600;color:var(--text-dark);}
+.cred-cat{font-size:11px;color:var(--text-light);}
+.cred-status{font-size:11px;padding:3px 10px;border-radius:20px;}
+.cred-set{background:#e8f8f0;color:var(--green);}
+.cred-notset{background:var(--bg2);color:var(--text-light);}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.35);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--card);border-radius:18px;padding:0;width:600px;max-width:96vw;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(30,50,80,.2);}
+.modal-lg{width:720px;}
+.modal-header{padding:24px 28px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--card);z-index:10;}
+.modal-title{font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);}
+.modal-sub{font-size:12px;color:var(--text-light);margin-top:2px;}
+.modal-close{width:32px;height:32px;border-radius:50%;background:var(--bg2);border:none;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-mid);}
+.modal-body{padding:24px 28px;}
+.modal-footer{padding:16px 28px 24px;display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.form-select{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Nunito',sans-serif;font-size:14px;color:var(--text-dark);background:#fafcff;appearance:none;cursor:pointer;}
+.form-select:focus{outline:none;border-color:var(--text);}
+.form-textarea{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Nunito',sans-serif;font-size:13px;color:var(--text-dark);background:#fafcff;resize:vertical;min-height:80px;}
+.form-textarea:focus{outline:none;border-color:var(--text);}
+.form-hint{font-size:11px;color:var(--text-light);margin-top:4px;}
+.section-divider{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.1em;margin:20px 0 12px;padding-top:16px;border-top:1px solid var(--border);}
+.cal-wrap{background:var(--bg);border-radius:12px;padding:16px;margin-bottom:18px;}
+.cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.cal-month{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);}
+.cal-btn{width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;color:var(--text-mid);}
+.cal-btn:hover{background:var(--bg2);}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal-day-header{text-align:center;font-size:10px;font-weight:700;color:var(--text-light);padding:4px;text-transform:uppercase;}
+.cal-day{text-align:center;padding:7px 4px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--text-mid);transition:all .15s;}
+.cal-day:hover{background:rgba(45,107,182,.1);color:var(--text);}
+.cal-day.today{background:var(--text);color:#fff;font-weight:700;}
+.cal-day.selected{background:rgba(45,107,182,.15);color:var(--text);font-weight:700;border:1.5px solid var(--text);}
+.cal-day.other-month{opacity:.35;}
+.cal-day.has-report{position:relative;}
+.cal-day.has-report::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;background:var(--green);border-radius:50%;}
+.ql-item{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:9px;background:var(--bg);margin-bottom:7px;font-size:13px;font-weight:600;color:var(--text-dark);cursor:pointer;transition:background .15s;}
+.ql-item:hover{background:var(--bg2);}
+.ql-arrow{color:var(--text-light);font-size:14px;}
+.prog-wrap{background:var(--bg2);border-radius:20px;height:6px;}
+.prog-bar{height:6px;border-radius:20px;background:linear-gradient(90deg,var(--text),var(--accent));}
+.eod-step{display:none;}
+.eod-step.active{display:block;}
+.step-indicator{display:flex;gap:6px;margin-bottom:20px;}
+.step-dot{flex:1;height:4px;border-radius:2px;background:var(--bg2);}
+.step-dot.done{background:var(--text);}
+.step-dot.current{background:var(--accent);}
+.toast{position:fixed;bottom:28px;right:28px;background:var(--text-dark);color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;box-shadow:0 8px 24px rgba(30,50,80,.25);}
+.toast.show{transform:translateY(0);opacity:1;}
+.page-section{display:none;}
+.page-section.active{display:block;}
+.appear-opt{display:flex;align-items:center;gap:14px;padding:12px;border-radius:10px;border:2px solid var(--border);cursor:pointer;margin-bottom:8px;transition:border-color .2s;}
+.appear-opt.selected{border-color:var(--text);}
+.appear-opt-preview{width:48px;height:32px;border-radius:6px;flex-shrink:0;}
+.appear-opt-name{font-size:13px;font-weight:600;color:var(--text-dark);}
+.appear-opt-sub{font-size:11px;color:var(--text-light);}
+.color-swatch-wrap{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
+.color-swatch{width:40px;height:40px;border-radius:8px;cursor:pointer;border:3px solid transparent;transition:border-color .15s;}
+.color-swatch.sel{border-color:var(--text);}
+/* My Reports - inline EOD cards */
+.eod-report-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px;}
+.eod-report-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.eod-report-date{font-family:'Playfair Display',serif;font-size:14px;color:var(--text-dark);}
+.eod-report-detail{font-size:12px;color:var(--text-mid);margin-bottom:6px;line-height:1.6;}
+.eod-report-label{font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-top:10px;margin-bottom:4px;}
+/* Announcement banner */
+.announcement-banner{background:linear-gradient(135deg,rgba(45,107,182,.12),rgba(135,171,213,.08));border:1px solid var(--border-hover);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;}
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px;}
+</style>
+</head>
+<body>
+
+<!-- ══════════════ LOGIN ══════════════ -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <div class="login-logo" style="flex-direction:column;gap:6px;">
+      <div class="login-logo-icon" style="width:54px;height:54px;font-size:26px;">W</div>
+      <div>
+        <div class="login-logo-name" style="text-align:center;">WebLight Media</div>
+        <div class="login-logo-sub" style="text-align:center;">Team Portal</div>
+      </div>
+    </div>
+    <div class="login-title">Welcome back</div>
+    <div class="login-sub">Sign in to your workspace</div>
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input class="form-input" type="email" id="loginEmail" placeholder="your@email.com" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <div style="position:relative;">
+        <input class="form-input" type="password" id="loginPassword" placeholder="••••••••" style="padding-right:42px;" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+        <button onclick="togglePwVis('loginPassword',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-light);line-height:1;">👁</button>
+      </div>
+    </div>
+    <div id="loginError" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:8px;">❌ Incorrect email or password. Please try again.</div>
+    <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">Sign In →</button>
+    <div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text-light);">
+      <a href="index.html" style="color:var(--text);font-weight:700;text-decoration:none;">Admin Panel →</a>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ USER APP ══════════════ -->
+<div id="userApp" class="app">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">W</div>
+      <div>
+        <div class="sidebar-logo-name">WebLight Media</div>
+        <div class="sidebar-logo-sub">Team Portal</div>
+      </div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="nav-group-label">Execution</div>
+      <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni">🏠</span>Operations</div>
+      <div class="nav-item" onclick="showSection('myreports',this)"><span class="ni">📊</span>My Reports</div>
+      <div class="nav-item" onclick="showSection('blockers',this)"><span class="ni">🚧</span>Blockers</div>
+      <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni">📋</span>Downtime Tasks</div>
+      <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni">🎨</span>Brand Rights</div>
+      <div class="nav-group-label">Control</div>
+      <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni">🛡️</span>Decision Rights</div>
+      <div class="nav-item" onclick="showSection('goals',this)"><span class="ni">🎯</span>Goals</div>
+      <div class="nav-group-label">Infrastructure</div>
+      <div class="nav-item" onclick="showSection('bizSetup',this)"><span class="ni">🏢</span>Business Setup</div>
+      <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni">🔑</span>Credentials</div>
+    </div>
+    <div class="sidebar-user">
+      <div class="sidebar-user-card">
+        <div class="avatar" id="sidebarAvatar">?</div>
+        <div>
+          <div class="su-name" id="sidebarName">Loading…</div>
+          <div class="su-role" id="sidebarRole">Team Member</div>
+        </div>
+      </div>
+      <div class="su-actions">
+        <div class="su-btn" onclick="showSection('profile',document.querySelector('.nav-item'))">⚙️ Profile</div>
+        <div class="su-btn" onclick="openAppearanceModal()">🎨 Theme</div>
+        <div class="su-btn" onclick="logout()">↩ Out</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" id="pageTitle">Operations</div>
+        <div class="topbar-sub" id="pageSubtitle"></div>
+      </div>
+      <div class="topbar-right">
+        <div class="notif-btn" id="notifBtn" onclick="checkAnnouncements()">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div></div>
+        <button class="btn btn-primary btn-sm" onclick="openEODModal()">+ Submit EOD</button>
+      </div>
+    </div>
+    <div class="content">
+
+      <!-- ── OPERATIONS ── -->
+      <div id="sec-operations" class="page-section active">
+        <!-- Announcement Banner -->
+        <div id="announcementBanner" class="announcement-banner" style="display:none;">
+          <div style="font-size:20px;">📣</div>
+          <div style="flex:1;">
+            <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Announcement from Admin</div>
+            <div id="announcementText" style="font-size:13px;color:var(--text-dark);line-height:1.6;"></div>
+          </div>
+          <button onclick="document.getElementById('announcementBanner').style.display='none'" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-light);">✕</button>
+        </div>
+
+        <div class="ops-grid-3">
+          <div class="stat-card">
+            <div class="stat-label">Active Shift</div>
+            <div class="stat-value" id="shiftDate">—</div>
+            <div class="stat-sub">EOD due by 5:00 PM</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">This Week</div>
+            <div class="stat-value" id="weeklyReportCount">0</div>
+            <div class="stat-sub">Reports submitted</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Open Blockers</div>
+            <div class="stat-value" id="openBlockerCount" style="color:var(--orange)">0</div>
+            <div class="stat-sub" id="blockerSubText">None active</div>
+          </div>
+        </div>
+        <div class="ops-grid">
+          <div>
+            <div class="pulse-card">
+              <div class="pulse-header">
+                <div class="pulse-title">Today's Pulse</div>
+                <span class="status-badge badge-working">● Working</span>
+              </div>
+              <div class="pulse-user">
+                <div class="avatar" id="pulseAvatar">?</div>
+                <div>
+                  <div class="pulse-name" id="pulseName">Loading…</div>
+                  <div class="pulse-role" id="pulseRoleDisplay">Team Member</div>
+                </div>
+                <span class="status-badge badge-working" style="margin-left:auto">● Working</span>
+              </div>
+              <div class="pulse-msg" id="todayEODStatus">No EOD report submitted yet today</div>
+            </div>
+            <div class="eod-section">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);">Today's Activity</div>
+                <span class="status-badge badge-pending" id="eodStatusBadge">EOD Pending</span>
+              </div>
+              <div class="eod-empty" id="eodTodayCard">No EOD report submitted yet today</div>
+              <div style="text-align:center;margin-top:12px;"><button class="btn btn-primary" onclick="openEODModal()">+ Submit EOD Report</button></div>
+            </div>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom:14px;">
+              <div class="card-header"><div class="card-title">Chain of Command</div></div>
+              <div class="card-body" id="ops-coc-display">
+                <div class="coc-item"><div class="coc-icon">💲</div><div><div class="coc-role">Billing / Payments</div><div class="coc-name">Jacob Joslin</div></div></div>
+                <div class="coc-item"><div class="coc-icon">👥</div><div><div class="coc-role">Daily Ops</div><div class="coc-name">Sarah Samy</div></div></div>
+                <div class="coc-item"><div class="coc-icon">💻</div><div><div class="coc-role">Tech / Design / Web</div><div class="coc-name">Sarah Soliman</div></div></div>
+                <div class="coc-item urgent-coc"><div class="coc-icon" style="background:var(--red)">⚡</div><div><div class="coc-role">Urgent Issues</div><div class="coc-name">David Joslin</div></div></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div class="card-title">Quick Links</div><button class="btn btn-outline btn-sm" onclick="openModal('editQLModal')" style="font-size:11px;">✏️ Edit</button></div>
+              <div class="card-body" id="ql-user-display">
+                <div class="ql-item" onclick="window.open('#','_blank')">📱 Sync CRM <span class="ql-arrow">↗</span></div>
+                <div class="ql-item" onclick="window.open('#','_blank')">📅 ScheduleDrop <span class="ql-arrow">↗</span></div>
+                <div class="ql-item" onclick="window.open('#','_blank')">🤖 Delphi AI <span class="ql-arrow">↗</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="roadmap-section">
+          <div class="roadmap-title">📍 30–60–90 Day Roadmap</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+            <div class="roadmap-phase">
+              <div class="roadmap-phase-title">First 14 Days</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Account access completed</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Design system reviewed</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Core training completed</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>First mockups ready</div>
+            </div>
+            <div class="roadmap-phase">
+              <div class="roadmap-phase-title">Days 15–30</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Client pages live</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Ad creatives delivered</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>First revision cycle done</div>
+            </div>
+            <div class="roadmap-phase">
+              <div class="roadmap-phase-title">Days 31–90</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Optimization routines</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Scaling workflows</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Reduced hand-holding</div>
+              <div class="roadmap-item"><div class="roadmap-dot"></div>Owner leverage gained</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── MY REPORTS ── -->
+      <div id="sec-myreports" class="page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div>
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">My EOD Reports</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">All your submitted end-of-day reports</div>
+          </div>
+          <button class="btn btn-primary" onclick="openEODModal()">+ Submit EOD</button>
+        </div>
+        <!-- Quick stats -->
+        <div class="report-row" style="margin-bottom:20px;">
+          <div class="report-metric"><div class="rm-val" id="myTotalReports">0</div><div class="rm-label">Total Submitted</div></div>
+          <div class="report-metric"><div class="rm-val" id="myThisWeek">0</div><div class="rm-label">This Week</div></div>
+          <div class="report-metric"><div class="rm-val" id="myThisMonth">0</div><div class="rm-label">This Month</div></div>
+          <div class="report-metric"><div class="rm-val" id="myStreak">0</div><div class="rm-label">Day Streak</div></div>
+        </div>
+        <!-- Reports list -->
+        <div id="myReportsList">
+          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No reports submitted yet. Click <strong>+ Submit EOD</strong> to get started.</div>
+        </div>
+      </div>
+
+      <!-- ── BLOCKERS ── -->
+      <div id="sec-blockers" class="page-section">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="btn btn-primary" onclick="openBlockerModal()">+ Add Blocker</button></div>
+        <div class="blocker-stats">
+          <div class="bstat" id="bstat-total"><div class="bstat-val" id="b-total">0</div><div class="bstat-label">Total Active</div></div>
+          <div class="bstat warn"><div class="bstat-val" style="color:var(--orange)" id="b-warn">0</div><div class="bstat-label">Escalated 48h+</div></div>
+          <div class="bstat crit"><div class="bstat-val" style="color:var(--red)" id="b-crit">0</div><div class="bstat-label">Critical 7+ days</div></div>
+          <div class="bstat"><div class="bstat-val" style="color:var(--orange)" id="b-warning">0</div><div class="bstat-label">Warning 3–7 days</div></div>
+        </div>
+        <div id="blockerList"></div>
+      </div>
+
+      <!-- ── DOWNTIME TASKS ── -->
+      <div id="sec-downtimeTasks" class="page-section">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Downtime Tasks</div><div class="card-sub">Work on these when no active client task is assigned</div></div>
+          <div class="card-body">
+            <div id="dtTaskList">
+              <div class="blocker-item"><div class="blocker-header"><span style="font-size:20px">1️⃣</span><div class="blocker-title">Review pending design briefs</div></div><div class="blocker-desc">Check all shared folders and project management tools for any outstanding briefs that haven't been started.</div></div>
+              <div class="blocker-item"><div class="blocker-header"><span style="font-size:20px">2️⃣</span><div class="blocker-title">Update portfolio samples</div></div><div class="blocker-desc">Add latest completed work to the internal portfolio folder. Organize by project type.</div></div>
+              <div class="blocker-item"><div class="blocker-header"><span style="font-size:20px">3️⃣</span><div class="blocker-title">Complete training module</div></div><div class="blocker-desc">Log into Skool and complete the next available training session. Note any questions for team standup.</div></div>
+              <div class="blocker-item"><div class="blocker-header"><span style="font-size:20px">4️⃣</span><div class="blocker-title">Audit active client websites</div></div><div class="blocker-desc">Check all managed client sites for broken links, slow loading, or outdated content. Log findings.</div></div>
+              <div class="blocker-item"><div class="blocker-header"><span style="font-size:20px">5️⃣</span><div class="blocker-title">Respond to all unread messages</div></div><div class="blocker-desc">Check Slack, email, and project PM tools. No message should go unanswered for more than 2 hours.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BRAND RIGHTS ── -->
+      <div id="sec-brandRights" class="page-section">
+        <div class="card" style="margin-bottom:18px;">
+          <div class="card-header"><div class="card-title">🎨 Brand Rights — WebLight Media Standards</div><div class="card-sub">All designers must follow these guidelines on every client project</div></div>
+          <div class="card-body">
+            <div class="brand-section">
+              <div class="brand-cat-title">✅ Design Do's</div>
+              <div class="brand-item brand-do"><div class="brand-icon">✅</div><div><div class="brand-text">Always use the client's approved brand color palette</div><div class="brand-sub">No substitutions without written approval from the account manager</div></div></div>
+              <div class="brand-item brand-do"><div class="brand-icon">✅</div><div><div class="brand-text">Deliver all assets in the required file formats (PNG, SVG, PDF)</div><div class="brand-sub">Ask the client if unsure — never assume</div></div></div>
+              <div class="brand-item brand-do"><div class="brand-icon">✅</div><div><div class="brand-text">Use royalty-free or licensed images only</div><div class="brand-sub">Source from approved libraries: Unsplash, Adobe Stock, or client-provided</div></div></div>
+              <div class="brand-item brand-do"><div class="brand-icon">✅</div><div><div class="brand-text">Maintain consistent typography hierarchy across all deliverables</div><div class="brand-sub">H1, H2, body, caption — follow the style guide exactly</div></div></div>
+              <div class="brand-item brand-do"><div class="brand-icon">✅</div><div><div class="brand-text">Log all version history and save as dated files</div><div class="brand-sub">v1.0, v1.1, v2.0 — never overwrite the original</div></div></div>
+            </div>
+            <div class="brand-section">
+              <div class="brand-cat-title">🚫 Design Don'ts</div>
+              <div class="brand-item brand-dont"><div class="brand-icon">🚫</div><div><div class="brand-text">Do NOT use AI-generated images without disclosure and approval</div><div class="brand-sub">Always flag if AI tools were used in content creation</div></div></div>
+              <div class="brand-item brand-dont"><div class="brand-icon">🚫</div><div><div class="brand-text">Do NOT share client brand assets or files externally</div><div class="brand-sub">No sharing outside the assigned project folder — ever</div></div></div>
+              <div class="brand-item brand-dont"><div class="brand-icon">🚫</div><div><div class="brand-text">Do NOT post client work on personal social media</div><div class="brand-sub">Wait for explicit approval before sharing any deliverable publicly</div></div></div>
+              <div class="brand-item brand-dont"><div class="brand-icon">🚫</div><div><div class="brand-text">Do NOT make font or layout changes not specified in the brief</div><div class="brand-sub">Bring creative suggestions to your manager first — don't self-approve</div></div></div>
+              <div class="brand-item brand-dont"><div class="brand-icon">🚫</div><div><div class="brand-text">Do NOT miss deadlines without prior notice</div><div class="brand-sub">If you are at risk of missing a deadline, communicate at least 24h in advance</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── DECISION RIGHTS ── -->
+      <div id="sec-decisionRights" class="page-section">
+        <div class="card" style="margin-bottom:18px;padding:14px 20px;background:var(--cream);border-color:var(--cream-dark);">
+          <div style="font-size:13px;color:var(--text-dark);">⚠️ This page outlines exactly what decisions fall within your authority, what needs approval, and what is outside your scope entirely. When in doubt, always escalate.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#e8f8f0;border:1px solid rgba(46,158,110,.25);border-radius:10px;margin-bottom:12px;">
+              <span style="font-size:18px;">✅</span>
+              <div><div style="font-size:12px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.07em;">Authorized</div><div style="font-size:11px;color:var(--text-mid);">Decisions you can make independently</div></div>
+            </div>
+            <div class="dr-item" style="border-left:3px solid var(--green);"><div class="dr-area" style="margin-bottom:4px;">Minor Design Revisions</div><div class="dr-desc">Color tweaks, spacing, copy formatting within approved brand guide — no approval needed.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--green);"><div class="dr-area" style="margin-bottom:4px;">File Naming & Organization</div><div class="dr-desc">Version control, folder structure, and file labeling are fully within your control.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--green);"><div class="dr-area" style="margin-bottom:4px;">Daily Task Prioritization</div><div class="dr-desc">You can decide the order you complete assigned tasks within the same deadline window.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--green);"><div class="dr-area" style="margin-bottom:4px;">Use of Approved Tools</div><div class="dr-desc">You may freely use tools already listed in your Credentials vault without asking.</div></div>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff8e8;border:1px solid rgba(217,119,6,.25);border-radius:10px;margin-bottom:12px;">
+              <span style="font-size:18px;">⚠️</span>
+              <div><div style="font-size:12px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.07em;">Needs Approval</div><div style="font-size:11px;color:var(--text-mid);">Must be cleared with your manager first</div></div>
+            </div>
+            <div class="dr-item" style="border-left:3px solid var(--orange);"><div class="dr-area" style="margin-bottom:4px;">New Design Direction</div><div class="dr-desc">Any major layout, font choice, or concept pivot must be approved before presenting to the client.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--orange);"><div class="dr-area" style="margin-bottom:4px;">Deadline Changes</div><div class="dr-desc">Any shift in agreed delivery dates must be escalated and approved 24h+ in advance.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--orange);"><div class="dr-area" style="margin-bottom:4px;">New Tool Requests</div><div class="dr-desc">Requests for access to new software or platforms must go through the admin panel first.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--orange);"><div class="dr-area" style="margin-bottom:4px;">Scope Expansion</div><div class="dr-desc">If a client requests work beyond the original scope, flag it — do not begin without approval.</div></div>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fde8e8;border:1px solid rgba(224,85,85,.25);border-radius:10px;margin-bottom:12px;">
+              <span style="font-size:18px;">🚫</span>
+              <div><div style="font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.07em;">Not Permitted</div><div style="font-size:11px;color:var(--text-mid);">Outside your decision authority entirely</div></div>
+            </div>
+            <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Direct Client Communication</div><div class="dr-desc">All client contact must go through the account manager unless explicitly delegated in writing.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Purchasing Software or Subscriptions</div><div class="dr-desc">You may not purchase any tool, plugin, or subscription on behalf of WebLight Media independently.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Sharing Client Files Externally</div><div class="dr-desc">No client assets, files, or data may be shared outside the assigned project folder under any circumstances.</div></div>
+            <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Pricing or Contract Decisions</div><div class="dr-desc">You are not authorized to quote prices, negotiate terms, or modify any client agreement.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── GOALS ── -->
+      <div id="sec-goals" class="page-section">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="btn btn-blue btn-sm" onclick="openGoalModal()">+ New Goal</button></div>
+        <div class="report-row" style="margin-bottom:20px;">
+          <div class="report-metric"><div class="rm-val" id="goalsActive">0</div><div class="rm-label">Active Goals</div></div>
+          <div class="report-metric"><div class="rm-val" id="goalsAchieved">0</div><div class="rm-label">Achieved</div></div>
+          <div class="report-metric"><div class="rm-val" id="goalsWeekly">0</div><div class="rm-label">Weekly</div></div>
+          <div class="report-metric"><div class="rm-val" id="goalsMonthly">0</div><div class="rm-label">Monthly</div></div>
+        </div>
+        <div id="goalsList">
+          <div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No goals set yet. Click <strong>+ New Goal</strong> to get started.</div>
+        </div>
+      </div>
+
+      <!-- ── BUSINESS SETUP ── -->
+      <div id="sec-bizSetup" class="page-section">
+        <div class="card" style="margin-bottom:14px;padding:12px 18px;background:var(--cream);border-color:var(--cream-dark);">
+          <div style="font-size:13px;color:var(--text-dark);">📋 This information is configured by your admin. Contact your manager if anything needs to be updated.</div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">🏢 Company Overview</div></div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+              <div><div class="stat-label">Company</div><div style="font-size:15px;font-weight:700;color:var(--text-dark);margin-top:4px;">WebLight Media</div></div>
+              <div><div class="stat-label">Industry</div><div style="font-size:15px;font-weight:700;color:var(--text-dark);margin-top:4px;">Website Design & Online Marketing</div></div>
+              <div><div class="stat-label">EOD Deadline</div><div style="font-size:13px;color:var(--text-mid);margin-top:4px;">5:00 PM EST Daily</div></div>
+              <div><div class="stat-label">Weekly Report Due</div><div style="font-size:13px;color:var(--text-mid);margin-top:4px;">Every Friday by 5:00 PM</div></div>
+              <div style="grid-column:span 2"><div class="stat-label">Mission Statement</div><div style="font-size:13px;color:var(--text-mid);margin-top:4px;">We build high-converting websites and digital marketing solutions that help local businesses grow online.</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:14px;">
+          <div class="card-header"><div class="card-title">Chain of Command</div></div>
+          <div class="card-body" id="biz-coc-display">
+            <div class="coc-item"><div class="coc-icon">💲</div><div><div class="coc-role">Billing / Payments</div><div class="coc-name">Jacob Joslin</div></div></div>
+            <div class="coc-item"><div class="coc-icon">👥</div><div><div class="coc-role">Daily Ops</div><div class="coc-name">Sarah Samy</div></div></div>
+            <div class="coc-item"><div class="coc-icon">💻</div><div><div class="coc-role">Tech / Design / Web</div><div class="coc-name">Sarah Soliman</div></div></div>
+            <div class="coc-item urgent-coc"><div class="coc-icon" style="background:var(--red)">⚡</div><div><div class="coc-role">Urgent Issues</div><div class="coc-name">David Joslin</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── CREDENTIALS ── -->
+      <div id="sec-credentials" class="page-section">
+        <div class="infra-card">
+          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);margin-bottom:16px;">🔑 Credentials Vault — Your Allowed Access</div>
+          <div class="cred-item"><div><div class="cred-name">Google Workspace (Designer)</div><div class="cred-cat">Google</div></div><span class="cred-status cred-notset">Not Set</span></div>
+          <div class="cred-item"><div><div class="cred-name">Sync CRM (Designer Access)</div><div class="cred-cat">CRM & Pipeline</div></div><span class="cred-status cred-notset">Not Set</span></div>
+          <div class="cred-item"><div><div class="cred-name">ScheduleDrop</div><div class="cred-cat">Scheduling</div></div><span class="cred-status cred-set">Configured</span></div>
+          <div class="cred-item"><div><div class="cred-name">Figma / Design Tools</div><div class="cred-cat">Design Software</div></div><span class="cred-status cred-set">Configured</span></div>
+          <div class="cred-item"><div><div class="cred-name">Hubstaff</div><div class="cred-cat">Time Tracking</div></div><span class="cred-status cred-notset">Not Set</span></div>
+          <div class="cred-item"><div><div class="cred-name">Skool Training</div><div class="cred-cat">Learning Platform</div></div><span class="cred-status cred-set">Configured</span></div>
+        </div>
+      </div>
+
+      <!-- ── PROFILE ── -->
+      <div id="sec-profile" class="page-section">
+        <div class="profile-grid">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Profile Settings</div></div>
+            <div class="card-body">
+              <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
+                <div class="avatar" style="width:64px;height:64px;font-size:22px;" id="profileAvatar">?</div>
+                <div><button class="btn btn-outline btn-sm">Upload Photo</button><div style="font-size:11px;color:var(--text-light);margin-top:4px;">JPG, PNG up to 5MB</div></div>
+              </div>
+              <div class="form-group"><label class="form-label">Full Name</label><input class="form-input" id="profileName" oninput="updateProfileName(this.value)"></div>
+              <div class="form-group"><label class="form-label">Job Title</label><input class="form-input" id="profileTitle"></div>
+              <div class="form-group"><label class="form-label">Email Address</label><input class="form-input" type="email" id="profileEmail"></div>
+              <button class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Account Info</div></div>
+            <div class="card-body">
+              <div class="cred-item"><div class="cred-name">Role</div><span id="accountRole" style="font-size:13px;color:var(--text-mid);">Team Member</span></div>
+              <div class="cred-item"><div class="cred-name">Assigned Business</div><span style="font-size:13px;color:var(--text-mid);">WebLight Media</span></div>
+              <div class="cred-item"><div class="cred-name">Account Type</div><span id="accountType" style="font-size:13px;color:var(--text-mid);">Contractor</span></div>
+              <div class="cred-item"><div class="cred-name">Email Verified</div><span class="cred-status cred-set">Verified</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">🔒 Change Password</div></div>
+            <div class="card-body">
+              <div class="form-group">
+                <label class="form-label">Current Password</label>
+                <div style="position:relative;">
+                  <input class="form-input" type="password" id="userCurPw" placeholder="Enter current password" style="padding-right:42px;">
+                  <button onclick="togglePwVis('userCurPw',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">New Password</label>
+                <div style="position:relative;">
+                  <input class="form-input" type="password" id="userNewPw" placeholder="At least 8 characters" style="padding-right:42px;">
+                  <button onclick="togglePwVis('userNewPw',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Confirm New Password</label>
+                <div style="position:relative;">
+                  <input class="form-input" type="password" id="userConfPw" placeholder="Repeat new password" style="padding-right:42px;">
+                  <button onclick="togglePwVis('userConfPw',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="changeUserPassword()">Update Password</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /userApp -->
+
+<!-- ══════════════ MODALS ══════════════ -->
+
+<!-- EOD Modal -->
+<div id="eodModal" class="modal-overlay">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div><div class="modal-title">Submit EOD Report</div><div class="modal-sub">End-of-day summary — due by 5:00 PM</div></div>
+      <button class="modal-close" onclick="closeModal('eodModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="cal-wrap">
+        <div class="cal-nav">
+          <button class="cal-btn" onclick="calNav(-1)">‹</button>
+          <div class="cal-month" id="calMonthLabel"></div>
+          <button class="cal-btn" onclick="calNav(1)">›</button>
+        </div>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+      <div style="background:rgba(45,107,182,.06);border-radius:10px;padding:10px 14px;margin-bottom:18px;font-size:13px;color:var(--text);font-weight:600;" id="selectedDateDisplay"></div>
+      <div class="step-indicator" id="stepInd">
+        <div class="step-dot done" id="s1"></div>
+        <div class="step-dot current" id="s2"></div>
+        <div class="step-dot" id="s3"></div>
+      </div>
+      <div class="eod-step active" id="eod-step1">
+        <div class="form-group"><label class="form-label">Tasks Completed Today</label><textarea class="form-textarea" id="eodTasks" rows="4" placeholder="List the main tasks you completed today…"></textarea></div>
+        <div class="form-group"><label class="form-label">Projects Worked On</label><input class="form-input" id="eodProjects" placeholder="e.g. Client A — Homepage Redesign"></div>
+        <div class="form-group"><label class="form-label">Hours of Deep Work</label><input class="form-input" type="number" id="eodHours" min="0" max="12" placeholder="e.g. 4"></div>
+      </div>
+      <div class="eod-step" id="eod-step2">
+        <div class="form-group"><label class="form-label">Wins Today 🎉</label><textarea class="form-textarea" id="eodWins" rows="3" placeholder="What went well today?"></textarea></div>
+        <div class="form-group"><label class="form-label">Issues or Blockers ⚠️</label><textarea class="form-textarea" id="eodIssues" rows="3" placeholder="Any problems or things blocking progress?"></textarea></div>
+      </div>
+      <div class="eod-step" id="eod-step3">
+        <div class="form-group"><label class="form-label">Tomorrow's Priority Tasks</label><textarea class="form-textarea" id="eodTomorrow" rows="3" placeholder="What will you tackle first tomorrow?"></textarea></div>
+        <div class="form-group"><label class="form-label">Support Needed from Manager</label><textarea class="form-textarea" id="eodSupport" rows="3" placeholder="Anything you need approved or answered?"></textarea></div>
+        <div class="form-group"><label class="form-label">Overall Day Rating</label>
+          <select class="form-select" id="eodRating">
+            <option>⭐⭐⭐⭐⭐ Excellent — hit all targets</option>
+            <option>⭐⭐⭐⭐ Good — mostly productive</option>
+            <option>⭐⭐⭐ Average — some disruptions</option>
+            <option>⭐⭐ Tough — significant blockers</option>
+            <option>⭐ Very difficult — needs discussion</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" id="eodBackBtn" onclick="eodStep(-1)" style="display:none">← Back</button>
+      <button class="btn btn-outline" onclick="closeModal('eodModal')">Cancel</button>
+      <button class="btn btn-primary" id="eodNextBtn" onclick="eodStep(1)">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Blocker Modal -->
+<div id="blockerModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Log a Blocker</div><div class="modal-sub">Document what is preventing your progress</div></div>
+      <button class="modal-close" onclick="closeModal('blockerModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Blocker Title</label><input class="form-input" placeholder="Short description of the issue" id="blockerTitle"></div>
+      <div class="form-group"><label class="form-label">Full Description</label><textarea class="form-textarea" placeholder="Describe the blocker in detail…" id="blockerDesc"></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Project Affected</label><input class="form-input" placeholder="Client or project name" id="blockerProject"></div>
+        <div class="form-group"><label class="form-label">Severity</label>
+          <select class="form-select" id="blockerSeverity">
+            <option>Warning (3–7 days)</option>
+            <option>Escalated (48h+)</option>
+            <option>Critical (7+ days)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('blockerModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addBlocker()">Submit Blocker</button>
+    </div>
+  </div>
+</div>
+
+<!-- Goal Modal -->
+<div id="goalModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Set a New Goal</div><div class="modal-sub">Track your weekly or monthly targets</div></div>
+      <button class="modal-close" onclick="closeModal('goalModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Goal Title</label><input class="form-input" id="goalTitle" placeholder="e.g. Complete 5 client deliverables this week"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Goal Type</label><select class="form-select" id="goalType"><option>Weekly</option><option>Monthly</option><option>Project-based</option></select></div>
+        <div class="form-group"><label class="form-label">Target Value</label><input class="form-input" type="number" id="goalTarget" placeholder="e.g. 5"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="goalDue"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('goalModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addGoal()">Create Goal</button>
+    </div>
+  </div>
+</div>
+
+<!-- Appearance Modal -->
+<div id="appearanceModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Appearance</div><div class="modal-sub">Customize your dashboard look</div></div>
+      <button class="modal-close" onclick="closeModal('appearanceModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="section-divider" style="border:none;margin-top:0;padding-top:0">Theme</div>
+      <div class="appear-opt selected" onclick="selectTheme(this,'light')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#EAEFF5,#F0F0F0)"></div><div><div class="appear-opt-name">Light</div><div class="appear-opt-sub">Clean light theme (default)</div></div></div>
+      <div class="appear-opt" onclick="selectTheme(this,'navy')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#1a3f6f,#2D6BB6)"></div><div><div class="appear-opt-name">Navy Blue</div><div class="appear-opt-sub">Professional dark navy</div></div></div>
+      <div class="appear-opt" onclick="selectTheme(this,'dark')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#0f1923,#162030)"></div><div><div class="appear-opt-name">Dark</div><div class="appear-opt-sub">Dark mode for night work</div></div></div>
+    </div>
+    <div class="modal-footer">
+      <div style="font-size:12px;color:var(--text-light);flex:1">Changes saved automatically</div>
+      <button class="btn btn-primary" onclick="closeModal('appearanceModal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Quick Links Modal -->
+<div id="editQLModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">✏️ Edit Quick Links</div><div class="modal-sub">Changes apply instantly to your dashboard</div></div>
+      <button class="modal-close" onclick="closeModal('editQLModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ql-edit-rows">
+        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
+          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">📱</span>
+          <input class="form-input" placeholder="Label" value="Sync CRM" style="font-size:13px;">
+          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
+          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
+        </div>
+        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
+          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">📅</span>
+          <input class="form-input" placeholder="Label" value="ScheduleDrop" style="font-size:13px;">
+          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
+          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
+        </div>
+        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
+          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">🤖</span>
+          <input class="form-input" placeholder="Label" value="Delphi AI" style="font-size:13px;">
+          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
+          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="addQLEditRow()" style="margin-top:4px;">+ Add Link</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('editQLModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveQuickLinks()">Save &amp; Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// SHARED DATA LAYER  (mirrors index.html)
+// ═══════════════════════════════════════════════════
+const DB_KEYS = {
+  feed:     'wl_live_feed',
+  eods:     'wl_eod_reports',
+  blockers: 'wl_blockers_db',
+  weeklySummaries: 'wl_weekly_summaries',
+  monthlySummaries: 'wl_monthly_summaries',
+  users:    'wl_users_db',
+  coc:      'wl_coc_data',
+  settings: 'wl_settings',
+  goals:    'wl_goals_db',
+  announcement: 'wl_announcement',
+};
+function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
+function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
+function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(key,arr.slice(0,500)); }
+
+function logActivity(type,userName,description,detail=''){
+  dbPush(DB_KEYS.feed,{
+    id:Date.now(), type, user:userName, desc:description, detail,
+    time:new Date().toISOString(),
+    date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+  });
+}
+
+// ── USER STATE ──
+let currentUser = null;
+let calYear, calMonth, selectedCalDate;
+let eodCurrentStep = 1;
+const today = new Date();
+let myGoals = [];
+
+// ADMIN CREDENTIALS (to block admin from logging in here)
+const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
+
+// ── LOGIN ──
+function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+  const pass  = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  if(!email||!pass){ errEl.style.display='block'; return; }
+
+  // Block admin accounts
+  if(ADMIN_CREDS.some(c=>c.email===email && c.password===pass)){
+    errEl.innerHTML='⚠️ Admin account — please use <a href="index.html" style="color:var(--text);">Admin Panel</a>';
+    errEl.style.display='block'; return;
+  }
+
+  // Check stored users
+  const storedUsers = dbGet(DB_KEYS.users)||[];
+  const found = storedUsers.find(u=>u.email.toLowerCase()===email && u.password===pass);
+  if(found){
+    errEl.style.display='none';
+    currentUser = found;
+    logActivity('login', found.name||email, 'User signed in', found.title||'');
+    showApp();
+    return;
+  }
+
+  // Demo fallback: any email/pass works (creates guest session)
+  if(email && pass){
+    errEl.style.display='none';
+    const parts = email.split('@')[0].split('.');
+    const name = parts.map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join(' ');
+    currentUser = {name, email, title:'Team Member', role:'Contractor', password:pass};
+    logActivity('login', name, 'User signed in (demo)', '');
+    showApp();
+    return;
+  }
+  errEl.style.display='block';
+}
+
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('userApp').classList.add('visible');
+  initApp();
+}
+
+function logout(){
+  const name = currentUser?.name || 'User';
+  logActivity('nav', name, 'Signed out', '');
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('userApp').classList.remove('visible');
+  currentUser = null;
+}
+
+function initApp(){
+  const user = currentUser;
+  if(!user) return;
+
+  // Set identity UI
+  const initials = (user.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  ['sidebarAvatar','pulseAvatar','profileAvatar'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.textContent=initials;
+  });
+  document.getElementById('sidebarName').textContent = user.name||user.email;
+  document.getElementById('sidebarRole').textContent = user.title||'Team Member';
+  document.getElementById('pulseName').textContent = user.name||user.email;
+  document.getElementById('pulseRoleDisplay').textContent = user.title||'Team Member';
+
+  const pn = document.getElementById('profileName');
+  const pt = document.getElementById('profileTitle');
+  const pe = document.getElementById('profileEmail');
+  if(pn) pn.value = user.name||'';
+  if(pt) pt.value = user.title||'';
+  if(pe) pe.value = user.email||'';
+  if(document.getElementById('accountRole')) document.getElementById('accountRole').textContent = user.role||'Team Member';
+  if(document.getElementById('accountType')) document.getElementById('accountType').textContent = user.role||'Contractor';
+
+  // Shift date
+  document.getElementById('shiftDate').textContent = today.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+
+  // Load CoC from shared storage
+  loadCoC();
+  // Load operations data
+  loadOpsStats();
+  // Check announcement
+  checkAnnouncements();
+  // Load goals
+  loadGoals();
+  // Load theme
+  const saved = localStorage.getItem('wl_theme');
+  if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
+}
+
+function loadCoC(){
+  const saved = dbGet(DB_KEYS.coc);
+  if(!saved||!saved.length) return;
+  const render = (el) => {
+    if(!el) return;
+    el.innerHTML = saved.map(({role,name})=>{
+      const isUrgent = role.toLowerCase().includes('urgent');
+      const initials = name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+      return `<div class="coc-item ${isUrgent?'urgent-coc':''}">
+        <div class="coc-icon" style="background:${isUrgent?'var(--red)':'var(--text)'}">${isUrgent?'⚡':initials}</div>
+        <div><div class="coc-role">${role}</div><div class="coc-name">${name}</div></div>
+      </div>`;
+    }).join('');
+  };
+  render(document.getElementById('ops-coc-display'));
+  render(document.getElementById('biz-coc-display'));
+}
+
+function loadOpsStats(){
+  const name = currentUser?.name || '';
+  const eods = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
+  const blockers = (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user===name&&b.status==='open');
+
+  // This week count
+  const now = new Date();
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
+  const thisWeek = eods.filter(e=>new Date(e.submittedAt||e.date)>=startOfWeek).length;
+  document.getElementById('weeklyReportCount').textContent = thisWeek;
+
+  // Blockers
+  document.getElementById('openBlockerCount').textContent = blockers.length;
+  document.getElementById('blockerSubText').textContent = blockers.length ? blockers.length+' active' : 'None active';
+
+  // Check today EOD
+  const todayStr = today.toISOString().slice(0,10);
+  const todayEOD = eods.find(e=>e.date===todayStr);
+  if(todayEOD){
+    document.getElementById('eodStatusBadge').className='status-badge badge-working';
+    document.getElementById('eodStatusBadge').textContent='✓ EOD Submitted';
+    document.getElementById('todayEODStatus').textContent='EOD submitted today ✓ · Rating: '+todayEOD.rating?.substring(0,8)||'';
+    document.getElementById('eodTodayCard').innerHTML=`
+      <div style="background:var(--bg);border-radius:10px;padding:14px;font-size:13px;color:var(--text-mid);">
+        <div style="font-weight:700;color:var(--green);margin-bottom:6px;">✓ EOD Submitted for ${todayStr}</div>
+        <div style="margin-bottom:4px;"><strong>Projects:</strong> ${todayEOD.projects||'—'}</div>
+        <div style="margin-bottom:4px;"><strong>Hours:</strong> ${todayEOD.hours||'—'}</div>
+        <div style="margin-bottom:4px;"><strong>Rating:</strong> ${todayEOD.rating?.substring(0,24)||'—'}</div>
+      </div>`;
+  }
+
+  // Render blockers list
+  renderBlockersList(blockers);
+}
+
+function renderBlockersList(blockers){
+  const list = document.getElementById('blockerList');
+  if(!list) return;
+  list.innerHTML = '';
+  if(!blockers.length){
+    list.innerHTML='<div style="text-align:center;padding:30px;color:var(--text-light);font-size:13px;">No active blockers. Great work! 🎉</div>';
+    return;
+  }
+  blockers.forEach(b=>{
+    const el = document.createElement('div');
+    el.className='blocker-item';
+    el.innerHTML=`<div class="blocker-header"><span class="status-badge badge-pending">⚠ ${b.sev?.split(' ')[0]||'Warning'}</span><div class="blocker-title">${b.title}</div><button class="btn btn-sm btn-outline" onclick="resolveBlocker(${b.id},this)">Resolve</button></div><div class="blocker-desc">${b.desc||''}</div><div class="blocker-meta"><span>📅 ${new Date(b.date).toLocaleDateString()}</span><span>🏢 ${b.proj||'General'}</span></div>`;
+    list.appendChild(el);
+  });
+  // Update blocker stats
+  document.getElementById('b-total').textContent = blockers.length;
+  document.getElementById('b-warn').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('escalated')).length;
+  document.getElementById('b-crit').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('critical')).length;
+  document.getElementById('b-warning').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('warning')).length;
+}
+
+function resolveBlocker(id, btn){
+  const all = dbGet(DB_KEYS.blockers)||[];
+  const idx = all.findIndex(b=>b.id===id);
+  if(idx>-1){ all[idx].status='resolved'; dbSet(DB_KEYS.blockers,all); }
+  btn.closest('.blocker-item').style.opacity='0';
+  btn.closest('.blocker-item').style.transition='opacity .3s';
+  setTimeout(()=>loadOpsStats(), 350);
+  showToast('Blocker resolved ✓');
+  logActivity('blocker', currentUser?.name||'User', 'Resolved blocker: '+(all[idx]?.title||''), '');
+}
+
+function checkAnnouncements(){
+  const msg = dbGet(DB_KEYS.announcement);
+  const banner = document.getElementById('announcementBanner');
+  const dot = document.getElementById('notifDot');
+  if(msg && msg.text){
+    document.getElementById('announcementText').textContent = msg.text;
+    banner.style.display = 'flex';
+    dot.style.display = 'block';
+  } else {
+    banner.style.display = 'none';
+    dot.style.display = 'none';
+  }
+}
+
+// ── SECTION NAV ──
+function showSection(id, el){
+  document.querySelectorAll('#userApp .page-section').forEach(s=>s.classList.remove('active'));
+  document.getElementById('sec-'+id).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  if(el) el.classList.add('active');
+  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile'};
+  document.getElementById('pageTitle').textContent = titles[id]||id;
+  const name = currentUser?.name||'User';
+  logActivity('nav', name, 'Navigated to '+id, id);
+
+  if(id==='myreports') loadMyReports();
+  if(id==='goals') loadGoals();
+  if(id==='blockers') loadOpsStats();
+  if(id==='bizSetup') loadCoC();
+}
+
+// ── MY REPORTS ──
+function loadMyReports(){
+  const name = currentUser?.name||'';
+  const all = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
+  const now = new Date();
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
+  const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1);
+
+  const thisWeek = all.filter(e=>new Date(e.submittedAt||e.date)>=startOfWeek).length;
+  const thisMonth = all.filter(e=>new Date(e.date+'T00:00:00')>=startOfMonth).length;
+
+  // Streak calculation
+  let streak = 0;
+  const dates = all.map(e=>e.date).sort().reverse();
+  const dayMs = 86400000;
+  const todayStr = today.toISOString().slice(0,10);
+  let checkDate = new Date(todayStr);
+  for(let i=0;i<365;i++){
+    const ds = checkDate.toISOString().slice(0,10);
+    if(dates.includes(ds)){ streak++; checkDate = new Date(checkDate-dayMs); }
+    else if(i===0){ checkDate = new Date(checkDate-dayMs); } // skip today if not submitted yet
+    else break;
+  }
+
+  document.getElementById('myTotalReports').textContent = all.length;
+  document.getElementById('myThisWeek').textContent = thisWeek;
+  document.getElementById('myThisMonth').textContent = thisMonth;
+  document.getElementById('myStreak').textContent = streak;
+
+  const list = document.getElementById('myReportsList');
+  if(!all.length){
+    list.innerHTML='<div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No reports submitted yet. Click <strong>+ Submit EOD</strong> to get started.</div>';
+    return;
+  }
+  list.innerHTML = all.slice(0,50).map(r=>`
+    <div class="eod-report-card">
+      <div class="eod-report-header">
+        <div class="eod-report-date">${r.date}</div>
+        <span class="status-badge badge-working">✓ Submitted</span>
+      </div>
+      ${r.projects?`<div class="eod-report-label">Projects</div><div class="eod-report-detail">${r.projects}</div>`:''}
+      ${r.hours?`<div class="eod-report-label">Deep Work</div><div class="eod-report-detail">${r.hours} hours</div>`:''}
+      ${r.tasks?`<div class="eod-report-label">Tasks Completed</div><div class="eod-report-detail" style="white-space:pre-line;">${r.tasks}</div>`:''}
+      ${r.wins?`<div class="eod-report-label">Wins 🎉</div><div class="eod-report-detail" style="white-space:pre-line;">${r.wins}</div>`:''}
+      ${r.issues?`<div class="eod-report-label">Issues / Blockers</div><div class="eod-report-detail" style="white-space:pre-line;">${r.issues}</div>`:''}
+      ${r.tomorrow?`<div class="eod-report-label">Tomorrow's Plan</div><div class="eod-report-detail" style="white-space:pre-line;">${r.tomorrow}</div>`:''}
+      ${r.rating?`<div class="eod-report-label">Day Rating</div><div class="eod-report-detail">${r.rating}</div>`:''}
+      <div style="font-size:11px;color:var(--text-light);margin-top:10px;">Submitted ${r.submittedAt?new Date(r.submittedAt).toLocaleString():r.date}</div>
+    </div>`).join('');
+}
+
+// ── CALENDAR ──
+function initCal(){
+  calYear = today.getFullYear();
+  calMonth = today.getMonth();
+  selectedCalDate = today.getDate();
+  renderCal();
+}
+function calNav(dir){ calMonth+=dir; if(calMonth>11){calMonth=0;calYear++;}else if(calMonth<0){calMonth=11;calYear--;} renderCal(); }
+const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const days=['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function renderCal(){
+  document.getElementById('calMonthLabel').textContent = months[calMonth]+' '+calYear;
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = days.map(d=>`<div class="cal-day-header">${d}</div>`).join('');
+  const firstDay = new Date(calYear,calMonth,1).getDay();
+  const daysInMonth = new Date(calYear,calMonth+1,0).getDate();
+  const prevDays = new Date(calYear,calMonth,0).getDate();
+  const name = currentUser?.name||'';
+  const myEods = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
+  const reportedDays = myEods.filter(e=>{ const d=new Date(e.date+'T00:00:00'); return d.getFullYear()===calYear&&d.getMonth()===calMonth; }).map(e=>new Date(e.date+'T00:00:00').getDate());
+  for(let i=0;i<firstDay;i++){ grid.innerHTML+=`<div class="cal-day other-month">${prevDays-firstDay+1+i}</div>`; }
+  for(let d=1;d<=daysInMonth;d++){
+    const isToday=d===today.getDate()&&calMonth===today.getMonth()&&calYear===today.getFullYear();
+    const isSel=d===selectedCalDate&&calMonth===today.getMonth()&&calYear===today.getFullYear();
+    const hasRep=reportedDays.includes(d);
+    const cls=[isToday?'today':'',isSel&&!isToday?'selected':'',hasRep?'has-report':''].filter(Boolean).join(' ');
+    grid.innerHTML+=`<div class="cal-day ${cls}" onclick="selectDay(${d})">${d}</div>`;
+  }
+  const remaining=42-(firstDay+daysInMonth);
+  for(let i=1;i<=remaining;i++) grid.innerHTML+=`<div class="cal-day other-month">${i}</div>`;
+  updateSelectedDisplay();
+}
+function selectDay(d){ selectedCalDate=d; renderCal(); }
+function updateSelectedDisplay(){
+  const el=document.getElementById('selectedDateDisplay');
+  if(el){ const date=new Date(calYear,calMonth,selectedCalDate); el.textContent='📅 Reporting for: '+date.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}); }
+}
+
+// ── EOD MODAL ──
+function openEODModal(){
+  initCal(); eodCurrentStep=1; updateEODStep();
+  document.getElementById('eodModal').classList.add('open');
+}
+function eodStep(dir){
+  const newStep=eodCurrentStep+dir;
+  if(newStep<1||newStep>3){
+    if(newStep>3){ submitEOD(); }
+    return;
+  }
+  eodCurrentStep=newStep; updateEODStep();
+}
+function updateEODStep(){
+  document.querySelectorAll('.eod-step').forEach((s,i)=>s.classList.toggle('active',i===eodCurrentStep-1));
+  ['s1','s2','s3'].forEach((id,i)=>{ const el=document.getElementById(id); el.className='step-dot'+(i<eodCurrentStep-1?' done':i===eodCurrentStep-1?' current':''); });
+  document.getElementById('eodBackBtn').style.display=eodCurrentStep>1?'inline-flex':'none';
+  document.getElementById('eodNextBtn').textContent=eodCurrentStep===3?'Submit Report ✓':'Next →';
+}
+function submitEOD(){
+  const selDate=new Date(calYear,calMonth,selectedCalDate).toISOString().slice(0,10);
+  const name=currentUser?.name||'User';
+  const title=currentUser?.title||'';
+  const eodReport={
+    id:Date.now(), user:name, title, date:selDate, submittedAt:new Date().toISOString(),
+    tasks:document.getElementById('eodTasks')?.value||'',
+    projects:document.getElementById('eodProjects')?.value||'',
+    hours:document.getElementById('eodHours')?.value||'',
+    wins:document.getElementById('eodWins')?.value||'',
+    issues:document.getElementById('eodIssues')?.value||'',
+    tomorrow:document.getElementById('eodTomorrow')?.value||'',
+    support:document.getElementById('eodSupport')?.value||'',
+    rating:document.getElementById('eodRating')?.value||''
+  };
+  dbPush(DB_KEYS.eods, eodReport);
+  logActivity('eod', name, 'Submitted EOD report for '+selDate, 'Rating: '+eodReport.rating.substring(0,4));
+  // Clear fields
+  ['eodTasks','eodProjects','eodHours','eodWins','eodIssues','eodTomorrow','eodSupport'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  closeModal('eodModal');
+  showToast('EOD Report submitted! ✓');
+  loadOpsStats();
+}
+
+// ── BLOCKER ──
+function addBlocker(){
+  const title=document.getElementById('blockerTitle').value.trim();
+  const desc=document.getElementById('blockerDesc').value;
+  const proj=document.getElementById('blockerProject').value;
+  const sev=document.getElementById('blockerSeverity').value;
+  if(!title){ showToast('Please enter a blocker title'); return; }
+  const name=currentUser?.name||'User';
+  const blocker={id:Date.now(),title,desc,proj,sev,user:name,date:new Date().toISOString(),status:'open'};
+  dbPush(DB_KEYS.blockers,blocker);
+  logActivity('blocker',name,'Logged blocker: '+title,sev);
+  ['blockerTitle','blockerDesc','blockerProject'].forEach(id=>document.getElementById(id).value='');
+  closeModal('blockerModal');
+  showToast('Blocker logged ✓');
+  loadOpsStats();
+}
+
+// ── GOALS ──
+function loadGoals(){
+  const name=currentUser?.name||'';
+  myGoals=(dbGet(DB_KEYS.goals)||[]).filter(g=>g.user===name);
+  const active=myGoals.filter(g=>g.status!=='achieved').length;
+  const achieved=myGoals.filter(g=>g.status==='achieved').length;
+  const weekly=myGoals.filter(g=>g.type==='Weekly').length;
+  const monthly=myGoals.filter(g=>g.type==='Monthly').length;
+  document.getElementById('goalsActive').textContent=active;
+  document.getElementById('goalsAchieved').textContent=achieved;
+  document.getElementById('goalsWeekly').textContent=weekly;
+  document.getElementById('goalsMonthly').textContent=monthly;
+  const list=document.getElementById('goalsList');
+  if(!myGoals.length){ list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No goals set yet. Click <strong>+ New Goal</strong> to get started.</div>'; return; }
+  list.innerHTML=myGoals.map(g=>`
+    <div class="goal-item">
+      <div class="goal-header">
+        <div class="goal-title">${g.title}</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="status-badge ${g.status==='achieved'?'badge-working':'badge-pending'}">${g.status==='achieved'?'✓ Achieved':'In Progress'}</span>
+          <button class="btn btn-sm btn-green" onclick="markGoalAchieved(${g.id})" style="padding:4px 10px;font-size:11px;" ${g.status==='achieved'?'disabled':''}>✓ Done</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteGoal(${g.id})" style="padding:4px 8px;font-size:11px;">✕</button>
+        </div>
+      </div>
+      <div class="goal-bar-wrap"><div class="goal-bar" style="width:${g.status==='achieved'?100:40}%;${g.status==='achieved'?'background:linear-gradient(90deg,var(--green),#5cd8a0)':''}"></div></div>
+      <div class="goal-vals"><span>${g.type} · Due: ${g.due||'TBD'}</span><span>${g.target?'Target: '+g.target:''}</span></div>
+    </div>`).join('');
+}
+function addGoal(){
+  const title=document.getElementById('goalTitle').value.trim();
+  if(!title){ showToast('Please enter a goal title'); return; }
+  const name=currentUser?.name||'User';
+  const goal={id:Date.now(),user:name,title,type:document.getElementById('goalType').value,target:document.getElementById('goalTarget').value,due:document.getElementById('goalDue').value,status:'active',createdAt:new Date().toISOString()};
+  const all=dbGet(DB_KEYS.goals)||[];
+  all.unshift(goal);
+  dbSet(DB_KEYS.goals,all);
+  logActivity('goal',name,'Added goal: '+title,goal.type);
+  ['goalTitle','goalTarget','goalDue'].forEach(id=>document.getElementById(id).value='');
+  closeModal('goalModal');
+  showToast('Goal created! 🎯');
+  loadGoals();
+}
+function markGoalAchieved(id){
+  const all=dbGet(DB_KEYS.goals)||[];
+  const g=all.find(x=>x.id===id);
+  if(g){ g.status='achieved'; dbSet(DB_KEYS.goals,all); logActivity('goal',currentUser?.name||'User','Achieved goal: '+g.title,''); showToast('Goal achieved! 🎉'); loadGoals(); }
+}
+function deleteGoal(id){
+  const all=(dbGet(DB_KEYS.goals)||[]).filter(x=>x.id!==id);
+  dbSet(DB_KEYS.goals,all);
+  showToast('Goal deleted');
+  loadGoals();
+}
+
+// ── PROFILE SAVE ──
+function saveProfile(){
+  if(!currentUser) return;
+  const name=document.getElementById('profileName')?.value.trim();
+  const title=document.getElementById('profileTitle')?.value.trim();
+  if(name){ currentUser.name=name; updateProfileName(name); }
+  if(title){ currentUser.title=title; document.getElementById('sidebarRole').textContent=title; document.getElementById('pulseRoleDisplay').textContent=title; }
+  // Update in stored users if registered
+  const all=dbGet(DB_KEYS.users)||[];
+  const idx=all.findIndex(u=>u.email===currentUser.email);
+  if(idx>-1){ all[idx].name=currentUser.name; all[idx].title=currentUser.title; dbSet(DB_KEYS.users,all); }
+  showToast('Profile saved ✓');
+}
+function updateProfileName(val){
+  const parts=val.split(' ');
+  const initials=(parts[0][0]+(parts[1]?parts[1][0]:'')).toUpperCase();
+  ['sidebarAvatar','pulseAvatar','profileAvatar'].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent=initials; });
+  document.getElementById('sidebarName').textContent=val;
+  document.getElementById('pulseName').textContent=val;
+}
+function changeUserPassword(){
+  const cur=document.getElementById('userCurPw')?.value;
+  const nw=document.getElementById('userNewPw')?.value;
+  const conf=document.getElementById('userConfPw')?.value;
+  if(!cur){ showToast('Please enter your current password'); return; }
+  if(currentUser && cur!==currentUser.password){ showToast('Current password is incorrect'); return; }
+  if(!nw||nw.length<8){ showToast('New password must be at least 8 characters'); return; }
+  if(nw!==conf){ showToast('Passwords do not match'); return; }
+  if(currentUser) currentUser.password=nw;
+  const all=dbGet(DB_KEYS.users)||[];
+  const idx=all.findIndex(u=>u.email===currentUser?.email);
+  if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
+  ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  showToast('Password updated ✓');
+}
+
+// ── MODALS ──
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+function openBlockerModal(){ openModal('blockerModal'); }
+function openGoalModal(){ openModal('goalModal'); }
+function openAppearanceModal(){ openModal('appearanceModal'); }
+
+// ── APPEARANCE ──
+function selectTheme(el,theme){
+  el.closest('.modal-body').querySelectorAll('.appear-opt').forEach(e=>e.classList.remove('selected'));
+  el.classList.add('selected');
+  document.documentElement.setAttribute('data-theme',theme==='light'?'':theme);
+  localStorage.setItem('wl_theme',theme);
+  showToast('Theme updated: '+theme);
+}
+
+// ── QUICK LINKS ──
+function addQLEditRow(){
+  const el=document.getElementById('ql-edit-rows');
+  const row=document.createElement('div');
+  row.className='ql-edit-row';
+  row.style.cssText='display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;';
+  row.innerHTML=`<span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">🔗</span><input class="form-input" placeholder="Label" style="font-size:13px;"><input class="form-input" placeholder="https://…" style="font-size:13px;"><button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>`;
+  el.appendChild(row);
+}
+function promptQLEmoji(el){
+  const e=prompt('Enter an emoji:',el.textContent);
+  if(e) el.textContent=e.trim().charAt(0)||'🔗';
+}
+function saveQuickLinks(){
+  const rows=document.querySelectorAll('#ql-edit-rows .ql-edit-row');
+  const display=document.getElementById('ql-user-display');
+  if(!display){ closeModal('editQLModal'); return; }
+  display.innerHTML='';
+  rows.forEach(row=>{
+    const emoji=row.querySelector('span')?.textContent||'🔗';
+    const inputs=row.querySelectorAll('input');
+    const label=inputs[0]?.value||'Link';
+    const url=inputs[1]?.value||'#';
+    const div=document.createElement('div');
+    div.className='ql-item';
+    div.innerHTML=`${emoji} ${label} <span class="ql-arrow">↗</span>`;
+    div.onclick=()=>window.open(url,'_blank');
+    display.appendChild(div);
+  });
+  closeModal('editQLModal');
+  showToast('Quick links updated ✓');
+}
+
+// ── PASSWORD VIS ──
+function togglePwVis(inputId,btn){
+  const inp=document.getElementById(inputId); if(!inp) return;
+  if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}
+  else{inp.type='password';btn.textContent='👁';}
+}
+
+// ── TOAST ──
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+// ── INIT ──
+document.addEventListener('click',e=>{
+  if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
+});
+
+// Auto-refresh ops stats every 20s (picks up admin changes like CoC updates)
+setInterval(()=>{
+  if(document.getElementById('userApp')?.classList.contains('visible')){
+    loadCoC();
+    checkAnnouncements();
+  }
+},20000);
+</script>
+</body>
+</html>

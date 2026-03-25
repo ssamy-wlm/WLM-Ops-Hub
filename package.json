@@ -1,0 +1,13 @@
+{
+  "name": "weblight-ops-hub",
+  "version": "1.0.0",
+  "description": "WebLight Media Operations Hub — Admin + Team Portal",
+  "private": true,
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve ."
+  },
+  "devDependencies": {
+    "serve": "^14.2.6"
+  }
+}

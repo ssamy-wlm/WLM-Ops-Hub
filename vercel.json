@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "/admin",
+      "dest": "/index.html"
+    },
+    {
+      "src": "/user",
+      "dest": "/user.html"
+    }
+  ]
+}
