@@ -1747,14 +1747,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <button class="modal-close" onclick="closeModal('addUserModal')">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">First Name</label><input class="form-input" placeholder="First name" id="newUserFirst"></div>
-        <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" placeholder="Last name" id="newUserLast"></div>
+      <div style="background:rgba(45,107,182,.06);border:1px solid rgba(45,107,182,.18);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--text-mid);margin-bottom:18px;line-height:1.6;">
+        🔐 <strong>Account Setup:</strong> You set an initial password here. The user will be required to change it on their first login at <code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:4px;">/user.html</code>. Share their email and initial password with them directly.
       </div>
-      <div class="form-group"><label class="form-label">Email Address</label><input class="form-input" type="email" placeholder="user@weblight.com" id="newUserEmail"></div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="Set unique password" id="newUserPass"><div class="form-hint">Min 8 characters. User can change after first login.</div></div>
-        <div class="form-group"><label class="form-label">Confirm Password</label><input class="form-input" type="password" placeholder="Confirm password" id="newUserPass2"></div>
+        <div class="form-group"><label class="form-label">First Name <span style="color:var(--red);">*</span></label><input class="form-input" placeholder="First name" id="newUserFirst"></div>
+        <div class="form-group"><label class="form-label">Last Name <span style="color:var(--red);">*</span></label><input class="form-input" placeholder="Last name" id="newUserLast"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Email Address <span style="color:var(--red);">*</span></label><input class="form-input" type="email" placeholder="user@weblight.com" id="newUserEmail"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Initial Password <span style="color:var(--red);">*</span></label><input class="form-input" type="password" placeholder="Min 6 characters" id="newUserPass"><div class="form-hint">⚠ User must change this on first login.</div></div>
+        <div class="form-group"><label class="form-label">Confirm Password <span style="color:var(--red);">*</span></label><input class="form-input" type="password" placeholder="Confirm password" id="newUserPass2"></div>
       </div>
       <div class="section-divider">Role & Responsibilities</div>
       <div class="form-group"><label class="form-label">Job Title</label><input class="form-input" placeholder="e.g. Web Designer, SEO Specialist, Ads Manager" id="newUserTitle"></div>
@@ -1832,9 +1835,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
         <div class="form-group"><label class="form-label">Responsibilities</label><textarea class="form-textarea" id="editResp" rows="3" placeholder="Core responsibilities for this user…"></textarea></div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">Reset Password</label><input class="form-input" type="password" id="editPass" placeholder="Leave blank to keep current"></div>
-          <div class="form-group"><label class="form-label">Confirm Password</label><input class="form-input" type="password" id="editPass2" placeholder="Confirm new password"></div>
+        <div style="background:rgba(45,107,182,.05);border:1px solid rgba(45,107,182,.15);border-radius:10px;padding:14px;margin-top:8px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;">🔑 Admin Password Reset</div>
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;line-height:1.5;">Leave both fields blank to keep the current password. Setting a new password here will flag the user to change it on next login.</div>
+          <div class="form-row">
+            <div class="form-group" style="margin:0;"><label class="form-label">New Password</label><input class="form-input" type="password" id="editPass" placeholder="Leave blank to keep current"></div>
+            <div class="form-group" style="margin:0;"><label class="form-label">Confirm Password</label><input class="form-input" type="password" id="editPass2" placeholder="Confirm new password"></div>
+          </div>
+          <div style="margin-top:10px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text-mid);">
+              <input type="checkbox" id="editForceChange" checked style="width:14px;height:14px;">
+              Require user to change this password on next login
+            </label>
+          </div>
         </div>
       </div>
 
@@ -2517,37 +2530,144 @@ function updateEODStep(){
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function openAddUserModal(){document.getElementById('addUserModal').classList.add('open');}
-function openEditUserModal(name){
-  document.getElementById('editUserTitle').textContent='Edit — '+name;
-  document.getElementById('editName').value=name;
-  const u=users.find(u=>u.name===name);
-  if(u){document.getElementById('editJobTitle').value=u.title;document.getElementById('editResp').value=u.resp;}
+
+// ── EDIT USER MODAL — load from DB ──
+function openEditUserModal(userIdOrName){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  let u = allUsers.find(u=>u.id===userIdOrName) || allUsers.find(u=>u.name===userIdOrName);
+  // fallback to static list
+  if(!u) u = users.find(x=>x.name===userIdOrName);
+  if(!u){
+    // Create a temp record for static users not yet in DB
+    u = {id:'static_'+userIdOrName, name:userIdOrName, email:'', title:'', resp:'', role:'Contractor'};
+  }
+  document.getElementById('editUserModal').dataset.userId = u.id||u.name;
+  document.getElementById('editUserTitle').textContent='Edit — '+u.name;
+  document.getElementById('editName').value=u.name||'';
+  document.getElementById('editEmail').value=u.email||'';
+  document.getElementById('editJobTitle').value=u.title||'';
+  document.getElementById('editResp').value=u.resp||'';
+  document.getElementById('editRole').value=u.role||'Contractor';
+  document.getElementById('editPass').value='';
+  document.getElementById('editPass2').value='';
   document.getElementById('editUserModal').classList.add('open');
 }
-function saveEditUser(){closeModal('editUserModal');showToast('User updated successfully');}
+
+function saveEditUser(){
+  const uid = document.getElementById('editUserModal').dataset.userId;
+  const name  = document.getElementById('editName').value.trim();
+  const email = document.getElementById('editEmail').value.trim().toLowerCase();
+  const title = document.getElementById('editJobTitle').value.trim();
+  const resp  = document.getElementById('editResp').value.trim();
+  const role  = document.getElementById('editRole').value;
+  const pass  = document.getElementById('editPass').value;
+  const pass2 = document.getElementById('editPass2').value;
+  if(!name||!email){showToast('Name and Email are required');return;}
+  if(pass && pass.length<6){showToast('New password must be at least 6 characters');return;}
+  if(pass && pass!==pass2){showToast('Passwords do not match');return;}
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
+  if(idx>-1){
+    allUsers[idx].name  = name;
+    allUsers[idx].email = email;
+    allUsers[idx].title = title;
+    allUsers[idx].resp  = resp;
+    allUsers[idx].role  = role;
+    if(pass){
+      allUsers[idx].password=pass;
+      const forceChange = document.getElementById('editForceChange')?.checked !== false;
+      allUsers[idx].mustChangePassword = forceChange;
+    }
+    dbSet(DB_KEYS.users, allUsers);
+  }
+  renderUserTable();
+  closeModal('editUserModal');
+  showToast('User updated successfully ✓');
+  logActivity('admin','Admin','Updated user: '+name,'');
+}
 function openBlockerModal(){document.getElementById('blockerModal').classList.add('open');}
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
 function openAppearanceModal(){document.getElementById('appearanceModal').classList.add('open');}
 
 // ── ADD USER ──
 function addUser(){
-  const first=document.getElementById('newUserFirst').value;
-  const last=document.getElementById('newUserLast').value;
-  const email=document.getElementById('newUserEmail').value;
+  const first=document.getElementById('newUserFirst').value.trim();
+  const last=document.getElementById('newUserLast').value.trim();
+  const email=document.getElementById('newUserEmail').value.trim().toLowerCase();
   const pass=document.getElementById('newUserPass').value;
   const pass2=document.getElementById('newUserPass2').value;
-  const title=document.getElementById('newUserTitle').value;
-  const resp=document.getElementById('newUserResp').value;
+  const title=document.getElementById('newUserTitle').value.trim();
+  const resp=document.getElementById('newUserResp').value.trim();
+  const role=document.getElementById('newUserRole').value;
+  const hours=document.getElementById('newUserHours').value;
   if(!first||!last||!email||!title){showToast('Please fill all required fields');return;}
+  if(!pass){showToast('An initial password is required');return;}
+  if(pass.length<6){showToast('Password must be at least 6 characters');return;}
   if(pass!==pass2){showToast('Passwords do not match');return;}
-  const initials=(first[0]+(last[0]||'')).toUpperCase();
-  const tbody=document.getElementById('userTableBody');
-  const tr=document.createElement('tr');
-  tr.innerHTML=`<td><div style="display:flex;align-items:center;gap:10px;"><div class="avatar" style="width:32px;height:32px;font-size:12px;">${initials}</div><div><div>${first} ${last}</div><div class="td-sub">${email}</div></div></div></td><td><div>${title}</div><div class="td-sub">${resp}</div></td><td><span class="status-badge badge-blue">${document.getElementById('newUserRole').value}</span></td><td><span class="cred-status cred-notset">Setup Pending</span></td><td><div class="td-actions"><button class="btn btn-sm btn-outline">Edit</button><button class="btn btn-sm btn-danger">Remove</button></div></td>`;
-  tbody.appendChild(tr);
+  // Check for duplicate email
+  const existing=dbGet(DB_KEYS.users)||[];
+  if(existing.find(u=>u.email===email)){showToast('An account with that email already exists');return;}
+  // Build user object and save
+  const fullName=first+' '+last;
+  const newUser={
+    id: 'u_'+Date.now(),
+    name: fullName,
+    email,
+    password: pass,
+    mustChangePassword: true,
+    title,
+    resp,
+    role,
+    hours,
+    status: 'active',
+    createdAt: new Date().toISOString()
+  };
+  existing.push(newUser);
+  dbSet(DB_KEYS.users, existing);
+  renderUserTable();
   closeModal('addUserModal');
-  showToast(`Account created for ${first} ${last} ✓`);
+  showToast(`Account created for ${fullName} ✓ — they will be prompted to change password on first login`);
   ['newUserFirst','newUserLast','newUserEmail','newUserPass','newUserPass2','newUserTitle','newUserResp'].forEach(id=>document.getElementById(id).value='');
+  logActivity('admin','Admin','Created user account: '+fullName, email);
+}
+
+// ── RENDER USER TABLE FROM DB ──
+function renderUserTable(){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const tbody = document.getElementById('userTableBody');
+  if(!tbody) return;
+  if(!allUsers.length){
+    tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-light);">No users yet. Click "+ Add New User" to get started.</td></tr>';
+    return;
+  }
+  const colorPalette=[
+    'linear-gradient(135deg,#2D6BB6,#87ABD5)',
+    'linear-gradient(135deg,#2e9e6e,#5cd8a0)',
+    'linear-gradient(135deg,#d97706,#f5b942)',
+    'linear-gradient(135deg,#e05555,#f08080)',
+    'linear-gradient(135deg,#7c3aed,#a78bfa)',
+    'linear-gradient(135deg,#0891b2,#67e8f9)',
+  ];
+  tbody.innerHTML = allUsers.map((u,i)=>{
+    const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+    const color=colorPalette[i%colorPalette.length];
+    const statusClass = u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending');
+    const statusLabel = u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending');
+    const badgeClass  = u.role==='Employee'?'badge-working':'badge-blue';
+    return `<tr>
+      <td><div style="display:flex;align-items:center;gap:10px;">
+        <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${initials}</div>
+        <div><div>${u.name}</div><div class="td-sub">${u.email}</div></div>
+      </div></td>
+      <td><div>${u.title||'—'}</div><div class="td-sub">${u.resp||''}</div></td>
+      <td><span class="status-badge ${badgeClass}">${u.role||'Contractor'}</span></td>
+      <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
+      <td><div class="td-actions">
+        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>
+      </div></td>
+    </tr>`;
+  }).join('');
 }
 
 // ── BLOCKER ──
@@ -2816,10 +2936,14 @@ function removeAdmin(btn, name){
 }
 
 function removeUser(btn, name){
-  if(!confirm(`Remove ${name} from the system? All their data will be lost.`)) return;
+  if(!confirm(`Remove ${name} from the system?\nThis will revoke their login access.`)) return;
+  // Remove from DB
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  dbSet(DB_KEYS.users, allUsers.filter(u=>u.name!==name));
   btn.closest('tr').style.transition='opacity .3s';
   btn.closest('tr').style.opacity='0';
-  setTimeout(()=>btn.closest('tr').remove(), 300);
+  setTimeout(()=>{ btn.closest('tr').remove(); }, 300);
+  logActivity('admin','Admin','Removed user: '+name,'');
   showToast(`${name} removed`);
 }
 
@@ -3751,19 +3875,29 @@ function logActivity(type, userName, description, detail=''){
   }
 }
 
-// Override the existing doLogin to log activity
+// ── Seed static users into DB on first load ──
+function seedStaticUsers(){
+  const existing = dbGet(DB_KEYS.users)||[];
+  if(existing.length) return; // already seeded
+  const staticUsers = [
+    {id:'u_static_1',name:'Jamie Soto',email:'jamie@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Web Designer',resp:'UI/UX, Brand Assets, Client Websites',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
+    {id:'u_static_2',name:'Marcus Lee',email:'marcus@weblight.com',password:'weblight2024',mustChangePassword:true,title:'SEO Specialist',resp:'On-Page SEO, Google Analytics, Keyword Research',role:'Employee',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
+    {id:'u_static_3',name:'Sofia Reyes',email:'sofia@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Content Writer',resp:'Blog Posts, Copy, Email Campaigns',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
+    {id:'u_static_4',name:'Dani Okafor',email:'dani@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Ads Manager',resp:'Meta Ads, Google Ads, Performance Reporting',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
+  ];
+  dbSet(DB_KEYS.users, staticUsers);
+}
+
+// Override the existing doLogin to log activity and check stored users
 const _originalDoLogin = window.doLogin;
 window.doLogin = function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
-  if(!email||!pass){ document.getElementById('loginError').style.display='block'; return; }
-  const ADMIN_CREDENTIALS = [{email:'ssamy@weblightmedia.com', password:'1234567'}];
-  const isAdmin = ADMIN_CREDENTIALS.some(c => c.email===email && c.password===pass);
   const errEl = document.getElementById('loginError');
+  if(!email||!pass){ errEl.style.display='block'; return; }
 
-  // Also check stored users
-  const storedUsers = dbGet(DB_KEYS.users) || [];
-  const storedUser = storedUsers.find(u => u.email.toLowerCase()===email && u.password===pass);
+  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567'}];
+  const isAdmin = ADMIN_CREDS.some(c => c.email===email && c.password===pass);
 
   if(isAdmin){
     errEl.style.display='none';
@@ -3772,6 +3906,10 @@ window.doLogin = function(){
     showAdminApp();
     return;
   }
+
+  // Check stored users — require valid credentials, no fallback
+  const storedUsers = dbGet(DB_KEYS.users) || [];
+  const storedUser = storedUsers.find(u => u.email.toLowerCase()===email && u.password===pass);
   if(storedUser){
     errEl.style.display='none';
     currentRole='user';
@@ -3780,14 +3918,8 @@ window.doLogin = function(){
     showUserApp();
     return;
   }
-  // fallback for demo — any valid email/pass
-  if(email && pass){
-    errEl.style.display='none';
-    currentRole='user';
-    logActivity('login','Demo User','User signed in (demo mode)','');
-    showUserApp();
-    return;
-  }
+
+  errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
   errEl.style.display='block';
 };
 
@@ -4334,8 +4466,13 @@ window.switchAdminTab = function(el, tab){
   if(tab==='reports') setTimeout(loadAdminReportsTab, 100);
 };
 
-// Also init announcement status on admin load
+// Also init announcement status on admin load, seed users, and render user table
 document.addEventListener('DOMContentLoaded', ()=>{
+  // Seed static sample users into DB if not already present
+  seedStaticUsers();
+  // Render user table from DB
+  renderUserTable();
+  // Restore announcement text
   const existing = dbGet('wl_announcement');
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;

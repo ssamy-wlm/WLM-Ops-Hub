@@ -296,6 +296,34 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
   </div>
 </div>
 
+<!-- ══════════════ FORCE PASSWORD CHANGE SCREEN ══════════════ -->
+<div id="changePasswordScreen" style="display:none;position:fixed;inset:0;background:var(--bg-page,#f0ede8);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:var(--card,#fff);border-radius:18px;padding:36px 40px;width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,.12);border:1px solid var(--border);">
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="width:56px;height:56px;background:linear-gradient(135deg,#f59e0b,#fbbf24);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;">🔑</div>
+      <div style="font-size:20px;font-weight:800;color:var(--text-dark,#1a1814);letter-spacing:-.02em;margin-bottom:8px;">Set Your Password</div>
+      <div style="font-size:13px;color:var(--text-mid,#6b6660);line-height:1.5;">Your admin has set an initial password for your account.<br>Please create a new secure password to continue.</div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px;">
+      <label class="form-label">New Password</label>
+      <div style="position:relative;">
+        <input class="form-input" type="password" id="fpNewPass" placeholder="Minimum 8 characters" style="padding-right:42px;">
+        <button onclick="togglePwVis('fpNewPass',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-light);line-height:1;">👁</button>
+      </div>
+      <div id="fpStrength" style="font-size:11px;margin-top:4px;color:var(--text-light);"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:24px;">
+      <label class="form-label">Confirm New Password</label>
+      <input class="form-input" type="password" id="fpConfPass" placeholder="Re-enter your new password" onkeydown="if(event.key==='Enter')submitForcedPasswordChange()">
+    </div>
+    <div id="fpError" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:#e05555;margin-bottom:16px;"></div>
+    <button class="btn btn-primary" style="width:100%;font-size:14px;padding:13px;" onclick="submitForcedPasswordChange()">Save & Continue to Dashboard →</button>
+    <div style="margin-top:14px;text-align:center;">
+      <button onclick="logout()" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-light);">← Sign out</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ USER APP ══════════════ -->
 <div id="userApp" class="app">
   <!-- SIDEBAR -->
@@ -897,32 +925,70 @@ function doLogin(){
     errEl.style.display='block'; return;
   }
 
-  // Check stored users
+  // Check stored users — require valid credentials, no demo fallback
   const storedUsers = dbGet(DB_KEYS.users)||[];
   const found = storedUsers.find(u=>u.email.toLowerCase()===email && u.password===pass);
   if(found){
     errEl.style.display='none';
     currentUser = found;
     logActivity('login', found.name||email, 'User signed in', found.title||'');
-    showApp();
+    // Check if this is a first-login requiring password change
+    if(found.mustChangePassword){
+      showForcedPasswordChange();
+    } else {
+      showApp();
+    }
     return;
   }
 
-  // Demo fallback: any email/pass works (creates guest session)
-  if(email && pass){
-    errEl.style.display='none';
-    const parts = email.split('@')[0].split('.');
-    const name = parts.map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join(' ');
-    currentUser = {name, email, title:'Team Member', role:'Contractor', password:pass};
-    logActivity('login', name, 'User signed in (demo)', '');
-    showApp();
-    return;
-  }
+  errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
   errEl.style.display='block';
+}
+
+function showForcedPasswordChange(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('userApp').classList.remove('visible');
+  const fpScreen = document.getElementById('changePasswordScreen');
+  fpScreen.style.display='flex';
+  document.getElementById('fpNewPass').value='';
+  document.getElementById('fpConfPass').value='';
+  document.getElementById('fpError').style.display='none';
+  // Password strength indicator
+  document.getElementById('fpNewPass').addEventListener('input', function(){
+    const v=this.value;
+    const el=document.getElementById('fpStrength');
+    if(!v){el.textContent='';return;}
+    if(v.length<6){el.textContent='Too short';el.style.color='#e05555';return;}
+    if(v.length<8){el.textContent='Weak — try adding numbers or symbols';el.style.color='#d97706';return;}
+    if(v.length>=8 && /[0-9]/.test(v) && /[^a-zA-Z0-9]/.test(v)){el.textContent='Strong ✓';el.style.color='#2e9e6e';return;}
+    if(v.length>=8){el.textContent='Good';el.style.color='#2e9e6e';}
+  });
+}
+
+function submitForcedPasswordChange(){
+  const np  = document.getElementById('fpNewPass').value;
+  const cp  = document.getElementById('fpConfPass').value;
+  const err = document.getElementById('fpError');
+  if(!np){err.textContent='Please enter a new password.';err.style.display='block';return;}
+  if(np.length<8){err.textContent='Password must be at least 8 characters.';err.style.display='block';return;}
+  if(np!==cp){err.textContent='Passwords do not match.';err.style.display='block';return;}
+  // Save new password to DB and clear mustChangePassword flag
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const idx = allUsers.findIndex(u=>u.id===currentUser.id||u.email===currentUser.email);
+  if(idx>-1){
+    allUsers[idx].password = np;
+    allUsers[idx].mustChangePassword = false;
+    dbSet(DB_KEYS.users, allUsers);
+    currentUser = allUsers[idx];
+  }
+  logActivity('login', currentUser.name, 'User set new password (first login)', '');
+  document.getElementById('changePasswordScreen').style.display='none';
+  showApp();
 }
 
 function showApp(){
   document.getElementById('loginScreen').style.display='none';
+  document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.add('visible');
   initApp();
 }
@@ -931,6 +997,7 @@ function logout(){
   const name = currentUser?.name || 'User';
   logActivity('nav', name, 'Signed out', '');
   document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');
   currentUser = null;
 }
