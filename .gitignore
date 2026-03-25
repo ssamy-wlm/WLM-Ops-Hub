@@ -1,0 +1,5 @@
+node_modules/
+.pm2/
+*.log
+.env
+.dev.vars
