@@ -894,6 +894,31 @@ function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); 
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
 function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(key,arr.slice(0,500)); }
 
+// ── Cloud config (shared with admin panel via localStorage) ──
+const CLOUD_CFG_KEY = 'wl_cloud_config';
+function getCloudConfig(){ return dbGet(CLOUD_CFG_KEY)||{apiKey:'',binId:''}; }
+function cloudIsConfigured(){ const c=getCloudConfig(); return !!(c.apiKey&&c.binId); }
+
+// Fetch latest users from JSONBin, update localStorage, return array (or null on failure)
+async function cloudFetchUsers(){
+  const cfg = getCloudConfig();
+  if(!cfg.apiKey||!cfg.binId) return null;
+  try{
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{
+      headers:{'X-Master-Key': cfg.apiKey}
+    });
+    if(!res.ok) return null;
+    const data = await res.json();
+    const users = data?.record?.users;
+    if(Array.isArray(users)){
+      dbSet(DB_KEYS.users, users); // cache locally
+      localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
+      return users;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+
 function logActivity(type,userName,description,detail=''){
   dbPush(DB_KEYS.feed,{
     id:Date.now(), type, user:userName, desc:description, detail,
@@ -913,10 +938,11 @@ let myGoals = [];
 const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
 
 // ── LOGIN ──
-function doLogin(){
+async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
+  const btn   = document.querySelector('#loginScreen .btn-primary');
   if(!email||!pass){ errEl.style.display='block'; return; }
 
   // Block admin accounts
@@ -925,14 +951,28 @@ function doLogin(){
     errEl.style.display='block'; return;
   }
 
-  // Check stored users — require valid credentials, no demo fallback
-  const storedUsers = dbGet(DB_KEYS.users)||[];
-  const found = storedUsers.find(u=>u.email.toLowerCase()===email && u.password===pass);
+  // Show loading state
+  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
+  errEl.style.display='none';
+
+  // 1. Try to fetch latest user list from cloud (if configured)
+  let users = null;
+  if(cloudIsConfigured()){
+    users = await cloudFetchUsers(); // updates localStorage on success
+  }
+  // 2. Fallback to local cache
+  if(!Array.isArray(users)){
+    users = dbGet(DB_KEYS.users)||[];
+  }
+
+  // Restore button
+  if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+
+  const found = users.find(u=>u.email.toLowerCase()===email && u.password===pass);
   if(found){
     errEl.style.display='none';
     currentUser = found;
     logActivity('login', found.name||email, 'User signed in', found.title||'');
-    // Check if this is a first-login requiring password change
     if(found.mustChangePassword){
       showForcedPasswordChange();
     } else {
@@ -965,14 +1005,15 @@ function showForcedPasswordChange(){
   });
 }
 
-function submitForcedPasswordChange(){
+async function submitForcedPasswordChange(){
   const np  = document.getElementById('fpNewPass').value;
   const cp  = document.getElementById('fpConfPass').value;
   const err = document.getElementById('fpError');
+  const btn = document.querySelector('#changePasswordScreen .btn-primary');
   if(!np){err.textContent='Please enter a new password.';err.style.display='block';return;}
   if(np.length<8){err.textContent='Password must be at least 8 characters.';err.style.display='block';return;}
   if(np!==cp){err.textContent='Passwords do not match.';err.style.display='block';return;}
-  // Save new password to DB and clear mustChangePassword flag
+  // Save new password to local DB and clear mustChangePassword flag
   const allUsers = dbGet(DB_KEYS.users)||[];
   const idx = allUsers.findIndex(u=>u.id===currentUser.id||u.email===currentUser.email);
   if(idx>-1){
@@ -980,6 +1021,19 @@ function submitForcedPasswordChange(){
     allUsers[idx].mustChangePassword = false;
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
+  }
+  // Push updated password to cloud so admin sees "Active" status
+  if(cloudIsConfigured() && btn){
+    btn.textContent='Saving…'; btn.disabled=true;
+    const cfg = getCloudConfig();
+    try{
+      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+        method:'PUT',
+        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        body: JSON.stringify({users: allUsers})
+      });
+    }catch(e){ /* non-critical, local already saved */ }
+    if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
   }
   logActivity('login', currentUser.name, 'User set new password (first login)', '');
   document.getElementById('changePasswordScreen').style.display='none';
@@ -1381,7 +1435,7 @@ function updateProfileName(val){
   document.getElementById('sidebarName').textContent=val;
   document.getElementById('pulseName').textContent=val;
 }
-function changeUserPassword(){
+async function changeUserPassword(){
   const cur=document.getElementById('userCurPw')?.value;
   const nw=document.getElementById('userNewPw')?.value;
   const conf=document.getElementById('userConfPw')?.value;
@@ -1394,7 +1448,18 @@ function changeUserPassword(){
   const idx=all.findIndex(u=>u.email===currentUser?.email);
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
-  showToast('Password updated ✓');
+  showToast('Password updated ✓ — syncing…');
+  // Push to cloud
+  if(cloudIsConfigured()){
+    const cfg=getCloudConfig();
+    try{
+      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+        method:'PUT',
+        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        body:JSON.stringify({users:all})
+      });
+    }catch(e){}
+  }
 }
 
 // ── MODALS ──

@@ -1082,6 +1082,33 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── CLOUD SYNC BANNER ── -->
+      <div id="cloudSyncBanner" style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:220px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:3px;">☁️ Cloud Sync — JSONBin.io</div>
+          <div style="font-size:11px;color:var(--text-light);line-height:1.5;" id="cloudSyncStatus">Not configured — enter your API key &amp; Bin ID below to enable cross-device sync.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline" onclick="toggleCloudConfig()" id="cloudConfigToggleBtn" style="font-size:11px;">⚙ Configure</button>
+          <button class="btn btn-sm btn-outline" onclick="cloudPullUsers()" style="font-size:11px;" id="cloudPullBtn">↓ Pull from Cloud</button>
+          <button class="btn btn-sm btn-primary" onclick="cloudPushUsers()" style="font-size:11px;" id="cloudPushBtn">↑ Push to Cloud</button>
+        </div>
+        <!-- Config panel (hidden by default) -->
+        <div id="cloudConfigPanel" style="display:none;width:100%;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;line-height:1.6;">
+            1. Create a free account at <a href="https://jsonbin.io" target="_blank" style="color:var(--text);font-weight:700;">jsonbin.io</a><br>
+            2. Go to <strong>API Keys</strong> → copy your <strong>Secret Key</strong><br>
+            3. Click <strong>+ Create Bin</strong>, paste <code style="font-size:11px;background:var(--card);padding:1px 5px;border-radius:4px;">{"users":[]}</code> as content → copy the <strong>Bin ID</strong><br>
+            4. Paste both below and click <strong>Save Config</strong>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">
+            <div class="form-group" style="margin:0;"><label class="form-label">JSONBin Secret Key</label><input class="form-input" id="cloudApiKey" placeholder="$2b$10$…" style="font-size:12px;font-family:monospace;"></div>
+            <div class="form-group" style="margin:0;"><label class="form-label">Bin ID</label><input class="form-input" id="cloudBinId" placeholder="67a1b2c3d4e5f60012345678" style="font-size:12px;font-family:monospace;"></div>
+            <button class="btn btn-primary btn-sm" onclick="saveCloudConfig()" style="white-space:nowrap;">Save Config ✓</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ── USERS SECTION ── -->
       <div class="user-table-wrap">
         <div class="table-header">
@@ -2582,8 +2609,9 @@ function saveEditUser(){
   }
   renderUserTable();
   closeModal('editUserModal');
-  showToast('User updated successfully ✓');
+  showToast('User updated — syncing to cloud…');
   logActivity('admin','Admin','Updated user: '+name,'');
+  cloudAutoSync();
 }
 function openBlockerModal(){document.getElementById('blockerModal').classList.add('open');}
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
@@ -2626,9 +2654,10 @@ function addUser(){
   dbSet(DB_KEYS.users, existing);
   renderUserTable();
   closeModal('addUserModal');
-  showToast(`Account created for ${fullName} ✓ — they will be prompted to change password on first login`);
+  showToast(`Account created for ${fullName} ✓ — syncing to cloud…`);
   ['newUserFirst','newUserLast','newUserEmail','newUserPass','newUserPass2','newUserTitle','newUserResp'].forEach(id=>document.getElementById(id).value='');
   logActivity('admin','Admin','Created user account: '+fullName, email);
+  cloudAutoSync();
 }
 
 // ── RENDER USER TABLE FROM DB ──
@@ -2936,7 +2965,7 @@ function removeAdmin(btn, name){
 }
 
 function removeUser(btn, name){
-  if(!confirm(`Remove ${name} from the system?\nThis will revoke their login access.`)) return;
+  if(!confirm(`Remove ${name} from the system?\nThis will revoke their login access immediately.`)) return;
   // Remove from DB
   const allUsers = dbGet(DB_KEYS.users)||[];
   dbSet(DB_KEYS.users, allUsers.filter(u=>u.name!==name));
@@ -2944,7 +2973,8 @@ function removeUser(btn, name){
   btn.closest('tr').style.opacity='0';
   setTimeout(()=>{ btn.closest('tr').remove(); }, 300);
   logActivity('admin','Admin','Removed user: '+name,'');
-  showToast(`${name} removed`);
+  showToast(`${name} removed — syncing to cloud…`);
+  cloudAutoSync();
 }
 
 // ── PASSWORD CHANGE ──
@@ -4464,7 +4494,136 @@ const _origSwitchAdminFinal = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdminFinal(el, tab);
   if(tab==='reports') setTimeout(loadAdminReportsTab, 100);
+  if(tab==='users') setTimeout(updateCloudStatusUI, 100);
 };
+
+// ═══════════════════════════════════════════════════════════
+// ☁️  CLOUD SYNC ENGINE  —  JSONBin.io
+// ═══════════════════════════════════════════════════════════
+const CLOUD_CFG_KEY = 'wl_cloud_config';
+
+function getCloudConfig(){
+  return dbGet(CLOUD_CFG_KEY) || {apiKey:'', binId:''};
+}
+function cloudIsConfigured(){
+  const c = getCloudConfig();
+  return !!(c.apiKey && c.binId);
+}
+
+function saveCloudConfig(){
+  const apiKey = document.getElementById('cloudApiKey')?.value.trim();
+  const binId  = document.getElementById('cloudBinId')?.value.trim();
+  if(!apiKey || !binId){ showToast('Please enter both the API Key and Bin ID'); return; }
+  dbSet(CLOUD_CFG_KEY, {apiKey, binId});
+  document.getElementById('cloudConfigPanel').style.display='none';
+  document.getElementById('cloudConfigToggleBtn').textContent='⚙ Configure';
+  updateCloudStatusUI();
+  showToast('Cloud config saved — pulling latest users…');
+  cloudPullUsers();
+}
+
+function toggleCloudConfig(){
+  const panel = document.getElementById('cloudConfigPanel');
+  const btn   = document.getElementById('cloudConfigToggleBtn');
+  const cfg   = getCloudConfig();
+  const open  = panel.style.display === 'none';
+  panel.style.display = open ? 'block' : 'none';
+  btn.textContent = open ? '✕ Close' : '⚙ Configure';
+  if(open){
+    if(cfg.apiKey) document.getElementById('cloudApiKey').value = cfg.apiKey;
+    if(cfg.binId)  document.getElementById('cloudBinId').value  = cfg.binId;
+  }
+}
+
+function setCloudStatus(msg, type='idle'){
+  const el = document.getElementById('cloudSyncStatus');
+  if(!el) return;
+  const icons = {idle:'☁️', syncing:'🔄', ok:'✅', error:'❌'};
+  el.innerHTML = (icons[type]||'') + ' ' + msg;
+  el.style.color = type==='error' ? 'var(--red)' : type==='ok' ? 'var(--green,#2e9e6e)' : 'var(--text-light)';
+}
+
+function updateCloudStatusUI(){
+  const cfg = getCloudConfig();
+  const lastSync = localStorage.getItem('wl_cloud_last_sync');
+  if(!cfg.apiKey || !cfg.binId){
+    setCloudStatus('Not configured — enter your API key &amp; Bin ID below to enable cross-device sync.','idle');
+  } else if(lastSync){
+    const d = new Date(lastSync);
+    setCloudStatus(`Last synced: ${d.toLocaleString()} · Bin ID: ${cfg.binId.slice(0,8)}…`, 'ok');
+  } else {
+    setCloudStatus(`Configured · Bin ID: ${cfg.binId.slice(0,8)}… · Not yet synced`, 'idle');
+  }
+}
+
+// Push users array to JSONBin
+async function cloudPushUsers(silent=false){
+  const cfg = getCloudConfig();
+  if(!cfg.apiKey || !cfg.binId){
+    if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
+    return false;
+  }
+  const users = dbGet(DB_KEYS.users) || [];
+  setCloudStatus('Pushing to cloud…','syncing');
+  try {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type':  'application/json',
+        'X-Master-Key':  cfg.apiKey,
+        'X-Bin-Versioning': 'false'
+      },
+      body: JSON.stringify({ users })
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const now = new Date().toISOString();
+    localStorage.setItem('wl_cloud_last_sync', now);
+    updateCloudStatusUI();
+    if(!silent) showToast(`✅ ${users.length} user${users.length!==1?'s':''} pushed to cloud`);
+    return true;
+  } catch(e){
+    setCloudStatus('Push failed: ' + e.message, 'error');
+    if(!silent) showToast('❌ Cloud push failed — check your API Key & Bin ID');
+    return false;
+  }
+}
+
+// Pull users array from JSONBin and merge into localStorage
+async function cloudPullUsers(silent=false){
+  const cfg = getCloudConfig();
+  if(!cfg.apiKey || !cfg.binId){
+    if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
+    return;
+  }
+  setCloudStatus('Pulling from cloud…','syncing');
+  try {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {
+      headers: { 'X-Master-Key': cfg.apiKey }
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const cloudUsers = data?.record?.users;
+    if(!Array.isArray(cloudUsers)) throw new Error('Unexpected response format');
+    // Merge: cloud is source of truth for user accounts
+    dbSet(DB_KEYS.users, cloudUsers);
+    const now = new Date().toISOString();
+    localStorage.setItem('wl_cloud_last_sync', now);
+    updateCloudStatusUI();
+    renderUserTable();
+    if(!silent) showToast(`✅ Pulled ${cloudUsers.length} user${cloudUsers.length!==1?'s':''} from cloud`);
+  } catch(e){
+    setCloudStatus('Pull failed: ' + e.message, 'error');
+    if(!silent) showToast('❌ Cloud pull failed — check your API Key & Bin ID');
+  }
+}
+
+// Auto-push after every user DB write (called from addUser, saveEditUser, removeUser)
+async function cloudAutoSync(){
+  if(!cloudIsConfigured()) return;
+  await cloudPushUsers(true); // silent=true, no toast
+}
+
+// ═══════════════════════════════════════════════════════════
 
 // Also init announcement status on admin load, seed users, and render user table
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -4476,6 +4635,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const existing = dbGet('wl_announcement');
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;
+  }
+  // Update cloud sync status badge
+  updateCloudStatusUI();
+  // Auto-pull on load if cloud is configured (get latest from cloud)
+  if(cloudIsConfigured()){
+    cloudPullUsers(true);
   }
 });
 </script>
