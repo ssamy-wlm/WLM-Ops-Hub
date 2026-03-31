@@ -431,7 +431,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni">🛡️</span>Decision Rights</div>
       <div class="nav-item" onclick="showSection('goals',this)"><span class="ni">🎯</span>Goals</div>
       <div class="nav-group-label">Infrastructure</div>
-      <div class="nav-item" onclick="showSection('bizSetup',this)"><span class="ni">🏢</span>Business Setup</div>
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni">🔑</span>Credentials</div>
     </div>
     <div class="sidebar-user">
@@ -1797,9 +1796,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <button class="modal-close" onclick="closeModal('addAdminModal')">✕</button>
     </div>
     <div class="modal-body">
-      <div style="padding:12px 14px;background:rgba(224,85,85,.07);border:1px solid rgba(224,85,85,.2);border-radius:10px;margin-bottom:18px;font-size:13px;color:var(--red);">
-        ⚠️ Admin accounts have unrestricted access to all users, credentials, settings, and reports. Only grant this to trusted team leads.
-      </div>
+
       <div class="form-row">
         <div class="form-group"><label class="form-label">First Name</label><input class="form-input" placeholder="First name" id="newAdminFirst"></div>
         <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" placeholder="Last name" id="newAdminLast"></div>
@@ -1942,9 +1939,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <button class="modal-close" onclick="closeModal('addUserModal')">✕</button>
     </div>
     <div class="modal-body">
-      <div style="background:rgba(45,107,182,.06);border:1px solid rgba(45,107,182,.18);border-radius:10px;padding:11px 14px;font-size:12px;color:var(--text-mid);margin-bottom:18px;line-height:1.6;">
-        🔐 <strong>Account Setup:</strong> You set an initial password here. The user will be required to change it on their first login at <code style="font-size:11px;background:var(--bg);padding:1px 5px;border-radius:4px;">/user.html</code>. Share their email and initial password with them directly.
-      </div>
+
       <div class="form-row">
         <div class="form-group"><label class="form-label">First Name <span style="color:var(--red);">*</span></label><input class="form-input" placeholder="First name" id="newUserFirst"></div>
         <div class="form-group"><label class="form-label">Last Name <span style="color:var(--red);">*</span></label><input class="form-input" placeholder="Last name" id="newUserLast"></div>
@@ -5563,33 +5558,49 @@ function _openMailClient(){
 function sendWelcomeEmail(userData){
   const { name, email, title, password } = userData;
   const hubUrl = window.location.origin + '/user.html';
-  const subject = 'Welcome to WebLight Media — Your Operations Hub Access';
+  const subject = `New User Login Details — ${name}`;
   const body =
-`Hello ${name},
+`Hi Sarah,
+
+A new user account has been created. Here are their login details to forward:
+
+👤 Name: ${name}
+💼 Title: ${title||'Team Member'}
+📧 Email (Username): ${email}
+🔑 Temporary Password: ${password}
+🔗 Login Link: ${hubUrl}
+
+Please forward the following invitation to ${email}:
+
+─────────────────────────────────────────
+Subject: Welcome to WebLight Media — Your Operations Hub Access
+
+Hello ${name},
 
 Welcome to the team! 🎉
 
-This is your official invitation to join our Operations Hub as a full-time ${title||'Team Member'} with WebLight Media.
+This is your official invitation to join our Operations Hub as ${title||'a Team Member'} with WebLight Media.
 
 Your login credentials are below:
 🔗 Hub Link: ${hubUrl}
 📧 Username: ${email}
 🔑 Temporary Password: ${password}
 
-Please log in at your earliest convenience and change your password to something you will remember — we use this platform on a daily basis, so you'll want to keep your credentials somewhere safe.
+Please log in at your earliest convenience and change your password to something you will remember.
 
 If you run into any trouble logging in or have any questions, don't hesitate to reach out.
 Looking forward to working with you!
 
 Have a great day,
 Sarah Samy
-Director of Systems & Operations at WebLight Media`;
+Director of Systems & Operations at WebLight Media
+─────────────────────────────────────────`;
 
   _showEmailPreview({
-    to: email,
+    to: 'ssamy@weblightmedia.com',
     subject,
     body,
-    subtitle: `Invitation for ${name} — ${title||'Team Member'}`
+    subtitle: `Login details for ${name} — forward to ${email}`
   });
 }
 
@@ -5899,13 +5910,29 @@ function saveEditAdmin(){
   logActivity('admin','Admin','Updated admin account: '+name+' → '+_getLevelInfo(level).label, email);
 }
 
-// ── Admin welcome email — uses unified preview modal ──
+// ── Admin welcome email — sends to Sarah so she can forward ──
 function _sendAdminWelcomeEmail({ name, email, title, password, level }){
   const info   = _getLevelInfo(level);
   const hubUrl = window.location.origin + '/index.html';
-  const subject = 'Welcome to WebLight Media — Your Admin Panel Access';
+  const subject = `New Admin Login Details — ${name}`;
   const body =
-`Hello ${name},
+`Hi Sarah,
+
+A new admin account has been created. Here are their login details to forward:
+
+👤 Name: ${name}
+💼 Title: ${title||'Admin'}
+📧 Email (Username): ${email}
+🔑 Temporary Password: ${password}
+🔐 Access Level: ${info.label}
+🔗 Admin Panel: ${hubUrl}
+
+Please forward the following invitation to ${email}:
+
+─────────────────────────────────────────
+Subject: Welcome to WebLight Media — Your Admin Panel Access
+
+Hello ${name},
 
 Welcome to the team! 🎉
 
@@ -5915,9 +5942,7 @@ Your login credentials are below:
 🔗 Admin Panel: ${hubUrl}
 📧 Username: ${email}
 🔑 Temporary Password: ${password}
-
-Access level: ${info.label}
-${info.desc}
+🔐 Access Level: ${info.label} — ${info.desc}
 
 Please log in at your earliest convenience and change your password on first login.
 
@@ -5925,13 +5950,14 @@ If you have any questions, don't hesitate to reach out.
 
 Have a great day,
 Sarah Samy
-Director of Systems & Operations at WebLight Media`;
+Director of Systems & Operations at WebLight Media
+─────────────────────────────────────────`;
 
   _showEmailPreview({
-    to: email,
+    to: 'ssamy@weblightmedia.com',
     subject,
     body,
-    subtitle: `Admin invitation for ${name} — ${info.label}`
+    subtitle: `Admin login details for ${name} — forward to ${email}`
   });
 }
 
