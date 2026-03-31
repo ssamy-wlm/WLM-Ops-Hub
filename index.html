@@ -3071,10 +3071,54 @@ function toggleCredLabel(cb){
 // ── ADMIN MANAGEMENT ──
 function openAddAdminModal(){ openModal('addAdminModal'); }
 
+// ── Admin colour palette ──
+const ADMIN_COLORS = [
+  'linear-gradient(135deg,#2D6BB6,#87ABD5)',
+  'linear-gradient(135deg,#9333ea,#c084fc)',
+  'linear-gradient(135deg,#0891b2,#67e8f9)',
+  'linear-gradient(135deg,#2e9e6e,#5cd8a0)',
+  'linear-gradient(135deg,#d97706,#f5b942)',
+  'linear-gradient(135deg,#e05555,#f08080)',
+];
+
+// ── Render the Admin Accounts table from localStorage ──
+function renderAdminTable(){
+  const tbody = document.getElementById('adminTableBody');
+  if(!tbody) return;
+  // Keep the hardcoded primary row; remove any previously injected dynamic rows
+  tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
+
+  const admins = dbGet(DB_KEYS.admins)||[];
+  admins.forEach((a, i)=>{
+    const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
+    const levelLabel = a.level==='super' ? 'Super Admin' : 'Admin';
+    const tr = document.createElement('tr');
+    tr.dataset.adminId = a.id;
+    tr.innerHTML = `
+      <td style="padding:14px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${a.initials}</div>
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(a.name)}</div>
+            <div class="td-sub">${escHtml(a.email)}</div>
+          </div>
+        </div>
+      </td>
+      <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">${levelLabel}</span></td>
+      <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
+      <td style="padding:14px 18px;">
+        <div class="td-actions">
+          <button class="btn btn-sm btn-danger" onclick="removeAdmin(this,'${escHtml(a.id)}')">Remove</button>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
 function addAdmin(){
   const first = document.getElementById('newAdminFirst').value.trim();
   const last  = document.getElementById('newAdminLast').value.trim();
-  const email = document.getElementById('newAdminEmail').value.trim();
+  const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
   const title = document.getElementById('newAdminTitle').value.trim();
   const pass  = document.getElementById('newAdminPass').value;
   const pass2 = document.getElementById('newAdminPass2').value;
@@ -3085,53 +3129,79 @@ function addAdmin(){
   if(!pass||pass.length<8){showToast('Password must be at least 8 characters');return;}
   if(pass!==pass2){showToast('Passwords do not match');return;}
 
-  const name = first+' '+last;
-  const initials = (first[0]+(last[0]||'')).toUpperCase();
-  const colors = [
-    'linear-gradient(135deg,#2D6BB6,#87ABD5)',
-    'linear-gradient(135deg,#9333ea,#c084fc)',
-    'linear-gradient(135deg,#0891b2,#67e8f9)',
-    'linear-gradient(135deg,#2e9e6e,#5cd8a0)'
-  ];
-  const color = colors[Math.floor(Math.random()*colors.length)];
-  const isSuper = level==='super';
-  const levelLabel = isSuper ? 'Super Admin' : 'Admin';
+  // Prevent duplicate email
+  const existing = dbGet(DB_KEYS.admins)||[];
+  if(existing.find(a=>a.email===email)){showToast('An admin with that email already exists');return;}
 
-  const tbody = document.getElementById('adminTableBody');
-  const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td style="padding:14px 18px;">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${initials}</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${name}</div>
-          <div class="td-sub">${email}</div>
-        </div>
-      </div>
-    </td>
-    <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">${levelLabel}</span></td>
-    <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
-    <td style="padding:14px 18px;">
-      <div class="td-actions">
-        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${name}')">Edit</button>
-        <button class="btn btn-sm btn-danger" onclick="removeAdmin(this,'${name}')">Remove</button>
-      </div>
-    </td>`;
-  tbody.appendChild(tr);
+  const name     = first+' '+last;
+  const initials = (first[0]+(last[0]||'')).toUpperCase();
+  const newAdmin = {
+    id:        'adm_'+Date.now(),
+    name, email, title, initials,
+    password:  pass,
+    level,
+    status:    'active',
+    createdAt: new Date().toISOString(),
+  };
+  existing.push(newAdmin);
+  dbSet(DB_KEYS.admins, existing);
+  renderAdminTable();
 
   closeModal('addAdminModal');
   ['newAdminFirst','newAdminLast','newAdminEmail','newAdminTitle','newAdminPass','newAdminPass2'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
   showToast(`Admin account created for ${name} ✓`);
+  logActivity('admin','Admin','New admin account created: '+name, email);
+
+  // ── Send welcome email to new admin ──
+  sendAdminWelcomeEmail({ name, email, title, password: pass });
 }
 
-function removeAdmin(btn, name){
-  if(!confirm(`Remove admin access for ${name}? This cannot be undone.`)) return;
-  btn.closest('tr').style.transition='opacity .3s';
-  btn.closest('tr').style.opacity='0';
-  setTimeout(()=>btn.closest('tr').remove(), 300);
-  showToast(`${name} removed from admins`);
+function removeAdmin(btn, adminId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===adminId);
+  const displayName = a ? a.name : adminId;
+  if(!confirm(`Remove admin access for ${displayName}? This cannot be undone.`)) return;
+  dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
+  renderAdminTable();
+  showToast(`${displayName} removed from admins`);
+}
+
+// ── Send admin welcome email (mailto: opens default email client) ──
+function sendAdminWelcomeEmail({ name, email, title, password }){
+  const hubUrl  = window.location.origin + '/index.html';
+  const subject = encodeURIComponent('Welcome to WebLight Media — Your Admin Panel Access');
+  const body    = encodeURIComponent(
+`Hello ${name},
+
+Welcome to the team! 🎉
+
+You have been granted Admin access to the WebLight Media Operations Hub as ${title||'Admin'}.
+
+Your login credentials are below:
+🔗 Admin Panel: ${hubUrl}
+📧 Username: ${email}
+🔑 Temporary Password: ${password}
+
+Please log in and change your password as soon as possible.
+
+The Admin Panel gives you full access to users, reports, settings, and live feed — use it responsibly.
+
+If you have any questions, reach out directly.
+
+Have a great day,
+Sarah Samy
+Director of Systems & Operations at WebLight Media`);
+
+  if(confirm(`Open your email client to send the invitation to ${email}?`)){
+    const a = document.createElement('a');
+    a.href = `mailto:${email}?subject=${subject}&body=${body}`;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 }
 
 function removeUser(btn, userId){
@@ -4112,6 +4182,7 @@ const DB_KEYS = {
   goals:    'wl_goals_db',
   orgNodes: 'wl_org_nodes',
   orgLinks: 'wl_org_links',
+  admins:   'wl_admins_db',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -4157,13 +4228,20 @@ window.doLogin = function(){
   const errEl = document.getElementById('loginError');
   if(!email||!pass){ errEl.style.display='block'; return; }
 
-  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567'}];
-  const isAdmin = ADMIN_CREDS.some(c => c.email===email && c.password===pass);
+  // Primary hardcoded admin
+  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567', name:'Sarah Samy'}];
+  const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
 
-  if(isAdmin){
+  // Dynamic admins stored in localStorage
+  const storedAdmins = dbGet(DB_KEYS.admins)||[];
+  const dynamicAdmin = storedAdmins.find(a => a.email===email && a.password===pass);
+
+  const matchedAdmin = hardcodedAdmin || dynamicAdmin;
+  if(matchedAdmin){
     errEl.style.display='none';
     currentRole='admin';
-    logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
+    const adminName = matchedAdmin.name || 'Admin';
+    logActivity('login',`Admin (${adminName})`,'Admin signed in','admin panel');
     showAdminApp();
     return;
   }
@@ -4862,6 +4940,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   seedStaticUsers();
   // Render user table from DB
   renderUserTable();
+  // Render admin accounts table from DB
+  renderAdminTable();
   // Restore announcement text
   const existing = dbGet('wl_announcement');
   if(existing && existing.text && document.getElementById('announcementInput')){
