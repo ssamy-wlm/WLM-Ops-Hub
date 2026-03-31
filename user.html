@@ -348,6 +348,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="nav-group-label">Infrastructure</div>
       <div class="nav-item" onclick="showSection('bizSetup',this)"><span class="ni">🏢</span>Business Setup</div>
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni">🔑</span>Credentials</div>
+      <div class="nav-group-label">HR</div>
+      <div class="nav-item" onclick="showSection('timeoff',this)"><span class="ni">🏖</span>Time Off</div>
     </div>
     <div class="sidebar-user">
       <div class="sidebar-user-card">
@@ -647,6 +649,45 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           <div class="cred-item"><div><div class="cred-name">Figma / Design Tools</div><div class="cred-cat">Design Software</div></div><span class="cred-status cred-set">Configured</span></div>
           <div class="cred-item"><div><div class="cred-name">Hubstaff</div><div class="cred-cat">Time Tracking</div></div><span class="cred-status cred-notset">Not Set</span></div>
           <div class="cred-item"><div><div class="cred-name">Skool Training</div><div class="cred-cat">Learning Platform</div></div><span class="cred-status cred-set">Configured</span></div>
+        </div>
+      </div>
+
+      <!-- ── TIME OFF ── -->
+      <div id="sec-timeoff" class="page-section">
+        <div style="max-width:640px;">
+          <div style="font-size:20px;font-weight:800;color:var(--text-dark);margin-bottom:6px;">🏖 Request Time Off</div>
+          <div style="font-size:13px;color:var(--text-light);margin-bottom:20px;">Submit a time off request for admin review and approval.</div>
+
+          <!-- My Request History -->
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);margin-bottom:14px;">Submit New Request</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">Start Date *</label><input class="form-input" type="date" id="to-start"></div>
+              <div class="form-group"><label class="form-label">End Date *</label><input class="form-input" type="date" id="to-end"></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Type</label>
+              <select class="form-select" id="to-type">
+                <option value="PTO">PTO (Paid Time Off)</option>
+                <option value="Sick">Sick Day</option>
+                <option value="Personal">Personal Day</option>
+                <option value="Emergency">Emergency</option>
+                <option value="Unpaid">Unpaid Leave</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Reason / Notes</label>
+              <textarea class="form-textarea" id="to-reason" rows="3" placeholder="Optional — briefly describe the reason for your time off request…"></textarea>
+            </div>
+            <div id="to-submit-error" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:12px;"></div>
+            <button class="btn btn-primary" onclick="submitTimeOffRequest()">Submit Request →</button>
+          </div>
+
+          <!-- My Requests History -->
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);margin-bottom:14px;">My Requests</div>
+            <div id="myTimeOffList"><div style="font-size:13px;color:var(--text-light);">No requests submitted yet.</div></div>
+          </div>
         </div>
       </div>
 
@@ -1537,6 +1578,83 @@ setInterval(()=>{
     checkAnnouncements();
   }
 },20000);
+
+// ═══════════════════════════════════════════════════════════
+// TIME OFF — user submission + history
+// ═══════════════════════════════════════════════════════════
+function submitTimeOffRequest(){
+  const start   = document.getElementById('to-start')?.value;
+  const end     = document.getElementById('to-end')?.value;
+  const type    = document.getElementById('to-type')?.value||'PTO';
+  const reason  = document.getElementById('to-reason')?.value?.trim()||'';
+  const errEl   = document.getElementById('to-submit-error');
+  if(errEl) errEl.style.display='none';
+
+  if(!start||!end){ if(errEl){errEl.textContent='Please select start and end dates.';errEl.style.display='block';} return; }
+  if(end<start){ if(errEl){errEl.textContent='End date must be on or after start date.';errEl.style.display='block';} return; }
+
+  const userName = document.getElementById('sidebarName')?.textContent || currentUserData?.name || 'User';
+  
+  // Calculate business days
+  let days=0; const d=new Date(start);
+  while(d<=new Date(end)){ if(d.getDay()!==0&&d.getDay()!==6) days++; d.setDate(d.getDate()+1); }
+
+  const request = {
+    id: 'to_'+Date.now(),
+    userName,
+    startDate: start,
+    endDate: end,
+    days,
+    type,
+    reason,
+    status: 'pending',
+    submittedAt: new Date().toISOString()
+  };
+
+  const all = dbGet('wl_timeoff_requests')||[];
+  all.unshift(request);
+  dbSet('wl_timeoff_requests', all);
+
+  // Clear form
+  if(document.getElementById('to-start')) document.getElementById('to-start').value='';
+  if(document.getElementById('to-end'))   document.getElementById('to-end').value='';
+  if(document.getElementById('to-reason')) document.getElementById('to-reason').value='';
+
+  showToast('⏰ Time off request submitted — pending admin approval');
+  renderMyTimeOff();
+}
+
+function renderMyTimeOff(){
+  const userName = document.getElementById('sidebarName')?.textContent || currentUserData?.name || '';
+  const all = dbGet('wl_timeoff_requests')||[];
+  const myRequests = all.filter(r=>r.userName===userName);
+  const list = document.getElementById('myTimeOffList');
+  if(!list) return;
+  if(!myRequests.length){
+    list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No requests submitted yet.</div>';
+    return;
+  }
+  list.innerHTML = myRequests.map(r=>{
+    const statusColor = r.status==='approved'?'var(--green)':r.status==='denied'?'var(--red)':'var(--orange)';
+    const statusBg = r.status==='approved'?'rgba(46,158,110,.1)':r.status==='denied'?'rgba(224,85,85,.1)':'rgba(245,185,66,.1)';
+    return `<div style="padding:12px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.type} · ${r.startDate}${r.endDate!==r.startDate?' → '+r.endDate:''} (${r.days} day${r.days!==1?'s':''})</div>
+        <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${statusBg};color:${statusColor};">${(r.status||'pending').toUpperCase()}</span>
+      </div>
+      ${r.reason?`<div style="font-size:12px;color:var(--text-mid);">${r.reason}</div>`:''}
+      ${r.adminNote?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;font-style:italic;">Admin: ${r.adminNote}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+// Load time off history when section is opened
+const _origShowSectionUser = window.showSection;
+window.showSection = function(id, el){
+  _origShowSectionUser(id, el);
+  if(id==='timeoff') setTimeout(renderMyTimeOff, 80);
+};
+
 </script>
 </body>
 </html>
