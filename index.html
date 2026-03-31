@@ -1825,9 +1825,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
         <select class="form-select" id="newAdminLevel">
-          <option value="admin">Admin — Full access, can manage users & settings</option>
+          <option value="view_only">View Only — Can view users, reports &amp; feed — no edits</option>
+          <option value="support">Support Staff — Can view and comment — limited edit access</option>
+          <option value="admin" selected>Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
+          <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
         </select>
+        <div style="margin-top:8px;">
+          <span id="adminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -3068,141 +3074,11 @@ function toggleCredLabel(cb){
   else{track.style.background='var(--bg2)';thumb.style.left='3px';}
 }
 
-// ── ADMIN MANAGEMENT ──
+// ── ADMIN MANAGEMENT — stub only; full implementation loaded after DB_KEYS is ready ──
 function openAddAdminModal(){ openModal('addAdminModal'); }
-
-// ── Admin colour palette ──
-const ADMIN_COLORS = [
-  'linear-gradient(135deg,#2D6BB6,#87ABD5)',
-  'linear-gradient(135deg,#9333ea,#c084fc)',
-  'linear-gradient(135deg,#0891b2,#67e8f9)',
-  'linear-gradient(135deg,#2e9e6e,#5cd8a0)',
-  'linear-gradient(135deg,#d97706,#f5b942)',
-  'linear-gradient(135deg,#e05555,#f08080)',
-];
-
-// ── Render the Admin Accounts table from localStorage ──
-function renderAdminTable(){
-  const tbody = document.getElementById('adminTableBody');
-  if(!tbody) return;
-  // Keep the hardcoded primary row; remove any previously injected dynamic rows
-  tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
-
-  const admins = dbGet(DB_KEYS.admins)||[];
-  admins.forEach((a, i)=>{
-    const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
-    const levelLabel = a.level==='super' ? 'Super Admin' : 'Admin';
-    const tr = document.createElement('tr');
-    tr.dataset.adminId = a.id;
-    tr.innerHTML = `
-      <td style="padding:14px 18px;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${a.initials}</div>
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(a.name)}</div>
-            <div class="td-sub">${escHtml(a.email)}</div>
-          </div>
-        </div>
-      </td>
-      <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">${levelLabel}</span></td>
-      <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
-      <td style="padding:14px 18px;">
-        <div class="td-actions">
-          <button class="btn btn-sm btn-danger" onclick="removeAdmin(this,'${escHtml(a.id)}')">Remove</button>
-        </div>
-      </td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-function addAdmin(){
-  const first = document.getElementById('newAdminFirst').value.trim();
-  const last  = document.getElementById('newAdminLast').value.trim();
-  const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
-  const title = document.getElementById('newAdminTitle').value.trim();
-  const pass  = document.getElementById('newAdminPass').value;
-  const pass2 = document.getElementById('newAdminPass2').value;
-  const level = document.getElementById('newAdminLevel').value;
-
-  if(!first||!last){showToast('Please enter first and last name');return;}
-  if(!email){showToast('Please enter an email address');return;}
-  if(!pass||pass.length<8){showToast('Password must be at least 8 characters');return;}
-  if(pass!==pass2){showToast('Passwords do not match');return;}
-
-  // Prevent duplicate email
-  const existing = dbGet(DB_KEYS.admins)||[];
-  if(existing.find(a=>a.email===email)){showToast('An admin with that email already exists');return;}
-
-  const name     = first+' '+last;
-  const initials = (first[0]+(last[0]||'')).toUpperCase();
-  const newAdmin = {
-    id:        'adm_'+Date.now(),
-    name, email, title, initials,
-    password:  pass,
-    level,
-    status:    'active',
-    createdAt: new Date().toISOString(),
-  };
-  existing.push(newAdmin);
-  dbSet(DB_KEYS.admins, existing);
-  renderAdminTable();
-
-  closeModal('addAdminModal');
-  ['newAdminFirst','newAdminLast','newAdminEmail','newAdminTitle','newAdminPass','newAdminPass2'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.value='';
-  });
-  showToast(`Admin account created for ${name} ✓`);
-  logActivity('admin','Admin','New admin account created: '+name, email);
-
-  // ── Send welcome email to new admin ──
-  sendAdminWelcomeEmail({ name, email, title, password: pass });
-}
-
-function removeAdmin(btn, adminId){
-  const admins = dbGet(DB_KEYS.admins)||[];
-  const a = admins.find(x=>x.id===adminId);
-  const displayName = a ? a.name : adminId;
-  if(!confirm(`Remove admin access for ${displayName}? This cannot be undone.`)) return;
-  dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
-  renderAdminTable();
-  showToast(`${displayName} removed from admins`);
-}
-
-// ── Send admin welcome email (mailto: opens default email client) ──
-function sendAdminWelcomeEmail({ name, email, title, password }){
-  const hubUrl  = window.location.origin + '/index.html';
-  const subject = encodeURIComponent('Welcome to WebLight Media — Your Admin Panel Access');
-  const body    = encodeURIComponent(
-`Hello ${name},
-
-Welcome to the team! 🎉
-
-You have been granted Admin access to the WebLight Media Operations Hub as ${title||'Admin'}.
-
-Your login credentials are below:
-🔗 Admin Panel: ${hubUrl}
-📧 Username: ${email}
-🔑 Temporary Password: ${password}
-
-Please log in and change your password as soon as possible.
-
-The Admin Panel gives you full access to users, reports, settings, and live feed — use it responsibly.
-
-If you have any questions, reach out directly.
-
-Have a great day,
-Sarah Samy
-Director of Systems & Operations at WebLight Media`);
-
-  if(confirm(`Open your email client to send the invitation to ${email}?`)){
-    const a = document.createElement('a');
-    a.href = `mailto:${email}?subject=${subject}&body=${body}`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-}
+function addAdmin(){ if(window._addAdminImpl) window._addAdminImpl(); else alert('Still loading — please try again.'); }
+function removeAdmin(btn, adminId){ if(window._removeAdminImpl) window._removeAdminImpl(btn, adminId); }
+function renderAdminTable(){ if(window._renderAdminTableImpl) window._renderAdminTableImpl(); }
 
 function removeUser(btn, userId){
   const allUsers = dbGet(DB_KEYS.users)||[];
@@ -5645,6 +5521,208 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _platformsLocal = getPlatforms();
   setTimeout(renderPlatformsList, 800);
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN ACCOUNTS — full implementation (loaded after DB_KEYS is ready)
+// ═══════════════════════════════════════════════════════════════════
+
+const ADMIN_COLORS = [
+  'linear-gradient(135deg,#2D6BB6,#87ABD5)',
+  'linear-gradient(135deg,#9333ea,#c084fc)',
+  'linear-gradient(135deg,#0891b2,#67e8f9)',
+  'linear-gradient(135deg,#2e9e6e,#5cd8a0)',
+  'linear-gradient(135deg,#d97706,#f5b942)',
+  'linear-gradient(135deg,#e05555,#f08080)',
+];
+
+// Access level config — value, label, description, badge colour
+const ADMIN_LEVELS = [
+  { value:'view_only',    label:'View Only',       desc:'Can view users, reports & feed — no edits',       color:'#6b7280' },
+  { value:'support',      label:'Support Staff',   desc:'Can view and comment — limited edit access',       color:'#0891b2' },
+  { value:'admin',        label:'Admin',           desc:'Full access to users, settings & reports',         color:'#2D6BB6' },
+  { value:'super',        label:'Super Admin',     desc:'Full access including admin management',           color:'#9333ea' },
+  { value:'owner',        label:'Owner / Partner', desc:'Unrestricted — same as primary account',          color:'#e05555' },
+];
+
+function _getLevelInfo(value){
+  return ADMIN_LEVELS.find(l=>l.value===value) || ADMIN_LEVELS[2];
+}
+
+// ── Rebuild the access level <select> options ──
+function _populateAdminLevelSelect(){
+  const sel = document.getElementById('newAdminLevel');
+  if(!sel) return;
+  sel.innerHTML = ADMIN_LEVELS.map(l=>
+    `<option value="${l.value}">${l.label} — ${l.desc}</option>`
+  ).join('');
+  sel.value = 'admin'; // default
+  // Live update description badge when selection changes
+  sel.onchange = () => _updateLevelBadge();
+  _updateLevelBadge();
+}
+
+function _updateLevelBadge(){
+  const sel  = document.getElementById('newAdminLevel');
+  const badge = document.getElementById('adminLevelBadge');
+  if(!sel||!badge) return;
+  const info = _getLevelInfo(sel.value);
+  badge.textContent = info.label;
+  badge.style.background = info.color + '22';
+  badge.style.color = info.color;
+  badge.style.border = `1px solid ${info.color}44`;
+}
+
+// ── Render the Admin Accounts table from localStorage ──
+window._renderAdminTableImpl = function(){
+  const tbody = document.getElementById('adminTableBody');
+  if(!tbody) return;
+  // Remove previously injected dynamic rows only
+  tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
+
+  const admins = dbGet(DB_KEYS.admins)||[];
+  admins.forEach((a, i)=>{
+    const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
+    const info  = _getLevelInfo(a.level);
+    const tr = document.createElement('tr');
+    tr.dataset.adminId = a.id;
+    tr.innerHTML = `
+      <td style="padding:14px 18px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(a.initials||'?')}</div>
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(a.name)}</div>
+            <div class="td-sub">${escHtml(a.email)}</div>
+            ${a.title?`<div class="td-sub" style="font-style:italic;">${escHtml(a.title)}</div>`:''}
+          </div>
+        </div>
+      </td>
+      <td style="padding:14px 18px;">
+        <span class="status-badge" style="background:${info.color}18;color:${info.color};border:1px solid ${info.color}33;">
+          ${escHtml(info.label)}
+        </span>
+      </td>
+      <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
+      <td style="padding:14px 18px;">
+        <div class="td-actions">
+          <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
+        </div>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+};
+
+// ── Create a new admin account ──
+window._addAdminImpl = function(){
+  const first = document.getElementById('newAdminFirst').value.trim();
+  const last  = document.getElementById('newAdminLast').value.trim();
+  const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
+  const title = document.getElementById('newAdminTitle').value.trim();
+  const pass  = document.getElementById('newAdminPass').value;
+  const pass2 = document.getElementById('newAdminPass2').value;
+  const level = document.getElementById('newAdminLevel').value;
+
+  if(!first||!last){ showToast('Please enter first and last name'); return; }
+  if(!email){        showToast('Please enter an email address');      return; }
+  if(!pass||pass.length<6){ showToast('Password must be at least 6 characters'); return; }
+  if(pass!==pass2){  showToast('Passwords do not match');             return; }
+
+  const existing = dbGet(DB_KEYS.admins)||[];
+  if(existing.find(a=>a.email===email)){ showToast('An admin with that email already exists'); return; }
+
+  const name     = first + ' ' + last;
+  const initials = (first[0]+(last[0]||'')).toUpperCase();
+  const newAdmin = {
+    id:        'adm_' + Date.now(),
+    name, email, title, initials,
+    password:  pass,
+    level,
+    status:    'active',
+    createdAt: new Date().toISOString(),
+  };
+  existing.push(newAdmin);
+  dbSet(DB_KEYS.admins, existing);
+
+  // Re-render table
+  window._renderAdminTableImpl();
+
+  // Close & clear modal
+  closeModal('addAdminModal');
+  ['newAdminFirst','newAdminLast','newAdminEmail','newAdminTitle','newAdminPass','newAdminPass2'].forEach(id=>{
+    const el = document.getElementById(id); if(el) el.value = '';
+  });
+
+  showToast(`Admin account created for ${name} ✓`);
+  logActivity('admin','Admin','New admin account: '+name+' ('+_getLevelInfo(level).label+')', email);
+
+  // ── Send welcome email (opens default mail client) ──
+  _sendAdminWelcomeEmail({ name, email, title, password: pass, level });
+};
+
+// ── Remove an admin ──
+window._removeAdminImpl = function(btn, adminId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===adminId);
+  const displayName = a ? a.name : adminId;
+  if(!confirm(`Remove admin access for ${displayName}?\nThis cannot be undone.`)) return;
+  dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
+  window._renderAdminTableImpl();
+  showToast(`${displayName} removed from admins`);
+  logActivity('admin','Admin','Removed admin: '+displayName,'');
+};
+
+// ── Welcome email ──
+function _sendAdminWelcomeEmail({ name, email, title, password, level }){
+  const info   = _getLevelInfo(level);
+  const hubUrl = window.location.origin + '/index.html';
+  const subject = encodeURIComponent('Welcome to WebLight Media — Your Admin Panel Access');
+  const body = encodeURIComponent(
+`Hello ${name},
+
+Welcome to the team! 🎉
+
+You have been granted ${info.label} access to the WebLight Media Operations Hub${title ? ' as ' + title : ''}.
+
+Your login credentials are below:
+🔗 Admin Panel: ${hubUrl}
+📧 Username: ${email}
+🔑 Temporary Password: ${password}
+
+Access level: ${info.label}
+${info.desc}
+
+Please log in at your earliest convenience. You will be asked to change your password on first login.
+
+If you have any questions, don't hesitate to reach out.
+
+Have a great day,
+Sarah Samy
+Director of Systems & Operations at WebLight Media`);
+
+  if(confirm(`Send login invitation to ${email}?\n\nThis will open your default email client.`)){
+    const a = document.createElement('a');
+    a.href = `mailto:${email}?subject=${subject}&body=${body}`;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+}
+
+// ── Init on DOM ready ──
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Render saved admins into table
+  setTimeout(()=>{
+    window._renderAdminTableImpl();
+    _populateAdminLevelSelect();
+  }, 200);
+});
+
+// ── Re-populate level select whenever modal opens ──
+const _origOpenAddAdminModal = window.openAddAdminModal;
+window.openAddAdminModal = function(){
+  _origOpenAddAdminModal();
+  _populateAdminLevelSelect();
+};
 
 </script>
 </body>
