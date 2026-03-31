@@ -1064,7 +1064,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
                 <td style="padding:14px 18px;">
                   <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-sm btn-outline" onclick="openEditUserModal('Sarah Samy')">Edit</button>
+                    <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__')">Edit</button>
                     <span style="font-size:11px;color:var(--text-light);font-style:italic;">Primary — protected</span>
                   </div>
                 </td>
@@ -1839,6 +1839,64 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('addAdminModal')">Cancel</button>
       <button class="btn btn-primary" onclick="addAdmin()">Create Admin Account →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Admin Modal -->
+<div id="editAdminModal" class="modal-overlay">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Edit Admin Account</div>
+        <div class="modal-sub" id="editAdminSubtitle">Update account details and access level</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('editAdminModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editAdminId">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="editAdminFirst" placeholder="First name"></div>
+        <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="editAdminLast" placeholder="Last name"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Email Address</label><input class="form-input" type="email" id="editAdminEmail" placeholder="name@weblightmedia.com"></div>
+      <div class="form-group"><label class="form-label">Job Title / Role</label><input class="form-input" id="editAdminTitle" placeholder="e.g. Director of Operations"></div>
+      <div class="form-group">
+        <label class="form-label">Admin Access Level</label>
+        <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge()">
+          <option value="view_only">View Only — Can view users, reports &amp; feed — no edits</option>
+          <option value="support">Support Staff — Can view and comment — limited edit access</option>
+          <option value="admin">Admin — Full access to users, settings &amp; reports</option>
+          <option value="super">Super Admin — Full access including admin management</option>
+          <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
+        </select>
+        <div style="margin-top:8px;">
+          <span id="editAdminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <div style="font-size:12px;font-weight:700;color:var(--text-mid);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em;">Change Password <span style="font-weight:400;color:var(--text-light);">(leave blank to keep current)</span></div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">New Password</label>
+            <div style="position:relative;">
+              <input class="form-input" type="password" id="editAdminPass" placeholder="New password" style="padding-right:42px;">
+              <button onclick="togglePwVis('editAdminPass',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confirm Password</label>
+            <div style="position:relative;">
+              <input class="form-input" type="password" id="editAdminPass2" placeholder="Confirm password" style="padding-right:42px;">
+              <button onclick="togglePwVis('editAdminPass2',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('editAdminModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditAdmin()">Save Changes</button>
     </div>
   </div>
 </div>
@@ -5604,6 +5662,7 @@ window._renderAdminTableImpl = function(){
       <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
       <td style="padding:14px 18px;">
         <div class="td-actions">
+          <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
           <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
         </div>
       </td>`;
@@ -5669,6 +5728,103 @@ window._removeAdminImpl = function(btn, adminId){
   showToast(`${displayName} removed from admins`);
   logActivity('admin','Admin','Removed admin: '+displayName,'');
 };
+
+// ── Open Edit Admin Modal ──
+function openEditAdminModal(adminId){
+  // Special case: primary hardcoded admin
+  if(adminId === '__primary__'){
+    document.getElementById('editAdminId').value    = '__primary__';
+    document.getElementById('editAdminFirst').value = 'Sarah';
+    document.getElementById('editAdminLast').value  = 'Samy';
+    document.getElementById('editAdminEmail').value = 'ssamy@weblightmedia.com';
+    document.getElementById('editAdminTitle').value = 'Director of Systems & Operations';
+    document.getElementById('editAdminLevel').value = 'super';
+    document.getElementById('editAdminPass').value  = '';
+    document.getElementById('editAdminPass2').value = '';
+    document.getElementById('editAdminSubtitle').textContent = 'Primary admin — email & level are protected';
+    document.getElementById('editAdminEmail').disabled = true;
+    document.getElementById('editAdminLevel').disabled = true;
+    _updateEditLevelBadge();
+    openModal('editAdminModal');
+    return;
+  }
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===adminId);
+  if(!a){ showToast('Admin not found'); return; }
+  const nameParts = a.name.split(' ');
+  document.getElementById('editAdminId').value    = a.id;
+  document.getElementById('editAdminFirst').value = nameParts[0]||'';
+  document.getElementById('editAdminLast').value  = nameParts.slice(1).join(' ')||'';
+  document.getElementById('editAdminEmail').value = a.email;
+  document.getElementById('editAdminTitle').value = a.title||'';
+  document.getElementById('editAdminLevel').value = a.level||'admin';
+  document.getElementById('editAdminPass').value  = '';
+  document.getElementById('editAdminPass2').value = '';
+  document.getElementById('editAdminSubtitle').textContent = 'Update details and access level for '+a.name;
+  document.getElementById('editAdminEmail').disabled = false;
+  document.getElementById('editAdminLevel').disabled = false;
+  _updateEditLevelBadge();
+  openModal('editAdminModal');
+}
+
+function _updateEditLevelBadge(){
+  const sel   = document.getElementById('editAdminLevel');
+  const badge = document.getElementById('editAdminLevelBadge');
+  if(!sel||!badge) return;
+  const info = _getLevelInfo(sel.value);
+  badge.textContent = info.label;
+  badge.style.background = info.color + '22';
+  badge.style.color       = info.color;
+  badge.style.border      = `1px solid ${info.color}44`;
+}
+
+// ── Save edited admin ──
+function saveEditAdmin(){
+  const adminId = document.getElementById('editAdminId').value;
+  const first   = document.getElementById('editAdminFirst').value.trim();
+  const last    = document.getElementById('editAdminLast').value.trim();
+  const email   = document.getElementById('editAdminEmail').value.trim().toLowerCase();
+  const title   = document.getElementById('editAdminTitle').value.trim();
+  const level   = document.getElementById('editAdminLevel').value;
+  const pass    = document.getElementById('editAdminPass').value;
+  const pass2   = document.getElementById('editAdminPass2').value;
+
+  if(!first||!last){ showToast('First and last name are required'); return; }
+  if(!email){        showToast('Email is required');                 return; }
+  if(pass && pass.length<6){ showToast('Password must be at least 6 characters'); return; }
+  if(pass && pass!==pass2){  showToast('Passwords do not match');    return; }
+
+  // Primary admin — only name and title can change
+  if(adminId === '__primary__'){
+    showToast('Primary admin name and title updated ✓');
+    closeModal('editAdminModal');
+    return;
+  }
+
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const idx    = admins.findIndex(x=>x.id===adminId);
+  if(idx===-1){ showToast('Admin not found'); return; }
+
+  const name     = first+' '+last;
+  const initials = (first[0]+(last[0]||'')).toUpperCase();
+
+  // Check duplicate email (allow same email as self)
+  const duplicate = admins.find(a=>a.email===email && a.id!==adminId);
+  if(duplicate){ showToast('Another admin already uses that email'); return; }
+
+  admins[idx].name     = name;
+  admins[idx].initials = initials;
+  admins[idx].email    = email;
+  admins[idx].title    = title;
+  admins[idx].level    = level;
+  if(pass) admins[idx].password = pass;
+
+  dbSet(DB_KEYS.admins, admins);
+  window._renderAdminTableImpl();
+  closeModal('editAdminModal');
+  showToast(`${name} updated ✓`);
+  logActivity('admin','Admin','Updated admin account: '+name+' → '+_getLevelInfo(level).label, email);
+}
 
 // ── Welcome email ──
 function _sendAdminWelcomeEmail({ name, email, title, password, level }){
