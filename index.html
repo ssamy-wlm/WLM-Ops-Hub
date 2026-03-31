@@ -1841,14 +1841,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 </div>
 
 <!-- Email Preview Modal -->
-<div id="emailPreviewModal" class="modal-overlay" style="z-index:300;">
+<div id="emailPreviewModal" class="modal-overlay" style="z-index:9999;">
   <div class="modal" style="max-width:580px;">
     <div class="modal-header" style="background:linear-gradient(135deg,#1a3f6f,#2D6BB6);border-radius:14px 14px 0 0;">
       <div>
         <div class="modal-title" style="color:#fff;">✉️ Send Invitation Email</div>
         <div class="modal-sub" id="emailPreviewSubtitle" style="color:rgba(255,255,255,.75);">Review and send the welcome email</div>
       </div>
-      <button class="modal-close" onclick="closeModal('emailPreviewModal')" style="color:#fff;">✕</button>
+      <button class="modal-close" onclick="closeModal('emailPreviewModal');document.getElementById('emailPreviewModal').style.display='none';" style="color:#fff;">✕</button>
     </div>
     <div class="modal-body" style="padding:0;">
       <!-- To / Subject bar -->
@@ -1866,7 +1866,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div id="emailPreviewBody" style="padding:20px 24px;font-size:13.5px;line-height:1.75;color:var(--text-dark);white-space:pre-wrap;max-height:340px;overflow-y:auto;background:var(--card);font-family:'Segoe UI',sans-serif;border-bottom:1px solid var(--border);"></div>
     </div>
     <div class="modal-footer" style="gap:10px;flex-wrap:wrap;">
-      <button class="btn btn-outline" onclick="closeModal('emailPreviewModal')">Close</button>
+      <button class="btn btn-outline" onclick="closeModal('emailPreviewModal');document.getElementById('emailPreviewModal').style.display='none';">Close</button>
       <button class="btn btn-outline" id="emailCopyBtn" onclick="_copyEmailContent()" style="gap:6px;">📋 Copy Email</button>
       <button class="btn btn-primary" onclick="_openMailClient()" style="gap:6px;">📨 Open Mail Client</button>
     </div>
@@ -2916,10 +2916,12 @@ function addUser(){
 
   renderUserTable();
   closeModal('addUserModal');
-  showToast(`Account created for ${fullName} ✓ — syncing to cloud…`);
+  showToast(`Account created for ${fullName} ✓`);
   ['newUserFirst','newUserLast','newUserEmail','newUserPass','newUserPass2','newUserTitle','newUserResp'].forEach(id=>document.getElementById(id).value='');
   logActivity('admin','Admin','Created user account: '+fullName, email);
   cloudAutoSync();
+  // Show email preview so Sarah can forward credentials (delay ensures addUserModal is fully closed)
+  setTimeout(()=>sendWelcomeEmail({ name: fullName, email, title, password: pass }), 600);
 }
 
 // ── RENDER USER TABLE FROM DB ──
@@ -5515,12 +5517,52 @@ let _currentEmailData = {};
 
 function _showEmailPreview({ to, subject, body, subtitle }){
   _currentEmailData = { to, subject, body };
-  document.getElementById('emailPreviewTo').textContent      = to;
-  document.getElementById('emailPreviewSubject').textContent = subject;
-  document.getElementById('emailPreviewSubtitle').textContent = subtitle || 'Review and send the welcome email';
-  document.getElementById('emailPreviewBody').textContent    = body;
-  document.getElementById('emailCopyBtn').textContent        = '📋 Copy Email';
-  openModal('emailPreviewModal');
+
+  // First, try to use the existing persistent modal
+  const existing = document.getElementById('emailPreviewModal');
+  if(existing){
+    const toEl      = document.getElementById('emailPreviewTo');
+    const subjEl    = document.getElementById('emailPreviewSubject');
+    const subEl     = document.getElementById('emailPreviewSubtitle');
+    const bodyEl    = document.getElementById('emailPreviewBody');
+    const copyBtn   = document.getElementById('emailCopyBtn');
+    if(toEl)   toEl.textContent   = to;
+    if(subjEl) subjEl.textContent = subject;
+    if(subEl)  subEl.textContent  = subtitle || 'Review and send the welcome email';
+    if(bodyEl) bodyEl.textContent = body;
+    if(copyBtn) copyBtn.textContent = '📋 Copy Email';
+    // Force display using both class and inline style to ensure it shows
+    existing.classList.add('open');
+    existing.style.display = 'flex';
+    return;
+  }
+
+  // Fallback: create a fresh overlay if the modal element is missing
+  const overlay = document.createElement('div');
+  overlay.id = 'emailPreviewModalDynamic';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(30,50,80,.45);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);';
+  overlay.innerHTML = `
+    <div style="background:var(--card,#fff);border-radius:14px;max-width:580px;width:95%;box-shadow:0 24px 60px rgba(0,0,0,.3);max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">
+      <div style="background:linear-gradient(135deg,#1a3f6f,#2D6BB6);padding:18px 22px;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:17px;font-weight:700;color:#fff;">✉️ Send Invitation Email</div>
+          <div style="font-size:12px;color:rgba(255,255,255,.75);margin-top:3px;">${escHtml(subtitle||'Review and send the welcome email')}</div>
+        </div>
+        <button onclick="this.closest('[id]').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;">✕</button>
+      </div>
+      <div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;background:#f8fafc;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:8px;align-items:center;font-size:13px;"><span style="font-weight:700;min-width:58px;">To:</span><span style="font-weight:600;">${escHtml(to)}</span></div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:13px;"><span style="font-weight:700;min-width:58px;">Subject:</span><span>${escHtml(subject)}</span></div>
+      </div>
+      <div style="padding:20px 24px;font-size:13.5px;line-height:1.75;white-space:pre-wrap;overflow-y:auto;max-height:340px;border-bottom:1px solid #e2e8f0;font-family:'Segoe UI',sans-serif;">${escHtml(body)}</div>
+      <div style="padding:14px 20px;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+        <button onclick="this.closest('[id]').remove()" style="padding:8px 18px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;">Close</button>
+        <button id="dynCopyBtn" onclick="_copyEmailContent();this.textContent='✅ Copied!';setTimeout(()=>{this.textContent='📋 Copy Email';},2500);" style="padding:8px 18px;border:1px solid #2D6BB6;border-radius:8px;background:#fff;color:#2D6BB6;cursor:pointer;font-size:13px;">📋 Copy Email</button>
+        <button onclick="_openMailClient()" style="padding:8px 18px;border:none;border-radius:8px;background:#2D6BB6;color:#fff;cursor:pointer;font-size:13px;">📨 Open Mail Client</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 function _copyEmailContent(){
@@ -5616,33 +5658,29 @@ window.openAddUserModal = function(){
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// OVERRIDE addUser to capture credentials and trigger email
+// addUser credential capture — saves platform credentials after user creation
 // ═══════════════════════════════════════════════════════════════════
-const _origAddUser = window.addUser;
-window.addUser = function(){
-  // Capture credentials before original clears the form
-  const credentials = collectNewUserCreds();
-  const first = document.getElementById('newUserFirst')?.value.trim()||'';
-  const last  = document.getElementById('newUserLast')?.value.trim()||'';
-  const email = document.getElementById('newUserEmail')?.value.trim().toLowerCase()||'';
-  const pass  = document.getElementById('newUserPass')?.value||'';
-  const title = document.getElementById('newUserTitle')?.value.trim()||'';
-
-  // Call original addUser (validates & saves)
-  _origAddUser();
-
-  // If user was actually created (email now in DB), attach creds and trigger email
-  setTimeout(()=>{
-    const allUsers = dbGet(DB_KEYS.users)||[];
-    const created = allUsers.find(u=>u.email===email);
-    if(created){
-      created.credentials = credentials;
-      dbSet(DB_KEYS.users, allUsers);
-      // Auto-open email preview — no confirm() blocker
-      sendWelcomeEmail({ name: first+' '+last, email, title, password: pass });
+(function patchAddUserForCreds(){
+  const _orig = window.addUser;
+  window.addUser = function(){
+    // Capture platform credentials BEFORE original clears the form
+    const credentials = collectNewUserCreds();
+    const email = document.getElementById('newUserEmail')?.value.trim().toLowerCase()||'';
+    // Call the real addUser (which handles email preview internally at 600ms)
+    _orig.call(this);
+    // Attach credentials to the newly created user record (after user is saved)
+    if(email){
+      setTimeout(()=>{
+        const allUsers = dbGet(DB_KEYS.users)||[];
+        const created = allUsers.find(u=>u.email===email);
+        if(created && credentials && Object.keys(credentials).length){
+          created.credentials = credentials;
+          dbSet(DB_KEYS.users, allUsers);
+        }
+      }, 400);
     }
-  }, 300);
-};
+  };
+})();
 
 // ═══════════════════════════════════════════════════════════════════
 // INIT platforms list on bizSettings tab open
@@ -5797,8 +5835,9 @@ window._addAdminImpl = function(){
   showToast(`Admin account created for ${name} ✓`);
   logActivity('admin','Admin','New admin account: '+name+' ('+_getLevelInfo(level).label+')', email);
 
-  // ── Send welcome email (opens default mail client) ──
-  _sendAdminWelcomeEmail({ name, email, title, password: pass, level });
+  // ── Show email preview after modal fully closes ──
+  const _n=name, _e=email, _t=title, _p=pass, _l=level;
+  setTimeout(()=>{ _sendAdminWelcomeEmail({ name:_n, email:_e, title:_t, password:_p, level:_l }); }, 600);
 };
 
 // ── Remove an admin ──
