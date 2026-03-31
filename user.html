@@ -635,13 +635,12 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <!-- ── CREDENTIALS ── -->
       <div id="sec-credentials" class="page-section">
         <div class="infra-card">
-          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);margin-bottom:16px;">🔑 Credentials Vault — Your Allowed Access</div>
-          <div class="cred-item"><div><div class="cred-name">Google Workspace (Designer)</div><div class="cred-cat">Google</div></div><span class="cred-status cred-notset">Not Set</span></div>
-          <div class="cred-item"><div><div class="cred-name">Sync CRM (Designer Access)</div><div class="cred-cat">CRM & Pipeline</div></div><span class="cred-status cred-notset">Not Set</span></div>
-          <div class="cred-item"><div><div class="cred-name">ScheduleDrop</div><div class="cred-cat">Scheduling</div></div><span class="cred-status cred-set">Configured</span></div>
-          <div class="cred-item"><div><div class="cred-name">Figma / Design Tools</div><div class="cred-cat">Design Software</div></div><span class="cred-status cred-set">Configured</span></div>
-          <div class="cred-item"><div><div class="cred-name">Hubstaff</div><div class="cred-cat">Time Tracking</div></div><span class="cred-status cred-notset">Not Set</span></div>
-          <div class="cred-item"><div><div class="cred-name">Skool Training</div><div class="cred-cat">Learning Platform</div></div><span class="cred-status cred-set">Configured</span></div>
+          <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);margin-bottom:6px;">🔑 Credentials Vault — Your Allowed Access</div>
+          <div style="font-size:12px;color:var(--text-light);margin-bottom:18px;">These are the platforms and login details assigned to your account by your admin.</div>
+          <div id="userCredVault">
+            <!-- Dynamically populated by renderUserCredVault() -->
+            <div style="font-size:13px;color:var(--text-light);">Loading your credentials…</div>
+          </div>
         </div>
       </div>
 
@@ -1646,7 +1645,61 @@ const _origShowSectionUser = window.showSection;
 window.showSection = function(id, el){
   _origShowSectionUser(id, el);
   if(id==='timeoff') setTimeout(renderMyTimeOff, 80);
+  if(id==='credentials') setTimeout(renderUserCredVault, 80);
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// CREDENTIALS VAULT — render from platforms + user's saved creds
+// ═══════════════════════════════════════════════════════════════════
+function renderUserCredVault(){
+  const wrap = document.getElementById('userCredVault');
+  if(!wrap) return;
+  const currentUser = dbGet('wl_current_user');
+  const allUsers    = dbGet('wl_users_db') || [];
+  const WL_PLATFORMS_KEY = 'wl_platforms';
+  const DEFAULT_PLATFORMS = [
+    {id:'p1', name:'Google Workspace',  category:'Productivity',   url:'https://workspace.google.com'},
+    {id:'p2', name:'Sync CRM',          category:'CRM & Pipeline', url:''},
+    {id:'p3', name:'ScheduleDrop',      category:'Scheduling',     url:''},
+    {id:'p4', name:'Figma / Design',    category:'Design Software',url:'https://figma.com'},
+    {id:'p5', name:'Hubstaff',          category:'Time Tracking',  url:'https://hubstaff.com'},
+    {id:'p6', name:'Slack',             category:'Communication',  url:'https://slack.com'},
+    {id:'p7', name:'Skool',             category:'Learning Platform',url:'https://skool.com'},
+    {id:'p8', name:'Delphi AI',         category:'AI Tools',       url:''},
+  ];
+  const platforms  = dbGet(WL_PLATFORMS_KEY) || DEFAULT_PLATFORMS;
+  // Find current user's credentials
+  let userCreds = {};
+  if(currentUser){
+    const dbUser = allUsers.find(u=>u.email===currentUser.email||u.id===currentUser.id);
+    if(dbUser && dbUser.credentials) userCreds = dbUser.credentials;
+  }
+  if(!platforms.length){
+    wrap.innerHTML='<div style="font-size:13px;color:var(--text-light);">No platforms have been configured yet. Contact your admin.</div>';
+    return;
+  }
+  wrap.innerHTML = platforms.map(p=>{
+    const cred = userCreds[p.id];
+    const hasAccess = !!(cred && (cred.username || cred.password));
+    return `
+    <div class="cred-item" style="padding:12px 0;">
+      <div style="flex:1;">
+        <div class="cred-name">${escHtmlUser(p.name)}</div>
+        <div class="cred-cat">${escHtmlUser(p.category||'')}</div>
+        ${p.url && hasAccess ? `<a href="${escHtmlUser(p.url)}" target="_blank" style="font-size:11px;color:var(--text);opacity:.7;">🔗 Open platform</a>` : ''}
+        ${hasAccess && cred.username ? `<div style="font-size:11px;color:var(--text-mid);margin-top:3px;">👤 ${escHtmlUser(cred.username)}</div>` : ''}
+      </div>
+      <span class="cred-status ${hasAccess ? 'cred-set' : 'cred-notset'}">${hasAccess ? 'Configured' : 'Not Set'}</span>
+    </div>`;
+  }).join('');
+}
+
+function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Render on page load if credentials section is active
+document.addEventListener('DOMContentLoaded', ()=>{
+  setTimeout(renderUserCredVault, 1000);
+});
 
 </script>
 </body>

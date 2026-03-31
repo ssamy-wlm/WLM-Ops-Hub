@@ -1672,6 +1672,26 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
       </div>
+      <!-- ── PLATFORMS & TOOLS ── -->
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-header">
+          <div><div class="card-title">🛠 Platforms & Tools</div><div class="card-sub">All apps your team uses — these populate the credentials section when creating users</div></div>
+          <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
+        </div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:14px;line-height:1.5;">
+            Add every platform or tool your team uses. Each one will appear as an editable credential field when a new user is created, so you can assign logins per person.
+          </div>
+          <div id="platformsList" style="display:flex;flex-direction:column;gap:8px;">
+            <!-- rows injected by renderPlatformsList() -->
+          </div>
+          <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary btn-sm" onclick="savePlatforms()">Save Platforms ✓</button>
+            <span id="platforms-saved-badge" style="font-size:11px;color:var(--green);display:none;">✓ Saved</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 30-60-90 Day Roadmap editor -->
       <div class="card">
         <div class="card-header"><div class="card-title">📍 30–60–90 Day Roadmap</div><div class="card-sub">Milestone targets shown on every user's Operations dashboard</div></div>
@@ -1868,16 +1888,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="newUserPayRate" placeholder="0.00" min="0" step="0.01"></div>
       </div>
-      <div class="section-divider">Allowed Credentials</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="credCheckboxes">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Google Workspace</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Sync CRM</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> ScheduleDrop</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Figma / Design</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Hubstaff</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Slack</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Skool</label>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px;border-radius:8px;background:var(--bg);"><input type="checkbox"> Delphi AI</label>
+      <div class="section-divider">Credentials & Platform Access</div>
+      <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;line-height:1.5;">
+        ✏️ Enter the login credentials for each platform this user will have access to. Leave blank to skip. Platforms are managed in <strong>Business Setup → Platforms & Tools</strong>.
+      </div>
+      <div id="newUserCredRows" style="display:flex;flex-direction:column;gap:8px;">
+        <!-- rows injected by renderNewUserCredRows() on modal open -->
       </div>
     </div>
     <div class="modal-footer">
@@ -5207,6 +5223,263 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(el) el.textContent=formatted;
   });
 })();
+
+// ═══════════════════════════════════════════════════════════════════
+// PLATFORMS & TOOLS — Business Setup
+// ═══════════════════════════════════════════════════════════════════
+const WL_PLATFORMS_KEY = 'wl_platforms';
+
+const DEFAULT_PLATFORMS = [
+  {id:'p1', name:'Google Workspace',   category:'Productivity',  url:'https://workspace.google.com'},
+  {id:'p2', name:'Sync CRM',           category:'CRM & Pipeline', url:''},
+  {id:'p3', name:'ScheduleDrop',        category:'Scheduling',    url:''},
+  {id:'p4', name:'Figma / Design',      category:'Design Software',url:'https://figma.com'},
+  {id:'p5', name:'Hubstaff',            category:'Time Tracking', url:'https://hubstaff.com'},
+  {id:'p6', name:'Slack',              category:'Communication',  url:'https://slack.com'},
+  {id:'p7', name:'Skool',              category:'Learning Platform',url:'https://skool.com'},
+  {id:'p8', name:'Delphi AI',          category:'AI Tools',       url:''},
+];
+
+function getPlatforms(){
+  return dbGet(WL_PLATFORMS_KEY) || DEFAULT_PLATFORMS;
+}
+
+function renderPlatformsList(){
+  const wrap = document.getElementById('platformsList');
+  if(!wrap) return;
+  const platforms = getPlatforms();
+  if(!platforms.length){
+    wrap.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No platforms added yet. Click "+ Add Platform" above.</div>';
+    return;
+  }
+  wrap.innerHTML = platforms.map((p,i)=>`
+    <div class="platform-row" data-pid="${p.id}" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:center;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;">
+      <input class="form-input" style="margin:0;" placeholder="Platform name *" value="${escHtml(p.name)}" oninput="updatePlatformField('${p.id}','name',this.value)" required>
+      <input class="form-input" style="margin:0;" placeholder="Category (e.g. CRM, Design)" value="${escHtml(p.category||'')}" oninput="updatePlatformField('${p.id}','category',this.value)">
+      <input class="form-input" style="margin:0;" placeholder="Login URL (optional)" value="${escHtml(p.url||'')}" oninput="updatePlatformField('${p.id}','url',this.value)">
+      <button class="btn btn-danger btn-sm" onclick="removePlatform('${p.id}')" style="height:36px;white-space:nowrap;">✕ Remove</button>
+    </div>`).join('');
+}
+
+function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+let _platformsLocal = null;
+function updatePlatformField(pid, field, val){
+  if(!_platformsLocal) _platformsLocal = getPlatforms();
+  const p = _platformsLocal.find(x=>x.id===pid);
+  if(p) p[field] = val;
+}
+
+function addPlatformRow(){
+  if(!_platformsLocal) _platformsLocal = getPlatforms();
+  const id = 'p_'+Date.now();
+  _platformsLocal.push({id, name:'', category:'', url:''});
+  dbSet(WL_PLATFORMS_KEY, _platformsLocal);
+  renderPlatformsList();
+}
+
+function removePlatform(pid){
+  if(!_platformsLocal) _platformsLocal = getPlatforms();
+  _platformsLocal = _platformsLocal.filter(x=>x.id!==pid);
+  dbSet(WL_PLATFORMS_KEY, _platformsLocal);
+  renderPlatformsList();
+}
+
+function savePlatforms(){
+  if(!_platformsLocal) _platformsLocal = getPlatforms();
+  // Sync from DOM inputs in case updatePlatformField wasn't called
+  document.querySelectorAll('#platformsList .platform-row').forEach(row=>{
+    const pid = row.dataset.pid;
+    const inputs = row.querySelectorAll('input');
+    const p = _platformsLocal.find(x=>x.id===pid);
+    if(p && inputs.length>=3){
+      p.name     = inputs[0].value.trim();
+      p.category = inputs[1].value.trim();
+      p.url      = inputs[2].value.trim();
+    }
+  });
+  _platformsLocal = _platformsLocal.filter(p=>p.name);
+  dbSet(WL_PLATFORMS_KEY, _platformsLocal);
+  const badge = document.getElementById('platforms-saved-badge');
+  if(badge){ badge.style.display='inline'; setTimeout(()=>badge.style.display='none',2500); }
+  showToast('Platforms saved ✓ — will appear on next Add User');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CREDENTIALS ROWS in Add User modal — driven by platforms
+// ═══════════════════════════════════════════════════════════════════
+function renderNewUserCredRows(){
+  const wrap = document.getElementById('newUserCredRows');
+  if(!wrap) return;
+  const platforms = getPlatforms();
+  if(!platforms.length){
+    wrap.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No platforms configured yet. Add them in Business Setup → Platforms & Tools.</div>';
+    return;
+  }
+  wrap.innerHTML = platforms.map(p=>`
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:13px;font-weight:700;color:var(--text-dark);flex:1;">${escHtml(p.name)}</span>
+        <span style="font-size:10px;color:var(--text-light);background:var(--card);border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${escHtml(p.category||'')}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <input class="form-input" style="font-size:12px;" placeholder="Username / Email" data-cred-platform="${escHtml(p.id)}" data-cred-field="username" id="cred_${p.id}_user">
+        <input class="form-input" style="font-size:12px;" placeholder="Password / Access key" data-cred-platform="${escHtml(p.id)}" data-cred-field="password" id="cred_${p.id}_pass" type="password">
+      </div>
+      ${p.url?`<div style="font-size:11px;color:var(--text-light);margin-top:6px;">🔗 <a href="${escHtml(p.url)}" target="_blank" style="color:var(--text);">${escHtml(p.url)}</a></div>`:''}
+    </div>`).join('');
+}
+
+function collectNewUserCreds(){
+  const platforms = getPlatforms();
+  const creds = {};
+  platforms.forEach(p=>{
+    const uEl = document.getElementById(`cred_${p.id}_user`);
+    const pEl = document.getElementById(`cred_${p.id}_pass`);
+    const username = uEl ? uEl.value.trim() : '';
+    const password = pEl ? pEl.value.trim() : '';
+    if(username || password){
+      creds[p.id] = { platform: p.name, category: p.category, url: p.url, username, password };
+    }
+  });
+  return creds;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MANAGER DROPDOWN — includes ALL org chart members + DB users
+// ═══════════════════════════════════════════════════════════════════
+function populateManagerDropdownFull(){
+  const sel = document.getElementById('newUserManager');
+  if(!sel) return;
+  // Combine orgNodes + DB users, de-duplicate by name
+  const seenNames = new Set();
+  const options = [{ value:'', label:'— None / Top Level —' }];
+  // 1. Org chart members (directors, managers, CEO)
+  orgNodes.forEach(n=>{
+    if(n.level==='ceo'||n.level==='director'||n.level==='manager'){
+      if(!seenNames.has(n.name)){
+        seenNames.add(n.name);
+        options.push({ value: n.id, label: `${n.name} — ${n.title}` });
+      }
+    }
+  });
+  // 2. DB users with Manager / Admin role
+  const dbUsers = dbGet(DB_KEYS.users)||[];
+  dbUsers.forEach(u=>{
+    if((u.role==='Manager'||u.role==='Admin') && !seenNames.has(u.name)){
+      seenNames.add(u.name);
+      options.push({ value: u.id, label: `${u.name} (${u.role})` });
+    }
+  });
+  // 3. All org chart members (any level) — team members can also report to others
+  orgNodes.forEach(n=>{
+    if(!seenNames.has(n.name)){
+      seenNames.add(n.name);
+      options.push({ value: n.id, label: `${n.name} — ${n.title}` });
+    }
+  });
+  sel.innerHTML = options.map(o=>`<option value="${escHtml(o.value)}">${escHtml(o.label)}</option>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SEND WELCOME EMAIL — mailto: fallback (opens email client)
+// ═══════════════════════════════════════════════════════════════════
+function sendWelcomeEmail(userData){
+  const { name, email, title, password } = userData;
+  const hubUrl = window.location.origin + '/user.html';
+  const subject = encodeURIComponent('Welcome to WebLight Media — Your Operations Hub Access');
+  const body = encodeURIComponent(
+`Hello ${name},
+
+Welcome to the team! 🎉
+
+This is your official invitation to join our Operations Hub as a full-time ${title||'Team Member'} with WebLight Media.
+
+Your login credentials are below:
+🔗 Hub Link: ${hubUrl}
+📧 Username: ${email}
+🔑 Temporary Password: ${password}
+
+Please log in at your earliest convenience and change your password to something you will remember — we use this platform on a daily basis, so you'll want to keep your credentials somewhere safe.
+
+If you run into any trouble logging in or have any questions, don't hesitate to reach out.
+Looking forward to working with you!
+
+Have a great day,
+Sarah Samy
+Director of Systems & Operations at WebLight Media`);
+
+  // Open mailto link (opens default email client)
+  const mailto = `mailto:${email}?subject=${subject}&body=${body}`;
+  const a = document.createElement('a');
+  a.href = mailto;
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OVERRIDE openAddUserModal to also render cred rows & manager list
+// ═══════════════════════════════════════════════════════════════════
+const _origOpenAddUserModal = window.openAddUserModal;
+window.openAddUserModal = function(){
+  _origOpenAddUserModal();
+  populateManagerDropdownFull();
+  renderNewUserCredRows();
+  _platformsLocal = getPlatforms();
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// OVERRIDE addUser to capture credentials and trigger email
+// ═══════════════════════════════════════════════════════════════════
+const _origAddUser = window.addUser;
+window.addUser = function(){
+  // Capture credentials before original clears the form
+  const credentials = collectNewUserCreds();
+  const first = document.getElementById('newUserFirst')?.value.trim()||'';
+  const last  = document.getElementById('newUserLast')?.value.trim()||'';
+  const email = document.getElementById('newUserEmail')?.value.trim().toLowerCase()||'';
+  const pass  = document.getElementById('newUserPass')?.value||'';
+  const title = document.getElementById('newUserTitle')?.value.trim()||'';
+
+  // Call original addUser (validates & saves)
+  _origAddUser();
+
+  // If user was actually created (email now in DB), attach creds and trigger email
+  setTimeout(()=>{
+    const allUsers = dbGet(DB_KEYS.users)||[];
+    const created = allUsers.find(u=>u.email===email);
+    if(created){
+      created.credentials = credentials;
+      dbSet(DB_KEYS.users, allUsers);
+      // Ask admin if they want to send the welcome email
+      if(confirm(`✅ Account created for ${first} ${last}!\n\nWould you like to send them a welcome email with their login details?\n\nClick OK to open your email client with the pre-filled invite.`)){
+        sendWelcomeEmail({ name: first+' '+last, email, title, password: pass });
+      }
+    }
+  }, 300);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// INIT platforms list on bizSettings tab open
+// ═══════════════════════════════════════════════════════════════════
+(function patchSwitchAdminTabForPlatforms(){
+  const _origSwitch = window.switchAdminTab;
+  window.switchAdminTab = function(el, tab){
+    _origSwitch(el, tab);
+    if(tab==='bizSettings'){
+      _platformsLocal = getPlatforms();
+      setTimeout(renderPlatformsList, 150);
+    }
+  };
+})();
+
+// Init on load too
+document.addEventListener('DOMContentLoaded', ()=>{
+  _platformsLocal = getPlatforms();
+  setTimeout(renderPlatformsList, 800);
+});
 
 </script>
 </body>
