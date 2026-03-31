@@ -1843,6 +1843,39 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
+<!-- Email Preview Modal -->
+<div id="emailPreviewModal" class="modal-overlay" style="z-index:300;">
+  <div class="modal" style="max-width:580px;">
+    <div class="modal-header" style="background:linear-gradient(135deg,#1a3f6f,#2D6BB6);border-radius:14px 14px 0 0;">
+      <div>
+        <div class="modal-title" style="color:#fff;">✉️ Send Invitation Email</div>
+        <div class="modal-sub" id="emailPreviewSubtitle" style="color:rgba(255,255,255,.75);">Review and send the welcome email</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('emailPreviewModal')" style="color:#fff;">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <!-- To / Subject bar -->
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--bg);display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:8px;align-items:center;font-size:13px;">
+          <span style="font-weight:700;color:var(--text-mid);min-width:58px;">To:</span>
+          <span id="emailPreviewTo" style="color:var(--text-dark);font-weight:600;"></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;font-size:13px;">
+          <span style="font-weight:700;color:var(--text-mid);min-width:58px;">Subject:</span>
+          <span id="emailPreviewSubject" style="color:var(--text-dark);"></span>
+        </div>
+      </div>
+      <!-- Email body -->
+      <div id="emailPreviewBody" style="padding:20px 24px;font-size:13.5px;line-height:1.75;color:var(--text-dark);white-space:pre-wrap;max-height:340px;overflow-y:auto;background:var(--card);font-family:'Segoe UI',sans-serif;border-bottom:1px solid var(--border);"></div>
+    </div>
+    <div class="modal-footer" style="gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-outline" onclick="closeModal('emailPreviewModal')">Close</button>
+      <button class="btn btn-outline" id="emailCopyBtn" onclick="_copyEmailContent()" style="gap:6px;">📋 Copy Email</button>
+      <button class="btn btn-primary" onclick="_openMailClient()" style="gap:6px;">📨 Open Mail Client</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit Admin Modal -->
 <div id="editAdminModal" class="modal-overlay">
   <div class="modal" style="max-width:520px;">
@@ -5481,13 +5514,57 @@ function populateManagerDropdownFull(){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// SEND WELCOME EMAIL — mailto: fallback (opens email client)
+// UNIFIED EMAIL PREVIEW MODAL — works for both user and admin emails
 // ═══════════════════════════════════════════════════════════════════
+let _currentEmailData = {};
+
+function _showEmailPreview({ to, subject, body, subtitle }){
+  _currentEmailData = { to, subject, body };
+  document.getElementById('emailPreviewTo').textContent      = to;
+  document.getElementById('emailPreviewSubject').textContent = subject;
+  document.getElementById('emailPreviewSubtitle').textContent = subtitle || 'Review and send the welcome email';
+  document.getElementById('emailPreviewBody').textContent    = body;
+  document.getElementById('emailCopyBtn').textContent        = '📋 Copy Email';
+  openModal('emailPreviewModal');
+}
+
+function _copyEmailContent(){
+  const { to, subject, body } = _currentEmailData;
+  const full = `To: ${to}\nSubject: ${subject}\n\n${body}`;
+  navigator.clipboard.writeText(full).then(()=>{
+    const btn = document.getElementById('emailCopyBtn');
+    btn.textContent = '✅ Copied!';
+    setTimeout(()=>{ btn.textContent = '📋 Copy Email'; }, 2500);
+  }).catch(()=>{
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = full;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('emailCopyBtn');
+    btn.textContent = '✅ Copied!';
+    setTimeout(()=>{ btn.textContent = '📋 Copy Email'; }, 2500);
+  });
+}
+
+function _openMailClient(){
+  const { to, subject, body } = _currentEmailData;
+  const a = document.createElement('a');
+  a.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function sendWelcomeEmail(userData){
   const { name, email, title, password } = userData;
   const hubUrl = window.location.origin + '/user.html';
-  const subject = encodeURIComponent('Welcome to WebLight Media — Your Operations Hub Access');
-  const body = encodeURIComponent(
+  const subject = 'Welcome to WebLight Media — Your Operations Hub Access';
+  const body =
 `Hello ${name},
 
 Welcome to the team! 🎉
@@ -5506,16 +5583,14 @@ Looking forward to working with you!
 
 Have a great day,
 Sarah Samy
-Director of Systems & Operations at WebLight Media`);
+Director of Systems & Operations at WebLight Media`;
 
-  // Open mailto link (opens default email client)
-  const mailto = `mailto:${email}?subject=${subject}&body=${body}`;
-  const a = document.createElement('a');
-  a.href = mailto;
-  a.target = '_blank';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  _showEmailPreview({
+    to: email,
+    subject,
+    body,
+    subtitle: `Invitation for ${name} — ${title||'Team Member'}`
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5552,10 +5627,8 @@ window.addUser = function(){
     if(created){
       created.credentials = credentials;
       dbSet(DB_KEYS.users, allUsers);
-      // Ask admin if they want to send the welcome email
-      if(confirm(`✅ Account created for ${first} ${last}!\n\nWould you like to send them a welcome email with their login details?\n\nClick OK to open your email client with the pre-filled invite.`)){
-        sendWelcomeEmail({ name: first+' '+last, email, title, password: pass });
-      }
+      // Auto-open email preview — no confirm() blocker
+      sendWelcomeEmail({ name: first+' '+last, email, title, password: pass });
     }
   }, 300);
 };
@@ -5826,12 +5899,12 @@ function saveEditAdmin(){
   logActivity('admin','Admin','Updated admin account: '+name+' → '+_getLevelInfo(level).label, email);
 }
 
-// ── Welcome email ──
+// ── Admin welcome email — uses unified preview modal ──
 function _sendAdminWelcomeEmail({ name, email, title, password, level }){
   const info   = _getLevelInfo(level);
   const hubUrl = window.location.origin + '/index.html';
-  const subject = encodeURIComponent('Welcome to WebLight Media — Your Admin Panel Access');
-  const body = encodeURIComponent(
+  const subject = 'Welcome to WebLight Media — Your Admin Panel Access';
+  const body =
 `Hello ${name},
 
 Welcome to the team! 🎉
@@ -5846,22 +5919,20 @@ Your login credentials are below:
 Access level: ${info.label}
 ${info.desc}
 
-Please log in at your earliest convenience. You will be asked to change your password on first login.
+Please log in at your earliest convenience and change your password on first login.
 
 If you have any questions, don't hesitate to reach out.
 
 Have a great day,
 Sarah Samy
-Director of Systems & Operations at WebLight Media`);
+Director of Systems & Operations at WebLight Media`;
 
-  if(confirm(`Send login invitation to ${email}?\n\nThis will open your default email client.`)){
-    const a = document.createElement('a');
-    a.href = `mailto:${email}?subject=${subject}&body=${body}`;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
+  _showEmailPreview({
+    to: email,
+    subject,
+    body,
+    subtitle: `Admin invitation for ${name} — ${info.label}`
+  });
 }
 
 // ── Init on DOM ready ──
