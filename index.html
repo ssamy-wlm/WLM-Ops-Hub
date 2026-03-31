@@ -2794,6 +2794,34 @@ function addUser(){
   };
   existing.push(newUser);
   dbSet(DB_KEYS.users, existing);
+
+  // ── Auto-add to org chart ──
+  orgLoad(); // make sure orgNodes/orgLinks are current
+  const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
+  if(!alreadyInOrg){
+    // Determine level from role
+    const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
+    const nodeLevel = levelMap[role] || 'member';
+    // Place new bubble below manager if manager is known
+    let nx = 100 + Math.random()*300, ny = 500;
+    if(managerId){
+      const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
+      if(mgrNode){ nx = mgrNode.x + (Math.random()*200-100); ny = mgrNode.y + 150; }
+    }
+    const newNodeId = 'u_node_'+Date.now();
+    orgNodes.push({id:newNodeId, name:fullName, title:title||'Team Member', photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
+    // Link to manager in org chart
+    if(managerId){
+      const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
+      if(mgrNode && !orgLinks.find(l=>(l[0]===mgrNode.id&&l[1]===newNodeId)||(l[0]===newNodeId&&l[1]===mgrNode.id))){
+        orgLinks.push([mgrNode.id, newNodeId]);
+      }
+    }
+    orgSave();
+    // Re-render if org chart canvas is visible
+    if(document.getElementById('org-canvas')) renderOrgChart();
+  }
+
   renderUserTable();
   closeModal('addUserModal');
   showToast(`Account created for ${fullName} ✓ — syncing to cloud…`);
@@ -3327,7 +3355,8 @@ const orgColors = {
   member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'
 };
 
-let orgNodes = [
+// ── Default org chart data (used only when localStorage is empty) ──
+const ORG_NODES_DEFAULT = [
   {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                photo:null, level:'ceo',      x:406, y:30,  fixed:true},
   {id:'sara',   name:'Sara Soliman',  title:'Director of Production',         photo:null, level:'director', x:160, y:170},
   {id:'sarah',  name:'Sarah Samy',    title:'Director of Business Structure', photo:null, level:'director', x:650, y:170},
@@ -3339,8 +3368,7 @@ let orgNodes = [
   {id:'youssef',name:'Youssef Hamdy', title:'Social Media Specialist',        photo:null, level:'member',   x:260, y:460},
   {id:'sam',    name:'Sam Raslan',    title:'SERVPRO & Lead Gen Specialist',  photo:null, level:'member',   x:650, y:460},
 ];
-
-let orgLinks = [
+const ORG_LINKS_DEFAULT = [
   ['david','sara'],['david','sarah'],
   ['sara','abby'],['sara','emily'],
   ['sarah','jacob'],
@@ -3349,18 +3377,51 @@ let orgLinks = [
   ['jacob','sam'],
 ];
 
+// ── Live org chart data (loaded from / saved to localStorage) ──
+let orgNodes = [];
+let orgLinks = [];
+
+function orgSave(){
+  // DB_KEYS may not exist yet when called early; use direct key names as fallback
+  const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
+  const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
+  try{
+    localStorage.setItem(nk, JSON.stringify(orgNodes));
+    localStorage.setItem(lk, JSON.stringify(orgLinks));
+  }catch(e){}
+}
+
+function orgLoad(){
+  try{
+    const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
+    const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
+    const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
+    const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
+    orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+    orgLinks = savedLinks ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+  } catch(e){
+    orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+    orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+  }
+}
+
 let orgDragging = null, orgDragOffset = {x:0,y:0};
 let connectMode = false, connectFrom = null;
-let orgIdCounter = 100;
+let orgIdCounter = 200;
 
 function initOrgChart(){
   const canvas = document.getElementById('org-canvas');
   if(!canvas) return;
+  orgLoad();
   renderOrgChart();
-  canvas.addEventListener('mousemove', onOrgMouseMove);
-  canvas.addEventListener('mouseup', onOrgMouseUp);
-  canvas.addEventListener('touchmove', onOrgTouchMove, {passive:false});
-  canvas.addEventListener('touchend', onOrgMouseUp);
+  // Only add listeners once
+  if(!canvas._orgListeners){
+    canvas._orgListeners = true;
+    canvas.addEventListener('mousemove', onOrgMouseMove);
+    canvas.addEventListener('mouseup', onOrgMouseUp);
+    canvas.addEventListener('touchmove', onOrgTouchMove, {passive:false});
+    canvas.addEventListener('touchend', onOrgMouseUp);
+  }
 }
 
 function renderOrgChart(){
@@ -3476,7 +3537,7 @@ function onOrgTouchMove(e){
   renderOrgChart();
   e.preventDefault();
 }
-function onOrgMouseUp(){ orgDragging=null; }
+function onOrgMouseUp(){ if(orgDragging){ orgDragging=null; orgSave(); } else { orgDragging=null; } }
 
 function onOrgBubbleClick(e, id){
   if(orgDragging) return;
@@ -3491,6 +3552,7 @@ function onOrgBubbleClick(e, id){
       if(exists>-1){ orgLinks.splice(exists,1); showToast('Link removed'); }
       else { orgLinks.push([connectFrom,id]); showToast('Link added ✓'); }
       connectFrom=null;
+      orgSave();
       renderOrgChart();
     }
     return;
@@ -3535,6 +3597,7 @@ function addOrgBubble(){
   const id='node'+(++orgIdCounter);
   const doAdd=(photoData)=>{
     orgNodes.push({id,name,title:title||'Team Member',photo:photoData||null,level,x:200+Math.random()*200,y:200+Math.random()*150});
+    orgSave();
     renderOrgChart();
     document.getElementById('org-add-panel').style.display='none';
     ['org-new-name','org-new-title'].forEach(i=>document.getElementById(i).value='');
@@ -3559,6 +3622,7 @@ function saveOrgEdit(){
     node.name=name||node.name;
     node.title=title||node.title;
     if(photoData) node.photo=photoData;
+    orgSave();
     renderOrgChart();
     document.getElementById('org-edit-panel').style.display='none';
     photoInput.value='';
@@ -3578,6 +3642,7 @@ function deleteOrgBubble(){
   if(!confirm('Remove this member from the org chart?')) return;
   orgNodes=orgNodes.filter(n=>n.id!==id);
   orgLinks=orgLinks.filter(l=>l[0]!==id&&l[1]!==id);
+  orgSave();
   renderOrgChart();
   document.getElementById('org-edit-panel').style.display='none';
   showToast('Member removed');
@@ -4045,6 +4110,8 @@ const DB_KEYS = {
   coc:      'wl_coc_data',
   settings: 'wl_settings',
   goals:    'wl_goals_db',
+  orgNodes: 'wl_org_nodes',
+  orgLinks: 'wl_org_links',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -5194,6 +5261,22 @@ window.saveEditUser = function(){
     allUsers[idx].emergencyContact= document.getElementById('editEmergencyContact')?.value||allUsers[idx].emergencyContact||'';
     allUsers[idx].adminNotes      = document.getElementById('editAdminNotes')?.value||allUsers[idx].adminNotes||'';
     dbSet(DB_KEYS.users, allUsers);
+
+    // ── Sync name/title changes into org chart ──
+    const newName  = document.getElementById('editName')?.value.trim();
+    const newTitle = document.getElementById('editJobTitle')?.value.trim();
+    const oldName  = allUsers[idx].name;
+    if(newName || newTitle){
+      orgLoad();
+      // Match by stored id (if it was added via addUser) or by old name
+      const orgNode = orgNodes.find(n => n.id===uid || n.name===oldName);
+      if(orgNode){
+        if(newName)  orgNode.name  = newName;
+        if(newTitle) orgNode.title = newTitle;
+        orgSave();
+        if(document.getElementById('org-canvas')) renderOrgChart();
+      }
+    }
   }
   // Call original (handles name/email/role/password)
   _origSaveEditUser();
@@ -5351,6 +5434,8 @@ function collectNewUserCreds(){
 function populateManagerDropdownFull(){
   const sel = document.getElementById('newUserManager');
   if(!sel) return;
+  // Always load current saved org nodes so dropdown is up to date
+  orgLoad();
   // Combine orgNodes + DB users, de-duplicate by name
   const seenNames = new Set();
   const options = [{ value:'', label:'— None / Top Level —' }];
