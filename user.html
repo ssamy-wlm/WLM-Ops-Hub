@@ -1004,6 +1004,8 @@ async function doLogin(){
   if(found){
     errEl.style.display='none';
     currentUser = found;
+    // ── Persist session so refresh doesn't log out ──
+    try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
     logActivity('login', found.name||email, 'User signed in', found.title||'');
     if(found.mustChangePassword){
       showForcedPasswordChange();
@@ -1054,20 +1056,23 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  // Push updated password to cloud so admin sees "Active" status
+  // Push updated password to cloud so all devices see the updated password
   if(cloudIsConfigured() && btn){
     btn.textContent='Saving…'; btn.disabled=true;
     const cfg = getCloudConfig();
+    const admins = dbGet(DB_KEYS.admins)||[];
     try{
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body: JSON.stringify({users: allUsers})
+        body: JSON.stringify({users: allUsers, admins})
       });
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
   }
   logActivity('login', currentUser.name, 'User set new password (first login)', '');
+  // Save session so refresh keeps user logged in
+  try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
   document.getElementById('changePasswordScreen').style.display='none';
   showApp();
 }
@@ -1082,6 +1087,7 @@ function showApp(){
 function logout(){
   const name = currentUser?.name || 'User';
   logActivity('nav', name, 'Signed out', '');
+  try{ sessionStorage.removeItem('wl_user_session'); }catch(e){}
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');
@@ -1481,17 +1487,20 @@ async function changeUserPassword(){
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   showToast('Password updated ✓ — syncing…');
-  // Push to cloud
+  // Push to cloud (both users and admins)
   if(cloudIsConfigured()){
     const cfg=getCloudConfig();
+    const admins=dbGet(DB_KEYS.admins)||[];
     try{
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body:JSON.stringify({users:all})
+        body:JSON.stringify({users:all, admins})
       });
     }catch(e){}
   }
+  // Refresh session timestamp
+  try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
 }
 
 // ── MODALS ──
@@ -1696,6 +1705,35 @@ function renderUserCredVault(){
 function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // Render on page load if credentials section is active
+
+// ═══════════════════════════════════════════════════
+// SESSION PERSISTENCE — restore login on page refresh
+// ═══════════════════════════════════════════════════
+(function restoreUserSession(){
+  try{
+    const sess = sessionStorage.getItem('wl_user_session');
+    if(!sess) return;
+    const s = JSON.parse(sess);
+    const TTL = 12 * 60 * 60 * 1000; // 12 hours
+    if(!s.ts || (Date.now()-s.ts) > TTL){
+      sessionStorage.removeItem('wl_user_session'); return;
+    }
+    // Restore from local DB (cloud pull happens async below)
+    const allUsers = dbGet(DB_KEYS.users)||[];
+    const found = allUsers.find(u=>u.email.toLowerCase()===s.email.toLowerCase());
+    if(found){
+      currentUser = found;
+      // Refresh session timestamp
+      try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
+      document.addEventListener('DOMContentLoaded',()=>{
+        // If forced password change is still needed, show that screen
+        if(found.mustChangePassword){ showForcedPasswordChange(); }
+        else { showApp(); }
+      });
+    }
+  }catch(e){}
+})();
+
 document.addEventListener('DOMContentLoaded', ()=>{
   setTimeout(renderUserCredVault, 1000);
 });
