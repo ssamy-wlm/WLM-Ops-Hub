@@ -3394,20 +3394,17 @@ const orgColors = {
 // ── Default org chart data (used only when localStorage is empty) ──
 const ORG_NODES_DEFAULT = [
   {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                photo:null, level:'ceo',      x:406, y:30,  fixed:true},
-  {id:'sara',   name:'Sara Soliman',  title:'Director of Production',         photo:null, level:'director', x:160, y:170},
-  {id:'sarah',  name:'Sarah Samy',    title:'Director of Business Structure', photo:null, level:'director', x:650, y:170},
+  {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations', photo:null, level:'director', x:650, y:170},
   {id:'abby',   name:'Abby Conklin',  title:'Production Manager',             photo:null, level:'manager',  x:50,  y:320},
   {id:'emily',  name:'Emily Rovillo', title:'Creative Manager',               photo:null, level:'manager',  x:260, y:320},
   {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                        photo:null, level:'manager',  x:650, y:320},
   {id:'ahmed',  name:'Ahmed Nuhan',   title:'Content Creator',                photo:null, level:'member',   x:20,  y:460},
   {id:'neha',   name:'Neha',          title:'Web Developer',                  photo:null, level:'member',   x:150, y:460},
-  {id:'youssef',name:'Youssef Hamdy', title:'Social Media Specialist',        photo:null, level:'member',   x:260, y:460},
-  {id:'sam',    name:'Sam Raslan',    title:'SERVPRO & Lead Gen Specialist',  photo:null, level:'member',   x:650, y:460},
+  {id:'nadia',name:'Nadia Fahmey', title:'Marketing Specialist',        photo:null, level:'member',   x:260, y:460},
+  {id:'rania',    name:'Rania Morsy',    title:'SERVPRO & Lead Gen Specialist',  photo:null, level:'member',   x:650, y:460},
 ];
 const ORG_LINKS_DEFAULT = [
   ['david','sara'],['david','sarah'],
-  ['sara','abby'],['sara','emily'],
-  ['sarah','jacob'],
   ['abby','ahmed'],['abby','neha'],
   ['emily','youssef'],
   ['jacob','sam'],
@@ -3700,14 +3697,6 @@ window.switchAdminTab = function(el, tab){
 // ═══════════════════════════════════════════════════════════════
 // CLIENT MODULE — Data + Logic
 // ═══════════════════════════════════════════════════════════════
-
-// ── Sample team roster (mirrors admin users) ──
-const TEAM_ROSTER = [
-  {id:'u1', name:'Jamie Soto',   initials:'JS', color:'#2D6BB6', hours:40},
-  {id:'u2', name:'Marcus Lee',   initials:'ML', color:'#2e9e6e', hours:40},
-  {id:'u3', name:'Sofia Reyes',  initials:'SR', color:'#d97706', hours:20},
-  {id:'u4', name:'Dani Okafor',  initials:'DO', color:'#e05555', hours:40},
-];
 
 // ── In-memory client store ──
 let clientDB = [
@@ -4187,39 +4176,42 @@ function seedStaticUsers(){
 }
 
 // Override the existing doLogin to log activity and check stored users
-const _originalDoLogin = window.doLogin;
 window.doLogin = async function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
-  const btn = document.querySelector('#loginScreen .btn-primary');
+  const errEl = document.getElementById('loginError');
+  const btn   = document.querySelector('#loginScreen .btn-primary');
+  if(!email||!pass){ errEl.style.display='block'; return; }
+
+  // ── Check hardcoded admin FIRST (no cloud needed) ──
+  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567', name:'Sarah Samy'}];
+  const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
+  if(hardcodedAdmin){
+    errEl.style.display='none';
+    currentRole='admin';
+    logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
+    showAdminApp();
+    return;
+  }
+
+  // ── For all other logins, sync from cloud first ──
   if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
   errEl.style.display='none';
   if(cloudIsConfigured()){ await cloudPullUsers(true); }
   if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
 
-  const errEl = document.getElementById('loginError');
-  if(!email||!pass){ errEl.style.display='block'; return; }
-
-  // Primary hardcoded admin
-  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567', name:'Sarah Samy'}];
-  const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
-
-  // Dynamic admins stored in localStorage
+  // Dynamic admins (synced from cloud)
   const storedAdmins = dbGet(DB_KEYS.admins)||[];
   const dynamicAdmin = storedAdmins.find(a => a.email===email && a.password===pass);
-
-  const matchedAdmin = hardcodedAdmin || dynamicAdmin;
-  if(matchedAdmin){
+  if(dynamicAdmin){
     errEl.style.display='none';
     currentRole='admin';
-    const adminName = matchedAdmin.name || 'Admin';
-    logActivity('login',`Admin (${adminName})`,'Admin signed in','admin panel');
+    logActivity('login',`Admin (${dynamicAdmin.name||'Admin'})`,'Admin signed in','admin panel');
     showAdminApp();
     return;
   }
-
-  // Check stored users — require valid credentials, no fallback
-  const storedUsers = dbGet(DB_KEYS.users) || [];
+  // Stored users (synced from cloud)
+  const storedUsers = dbGet(DB_KEYS.users)||[];
   const storedUser = storedUsers.find(u => u.email.toLowerCase()===email && u.password===pass);
   if(storedUser){
     errEl.style.display='none';
@@ -4229,7 +4221,6 @@ window.doLogin = async function(){
     showUserApp();
     return;
   }
-
   errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
   errEl.style.display='block';
 };
