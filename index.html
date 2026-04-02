@@ -2614,6 +2614,7 @@ function showAdminApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('adminApp').classList.add('visible');
   document.getElementById('userApp').classList.remove('visible');
+  try{ sessionStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
 }
 
 function showUserApp(){
@@ -2633,6 +2634,7 @@ function logout(){
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('userApp').classList.remove('visible');
   document.getElementById('adminApp').classList.remove('visible');
+  try{ sessionStorage.removeItem('wl_admin_session'); }catch(e){}
 }
 
 function initUserApp(){
@@ -4186,9 +4188,15 @@ function seedStaticUsers(){
 
 // Override the existing doLogin to log activity and check stored users
 const _originalDoLogin = window.doLogin;
-window.doLogin = function(){
+window.doLogin = async function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
+  const btn = document.querySelector('#loginScreen .btn-primary');
+  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
+  errEl.style.display='none';
+  if(cloudIsConfigured()){ await cloudPullUsers(true); }
+  if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+
   const errEl = document.getElementById('loginError');
   if(!email||!pass){ errEl.style.display='block'; return; }
 
@@ -6015,7 +6023,25 @@ window.openAddAdminModal = function(){
   _origOpenAddAdminModal();
   _populateAdminLevelSelect();
 };
-
+(function restoreAdminSession(){
+  try{
+    const sess = sessionStorage.getItem('wl_admin_session');
+    if(!sess) return;
+    const s = JSON.parse(sess);
+    const TTL = 12 * 60 * 60 * 1000;
+    if(!s.ts || (Date.now()-s.ts) > TTL){
+      sessionStorage.removeItem('wl_admin_session'); return;
+    }
+    if(s.role === 'admin'){
+      sessionStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
+      document.addEventListener('DOMContentLoaded', ()=>{
+        document.getElementById('loginScreen').style.display='none';
+        document.getElementById('adminApp').classList.add('visible');
+        document.getElementById('userApp').classList.remove('visible');
+      });
+    }
+  }catch(e){}
+})();
 </script>
 </body>
 </html>
