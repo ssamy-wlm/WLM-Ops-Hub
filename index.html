@@ -3217,6 +3217,9 @@ function changeAdminPassword(){
   if(!cur){showToast('Please enter your current password');return;}
   if(!nw||nw.length<8){showToast('New password must be at least 8 characters');return;}
   if(nw!==conf){showToast('Passwords do not match');return;}
+  const storedPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  if(cur!==storedPw){showToast('Current password is incorrect');return;}
+  localStorage.setItem('wl_primary_admin_pw', nw);
   ['adminCurPw','adminNewPw','adminConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   showToast('Admin password updated successfully ✓');
 }
@@ -4184,7 +4187,8 @@ window.doLogin = async function(){
   if(!email||!pass){ errEl.style.display='block'; return; }
 
   // ── Check hardcoded admin FIRST (no cloud needed) ──
-  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567', name:'Sarah Samy'}];
+  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:_primaryPw, name:'Sarah Samy'}];
   const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
   if(hardcodedAdmin){
     errEl.style.display='none';
