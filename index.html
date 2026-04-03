@@ -2614,7 +2614,7 @@ function showAdminApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('adminApp').classList.add('visible');
   document.getElementById('userApp').classList.remove('visible');
-  try{ sessionStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
 }
 
 function showUserApp(){
@@ -2634,7 +2634,7 @@ function logout(){
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('userApp').classList.remove('visible');
   document.getElementById('adminApp').classList.remove('visible');
-  try{ sessionStorage.removeItem('wl_admin_session'); }catch(e){}
+  try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
 }
 
 function initUserApp(){
@@ -4650,7 +4650,7 @@ function renderAdminReportsFromDB(){
 const _origSwitchAdmin3 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdmin3(el, tab);
-  if(tab==='reports') setTimeout(renderAdminReportsFromDB, 100);
+  // reports tab handled by loadAdminReportsTab (see below)
 };
 
 // ── Init on page load ──
@@ -6033,15 +6033,15 @@ window.openAddAdminModal = function(){
 };
 (function restoreAdminSession(){
   try{
-    const sess = sessionStorage.getItem('wl_admin_session');
+    const sess = localStorage.getItem('wl_admin_session');
     if(!sess) return;
     const s = JSON.parse(sess);
     const TTL = 12 * 60 * 60 * 1000;
     if(!s.ts || (Date.now()-s.ts) > TTL){
-      sessionStorage.removeItem('wl_admin_session'); return;
+      localStorage.removeItem('wl_admin_session'); return;
     }
     if(s.role === 'admin'){
-      sessionStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
+      localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
       document.addEventListener('DOMContentLoaded', ()=>{
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
