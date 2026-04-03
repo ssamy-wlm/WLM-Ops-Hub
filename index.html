@@ -3739,6 +3739,18 @@ let selectedClientColor = '#2D6BB6';
 let activeClientId = null;
 let activeProjectId = null;
 
+const _ROSTER_COLORS=['#2D6BB6','#9333ea','#e05555','#16a34a','#d97706','#0891b2','#7c3aed'];
+function buildTeamRoster(){
+  return (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active').map((u,i)=>({
+    id:u.id,
+    name:u.name,
+    initials:u.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(),
+    color:_ROSTER_COLORS[i%_ROSTER_COLORS.length],
+    hours:40
+  }));
+}
+let TEAM_ROSTER=buildTeamRoster();
+
 // ── Render client grid ──
 function renderClientGrid(list){
   list = list || clientDB;
@@ -3974,6 +3986,7 @@ function selectClientColor(el){
 // ── Project CRUD ──
 function openProjectModal(clientId, projId){
   const c=clientDB.find(x=>x.id===clientId);if(!c)return;
+  TEAM_ROSTER=buildTeamRoster();
   document.getElementById('projectModalTitle').textContent = projId ? 'Edit Project' : 'New Project';
   document.getElementById('projectModalSub').textContent = c.name;
   document.getElementById('proj-client-id').value=clientId;
