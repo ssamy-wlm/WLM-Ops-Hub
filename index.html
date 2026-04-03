@@ -2614,7 +2614,7 @@ function showAdminApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('adminApp').classList.add('visible');
   document.getElementById('userApp').classList.remove('visible');
-  try{ sessionStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
 }
 
 function showUserApp(){
@@ -2634,7 +2634,7 @@ function logout(){
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('userApp').classList.remove('visible');
   document.getElementById('adminApp').classList.remove('visible');
-  try{ sessionStorage.removeItem('wl_admin_session'); }catch(e){}
+  try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
 }
 
 function initUserApp(){
@@ -3217,6 +3217,9 @@ function changeAdminPassword(){
   if(!cur){showToast('Please enter your current password');return;}
   if(!nw||nw.length<8){showToast('New password must be at least 8 characters');return;}
   if(nw!==conf){showToast('Passwords do not match');return;}
+  const storedPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  if(cur!==storedPw){showToast('Current password is incorrect');return;}
+  localStorage.setItem('wl_primary_admin_pw', nw);
   ['adminCurPw','adminNewPw','adminConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   showToast('Admin password updated successfully ✓');
 }
@@ -3736,6 +3739,18 @@ let selectedClientColor = '#2D6BB6';
 let activeClientId = null;
 let activeProjectId = null;
 
+const _ROSTER_COLORS=['#2D6BB6','#9333ea','#e05555','#16a34a','#d97706','#0891b2','#7c3aed'];
+function buildTeamRoster(){
+  return (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active').map((u,i)=>({
+    id:u.id,
+    name:u.name,
+    initials:u.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(),
+    color:_ROSTER_COLORS[i%_ROSTER_COLORS.length],
+    hours:40
+  }));
+}
+let TEAM_ROSTER=buildTeamRoster();
+
 // ── Render client grid ──
 function renderClientGrid(list){
   list = list || clientDB;
@@ -3971,6 +3986,7 @@ function selectClientColor(el){
 // ── Project CRUD ──
 function openProjectModal(clientId, projId){
   const c=clientDB.find(x=>x.id===clientId);if(!c)return;
+  TEAM_ROSTER=buildTeamRoster();
   document.getElementById('projectModalTitle').textContent = projId ? 'Edit Project' : 'New Project';
   document.getElementById('projectModalSub').textContent = c.name;
   document.getElementById('proj-client-id').value=clientId;
@@ -4184,7 +4200,8 @@ window.doLogin = async function(){
   if(!email||!pass){ errEl.style.display='block'; return; }
 
   // ── Check hardcoded admin FIRST (no cloud needed) ──
-  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:'1234567', name:'Sarah Samy'}];
+  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:_primaryPw, name:'Sarah Samy'}];
   const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
   if(hardcodedAdmin){
     errEl.style.display='none';
@@ -4633,7 +4650,7 @@ function renderAdminReportsFromDB(){
 const _origSwitchAdmin3 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdmin3(el, tab);
-  if(tab==='reports') setTimeout(renderAdminReportsFromDB, 100);
+  // reports tab handled by loadAdminReportsTab (see below)
 };
 
 // ── Init on page load ──
@@ -6016,15 +6033,15 @@ window.openAddAdminModal = function(){
 };
 (function restoreAdminSession(){
   try{
-    const sess = sessionStorage.getItem('wl_admin_session');
+    const sess = localStorage.getItem('wl_admin_session');
     if(!sess) return;
     const s = JSON.parse(sess);
     const TTL = 12 * 60 * 60 * 1000;
     if(!s.ts || (Date.now()-s.ts) > TTL){
-      sessionStorage.removeItem('wl_admin_session'); return;
+      localStorage.removeItem('wl_admin_session'); return;
     }
     if(s.role === 'admin'){
-      sessionStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
+      localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
       document.addEventListener('DOMContentLoaded', ()=>{
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
