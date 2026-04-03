@@ -3752,7 +3752,7 @@ function buildTeamRoster(){
     hours:40
   }));
 }
-let TEAM_ROSTER=buildTeamRoster();
+let TEAM_ROSTER=[]; // populated lazily in openProjectModal once DB_KEYS is defined
 
 // ── Render client grid ──
 function renderClientGrid(list){
