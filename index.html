@@ -77,7 +77,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .nav-item .ni{font-size:16px;flex-shrink:0;width:20px;text-align:center;}
 .sidebar-user{padding:14px 16px;border-top:1px solid var(--border);}
 .sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
-.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--text),var(--gold));display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2D6BB6,#87ABD5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
 .avatar img{width:100%;height:100%;object-fit:cover;}
 .su-name{font-size:13px;font-weight:700;color:var(--text-dark);line-height:1.2;}
 .su-role{font-size:10.5px;color:var(--text-light);}
@@ -5048,12 +5048,14 @@ function refreshArchive(){
     if(!archives.length){
       userList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No archived users. Deleted users will appear here with all their data preserved.</div>';
     } else {
-      userList.innerHTML = archives.map(u=>{
+      const _archPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
+      userList.innerHTML = archives.map((u,i)=>{
         const arDate = u.archivedAt ? new Date(u.archivedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
         const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+        const _ac=_archPalette[i%_archPalette.length];
         return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border);">
           <div style="display:flex;align-items:center;gap:12px;">
-            <div class="avatar" style="background:linear-gradient(135deg,#94a3b8,#64748b);">${initials}</div>
+            <div class="avatar" style="background:${_ac};">${initials}</div>
             <div>
               <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${u.name||'Unknown'}</div>
               <div style="font-size:12px;color:var(--text-light);">${u.email||'—'} · ${u.title||''}</div>
@@ -5184,11 +5186,13 @@ function initPayroll(){
     container.innerHTML='<div style="font-size:13px;color:var(--text-light);">No users in system yet. Add users first.</div>';
     return;
   }
-  container.innerHTML = allUsers.map(u=>{
+  const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
+  container.innerHTML = allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+    const _pc=_payPalette[i%_payPalette.length];
     return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" style="display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
-      <div class="avatar" style="width:34px;height:34px;font-size:12px;">${initials}</div>
+      <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${u.name}</div>
         <div style="font-size:11px;color:var(--text-light);">$${rate}/hr · ${u.title||u.role||''}</div>
