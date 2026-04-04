@@ -288,6 +288,11 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <button onclick="togglePwVis('loginPassword',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-light);line-height:1;">👁</button>
       </div>
     </div>
+    <div id="workspaceSetup" style="display:none;padding:12px 14px;background:rgba(250,194,49,.07);border:1px solid rgba(250,194,49,.35);border-radius:10px;margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">🔗 First-Time Setup — Workspace Code</div>
+      <div style="font-size:11px;color:var(--text-mid);margin-bottom:8px;">Enter the Workspace Code your admin shared with you. You only need this once.</div>
+      <input class="form-input" type="text" id="workspaceCode" placeholder="e.g. 66a1b2c3d4e5f6a7b8c9d0e1" style="font-size:13px;font-family:monospace;letter-spacing:.04em;">
+    </div>
     <div id="loginError" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:8px;">❌ Incorrect email or password. Please try again.</div>
     <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">Sign In →</button>
     </div>
@@ -929,17 +934,30 @@ function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(ke
 
 // ── Cloud config (shared with admin panel via localStorage) ──
 const CLOUD_CFG_KEY = 'wl_cloud_config';
+const WORKSPACE_CODE_KEY = 'wl_workspace_code';
 function getCloudConfig(){ return dbGet(CLOUD_CFG_KEY)||{apiKey:'',binId:''}; }
-function cloudIsConfigured(){ const c=getCloudConfig(); return !!(c.apiKey&&c.binId); }
-
-// Fetch latest users from JSONBin, update localStorage, return array (or null on failure)
-async function cloudFetchUsers(){
+function getWorkspaceBinId(){
+  // Use full cloud config binId if available, otherwise fall back to workspace code
   const cfg = getCloudConfig();
-  if(!cfg.apiKey||!cfg.binId) return null;
+  if(cfg.binId) return cfg.binId;
+  return localStorage.getItem(WORKSPACE_CODE_KEY)||'';
+}
+function cloudIsConfigured(){
+  // Configured if we have either full cloud config OR a workspace code
+  const c=getCloudConfig();
+  if(c.apiKey&&c.binId) return true;
+  return !!(localStorage.getItem(WORKSPACE_CODE_KEY));
+}
+
+// Fetch latest users from JSONBin — works with full config OR public bin + workspace code
+async function cloudFetchUsers(){
+  const binId = getWorkspaceBinId();
+  if(!binId) return null;
+  const cfg = getCloudConfig();
   try{
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{
-      headers:{'X-Master-Key': cfg.apiKey}
-    });
+    // Try with API key first (more reliable), fall back to public read if no key
+    const headers = cfg.apiKey ? {'X-Master-Key': cfg.apiKey} : {};
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
     if(!res.ok) return null;
     const data = await res.json();
     const users = data?.record?.users;
@@ -970,6 +988,14 @@ let myGoals = [];
 // ADMIN CREDENTIALS (to block admin from logging in here)
 const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
 
+// Show workspace setup field if no cloud configured on this device
+function checkWorkspaceSetup(){
+  const setupEl = document.getElementById('workspaceSetup');
+  if(!setupEl) return;
+  const hasBin = !!(getWorkspaceBinId());
+  setupEl.style.display = hasBin ? 'none' : 'block';
+}
+
 // ── LOGIN ──
 async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -977,6 +1003,11 @@ async function doLogin(){
   const errEl = document.getElementById('loginError');
   const btn   = document.querySelector('#loginScreen .btn-primary');
   if(!email||!pass){ errEl.style.display='block'; return; }
+
+  // Save workspace code if entered
+  const wcField = document.getElementById('workspaceCode');
+  const wcVal = (wcField?.value||'').trim();
+  if(wcVal) localStorage.setItem(WORKSPACE_CODE_KEY, wcVal);
 
   // Block admin accounts
   if(ADMIN_CREDS.some(c=>c.email===email && c.password===pass)){
@@ -988,7 +1019,7 @@ async function doLogin(){
   if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
   errEl.style.display='none';
 
-  // 1. Try to fetch latest user list from cloud (if configured)
+  // 1. Try to fetch latest user list from cloud / workspace
   let users = null;
   if(cloudIsConfigured()){
     users = await cloudFetchUsers(); // updates localStorage on success
@@ -1005,8 +1036,8 @@ async function doLogin(){
   if(found){
     errEl.style.display='none';
     currentUser = found;
-    // ── Persist session so refresh doesn't log out ──
-    try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
+    // ── Persist session across refreshes ──
+    try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
     logActivity('login', found.name||email, 'User signed in', found.title||'');
     if(found.mustChangePassword){
       showForcedPasswordChange();
@@ -1016,8 +1047,12 @@ async function doLogin(){
     return;
   }
 
+  // If login failed and we had a workspace code entered, clear it so user can try again
+  if(wcVal){ localStorage.removeItem(WORKSPACE_CODE_KEY); if(wcField) wcField.value=''; }
+
   errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
   errEl.style.display='block';
+  checkWorkspaceSetup();
 }
 
 function showForcedPasswordChange(){
@@ -1073,7 +1108,7 @@ async function submitForcedPasswordChange(){
   }
   logActivity('login', currentUser.name, 'User set new password (first login)', '');
   // Save session so refresh keeps user logged in
-  try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
   document.getElementById('changePasswordScreen').style.display='none';
   showApp();
 }
@@ -1088,7 +1123,7 @@ function showApp(){
 function logout(){
   const name = currentUser?.name || 'User';
   logActivity('nav', name, 'Signed out', '');
-  try{ sessionStorage.removeItem('wl_user_session'); }catch(e){}
+  try{ localStorage.removeItem('wl_user_session'); }catch(e){}
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');
@@ -1501,7 +1536,7 @@ async function changeUserPassword(){
     }catch(e){}
   }
   // Refresh session timestamp
-  try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
 }
 
 // ── MODALS ──
@@ -1712,12 +1747,12 @@ function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 // ═══════════════════════════════════════════════════
 (function restoreUserSession(){
   try{
-    const sess = sessionStorage.getItem('wl_user_session');
+    const sess = localStorage.getItem('wl_user_session');
     if(!sess) return;
     const s = JSON.parse(sess);
     const TTL = 12 * 60 * 60 * 1000; // 12 hours
     if(!s.ts || (Date.now()-s.ts) > TTL){
-      sessionStorage.removeItem('wl_user_session'); return;
+      localStorage.removeItem('wl_user_session'); return;
     }
     // Restore from local DB (cloud pull happens async below)
     const allUsers = dbGet(DB_KEYS.users)||[];
@@ -1725,7 +1760,7 @@ function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
     if(found){
       currentUser = found;
       // Refresh session timestamp
-      try{ sessionStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
+      try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
       document.addEventListener('DOMContentLoaded',()=>{
         // If forced password change is still needed, show that screen
         if(found.mustChangePassword){ showForcedPasswordChange(); }
@@ -1737,6 +1772,7 @@ function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 
 document.addEventListener('DOMContentLoaded', ()=>{
   setTimeout(renderUserCredVault, 1000);
+  checkWorkspaceSetup();
 });
 
 </script>

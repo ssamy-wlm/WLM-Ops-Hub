@@ -1125,6 +1125,43 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </tbody>
         </table>
       </div>
+
+      <!-- ── CLOUD SYNC ── -->
+      <div class="card" style="margin-top:22px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">☁️ Cloud Sync &amp; Cross-Device Login</div>
+            <div class="card-sub">Sync users to JSONBin so team members can log in from any device</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm btn-outline" onclick="cloudPullUsers()">↓ Pull</button>
+            <button class="btn btn-sm btn-primary" onclick="cloudPushUsers()">↑ Push to Cloud</button>
+            <button class="btn btn-sm btn-outline" id="cloudConfigToggleBtn" onclick="toggleCloudConfig()">⚙ Configure</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="cloudSyncStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">☁️ Checking status…</div>
+          <!-- Workspace code display -->
+          <div id="workspaceCodeDisplay" style="display:none;padding:10px 14px;background:rgba(250,194,49,.09);border:1px solid rgba(250,194,49,.4);border-radius:10px;margin-bottom:12px;">
+            <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Workspace Code (share with your team)</div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <code id="workspaceCodeVal" style="font-size:14px;font-weight:700;color:var(--text-dark);background:var(--bg);padding:6px 10px;border-radius:6px;border:1px solid var(--border);flex:1;"></code>
+              <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(document.getElementById('workspaceCodeVal').textContent).then(()=>showToast('Workspace Code copied ✓'))">Copy</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-light);margin-top:6px;">Team members enter this code once on their first login. Make sure your JSONBin bin is set to <strong>Public</strong>.</div>
+          </div>
+          <!-- Config panel -->
+          <div id="cloudConfigPanel" style="display:none;padding:14px;background:var(--bg);border-radius:10px;border:1px solid var(--border);">
+            <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">JSONBin.io Configuration</div>
+            <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;">Don't have a JSONBin account? <a href="https://jsonbin.io" target="_blank" style="color:var(--text);">Sign up free at jsonbin.io</a> → Create a bin → Copy the Master API Key and Bin ID. <strong>Set the bin to Public</strong> so team members can read it.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+              <div><label class="form-label">Master API Key</label><input class="form-input" id="cloudApiKey" type="password" placeholder="$2a$10$…" style="font-size:13px;"></div>
+              <div><label class="form-label">Bin ID</label><input class="form-input" id="cloudBinId" type="text" placeholder="66a1b2c3d4e5f6a7b8c9d0e1" style="font-size:13px;font-family:monospace;"></div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveCloudConfig()">Save Configuration</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- All Reports -->
@@ -1383,6 +1420,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
           <div class="form-group" style="margin:0"><label class="form-label">Color Tag</label>
             <input type="color" id="pf-color" value="#2D6BB6" style="width:100%;height:38px;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:2px;">
+          </div>
+          <div class="form-group" style="margin:0;grid-column:1/-1">
+            <label class="form-label">Progress — <span id="pf-progress-val">0</span>%</label>
+            <input type="range" id="pf-progress" min="0" max="100" step="5" value="0" style="width:100%;accent-color:var(--text);" oninput="document.getElementById('pf-progress-val').textContent=this.value">
           </div>
           <div class="form-group" style="margin:0;grid-column:1/-1"><label class="form-label">Assigned Users</label>
             <div id="pf-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;"></div>
@@ -4012,12 +4053,16 @@ function openProjectModal(clientId, projId){
     document.getElementById('pf-priority').value=p.priority;
     document.getElementById('pf-color').value=p.color;
     document.getElementById('pf-desc').value=p.desc||'';
+    const pfp=document.getElementById('pf-progress');
+    if(pfp){pfp.value=p.progress||0;document.getElementById('pf-progress-val').textContent=p.progress||0;}
     p.users.forEach(uid=>{ const cb=document.getElementById('pf-u-'+uid); if(cb) cb.checked=true; });
   } else {
     ['pf-name','pf-start','pf-due','pf-desc'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('pf-status').value='not-started';
     document.getElementById('pf-priority').value='medium';
     document.getElementById('pf-color').value='#2D6BB6';
+    const pfp=document.getElementById('pf-progress');
+    if(pfp){pfp.value=0;document.getElementById('pf-progress-val').textContent=0;}
   }
   openModal('projectModal');
 }
@@ -4029,6 +4074,7 @@ function saveProject(){
   if(!name){showToast('Project name is required');return;}
   const c=clientDB.find(x=>x.id===clientId);if(!c)return;
   const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
+  const progressVal=parseInt(document.getElementById('pf-progress')?.value||0,10);
   const data={
     name, type:document.getElementById('pf-type').value,
     status:document.getElementById('pf-status').value,
@@ -4037,13 +4083,14 @@ function saveProject(){
     priority:document.getElementById('pf-priority').value,
     color:document.getElementById('pf-color').value,
     desc:document.getElementById('pf-desc').value,
+    progress:progressVal,
     users
   };
   if(editId){
     const p=c.projects.find(x=>x.id===editId);
     if(p) Object.assign(p,data);
   } else {
-    c.projects.push({id:'p'+Date.now(),...data,progress:0,progressLog:[],milestones:[],subprojects:[]});
+    c.projects.push({id:'p'+Date.now(),...data,progressLog:[],milestones:[],subprojects:[]});
   }
   closeModal('projectModal');
   renderClientGrid();
@@ -4838,13 +4885,20 @@ function setCloudStatus(msg, type='idle'){
 function updateCloudStatusUI(){
   const cfg = getCloudConfig();
   const lastSync = localStorage.getItem('wl_cloud_last_sync');
+  const wcdEl = document.getElementById('workspaceCodeDisplay');
+  const wcvEl = document.getElementById('workspaceCodeVal');
   if(!cfg.apiKey || !cfg.binId){
-    setCloudStatus('Not configured — enter your API key &amp; Bin ID below to enable cross-device sync.','idle');
+    setCloudStatus('Not configured — click ⚙ Configure to set up cross-device login.','idle');
+    if(wcdEl) wcdEl.style.display='none';
   } else if(lastSync){
     const d = new Date(lastSync);
-    setCloudStatus(`Last synced: ${d.toLocaleString()} · Bin ID: ${cfg.binId.slice(0,8)}…`, 'ok');
+    setCloudStatus(`✅ Last synced: ${d.toLocaleString()}`, 'ok');
+    if(wcdEl) wcdEl.style.display='block';
+    if(wcvEl) wcvEl.textContent=cfg.binId;
   } else {
-    setCloudStatus(`Configured · Bin ID: ${cfg.binId.slice(0,8)}… · Not yet synced`, 'idle');
+    setCloudStatus(`☁️ Configured — click "↑ Push to Cloud" to sync your users now.`, 'idle');
+    if(wcdEl) wcdEl.style.display='block';
+    if(wcvEl) wcvEl.textContent=cfg.binId;
   }
 }
 
@@ -5245,13 +5299,31 @@ function savePayrollWeek(){
     total+=pay;
     entries.push({userId:uid,name:u.name,hours,rate,pay});
   });
-  const record={id:Date.now(),weekStart:mon.toISOString().slice(0,10),weekEnd:fri.toISOString().slice(0,10),entries,total,savedAt:new Date().toISOString(),savedBy:'Admin'};
-  const saved=dbGet('wl_saved_payrolls')||[];
-  saved.unshift(record);
+  const weekStart=mon.toISOString().slice(0,10);
+  const weekEnd=fri.toISOString().slice(0,10);
+  const record={id:Date.now(),weekStart,weekEnd,entries,total,savedAt:new Date().toISOString(),savedBy:'Admin'};
+  let saved=dbGet('wl_saved_payrolls')||[];
+  // Replace existing record for same week instead of adding a duplicate
+  const existIdx=saved.findIndex(p=>p.weekStart===weekStart&&p.weekEnd===weekEnd);
+  if(existIdx>-1){
+    record.id=saved[existIdx].id; // keep original id
+    saved[existIdx]=record;
+    showToast('Payroll updated ✓ — $'+total.toFixed(2)+' total (previous save replaced)');
+  } else {
+    saved.unshift(record);
+    showToast('Payroll week saved ✓ — $'+total.toFixed(2)+' total');
+  }
   dbSet('wl_saved_payrolls',saved.slice(0,52)); // keep 1 year
   renderSavedPayrolls();
-  showToast('Payroll week saved ✓ — $'+total.toFixed(2)+' total');
-  logActivity('admin','Admin','Saved payroll for week of '+record.weekStart,'$'+total.toFixed(2));
+  logActivity('admin','Admin','Saved payroll for week of '+weekStart,'$'+total.toFixed(2));
+}
+
+function deletePayrollRecord(id){
+  if(!confirm('Delete this saved payroll record?')) return;
+  const saved=(dbGet('wl_saved_payrolls')||[]).filter(p=>p.id!==id);
+  dbSet('wl_saved_payrolls',saved);
+  renderSavedPayrolls();
+  showToast('Payroll record deleted');
 }
 
 function renderSavedPayrolls(){
@@ -5265,7 +5337,10 @@ function renderSavedPayrolls(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div><div style="font-size:13px;font-weight:700;color:var(--text-dark);">Week ${p.weekStart} → ${p.weekEnd}</div>
         <div style="font-size:11px;color:var(--text-light);">Saved ${new Date(p.savedAt).toLocaleDateString()}</div></div>
-        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${p.total.toFixed(2)}</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${p.total.toFixed(2)}</div>
+          <button class="btn btn-sm btn-danger" onclick="deletePayrollRecord(${p.id})" title="Delete this record" style="font-size:11px;padding:4px 10px;">✕ Delete</button>
+        </div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No hours logged</span>'}</div>
     </div>`;
