@@ -4768,14 +4768,17 @@ function filterAdminReports(){
   renderAdminReportsTable(filtered);
 }
 
+let _renderedEodReports = [];
+
 function renderAdminReportsTable(eods){
   const tbody=document.getElementById('adminReportsBody');
   if(!tbody) return;
-  if(!eods.length){
+  _renderedEodReports = eods.slice(0,100);
+  if(!_renderedEodReports.length){
     tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-light);">No reports found.</td></tr>';
     return;
   }
-  tbody.innerHTML=eods.slice(0,100).map(e=>{
+  tbody.innerHTML=_renderedEodReports.map((e,idx)=>{
     const taskLines=(e.tasks||'').split('\n').filter(Boolean).length||0;
     const hasIssue=e.issues&&e.issues.trim().length>0;
     const rating=(e.rating||'').substring(0,4);
@@ -4787,13 +4790,13 @@ function renderAdminReportsTable(eods){
       <td>${hasIssue?'<span class="status-badge badge-pending">⚠ Yes</span>':'<span style="color:var(--text-light);font-size:12px;">None</span>'}</td>
       <td style="font-size:12px;">${rating||'—'}</td>
       <td><span class="cred-status cred-set">Submitted</span></td>
-      <td><button class="btn btn-sm btn-outline" onclick="viewEODReport(${e.id})" style="font-size:11px;">👁 View</button></td>
+      <td><button class="btn btn-sm btn-outline" onclick="viewEODReport(${idx})" style="font-size:11px;">👁 View</button></td>
     </tr>`;
   }).join('');
 }
 
-function viewEODReport(id){
-  const e=_allEodReports.find(x=>x.id===id);
+function viewEODReport(idx){
+  const e=_renderedEodReports[idx];
   if(!e){showToast('Report not found');return;}
   document.getElementById('eodViewerTitle').textContent='EOD Report — '+e.user;
   document.getElementById('eodViewerSub').textContent=e.date+' · Submitted '+(e.submittedAt?new Date(e.submittedAt).toLocaleString():e.date);
