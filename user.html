@@ -935,12 +935,13 @@ function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(ke
 // ── Cloud config (shared with admin panel via localStorage) ──
 const CLOUD_CFG_KEY = 'wl_cloud_config';
 const WORKSPACE_CODE_KEY = 'wl_workspace_code';
+const _DEFAULT_BIN = '69d0c6bfaaba882197c311e7'; // WLM JSONBin public bin
 function getCloudConfig(){ return dbGet(CLOUD_CFG_KEY)||{apiKey:'',binId:''}; }
 function getWorkspaceBinId(){
-  // Use full cloud config binId if available, otherwise fall back to workspace code
+  // Use full cloud config binId if available, otherwise workspace code, otherwise default bin
   const cfg = getCloudConfig();
   if(cfg.binId) return cfg.binId;
-  return localStorage.getItem(WORKSPACE_CODE_KEY)||'';
+  return localStorage.getItem(WORKSPACE_CODE_KEY)||_DEFAULT_BIN;
 }
 function cloudIsConfigured(){
   // Configured if we have either full cloud config OR a workspace code
@@ -988,12 +989,11 @@ let myGoals = [];
 // ADMIN CREDENTIALS (to block admin from logging in here)
 const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
 
-// Show workspace setup field if no cloud configured on this device
+// Show workspace setup field only if no bin is available (always hidden now — default bin is hardcoded)
 function checkWorkspaceSetup(){
   const setupEl = document.getElementById('workspaceSetup');
   if(!setupEl) return;
-  const hasBin = !!(getWorkspaceBinId());
-  setupEl.style.display = hasBin ? 'none' : 'block';
+  setupEl.style.display = 'none'; // default bin is always available
 }
 
 // ── LOGIN ──

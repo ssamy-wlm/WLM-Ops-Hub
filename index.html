@@ -4984,6 +4984,16 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;
   }
+  // Pre-configure cloud credentials if not already set
+  (function seedCloudConfig(){
+    const existing = getCloudConfig();
+    if(!existing.apiKey || !existing.binId){
+      dbSet(CLOUD_CFG_KEY,{
+        apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
+        binId:'69d0c6bfaaba882197c311e7'
+      });
+    }
+  })();
   // Update cloud sync status badge
   updateCloudStatusUI();
   // Auto-pull on load if cloud is configured (get latest from cloud)
