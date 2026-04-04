@@ -514,10 +514,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div>
             <div class="card" style="margin-bottom:14px;">
               <div class="card-header"><div class="card-title">Chain of Command</div></div>
-              <div class="card-body">
+              <div class="card-body" id="admin-ops-coc-display">
                 <div class="coc-item"><div class="coc-icon">💲</div><div><div class="coc-role">Billing / Payments</div><div class="coc-name">Jacob Joslin</div></div></div>
                 <div class="coc-item"><div class="coc-icon">👥</div><div><div class="coc-role">Daily Ops</div><div class="coc-name">Sarah Samy</div></div></div>
-                <div class="coc-item"><div class="coc-icon">💻</div><div><div class="coc-role">Tech / Design / Web</div><div class="coc-name">Sarah Soliman</div></div></div>
                 <div class="coc-item urgent-coc"><div class="coc-icon" style="background:var(--red)">⚡</div><div><div class="coc-role">Urgent Issues</div><div class="coc-name">David Joslin</div></div></div>
               </div>
             </div>
@@ -899,7 +898,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="card-body" id="biz-coc-display">
             <div class="coc-item"><div class="coc-icon">💲</div><div><div class="coc-role">Billing / Payments</div><div class="coc-name">Jacob Joslin</div></div></div>
             <div class="coc-item"><div class="coc-icon">👥</div><div><div class="coc-role">Daily Ops</div><div class="coc-name">Sarah Samy</div></div></div>
-            <div class="coc-item"><div class="coc-icon">💻</div><div><div class="coc-role">Tech / Design / Web</div><div class="coc-name">Sarah Soliman</div></div></div>
             <div class="coc-item urgent-coc"><div class="coc-icon" style="background:var(--red)">⚡</div><div><div class="coc-role">Urgent Issues</div><div class="coc-name">David Joslin</div></div></div>
           </div>
         </div>
@@ -1639,11 +1637,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove();renderCOCPreview()">✕</button>
             </div>
             <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-              <div class="form-group" style="margin:0"><label class="form-label">Role / Area</label><input class="form-input" value="Tech / Design / Web" placeholder="e.g. Tech / Design" oninput="scheduleCoCSave()"></div>
-              <div class="form-group" style="margin:0"><label class="form-label">Contact Name</label><input class="form-input" value="Sarah Soliman" placeholder="Person or team" oninput="scheduleCoCSave()"></div>
-              <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove();renderCOCPreview()">✕</button>
-            </div>
-            <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
               <div class="form-group" style="margin:0"><label class="form-label">Role / Area</label><input class="form-input" value="Urgent Issues" placeholder="e.g. Urgent Issues" oninput="scheduleCoCSave()"></div>
               <div class="form-group" style="margin:0"><label class="form-label">Contact Name</label><input class="form-input" value="David Joslin" placeholder="Person or channel" oninput="scheduleCoCSave()"></div>
               <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove();renderCOCPreview()">✕</button>
@@ -2127,11 +2120,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
             <div class="form-group" style="margin:0"><label class="form-label">Role / Area</label><input class="form-input" value="Daily Ops" placeholder="e.g. Daily Ops"></div>
             <div class="form-group" style="margin:0"><label class="form-label">Contact Name</label><input class="form-input" value="Sarah Samy" placeholder="Contact name"></div>
-            <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove()">✕</button>
-          </div>
-          <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-            <div class="form-group" style="margin:0"><label class="form-label">Role / Area</label><input class="form-input" value="Tech / Design / Web" placeholder="e.g. Tech / Design"></div>
-            <div class="form-group" style="margin:0"><label class="form-label">Contact Name</label><input class="form-input" value="Sarah Soliman" placeholder="Contact name"></div>
             <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove()">✕</button>
           </div>
           <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
@@ -3090,6 +3078,33 @@ function addRMItem(phaseId){
 let cocSaveTimer=null;
 function scheduleCoCSave(){clearTimeout(cocSaveTimer);cocSaveTimer=setTimeout(renderCOCPreview,400);}
 
+function loadAdminCoC(){
+  const saved = dbGet('wl_coc_data');
+  if(!saved||!saved.length) return;
+  // Repopulate the editor rows
+  const container = document.getElementById('admin-coc-rows');
+  if(container){
+    container.innerHTML = saved.map(({role,name})=>`
+      <div class="coc-edit-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
+        <div class="form-group" style="margin:0"><label class="form-label">Role / Area</label><input class="form-input" value="${role.replace(/"/g,'&quot;')}" placeholder="e.g. Billing" oninput="scheduleCoCSave()"></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Contact Name</label><input class="form-input" value="${name.replace(/"/g,'&quot;')}" placeholder="Person or team" oninput="scheduleCoCSave()"></div>
+        <button class="btn btn-danger btn-sm" onclick="this.closest('.coc-edit-row').remove();renderCOCPreview()">✕</button>
+      </div>`).join('');
+  }
+  // Rerender all CoC display areas
+  const renderItems = (el) => {
+    if(!el) return;
+    el.innerHTML = saved.map(({role,name})=>{
+      const isUrgent = role.toLowerCase().includes('urgent');
+      const initials = name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+      return `<div class="coc-item ${isUrgent?'urgent-coc':''}"><div class="coc-icon" style="background:${isUrgent?'var(--red)':'var(--text)'}">${isUrgent?'⚡':initials}</div><div><div class="coc-role">${role}</div><div class="coc-name">${name}</div></div></div>`;
+    }).join('');
+  };
+  renderItems(document.getElementById('admin-ops-coc-display'));
+  renderItems(document.getElementById('biz-coc-display'));
+  renderCOCPreview();
+}
+
 function renderCOCPreview(){
   const preview=document.getElementById('coc-live-preview');
   if(!preview)return;
@@ -3130,16 +3145,15 @@ function saveCoC(){
       return `<div class="coc-item ${isUrgent?'urgent-coc':''}"><div class="coc-icon" style="background:${isUrgent?'var(--red)':'var(--text)'}">${isUrgent?'⚡':initials}</div><div><div class="coc-role">${role}</div><div class="coc-name">${name}</div></div></div>`;
     }).join('');
   }
-  // Update ops page CoC card
-  document.querySelectorAll('#sec-operations .card .card-body').forEach(b=>{
-    if(b.querySelector('.coc-item')){
-      b.innerHTML=cocItems.map(({role,name})=>{
-        const isUrgent=role.toLowerCase().includes('urgent');
-        const initials=name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
-        return `<div class="coc-item ${isUrgent?'urgent-coc':''}"><div class="coc-icon" style="background:${isUrgent?'var(--red)':'var(--text)'}">${isUrgent?'⚡':initials}</div><div><div class="coc-role">${role}</div><div class="coc-name">${name}</div></div></div>`;
-      }).join('');
-    }
-  });
+  // Update ops page CoC display
+  const opsCOC=document.getElementById('admin-ops-coc-display');
+  if(opsCOC){
+    opsCOC.innerHTML=cocItems.map(({role,name})=>{
+      const isUrgent=role.toLowerCase().includes('urgent');
+      const initials=name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+      return `<div class="coc-item ${isUrgent?'urgent-coc':''}"><div class="coc-icon" style="background:${isUrgent?'var(--red)':'var(--text)'}">${isUrgent?'⚡':initials}</div><div><div class="coc-role">${role}</div><div class="coc-name">${name}</div></div></div>`;
+    }).join('');
+  }
   renderCOCPreview();
   const badge=document.getElementById('coc-saved-badge');
   if(badge){badge.style.display='inline';setTimeout(()=>badge.style.display='none',3000);}
@@ -3185,8 +3199,8 @@ function confirmAddOrgMember(){
   showToast(name+' added to org chart ✓');
 }
 
-// init CoC preview on admin load
-document.addEventListener('DOMContentLoaded',()=>{ setTimeout(renderCOCPreview,200); });
+// init CoC preview on admin load — also restore saved CoC from localStorage
+document.addEventListener('DOMContentLoaded',()=>{ setTimeout(()=>{ loadAdminCoC(); renderCOCPreview(); },200); });
 
 // ── CREDENTIAL TOGGLE ──
 function toggleCredCard(cb, statusId){
