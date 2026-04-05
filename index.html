@@ -1132,8 +1132,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-sub">Sync users to JSONBin so team members can log in from any device</div>
           </div>
           <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm btn-outline" onclick="cloudPullUsers()">↓ Pull</button>
-            <button class="btn btn-sm btn-primary" onclick="cloudPushUsers()">↑ Push to Cloud</button>
+            <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
+            <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" id="cloudConfigToggleBtn" onclick="toggleCloudConfig()">⚙ Configure</button>
           </div>
         </div>
@@ -3136,6 +3136,7 @@ function saveCoC(){
   });
   // Save to shared localStorage so user.html can read it
   dbSet('wl_coc_data', cocItems);
+  cloudAutoSync();
   // Update user-side bizSetup CoC display
   const userCOC=document.getElementById('biz-coc-display');
   if(userCOC){
@@ -4736,11 +4737,13 @@ function broadcastAnnouncement(){
   if(s){ s.style.display='block'; setTimeout(()=>s.style.display='none', 4000); }
   logActivity('report','Admin','Broadcast announcement to all users', text.substring(0,40));
   showToast('Announcement sent to all users 📣');
+  cloudAutoSync();
 }
 function clearAnnouncement(){
   dbSet('wl_announcement', null);
   if(document.getElementById('announcementInput')) document.getElementById('announcementInput').value='';
   showToast('Announcement cleared');
+  cloudAutoSync();
 }
 
 // ══════════════════════════════════════════════
@@ -4919,40 +4922,73 @@ function updateCloudStatusUI(){
   }
 }
 
-// Push users array to JSONBin
-async function cloudPushUsers(silent=false){
+// Merge two arrays by id, deduplicating and keeping newest, limited to `limit` items
+function _mergeCloudArr(cloudArr, localArr, limit=200){
+  const combined = [...(Array.isArray(cloudArr)?cloudArr:[]), ...(Array.isArray(localArr)?localArr:[])];
+  const seen = new Set();
+  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
+                 .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
+}
+
+// Push ALL data to JSONBin (read-modify-write to avoid overwriting others)
+async function cloudPushAll(silent=false){
   const cfg = getCloudConfig();
   if(!cfg.apiKey || !cfg.binId){
     if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
     return false;
   }
-  const users = dbGet(DB_KEYS.users) || [];
-  setCloudStatus('Pushing to cloud…','syncing');
+  setCloudStatus('Syncing to cloud…','syncing');
   try {
+    // Pull latest first so we don't overwrite data from other team members
+    let cloudRecord = {};
+    try {
+      const r0 = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {headers:{'X-Master-Key':cfg.apiKey}});
+      if(r0.ok){ const d=await r0.json(); cloudRecord=d?.record||{}; }
+    } catch(e){}
+
+    const payload = {
+      users:        _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
+      admins:       _mergeCloudArr(cloudRecord.admins,   dbGet(DB_KEYS.admins)||[]),
+      eods:         _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
+      blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
+      goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
+      feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
+      announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
+      coc:          dbGet(DB_KEYS.coc) || cloudRecord.coc || null,
+      settings:     dbGet(DB_KEYS.settings) || cloudRecord.settings || null,
+      orgNodes:     dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
+      orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+    };
+
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type':  'application/json',
-        'X-Master-Key':  cfg.apiKey,
-        'X-Bin-Versioning': 'false'
-      },
-      body: JSON.stringify({ users })
+      headers: {'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+      body: JSON.stringify(payload)
     });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    // Store merged data locally so admin sees merged state too
+    dbSet(DB_KEYS.users, payload.users);
+    dbSet(DB_KEYS.admins, payload.admins);
+    dbSet(DB_KEYS.eods, payload.eods);
+    dbSet(DB_KEYS.blockers, payload.blockers);
+    dbSet(DB_KEYS.goals, payload.goals);
+    dbSet(DB_KEYS.feed, payload.feed);
+
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
     updateCloudStatusUI();
-    if(!silent) showToast(`✅ ${users.length} user${users.length!==1?'s':''} pushed to cloud`);
+    if(!silent) showToast('✅ All data synced to cloud');
     return true;
   } catch(e){
-    setCloudStatus('Push failed: ' + e.message, 'error');
-    if(!silent) showToast('❌ Cloud push failed — check your API Key & Bin ID');
+    setCloudStatus('Sync failed: '+e.message,'error');
+    if(!silent) showToast('❌ Cloud sync failed — check your API Key & Bin ID');
     return false;
   }
 }
 
-// Pull users array from JSONBin and merge into localStorage
-async function cloudPullUsers(silent=false){
+// Pull ALL data from JSONBin and merge into localStorage
+async function cloudPullAll(silent=false){
   const cfg = getCloudConfig();
   if(!cfg.apiKey || !cfg.binId){
     if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
@@ -4960,30 +4996,42 @@ async function cloudPullUsers(silent=false){
   }
   setCloudStatus('Pulling from cloud…','syncing');
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {
-      headers: { 'X-Master-Key': cfg.apiKey }
-    });
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {headers:{'X-Master-Key':cfg.apiKey}});
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const cloudUsers = data?.record?.users;
-    if(!Array.isArray(cloudUsers)) throw new Error('Unexpected response format');
-    // Merge: cloud is source of truth for user accounts
-    dbSet(DB_KEYS.users, cloudUsers);
+    const r = data?.record || {};
+
+    if(r.users)        dbSet(DB_KEYS.users,    _mergeCloudArr(r.users,    dbGet(DB_KEYS.users)||[]));
+    if(r.admins)       dbSet(DB_KEYS.admins,   _mergeCloudArr(r.admins,   dbGet(DB_KEYS.admins)||[]));
+    if(r.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(r.eods,     dbGet(DB_KEYS.eods)||[], 300));
+    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeCloudArr(r.blockers, dbGet(DB_KEYS.blockers)||[]));
+    if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
+    if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
+    if(r.announcement) dbSet('wl_announcement', r.announcement);
+    if(r.coc)          dbSet(DB_KEYS.coc,      r.coc);
+    if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
+    if(r.orgNodes)     dbSet(DB_KEYS.orgNodes,  r.orgNodes);
+    if(r.orgLinks)     dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
     updateCloudStatusUI();
     renderUserTable();
-    if(!silent) showToast(`✅ Pulled ${cloudUsers.length} user${cloudUsers.length!==1?'s':''} from cloud`);
+    if(!silent) showToast('✅ All data pulled from cloud');
   } catch(e){
-    setCloudStatus('Pull failed: ' + e.message, 'error');
+    setCloudStatus('Pull failed: '+e.message,'error');
     if(!silent) showToast('❌ Cloud pull failed — check your API Key & Bin ID');
   }
 }
 
-// Auto-push after every user DB write (called from addUser, saveEditUser, removeUser)
+// Backward-compat aliases
+async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
+async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
+
+// Auto-sync after every data write
 async function cloudAutoSync(){
   if(!cloudIsConfigured()) return;
-  await cloudPushUsers(true); // silent=true, no toast
+  await cloudPushAll(true);
 }
 
 // ═══════════════════════════════════════════════════════════
