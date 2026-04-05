@@ -948,25 +948,64 @@ function cloudIsConfigured(){
   return !!(localStorage.getItem(WORKSPACE_CODE_KEY));
 }
 
-// Fetch latest users from JSONBin — works with full config OR public bin + workspace code
+// Merge two arrays by id, deduplicating, newest first
+function _mergeCloudArr(cloudArr, localArr, limit=200){
+  const combined=[...(Array.isArray(cloudArr)?cloudArr:[]),...(Array.isArray(localArr)?localArr:[])];
+  const seen=new Set();
+  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
+                 .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
+}
+
+// Fetch latest data from JSONBin — pulls users AND all shared data
 async function cloudFetchUsers(){
   const binId = getWorkspaceBinId();
   if(!binId) return null;
   const cfg = getCloudConfig();
   try{
-    // Try with API key first (more reliable), fall back to public read if no key
     const headers = cfg.apiKey ? {'X-Master-Key': cfg.apiKey} : {};
     const res = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
     if(!res.ok) return null;
     const data = await res.json();
-    const users = data?.record?.users;
-    if(Array.isArray(users)){
-      dbSet(DB_KEYS.users, users); // cache locally
-      localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
-      return users;
-    }
-    return null;
+    const record = data?.record || {};
+    const users = record.users;
+    if(Array.isArray(users)) dbSet(DB_KEYS.users, users);
+    // Pull all shared data so users see latest announcement, coc, etc.
+    if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
+    if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeCloudArr(record.blockers, dbGet(DB_KEYS.blockers)||[]));
+    if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
+    if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
+    if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
+    localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
+    return Array.isArray(users) ? users : null;
   }catch(e){ return null; }
+}
+
+// Push user-generated data (EODs, blockers, goals, feed) to cloud using read-modify-write
+async function cloudPushData(){
+  const cfg = getCloudConfig();
+  const binId = getWorkspaceBinId();
+  if(!cfg.apiKey || !binId) return;
+  try {
+    const headers = {'X-Master-Key': cfg.apiKey};
+    const r0 = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
+    if(!r0.ok) return;
+    const d = await r0.json();
+    const cloudRecord = d?.record || {};
+    const payload = {
+      ...cloudRecord,
+      users:    _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
+      eods:     _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
+      blockers: _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
+      goals:    _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
+      feed:     _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
+    };
+    await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+      method:'PUT',
+      headers:{...headers,'Content-Type':'application/json','X-Bin-Versioning':'false'},
+      body:JSON.stringify(payload)
+    });
+    localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
+  }catch(e){}
 }
 
 function logActivity(type,userName,description,detail=''){
@@ -1414,6 +1453,7 @@ function submitEOD(){
   closeModal('eodModal');
   showToast('EOD Report submitted! ✓');
   loadOpsStats();
+  cloudPushData(); // sync to cloud so admin can see this report
 }
 
 // ── BLOCKER ──
@@ -1431,6 +1471,7 @@ function addBlocker(){
   closeModal('blockerModal');
   showToast('Blocker logged ✓');
   loadOpsStats();
+  cloudPushData();
 }
 
 // ── GOALS ──
@@ -1474,17 +1515,19 @@ function addGoal(){
   closeModal('goalModal');
   showToast('Goal created! 🎯');
   loadGoals();
+  cloudPushData();
 }
 function markGoalAchieved(id){
   const all=dbGet(DB_KEYS.goals)||[];
   const g=all.find(x=>x.id===id);
-  if(g){ g.status='achieved'; dbSet(DB_KEYS.goals,all); logActivity('goal',currentUser?.name||'User','Achieved goal: '+g.title,''); showToast('Goal achieved! 🎉'); loadGoals(); }
+  if(g){ g.status='achieved'; dbSet(DB_KEYS.goals,all); logActivity('goal',currentUser?.name||'User','Achieved goal: '+g.title,''); showToast('Goal achieved! 🎉'); loadGoals(); cloudPushData(); }
 }
 function deleteGoal(id){
   const all=(dbGet(DB_KEYS.goals)||[]).filter(x=>x.id!==id);
   dbSet(DB_KEYS.goals,all);
   showToast('Goal deleted');
   loadGoals();
+  cloudPushData();
 }
 
 // ── PROFILE SAVE ──
