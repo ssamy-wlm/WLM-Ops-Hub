@@ -1645,9 +1645,7 @@ function showToast(msg){
 }
 
 // ── INIT ──
-document.addEventListener('click',e=>{
-  if(e.target.classList.contains('modal-overlay')) closeModal(e.target.id);
-});
+// Modals only close via X button — not by clicking outside
 
 // Auto-refresh ops stats every 20s (picks up admin changes like CoC updates)
 setInterval(()=>{
