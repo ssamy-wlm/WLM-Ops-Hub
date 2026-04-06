@@ -1174,12 +1174,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <input class="form-input" id="report-search" placeholder="🔍 Search user or date…" oninput="filterAdminReports()" style="width:220px;font-size:13px;padding:9px 12px;">
         <select class="form-select" id="report-filter-user" onchange="filterAdminReports()" style="width:180px;font-size:13px;"><option value="">All Users</option></select>
         <input class="form-input" type="date" id="report-filter-date" onchange="filterAdminReports()" style="width:160px;font-size:13px;padding:9px 12px;">
+        <button class="btn btn-outline btn-sm" onclick="cloudPullAll(true).then(()=>loadAdminReportsTab())" style="font-size:12px;">🔄 Refresh</button>
         <button class="btn btn-outline btn-sm" onclick="exportReportsCSV()">📥 Export CSV</button>
       </div>
       <div class="user-table-wrap">
         <div class="table-header"><div class="table-title">All EOD Reports</div><span id="report-count-label" style="font-size:12px;color:var(--text-light);"></span></div>
         <table>
-          <thead><tr><th>Date</th><th>User</th><th>Projects</th><th>Hours</th><th>Issues</th><th>Rating</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Date</th><th>User</th><th>Projects</th><th>Hours</th><th>Issues</th><th>Rating</th><th>Status</th><th>Actions</th><th></th></tr></thead>
           <tbody id="adminReportsBody">
             <tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-light);">Loading reports…</td></tr>
           </tbody>
@@ -2522,8 +2523,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     </div>
     <div class="modal-body" id="eodViewerBody" style="padding:24px 28px;">
     </div>
+    <div style="padding:0 28px 20px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Admin Comment</div>
+      <textarea id="eodAdminComment" class="form-input" rows="3" placeholder="Add a private note or feedback on this report…" style="width:100%;font-size:13px;resize:vertical;line-height:1.6;"></textarea>
+      <button class="btn btn-primary btn-sm" onclick="saveEODComment()" style="margin-top:8px;">Save Comment</button>
+    </div>
     <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" onclick="deleteCurrentEOD()" style="margin-right:auto;">🗑 Delete Report</button>
       <button class="btn btn-outline" onclick="closeModal('eodViewerModal')">Close</button>
+    </div>
+  </div>
+</div>
     </div>
   </div>
 </div>
@@ -3247,6 +3257,9 @@ function removeUser(btn, userId){
     dbSet('wl_archived_users', archives);
     // Remove from active users
     dbSet(DB_KEYS.users, allUsers.filter(x=>x.id!==userId && x.name!==userId));
+    // Remove their reports and blockers from active lists (they live in archive now)
+    dbSet(DB_KEYS.eods,     (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user!==u.name));
+    dbSet(DB_KEYS.blockers, (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user!==u.name));
   }
   if(btn && btn.closest('tr')){
     btn.closest('tr').style.transition='opacity .3s';
@@ -4787,19 +4800,21 @@ function filterAdminReports(){
 }
 
 let _renderedEodReports = [];
+let _currentViewedEodIdx = -1; // tracks which report is open in the viewer
 
 function renderAdminReportsTable(eods){
   const tbody=document.getElementById('adminReportsBody');
   if(!tbody) return;
   _renderedEodReports = eods.slice(0,100);
   if(!_renderedEodReports.length){
-    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-light);">No reports found.</td></tr>';
+    tbody.innerHTML='<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-light);">No reports found. Click Refresh to pull latest from cloud.</td></tr>';
     return;
   }
   tbody.innerHTML=_renderedEodReports.map((e,idx)=>{
     const taskLines=(e.tasks||'').split('\n').filter(Boolean).length||0;
     const hasIssue=e.issues&&e.issues.trim().length>0;
     const rating=(e.rating||'').substring(0,4);
+    const hasComment=!!(e.adminComment);
     return `<tr>
       <td>${e.date}</td>
       <td><div>${e.user||'—'}</div><div class="td-sub">${e.title||''}</div></td>
@@ -4807,8 +4822,11 @@ function renderAdminReportsTable(eods){
       <td>${e.hours||'—'}</td>
       <td>${hasIssue?'<span class="status-badge badge-pending">⚠ Yes</span>':'<span style="color:var(--text-light);font-size:12px;">None</span>'}</td>
       <td style="font-size:12px;">${rating||'—'}</td>
-      <td><span class="cred-status cred-set">Submitted</span></td>
-      <td><button class="btn btn-sm btn-outline" onclick="viewEODReport(${idx})" style="font-size:11px;">👁 View</button></td>
+      <td><span class="cred-status cred-set">Submitted</span>${hasComment?' <span style="font-size:10px;color:var(--orange);">💬</span>':''}</td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-sm btn-outline" onclick="viewEODReport(${idx})" style="font-size:11px;">👁 View</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteEODReport(${idx})" style="font-size:11px;">🗑</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -4816,6 +4834,7 @@ function renderAdminReportsTable(eods){
 function viewEODReport(idx){
   const e=_renderedEodReports[idx];
   if(!e){showToast('Report not found');return;}
+  _currentViewedEodIdx=idx;
   document.getElementById('eodViewerTitle').textContent='EOD Report — '+e.user;
   document.getElementById('eodViewerSub').textContent=e.date+' · Submitted '+(e.submittedAt?new Date(e.submittedAt).toLocaleString():e.date);
   const section=(label,val)=>val?`<div style="margin-bottom:16px;"><div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">${label}</div><div style="font-size:13px;color:var(--text-dark);background:var(--bg);border-radius:8px;padding:10px 14px;line-height:1.7;white-space:pre-line;">${val}</div></div>`:'';
@@ -4832,7 +4851,45 @@ function viewEODReport(idx){
     ${section("Tomorrow's Priority Tasks", e.tomorrow)}
     ${section('Support Needed from Manager', e.support)}
   `;
+  // Load existing admin comment
+  const commentEl=document.getElementById('eodAdminComment');
+  if(commentEl) commentEl.value=e.adminComment||'';
   openModal('eodViewerModal');
+}
+
+function saveEODComment(){
+  const e=_renderedEodReports[_currentViewedEodIdx];
+  if(!e){showToast('No report open');return;}
+  const comment=document.getElementById('eodAdminComment')?.value||'';
+  // Save into the master array and localStorage
+  const allEods=dbGet(DB_KEYS.eods)||[];
+  const target=allEods.find(x=>x.id===e.id)||(e.id==null?allEods.find(x=>x.date===e.date&&x.user===e.user):null);
+  if(target){ target.adminComment=comment; target.commentedAt=new Date().toISOString(); }
+  e.adminComment=comment; // update rendered copy too
+  dbSet(DB_KEYS.eods, allEods);
+  showToast('Comment saved ✓');
+  cloudAutoSync();
+  filterAdminReports(); // re-render so 💬 badge shows
+}
+
+function deleteEODReport(idx){
+  const e=_renderedEodReports[idx];
+  if(!e){return;}
+  if(!confirm(`Delete this EOD report from ${e.user} on ${e.date}? This cannot be undone.`)) return;
+  const allEods=dbGet(DB_KEYS.eods)||[];
+  const updated=e.id!=null ? allEods.filter(x=>x.id!==e.id) : allEods.filter(x=>!(x.date===e.date&&x.user===e.user));
+  dbSet(DB_KEYS.eods, updated);
+  _allEodReports=updated;
+  showToast('Report deleted ✓');
+  cloudAutoSync();
+  filterAdminReports();
+}
+
+function deleteCurrentEOD(){
+  if(_currentViewedEodIdx>=0){
+    closeModal('eodViewerModal');
+    deleteEODReport(_currentViewedEodIdx);
+  }
 }
 
 function exportReportsCSV(){
@@ -4853,7 +4910,14 @@ function exportReportsCSV(){
 const _origSwitchAdminFinal = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdminFinal(el, tab);
-  if(tab==='reports') setTimeout(loadAdminReportsTab, 100);
+  if(tab==='reports'){
+    // Pull latest from cloud first so we see reports from all team members
+    if(cloudIsConfigured()){
+      cloudPullAll(true).then(()=>loadAdminReportsTab());
+    } else {
+      setTimeout(loadAdminReportsTab, 100);
+    }
+  }
   if(tab==='users') setTimeout(updateCloudStatusUI, 100);
 };
 
