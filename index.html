@@ -1483,6 +1483,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
     <!-- ══ PAYROLL CALCULATOR ══ -->
     <div id="admin-payroll" class="page-section">
+
+      <!-- Extra Hours Policy — super admin / owner only -->
+      <div id="ot-policy-panel" class="card" style="margin-bottom:18px;display:none;border:2px solid var(--gold,#FAC231);">
+        <div class="card-header" style="background:linear-gradient(135deg,rgba(250,194,49,.08),rgba(250,194,49,.03));">
+          <div>
+            <div class="card-title">🔒 Extra Hours Policy</div>
+            <div class="card-sub">Overtime rates applied when weekly hours exceed the threshold — visible to Super Admin &amp; Owner only</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveOTPolicyBtn()">Save Policy</button>
+        </div>
+        <div class="card-body">
+          <div style="display:flex;gap:16px;align-items:flex-end;margin-bottom:20px;flex-wrap:wrap;">
+            <div class="form-group" style="margin:0;">
+              <label class="form-label">Overtime Threshold (hours/week)</label>
+              <input class="form-input" type="number" id="ot-threshold" value="40" min="1" max="80" step="1" style="width:120px;">
+            </div>
+            <div style="font-size:12px;color:var(--text-light);padding-bottom:8px;">Any hours above this threshold are paid at the user's overtime rate.</div>
+          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Per-User Overtime Rates</div>
+          <div id="ot-user-rates" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header">
           <div>
@@ -1662,6 +1685,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="display:flex;gap:8px;">
             <button class="btn btn-outline btn-sm" id="org-connect-btn" onclick="toggleConnectMode()" style="font-size:11px;">🔗 Connect Mode</button>
             <button class="btn btn-blue btn-sm" onclick="openOrgAddPanel()" style="font-size:11px;">+ Add Member</button>
+            <button class="btn btn-primary btn-sm" onclick="orgSave();cloudAutoSync(true);showToast('Company structure saved!','success');" style="font-size:11px;">💾 Save</button>
           </div>
         </div>
         <div class="card-body" style="padding:0;">
@@ -4247,6 +4271,7 @@ const DB_KEYS = {
   orgNodes: 'wl_org_nodes',
   orgLinks: 'wl_org_links',
   admins:   'wl_admins_db',
+  otPolicy: 'wl_ot_policy',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -5038,6 +5063,7 @@ async function cloudPushAll(silent=false){
       orgNodes:     dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
       orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
       primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
+      otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5094,6 +5120,7 @@ async function cloudPullAll(silent=false){
     if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
+    if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -5407,28 +5434,37 @@ function initPayroll(){
   const allUsers = dbGet(DB_KEYS.users)||[];
   const container = document.getElementById('payrollRows');
   if(!container) return;
+
+  // Show OT policy panel for super admin / owner only
+  const canSeeOT = !_adminLevel || _adminLevel==='super' || _adminLevel==='owner';
+  const otPanel = document.getElementById('ot-policy-panel');
+  if(otPanel) otPanel.style.display = canSeeOT ? 'block' : 'none';
+  if(canSeeOT) initOTPolicyPanel(allUsers);
+
   if(!allUsers.length){
     container.innerHTML='<div style="font-size:13px;color:var(--text-light);">No users in system yet. Add users first.</div>';
     return;
   }
+  const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
   container.innerHTML = allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
+    const otRate = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const _pc=_payPalette[i%_payPalette.length];
-    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" style="display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" style="display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${u.name}</div>
-        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr · ${u.title||u.role||''}</div>
+        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr${otRate>0?' · OT: $'+otRate+'/hr':''} · ${u.title||u.role||''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <label style="font-size:12px;color:var(--text-mid);">Hours:</label>
-        <input type="number" min="0" max="80" step="0.5" value="0" class="form-input" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}">
+        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}">
       </div>
-      <div style="text-align:right;min-width:80px;">
+      <div style="text-align:right;min-width:90px;">
         <div style="font-size:15px;font-weight:800;color:var(--text-dark);" id="pay-${u.id}">$0.00</div>
-        <div style="font-size:10px;color:var(--text-light);">this week</div>
+        <div style="font-size:10px;color:var(--text-light);" id="pay-note-${u.id}">this week</div>
       </div>
     </div>`;
   }).join('');
@@ -5436,18 +5472,90 @@ function initPayroll(){
   renderSavedPayrolls();
 }
 
+function initOTPolicyPanel(users){
+  // Load saved policy
+  const policy = dbGet(DB_KEYS.otPolicy)||{};
+  const threshold = policy.threshold ?? 40;
+  const userRates = policy.userRates || {};
+
+  // Restore threshold input
+  const tInput = document.getElementById('ot-threshold');
+  if(tInput) tInput.value = threshold;
+
+  // Build per-user rate rows
+  const container = document.getElementById('ot-user-rates');
+  if(!container) return;
+  const activeUsers = (users||[]).filter(u=>u.status==='active'||!u.status);
+  container.innerHTML = activeUsers.map(u=>{
+    // Pre-fill: saved policy rate → user.overtimeRate → default 0 (Sarah Ibrahim default 12.75)
+    let saved = userRates[u.id];
+    if(saved === undefined) saved = parseFloat(u.overtimeRate)||0;
+    // Default Sarah Ibrahim to 12.75 if never set
+    if(!saved && u.name && u.name.toLowerCase().includes('sarah ibrahim')) saved = 12.75;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;font-size:13px;font-weight:600;color:var(--text-dark);">${u.name}</div>
+      <div style="font-size:11px;color:var(--text-light);flex:1;">${u.title||u.role||''}</div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:12px;color:var(--text-mid);">OT Rate $</span>
+        <input type="number" min="0" step="0.01" value="${saved||''}" placeholder="0.00"
+          class="form-input" style="width:90px;padding:6px 10px;font-size:13px;"
+          id="ot-rate-${u.id}" data-uid="${u.id}">
+        <span style="font-size:11px;color:var(--text-light);">/hr</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function saveOTPolicyBtn(){
+  const threshold = parseFloat(document.getElementById('ot-threshold')?.value)||40;
+  const userRates = {};
+  document.querySelectorAll('#ot-user-rates input[type="number"]').forEach(inp=>{
+    const uid = inp.dataset.uid;
+    const val = parseFloat(inp.value)||0;
+    if(uid) userRates[uid] = val;
+  });
+  const policy = { threshold, userRates };
+  dbSet(DB_KEYS.otPolicy, policy);
+
+  // Also persist overtimeRate on each user record for reference
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  allUsers.forEach(u=>{
+    if(userRates[u.id] !== undefined) u.overtimeRate = userRates[u.id];
+  });
+  dbSet(DB_KEYS.users, allUsers);
+  cloudAutoSync(true);
+
+  // Refresh payroll rows to reflect new rates
+  initPayroll();
+  showToast('Extra Hours Policy saved!', 'success');
+}
+
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
+  const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
+  const threshold = parseFloat(otPolicy.threshold)||40;
   let total = 0;
   rows.forEach(row=>{
-    const rate = parseFloat(row.dataset.rate)||0;
-    const uid  = row.dataset.uid;
+    const rate   = parseFloat(row.dataset.rate)||0;
+    const otRate = parseFloat(row.dataset.otRate)||0;
+    const uid    = row.dataset.uid;
     const hoursInput = row.querySelector('input[type="number"]');
-    const hours = parseFloat(hoursInput?.value)||0;
-    const pay = rate*hours;
+    const hours  = parseFloat(hoursInput?.value)||0;
+    let pay, noteText;
+    if(otRate > 0 && hours > threshold){
+      const regPay = threshold * rate;
+      const otPay  = (hours - threshold) * otRate;
+      pay = regPay + otPay;
+      noteText = `${threshold}h reg + ${(hours-threshold).toFixed(1)}h OT`;
+    } else {
+      pay = rate * hours;
+      noteText = 'this week';
+    }
     total += pay;
-    const payEl = document.getElementById('pay-'+uid);
-    if(payEl) payEl.textContent = '$'+pay.toFixed(2);
+    const payEl  = document.getElementById('pay-'+uid);
+    const noteEl = document.getElementById('pay-note-'+uid);
+    if(payEl)  payEl.textContent  = '$'+pay.toFixed(2);
+    if(noteEl) noteEl.textContent = noteText;
   });
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
@@ -5461,14 +5569,22 @@ function savePayrollWeek(){
   const fri = new Date(mon); fri.setDate(mon.getDate()+4);
   const entries=[];
   let total=0;
+  const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
+  const otThreshold = parseFloat(otPolicy.threshold)||40;
   document.querySelectorAll('.payroll-row').forEach(row=>{
     const uid=row.dataset.uid;
     const u=allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
     const hours=parseFloat(row.querySelector('input')?.value)||0;
     const rate=parseFloat(row.dataset.rate)||0;
-    const pay=rate*hours;
+    const otRate=parseFloat(row.dataset.otRate)||0;
+    let pay;
+    if(otRate>0 && hours>otThreshold){
+      pay = otThreshold*rate + (hours-otThreshold)*otRate;
+    } else {
+      pay = rate*hours;
+    }
     total+=pay;
-    entries.push({userId:uid,name:u.name,hours,rate,pay});
+    entries.push({userId:uid,name:u.name,hours,rate,otRate,pay});
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
