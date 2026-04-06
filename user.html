@@ -933,8 +933,12 @@ function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(ke
 // ── Cloud config (shared with admin panel via localStorage) ──
 const CLOUD_CFG_KEY = 'wl_cloud_config';
 const WORKSPACE_CODE_KEY = 'wl_workspace_code';
-const _DEFAULT_BIN = '69d0c6bfaaba882197c311e7'; // WLM JSONBin public bin
-function getCloudConfig(){ return dbGet(CLOUD_CFG_KEY)||{apiKey:'',binId:''}; }
+const _DEFAULT_BIN = '69d0c6bfaaba882197c311e7'; // WLM JSONBin bin
+const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
+function getCloudConfig(){
+  const stored = dbGet(CLOUD_CFG_KEY)||{};
+  return { apiKey: stored.apiKey||_DEFAULT_API_KEY, binId: stored.binId||_DEFAULT_BIN };
+}
 function getWorkspaceBinId(){
   // Use full cloud config binId if available, otherwise workspace code, otherwise default bin
   const cfg = getCloudConfig();
@@ -1056,12 +1060,9 @@ async function doLogin(){
   if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
   errEl.style.display='none';
 
-  // 1. Try to fetch latest user list from cloud / workspace
-  let users = null;
-  if(cloudIsConfigured()){
-    users = await cloudFetchUsers(); // updates localStorage on success
-  }
-  // 2. Fallback to local cache
+  // 1. Always try to fetch latest user list from cloud (API key is always available)
+  let users = await cloudFetchUsers();
+  // 2. Fallback to local cache if cloud fetch failed
   if(!Array.isArray(users)){
     users = dbGet(DB_KEYS.users)||[];
   }
