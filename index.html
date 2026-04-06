@@ -1860,8 +1860,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
         <select class="form-select" id="newAdminLevel" onchange="_updateNewLevelBadge()">
-          <option value="account_manager">Account Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
-          <option value="production_manager">Production Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
+          <option value="account_manager">Account Manager</option>
+          <option value="production_manager">Production Manager</option>
           <option value="admin" selected>Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -1937,8 +1937,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
         <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers')">
-          <option value="account_manager">Account Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
-          <option value="production_manager">Production Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
+          <option value="account_manager">Account Manager</option>
+          <option value="production_manager">Production Manager</option>
           <option value="admin">Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -3514,8 +3514,17 @@ function orgLoad(){
     const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
-    orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : [];
+    // If old data still has links, wipe it and use new pyramid default
+    if(savedLinks && Array.isArray(savedLinks) && savedLinks.length > 0){
+      localStorage.removeItem(nk);
+      localStorage.removeItem(lk);
+      orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+      orgLinks = [];
+      orgSave();
+    } else {
+      orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+      orgLinks = [];
+    }
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     orgLinks = [];
