@@ -3281,6 +3281,7 @@ function changeAdminPassword(){
   localStorage.setItem('wl_primary_admin_pw', nw);
   ['adminCurPw','adminNewPw','adminConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   showToast('Admin password updated successfully ✓');
+  cloudAutoSync();
 }
 
 // ── PASSWORD VISIBILITY ──
@@ -4958,6 +4959,7 @@ async function cloudPushAll(silent=false){
       settings:     dbGet(DB_KEYS.settings) || cloudRecord.settings || null,
       orgNodes:     dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
       orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+      primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5010,8 +5012,9 @@ async function cloudPullAll(silent=false){
     if(r.announcement) dbSet('wl_announcement', r.announcement);
     if(r.coc)          dbSet(DB_KEYS.coc,      r.coc);
     if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
-    if(r.orgNodes)     dbSet(DB_KEYS.orgNodes,  r.orgNodes);
-    if(r.orgLinks)     dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+    if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
+    if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+    if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
