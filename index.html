@@ -3394,9 +3394,6 @@ function showToast(msg){
 }
 
 // ── INIT ──
-document.addEventListener('click',e=>{
-  if(e.target.classList.contains('modal-overlay'))closeModal(e.target.id);
-});
 initUserApp();
 </script>
 
@@ -4276,15 +4273,8 @@ function logActivity(type, userName, description, detail=''){
 
 // ── Seed static users into DB on first load ──
 function seedStaticUsers(){
-  const existing = dbGet(DB_KEYS.users)||[];
-  if(existing.length) return; // already seeded
-  const staticUsers = [
-    {id:'u_static_1',name:'Jamie Soto',email:'jamie@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Web Designer',resp:'UI/UX, Brand Assets, Client Websites',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
-    {id:'u_static_2',name:'Marcus Lee',email:'marcus@weblight.com',password:'weblight2024',mustChangePassword:true,title:'SEO Specialist',resp:'On-Page SEO, Google Analytics, Keyword Research',role:'Employee',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
-    {id:'u_static_3',name:'Sofia Reyes',email:'sofia@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Content Writer',resp:'Blog Posts, Copy, Email Campaigns',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
-    {id:'u_static_4',name:'Dani Okafor',email:'dani@weblight.com',password:'weblight2024',mustChangePassword:true,title:'Ads Manager',resp:'Meta Ads, Google Ads, Performance Reporting',role:'Contractor',status:'active',createdAt:'2026-02-14T00:00:00.000Z'},
-  ];
-  dbSet(DB_KEYS.users, staticUsers);
+  // Never seed dummy users — cloud is the source of truth
+  // (old static sample data was causing phantom accounts to appear for new admin devices)
 }
 
 // Override the existing doLogin to log activity and check stored users
@@ -4304,6 +4294,7 @@ window.doLogin = async function(){
     currentRole='admin';
     logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
     showAdminApp();
+    startLiveSync('owner');
     return;
   }
 
@@ -4315,7 +4306,7 @@ window.doLogin = async function(){
 
   // Dynamic admins (synced from cloud)
   const storedAdmins = dbGet(DB_KEYS.admins)||[];
-  const dynamicAdmin = storedAdmins.find(a => a.email===email && a.password===pass);
+  const dynamicAdmin = storedAdmins.find(a => a.email.toLowerCase()===email && a.password===pass);
   if(dynamicAdmin){
     errEl.style.display='none';
     currentRole='admin';
@@ -4324,6 +4315,7 @@ window.doLogin = async function(){
     try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:dynamicAdmin.level||'admin', adminId:dynamicAdmin.id, ts:Date.now()})); }catch(e){}
     showAdminApp();
     setTimeout(()=>applyAdminRoleRestrictions(dynamicAdmin.level||'admin', dynamicAdmin), 100);
+    startLiveSync(dynamicAdmin.level||'admin');
     return;
   }
   // Stored users (synced from cloud)
@@ -5034,8 +5026,8 @@ async function cloudPushAll(silent=false){
     } catch(e){}
 
     const payload = {
-      users:        _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
-      admins:       _mergeCloudArr(cloudRecord.admins,   dbGet(DB_KEYS.admins)||[]),
+      users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
+      admins:       dbGet(DB_KEYS.admins)||[],
       eods:         _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
       blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -5089,8 +5081,9 @@ async function cloudPullAll(silent=false){
     const data = await res.json();
     const r = data?.record || {};
 
-    if(r.users)        dbSet(DB_KEYS.users,    _mergeCloudArr(r.users,    dbGet(DB_KEYS.users)||[]));
-    if(r.admins)       dbSet(DB_KEYS.admins,   _mergeCloudArr(r.admins,   dbGet(DB_KEYS.admins)||[]));
+    // Users and admins: cloud is source of truth — replace local (prevents phantom/deleted accounts reappearing)
+    if(r.users)        dbSet(DB_KEYS.users,    r.users);
+    if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
     if(r.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(r.eods,     dbGet(DB_KEYS.eods)||[], 300));
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeCloudArr(r.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
@@ -5121,6 +5114,20 @@ async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
 async function cloudAutoSync(){
   if(!cloudIsConfigured()) return;
   await cloudPushAll(true);
+}
+
+// Live sync — polls cloud every 45s for super/owner/admin roles so all devices stay in sync
+let _liveSyncInterval = null;
+function startLiveSync(level){
+  if(_liveSyncInterval) clearInterval(_liveSyncInterval);
+  const syncRoles = ['admin','super','owner','account_manager','production_manager'];
+  if(!syncRoles.includes(level)) return;
+  _liveSyncInterval = setInterval(async ()=>{
+    if(!cloudIsConfigured()) return;
+    await cloudPullAll(true);
+    renderUserTable();
+    refreshAdminOverview();
+  }, 45000); // every 45 seconds
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6352,6 +6359,8 @@ window.openAddAdminModal = function(){
           const adminObj = admins.find(a=>a.id===s.adminId);
           if(adminObj) setTimeout(()=>applyAdminRoleRestrictions(s.level, adminObj), 150);
         }
+        // Start live sync
+        if(typeof startLiveSync==='function') setTimeout(()=>startLiveSync(s.level||'owner'), 200);
       });
     }
   }catch(e){}
