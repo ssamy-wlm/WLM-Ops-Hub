@@ -1859,9 +1859,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
-        <select class="form-select" id="newAdminLevel">
-          <option value="view_only">View Only — Can view users, reports &amp; feed — no edits</option>
-          <option value="support">Support Staff — Can view and comment — limited edit access</option>
+        <select class="form-select" id="newAdminLevel" onchange="_updateNewLevelBadge()">
+          <option value="account_manager">Account Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
+          <option value="production_manager">Production Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
           <option value="admin" selected>Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -1869,6 +1869,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="margin-top:8px;">
           <span id="adminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
         </div>
+      <div id="newAdminAssignedUsersWrap" style="margin-top:14px;display:none;">
+        <label class="form-label">Assigned Users <span style="font-weight:400;color:var(--text-light);">(select which users this admin can manage)</span></label>
+        <select id="newAdminAssignedUsers" class="form-select" multiple style="height:120px;font-size:13px;"></select>
+        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Hold Ctrl / Cmd to select multiple users</div>
+      </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1931,9 +1936,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group"><label class="form-label">Job Title / Role</label><input class="form-input" id="editAdminTitle" placeholder="e.g. Director of Operations"></div>
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
-        <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge()">
-          <option value="view_only">View Only — Can view users, reports &amp; feed — no edits</option>
-          <option value="support">Support Staff — Can view and comment — limited edit access</option>
+        <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers')">
+          <option value="account_manager">Account Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
+          <option value="production_manager">Production Manager — Assigned users, Clients, Reports &amp; Summaries only</option>
           <option value="admin">Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -1941,6 +1946,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="margin-top:8px;">
           <span id="editAdminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
         </div>
+      <div id="editAdminAssignedUsersWrap" style="margin-top:14px;display:none;">
+        <label class="form-label">Assigned Users</label>
+        <select id="editAdminAssignedUsers" class="form-select" multiple style="height:120px;font-size:13px;"></select>
+        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Hold Ctrl / Cmd to select multiple users</div>
+      </div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
         <div style="font-size:12px;font-weight:700;color:var(--text-mid);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em;">Change Password <span style="font-weight:400;color:var(--text-light);">(leave blank to keep current)</span></div>
@@ -2970,7 +2980,11 @@ function addUser(){
 
 // ── RENDER USER TABLE FROM DB ──
 function renderUserTable(){
-  const allUsers = dbGet(DB_KEYS.users)||[];
+  let allUsers = dbGet(DB_KEYS.users)||[];
+  // Restrict to assigned users for limited admin roles
+  if(_adminLevel && RESTRICTED_ADMIN_ROLES.includes(_adminLevel) && _adminAssignedUsers.length){
+    allUsers = allUsers.filter(u => _adminAssignedUsers.includes(u.name) || _adminAssignedUsers.includes(u.id));
+  }
   const tbody = document.getElementById('userTableBody');
   if(!tbody) return;
   if(!allUsers.length){
@@ -3469,22 +3483,16 @@ const orgColors = {
 
 // ── Default org chart data (used only when localStorage is empty) ──
 const ORG_NODES_DEFAULT = [
-  {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                photo:null, level:'ceo',      x:406, y:30,  fixed:true},
-  {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations', photo:null, level:'director', x:650, y:170},
-  {id:'abby',   name:'Abby Conklin',  title:'Production Manager',             photo:null, level:'manager',  x:50,  y:320},
-  {id:'emily',  name:'Emily Rovillo', title:'Creative Manager',               photo:null, level:'manager',  x:260, y:320},
-  {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                        photo:null, level:'manager',  x:650, y:320},
-  {id:'ahmed',  name:'Ahmed Nuhan',   title:'Content Creator',                photo:null, level:'member',   x:20,  y:460},
-  {id:'neha',   name:'Neha',          title:'Web Developer',                  photo:null, level:'member',   x:150, y:460},
-  {id:'nadia',name:'Nadia Fahmey', title:'Marketing Specialist',        photo:null, level:'member',   x:260, y:460},
-  {id:'rania',    name:'Rania Morsy',    title:'SERVPRO & Lead Gen Specialist',  photo:null, level:'member',   x:650, y:460},
+  {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                     photo:null, level:'ceo',      x:383, y:20,  fixed:true},
+  {id:'abby',   name:'Abby Conklin',  title:'Production Manager',                 photo:null, level:'director', x:100, y:200},
+  {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                            photo:null, level:'director', x:383, y:200},
+  {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations',   photo:null, level:'director', x:666, y:200},
+  {id:'ahmed',  name:'Ahmed Nuhan',   title:'Content Creator',                    photo:null, level:'member',   x:30,  y:400},
+  {id:'neha',   name:'Neha',          title:'Web Developer',                      photo:null, level:'member',   x:200, y:400},
+  {id:'nadia',  name:'Nadia Fahmey',  title:'Marketing Specialist',               photo:null, level:'member',   x:370, y:400},
+  {id:'rania',  name:'Rania Morsy',   title:'Lead Generation Manager',            photo:null, level:'member',   x:540, y:400},
 ];
-const ORG_LINKS_DEFAULT = [
-  ['david','sara'],['david','sarah'],
-  ['abby','ahmed'],['abby','neha'],
-  ['emily','youssef'],
-  ['jacob','sam'],
-];
+const ORG_LINKS_DEFAULT = [];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──
 let orgNodes = [];
@@ -3507,10 +3515,10 @@ function orgLoad(){
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
     orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = savedLinks ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+    orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : [];
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+    orgLinks = [];
   }
 }
 
@@ -4303,7 +4311,10 @@ window.doLogin = async function(){
     errEl.style.display='none';
     currentRole='admin';
     logActivity('login',`Admin (${dynamicAdmin.name||'Admin'})`,'Admin signed in','admin panel');
+    // Store level so session restore can apply restrictions
+    try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:dynamicAdmin.level||'admin', adminId:dynamicAdmin.id, ts:Date.now()})); }catch(e){}
     showAdminApp();
+    setTimeout(()=>applyAdminRoleRestrictions(dynamicAdmin.level||'admin', dynamicAdmin), 100);
     return;
   }
   // Stored users (synced from cloud)
@@ -4792,7 +4803,9 @@ function filterAdminReports(){
     const matchQ=!q||(e.user||'').toLowerCase().includes(q)||(e.date||'').includes(q)||(e.projects||'').toLowerCase().includes(q);
     const matchU=!userF||e.user===userF;
     const matchD=!dateF||e.date===dateF;
-    return matchQ&&matchU&&matchD;
+    const matchAssigned = !(_adminLevel && RESTRICTED_ADMIN_ROLES.includes(_adminLevel) && _adminAssignedUsers.length) ||
+      _adminAssignedUsers.some(au => e.user===au);
+    return matchQ&&matchU&&matchD&&matchAssigned;
   });
   const lbl=document.getElementById('report-count-label');
   if(lbl) lbl.textContent=filtered.length+' reports';
@@ -5957,12 +5970,54 @@ const ADMIN_COLORS = [
 
 // Access level config — value, label, description, badge colour
 const ADMIN_LEVELS = [
-  { value:'view_only',    label:'View Only',       desc:'Can view users, reports & feed — no edits',       color:'#6b7280' },
-  { value:'support',      label:'Support Staff',   desc:'Can view and comment — limited edit access',       color:'#0891b2' },
-  { value:'admin',        label:'Admin',           desc:'Full access to users, settings & reports',         color:'#2D6BB6' },
-  { value:'super',        label:'Super Admin',     desc:'Full access including admin management',           color:'#9333ea' },
-  { value:'owner',        label:'Owner / Partner', desc:'Unrestricted — same as primary account',          color:'#e05555' },
+  { value:'account_manager',    label:'Account Manager',    desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#0891b2' },
+  { value:'production_manager', label:'Production Manager', desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#059669' },
+  { value:'admin',              label:'Admin',              desc:'Full access to users, settings & reports',        color:'#2D6BB6' },
+  { value:'super',              label:'Super Admin',        desc:'Full access including admin management',          color:'#9333ea' },
+  { value:'owner',              label:'Owner / Partner',    desc:'Unrestricted — same as primary account',         color:'#e05555' },
 ];
+
+const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
+let _adminLevel = null;
+let _adminAssignedUsers = []; // user names/ids this admin can see
+
+function applyAdminRoleRestrictions(level, adminObj){
+  _adminLevel = level;
+  _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
+  if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
+  // Hide forbidden nav tabs
+  const hideTabs = ['payroll','timeoff','archive','bizSettings','livefeed'];
+  document.querySelectorAll('.admin-nav-item').forEach(el=>{
+    const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
+    if(m && hideTabs.includes(m[1])) el.style.display='none';
+  });
+  // Disable add/edit/delete actions in UI (hide action buttons)
+  document.querySelectorAll('.su-btn').forEach(b=>b.style.display='none');
+}
+
+function _populateAssignedUsersSelect(selectId){
+  const sel = document.getElementById(selectId);
+  if(!sel) return;
+  const users = dbGet(DB_KEYS.users)||[];
+  sel.innerHTML = users.map(u=>`<option value="${u.name}">${u.name} — ${u.title||u.role||''}</option>`).join('');
+}
+
+function _toggleAssignedUsersPanel(levelSelectId, wrapId, assignedSelectId){
+  const level = document.getElementById(levelSelectId)?.value;
+  const wrap = document.getElementById(wrapId);
+  if(!wrap) return;
+  const isRestricted = RESTRICTED_ADMIN_ROLES.includes(level);
+  wrap.style.display = isRestricted ? 'block' : 'none';
+  if(isRestricted) _populateAssignedUsersSelect(assignedSelectId);
+}
+
+function _updateNewLevelBadge(){
+  _toggleAssignedUsersPanel('newAdminLevel','newAdminAssignedUsersWrap','newAdminAssignedUsers');
+  // Update badge
+  const info = (typeof _getLevelInfo==='function') ? _getLevelInfo(document.getElementById('newAdminLevel')?.value) : null;
+  const badge = document.getElementById('adminLevelBadge');
+  if(badge && info){ badge.textContent=info.label; badge.style.background=info.color+'22'; badge.style.color=info.color; }
+}
 
 function _getLevelInfo(value){
   return ADMIN_LEVELS.find(l=>l.value===value) || ADMIN_LEVELS[2];
@@ -6057,6 +6112,9 @@ window._addAdminImpl = function(){
     name, email, title, initials,
     password:  pass,
     level,
+    assignedUsers: RESTRICTED_ADMIN_ROLES.includes(level)
+      ? Array.from(document.getElementById('newAdminAssignedUsers')?.selectedOptions||[]).map(o=>o.value)
+      : [],
     status:    'active',
     createdAt: new Date().toISOString(),
   };
@@ -6127,6 +6185,12 @@ function openEditAdminModal(adminId){
   document.getElementById('editAdminEmail').disabled = false;
   document.getElementById('editAdminLevel').disabled = false;
   _updateEditLevelBadge();
+  // Populate assigned users panel
+  _toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers');
+  const assignedSel = document.getElementById('editAdminAssignedUsers');
+  if(assignedSel && Array.isArray(a.assignedUsers)){
+    Array.from(assignedSel.options).forEach(opt=>{ opt.selected = a.assignedUsers.includes(opt.value); });
+  }
   openModal('editAdminModal');
 }
 
@@ -6175,11 +6239,14 @@ function saveEditAdmin(){
   const duplicate = admins.find(a=>a.email===email && a.id!==adminId);
   if(duplicate){ showToast('Another admin already uses that email'); return; }
 
-  admins[idx].name     = name;
-  admins[idx].initials = initials;
-  admins[idx].email    = email;
-  admins[idx].title    = title;
-  admins[idx].level    = level;
+  admins[idx].name          = name;
+  admins[idx].initials      = initials;
+  admins[idx].email         = email;
+  admins[idx].title         = title;
+  admins[idx].level         = level;
+  admins[idx].assignedUsers = RESTRICTED_ADMIN_ROLES.includes(level)
+    ? Array.from(document.getElementById('editAdminAssignedUsers')?.selectedOptions||[]).map(o=>o.value)
+    : [];
   if(pass) admins[idx].password = pass;
 
   dbSet(DB_KEYS.admins, admins);
@@ -6265,11 +6332,17 @@ window.openAddAdminModal = function(){
       localStorage.removeItem('wl_admin_session'); return;
     }
     if(s.role === 'admin'){
-      localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
+      localStorage.setItem('wl_admin_session', JSON.stringify({...s, ts:Date.now()}));
       document.addEventListener('DOMContentLoaded', ()=>{
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
         document.getElementById('userApp').classList.remove('visible');
+        // Re-apply role restrictions for non-primary admins
+        if(s.level && s.adminId && typeof applyAdminRoleRestrictions==='function'){
+          const admins = JSON.parse(localStorage.getItem('wl_admins_db')||'[]');
+          const adminObj = admins.find(a=>a.id===s.adminId);
+          if(adminObj) setTimeout(()=>applyAdminRoleRestrictions(s.level, adminObj), 150);
+        }
       });
     }
   }catch(e){}
