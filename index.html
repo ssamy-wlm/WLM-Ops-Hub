@@ -5285,27 +5285,48 @@ function refreshAdminOverview(){
     weekLabel.textContent='Week of '+startOfWeek.toLocaleDateString('en-US',opts)+' – '+endOfWeek.toLocaleDateString('en-US',opts);
   }
 
-  // EOD list
+  // EOD list — show ALL active users, use all-time eods for last-submission info
   const eodList = document.getElementById('ov-eod-list');
   if(eodList){
-    if(!weekEods.length){
-      eodList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No submissions yet this week. All metrics show 0.</div>';
+    // Build per-user maps: this week's reports and all-time last report
+    const byUserWeek = {};
+    weekEods.forEach(e=>{ if(!byUserWeek[e.user]) byUserWeek[e.user]=[]; byUserWeek[e.user].push(e); });
+    const lastReportByUser = {};
+    eods.forEach(e=>{ // eods is all-time array
+      if(!lastReportByUser[e.user] || e.date > lastReportByUser[e.user].date){
+        lastReportByUser[e.user] = e;
+      }
+    });
+
+    const allUserNames = allUsers.map(u=>u.name);
+    // Include users who submitted but may have been removed, and all active users
+    const allNames = [...new Set([...allUserNames, ...Object.keys(byUserWeek)])];
+
+    if(!allNames.length){
+      eodList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No team members found.</div>';
     } else {
-      const byUser={};
-      weekEods.forEach(e=>{if(!byUser[e.user])byUser[e.user]=[];byUser[e.user].push(e);});
-      // Show all active users with 0 if no reports
-      const allUserNames = allUsers.map(u=>u.name);
-      const rows = [...new Set([...Object.keys(byUser),...allUserNames])].map(name=>{
-        const reps = byUser[name]||[];
-        const lastRep = reps[0];
-        const status = reps.length>0?`<span class="cred-status cred-set">${reps.length} report${reps.length!==1?'s':''}</span>`:'<span class="cred-status cred-notset">0 this week</span>';
+      const rows = allNames.map(name=>{
+        const weekReps = byUserWeek[name]||[];
+        const lastRep  = lastReportByUser[name];
+        const thisWeekCount = weekReps.length;
+        let status, subLine;
+        if(thisWeekCount > 0){
+          status  = `<span class="cred-status cred-set">${thisWeekCount} report${thisWeekCount!==1?'s':''}</span>`;
+          subLine = `Last: ${weekReps[0].date}`;
+        } else if(lastRep){
+          status  = `<span class="cred-status cred-notset">0 this week</span>`;
+          subLine = `Last submission: ${lastRep.date}`;
+        } else {
+          status  = `<span class="cred-status cred-notset">0 this week</span>`;
+          subLine = 'No reports yet';
+        }
         const initials = name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
         return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);">
           <div style="display:flex;align-items:center;gap:10px;">
             <div class="avatar" style="width:28px;height:28px;font-size:10px;">${initials}</div>
             <div>
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${name}</div>
-              ${lastRep?`<div style="font-size:11px;color:var(--text-light);">Last: ${lastRep.date}</div>`:'<div style="font-size:11px;color:var(--text-light);">No reports this week</div>'}
+              <div style="font-size:11px;color:var(--text-light);">${subLine}</div>
             </div>
           </div>
           ${status}
@@ -5336,11 +5357,17 @@ function refreshAdminOverview(){
   }
 }
 
-// Auto-refresh overview when tab opens
+// Auto-refresh overview when tab opens (pull cloud first so data is fresh)
 const _origSwitchAdminOV = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdminOV(el, tab);
-  if(tab==='overview') setTimeout(refreshAdminOverview, 80);
+  if(tab==='overview'){
+    if(cloudIsConfigured()){
+      cloudPullAll(true).then(()=>refreshAdminOverview());
+    } else {
+      setTimeout(refreshAdminOverview, 80);
+    }
+  }
   if(tab==='archive')  setTimeout(refreshArchive, 80);
   if(tab==='timeoff')  setTimeout(renderAdminTimeOff, 80);
   if(tab==='payroll')  setTimeout(initPayroll, 80);
