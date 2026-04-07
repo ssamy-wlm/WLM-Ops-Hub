@@ -1458,7 +1458,8 @@ function updateEODStep(){
   document.getElementById('eodNextBtn').textContent=eodCurrentStep===3?'Submit Report ✓':'Next →';
 }
 function submitEOD(){
-  const selDate=new Date(calYear,calMonth,selectedCalDate).toISOString().slice(0,10);
+  // Build date string from local calendar selection (avoid UTC offset shifting the day)
+  const selDate=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(selectedCalDate).padStart(2,'0')}`;
   const name=currentUser?.name||'User';
   const title=currentUser?.title||'';
   const issuesText = _eodBlockerCount>0 ? (document.getElementById('eodIssues')?.value||'') : '';

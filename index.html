@@ -1902,9 +1902,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <span id="adminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
         </div>
       <div id="newAdminAssignedUsersWrap" style="margin-top:14px;display:none;">
-        <label class="form-label">Assigned Users <span style="font-weight:400;color:var(--text-light);">(select which users this admin can manage)</span></label>
-        <select id="newAdminAssignedUsers" class="form-select" multiple style="height:120px;font-size:13px;"></select>
-        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Hold Ctrl / Cmd to select multiple users</div>
+        <label class="form-label">Assigned Users <span style="font-weight:400;color:var(--text-light);">(users this admin can manage)</span></label>
+        <div id="newAdminChips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="newAdminAssignedUsers" class="form-select" style="flex:1;font-size:13px;">
+            <option value="">— Select a user to add —</option>
+          </select>
+          <button type="button" class="btn btn-outline btn-sm" onclick="_addAssignedChip('newAdminAssignedUsers','newAdminChips')" style="white-space:nowrap;">+ Add</button>
+        </div>
       </div>
       </div>
     </div>
@@ -1968,7 +1973,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group"><label class="form-label">Job Title / Role</label><input class="form-input" id="editAdminTitle" placeholder="e.g. Director of Operations"></div>
       <div class="form-group">
         <label class="form-label">Admin Access Level</label>
-        <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers')">
+        <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips')">
           <option value="account_manager">Account Manager</option>
           <option value="production_manager">Production Manager</option>
           <option value="admin">Admin — Full access to users, settings &amp; reports</option>
@@ -1980,8 +1985,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       <div id="editAdminAssignedUsersWrap" style="margin-top:14px;display:none;">
         <label class="form-label">Assigned Users</label>
-        <select id="editAdminAssignedUsers" class="form-select" multiple style="height:120px;font-size:13px;"></select>
-        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Hold Ctrl / Cmd to select multiple users</div>
+        <div id="editAdminChips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="editAdminAssignedUsers" class="form-select" style="flex:1;font-size:13px;">
+            <option value="">— Select a user to add —</option>
+          </select>
+          <button type="button" class="btn btn-outline btn-sm" onclick="_addAssignedChip('editAdminAssignedUsers','editAdminChips')" style="white-space:nowrap;">+ Add</button>
+        </div>
       </div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
@@ -5181,6 +5191,8 @@ async function cloudPullAll(silent=false){
     localStorage.setItem('wl_cloud_last_sync', now);
     updateCloudStatusUI();
     renderUserTable();
+    // Refresh admin table so CEO/Owner sees newly added admin accounts
+    if(typeof window._renderAdminTableImpl === 'function') window._renderAdminTableImpl();
     if(!silent) showToast('✅ All data pulled from cloud');
   } catch(e){
     setCloudStatus('Pull failed: '+e.message,'error');
@@ -5268,7 +5280,10 @@ function refreshAdminOverview(){
   const sowStr = startOfWeek.toISOString().slice(0,10);
   const eowStr = endOfWeek.toISOString().slice(0,10);
 
-  const weekEods = eods.filter(e=>e.date>=sowStr && e.date<=eowStr);
+  // Include 1 day before week start to catch reports stored with UTC timezone offset
+  const sowBuf = new Date(startOfWeek); sowBuf.setDate(sowBuf.getDate()-1);
+  const sowBufStr = sowBuf.toISOString().slice(0,10);
+  const weekEods = eods.filter(e=>e.date>=sowBufStr && e.date<=eowStr);
   const activeBlockers = blockers.filter(b=>b.status==='open');
   const usersWhoSubmitted = new Set(weekEods.map(e=>e.user)).size;
   const onTimeRate = allUsers.length>0 ? Math.round((usersWhoSubmitted/allUsers.length)*100) : 0;
@@ -5530,45 +5545,38 @@ function initPayroll(){
   }
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const threshold = parseFloat(otPolicy.threshold)||40;
-  // Check if any user has an OT rate configured — if so, show the Extra Hours column
-  const anyOT = allUsers.some(u=>{
-    const r = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
-    return r > 0;
-  });
   const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
 
-  // Header row
-  const gridCols = anyOT ? 'auto 1fr auto auto auto' : 'auto 1fr auto auto';
-  const headerHtml = anyOT ? `
+  // Extra Hours column is always visible — allows manual entry per user
+  const gridCols = 'auto 1fr auto auto auto';
+  const headerHtml = `
     <div style="display:grid;grid-template-columns:${gridCols};gap:12px;padding:0 0 8px;border-bottom:2px solid var(--border);margin-bottom:4px;">
       <div></div>
       <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Team Member</div>
-      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Hours</div>
-      <div style="font-size:10px;font-weight:700;color:var(--gold,#d97706);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Extra Hours</div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Regular Hrs</div>
+      <div style="font-size:10px;font-weight:700;color:var(--gold,#d97706);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Extra Hrs</div>
       <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:right;">Pay</div>
-    </div>` : '';
+    </div>`;
 
   container.innerHTML = headerHtml + allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
     const otRate = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
+    const extraRate = otRate > 0 ? otRate : rate; // use OT rate if set, else regular rate
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const _pc=_payPalette[i%_payPalette.length];
-    const extraHoursCol = anyOT ? `
-      <div style="text-align:center;min-width:110px;">
-        <div style="font-size:13px;font-weight:700;color:var(--gold,#d97706);" id="ot-hrs-${u.id}">—</div>
-        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otRate>0?'$'+otRate+'/hr OT':'no OT rate'}</div>
-      </div>` : '';
-    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" data-extra-rate="${extraRate}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${u.name}</div>
-        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr${otRate>0?' · OT: $'+otRate+'/hr':''} · ${u.title||u.role||''}</div>
+        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr${otRate>0?' · Extra: $'+otRate+'/hr':''} · ${u.title||u.role||''}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <label style="font-size:12px;color:var(--text-mid);">Hours:</label>
-        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-reg-hrs" style="width:75px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
       </div>
-      ${extraHoursCol}
+      <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-extra-hrs" style="width:75px;padding:7px 10px;font-size:13px;border-color:var(--gold,#d97706)44;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
+        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otRate>0?'@ $'+otRate+'/hr':'@ reg rate'}</div>
+      </div>
       <div style="text-align:right;min-width:90px;">
         <div style="font-size:15px;font-weight:800;color:var(--text-dark);" id="pay-${u.id}">$0.00</div>
         <div style="font-size:10px;color:var(--text-light);" id="pay-note-${u.id}">this week</div>
@@ -5639,65 +5647,61 @@ function saveOTPolicyBtn(){
 
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
-  const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
-  const threshold = parseFloat(otPolicy.threshold)||40;
-  let total = 0, totalOtPay = 0;
-  const otLines = []; // for breakdown panel
+  let total = 0, totalExtraPay = 0;
+  const extraLines = []; // for breakdown panel
   rows.forEach(row=>{
-    const rate   = parseFloat(row.dataset.rate)||0;
-    const otRate = parseFloat(row.dataset.otRate)||0;
-    const uid    = row.dataset.uid;
-    const nameEl = row.querySelector('div > div:first-child');
-    const name   = nameEl ? nameEl.textContent.trim() : uid;
-    const hoursInput = row.querySelector('input[type="number"]');
-    const hours  = parseFloat(hoursInput?.value)||0;
-    let pay, noteText, otHours = 0, otPay = 0;
-    if(otRate > 0 && hours > threshold){
-      otHours = hours - threshold;
-      const regPay = threshold * rate;
-      otPay = otHours * otRate;
-      pay = regPay + otPay;
-      noteText = `${threshold}h reg + ${otHours.toFixed(1)}h OT`;
-      otLines.push({name, otHours, otRate, otPay});
+    const rate      = parseFloat(row.dataset.rate)||0;
+    const otRate    = parseFloat(row.dataset.otRate)||0;
+    const extraRate = parseFloat(row.dataset.extraRate)||rate; // OT rate if set, else regular rate
+    const uid       = row.dataset.uid;
+    const nameEl    = row.querySelector('div > div:first-child');
+    const name      = nameEl ? nameEl.textContent.trim() : uid;
+    const regInput   = row.querySelector('.pay-reg-hrs');
+    const extraInput = row.querySelector('.pay-extra-hrs');
+    const hours      = parseFloat(regInput?.value)||0;
+    const extraHours = parseFloat(extraInput?.value)||0;
+    const regPay   = hours * rate;
+    const xPay     = extraHours * extraRate;
+    const pay      = regPay + xPay;
+    let noteText;
+    if(extraHours > 0){
+      noteText = `${hours}h reg + ${extraHours}h extra`;
+      extraLines.push({name, extraHours, extraRate, xPay});
     } else {
-      pay = rate * hours;
-      noteText = 'this week';
+      noteText = hours > 0 ? hours+'h regular' : 'this week';
     }
     total += pay;
-    totalOtPay += otPay;
+    totalExtraPay += xPay;
     const payEl  = document.getElementById('pay-'+uid);
     const noteEl = document.getElementById('pay-note-'+uid);
     if(payEl)  payEl.textContent  = '$'+pay.toFixed(2);
     if(noteEl) noteEl.textContent = noteText;
-    // Update Extra Hours column
-    const otHrsEl = document.getElementById('ot-hrs-'+uid);
+    // Update extra pay label under extra hrs input
     const otPayEl = document.getElementById('ot-pay-'+uid);
-    if(otHrsEl){
-      if(otRate > 0 && otHours > 0){
-        otHrsEl.textContent = otHours.toFixed(1)+'h';
-        otHrsEl.style.color = 'var(--gold,#d97706)';
-        if(otPayEl){ otPayEl.textContent = '+$'+otPay.toFixed(2); otPayEl.style.color='var(--gold,#d97706)'; }
-      } else if(otRate > 0){
-        otHrsEl.textContent = '—';
-        otHrsEl.style.color = 'var(--text-light)';
-        if(otPayEl){ otPayEl.textContent = '$'+otRate+'/hr OT'; otPayEl.style.color='var(--text-light)'; }
+    if(otPayEl){
+      if(extraHours > 0){
+        otPayEl.textContent = '+$'+xPay.toFixed(2);
+        otPayEl.style.color = 'var(--gold,#d97706)';
+      } else {
+        otPayEl.textContent = otRate>0?'@ $'+otRate+'/hr':'@ reg rate';
+        otPayEl.style.color = 'var(--text-light)';
       }
     }
   });
-  // Update OT total in footer
+  // Update extra total in footer
   const otTotEl = document.getElementById('payrollOtTotal');
-  if(otTotEl) otTotEl.textContent = totalOtPay > 0 ? '(incl. $'+totalOtPay.toFixed(2)+' OT)' : '';
+  if(otTotEl) otTotEl.textContent = totalExtraPay > 0 ? '(incl. $'+totalExtraPay.toFixed(2)+' extra hrs)' : '';
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
-  // OT breakdown panel
+  // Extra hours breakdown panel
   const breakdown = document.getElementById('ot-breakdown');
   const bdRows    = document.getElementById('ot-breakdown-rows');
   if(breakdown && bdRows){
-    if(otLines.length){
-      bdRows.innerHTML = otLines.map(l=>
+    if(extraLines.length){
+      bdRows.innerHTML = extraLines.map(l=>
         `<div style="display:flex;justify-content:space-between;font-size:12px;">
           <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
-          <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h × $${l.otRate.toFixed(2)}/hr OT = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
+          <span style="color:var(--text-mid);">${l.extraHours}h × $${l.extraRate.toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.xPay.toFixed(2)}</strong></span>
         </div>`
       ).join('');
       breakdown.style.display = 'block';
@@ -6273,24 +6277,59 @@ function applyAdminRoleRestrictions(level, adminObj){
   document.querySelectorAll('.su-btn').forEach(b=>b.style.display='none');
 }
 
-function _populateAssignedUsersSelect(selectId){
+function _populateAssignedUsersSelect(selectId, chipsId, currentAssigned){
   const sel = document.getElementById(selectId);
   if(!sel) return;
   const users = dbGet(DB_KEYS.users)||[];
-  sel.innerHTML = users.map(u=>`<option value="${u.name}">${u.name} — ${u.title||u.role||''}</option>`).join('');
+  // Populate dropdown with all users (already-assigned ones still show so you can re-add if removed)
+  sel.innerHTML = '<option value="">— Select a user to add —</option>' +
+    users.map(u=>`<option value="${u.name}">${u.name} — ${u.title||u.role||''}</option>`).join('');
+  // Pre-populate chips from currentAssigned array
+  if(chipsId && Array.isArray(currentAssigned)){
+    const chipsEl = document.getElementById(chipsId);
+    if(chipsEl){
+      chipsEl.innerHTML = '';
+      currentAssigned.forEach(name=>{ if(name) _appendChip(chipsEl, name); });
+    }
+  }
 }
 
-function _toggleAssignedUsersPanel(levelSelectId, wrapId, assignedSelectId){
+function _appendChip(container, name){
+  // Don't add duplicate
+  if([...container.querySelectorAll('.au-chip')].some(c=>c.dataset.name===name)) return;
+  const chip = document.createElement('span');
+  chip.className = 'au-chip';
+  chip.dataset.name = name;
+  chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;background:var(--accent,#2D6BB6)18;border:1px solid var(--accent,#2D6BB6)44;color:var(--accent,#2D6BB6);border-radius:20px;padding:3px 10px 3px 12px;font-size:12px;font-weight:600;';
+  chip.innerHTML = `${escHtml(name)} <button type="button" onclick="this.closest('.au-chip').remove()" style="background:none;border:none;cursor:pointer;color:inherit;font-size:14px;line-height:1;padding:0;margin:0;" title="Remove">×</button>`;
+  container.appendChild(chip);
+}
+
+function _addAssignedChip(selectId, chipsId){
+  const sel = document.getElementById(selectId);
+  const chipsEl = document.getElementById(chipsId);
+  if(!sel || !chipsEl || !sel.value) return;
+  _appendChip(chipsEl, sel.value);
+  sel.value = ''; // reset dropdown
+}
+
+function _getAssignedFromChips(chipsId){
+  const chipsEl = document.getElementById(chipsId);
+  if(!chipsEl) return [];
+  return [...chipsEl.querySelectorAll('.au-chip')].map(c=>c.dataset.name).filter(Boolean);
+}
+
+function _toggleAssignedUsersPanel(levelSelectId, wrapId, assignedSelectId, chipsId, currentAssigned){
   const level = document.getElementById(levelSelectId)?.value;
   const wrap = document.getElementById(wrapId);
   if(!wrap) return;
   const isRestricted = RESTRICTED_ADMIN_ROLES.includes(level);
   wrap.style.display = isRestricted ? 'block' : 'none';
-  if(isRestricted) _populateAssignedUsersSelect(assignedSelectId);
+  if(isRestricted) _populateAssignedUsersSelect(assignedSelectId, chipsId, currentAssigned||[]);
 }
 
 function _updateNewLevelBadge(){
-  _toggleAssignedUsersPanel('newAdminLevel','newAdminAssignedUsersWrap','newAdminAssignedUsers');
+  _toggleAssignedUsersPanel('newAdminLevel','newAdminAssignedUsersWrap','newAdminAssignedUsers','newAdminChips',[]);
   // Update badge
   const info = (typeof _getLevelInfo==='function') ? _getLevelInfo(document.getElementById('newAdminLevel')?.value) : null;
   const badge = document.getElementById('adminLevelBadge');
@@ -6391,7 +6430,7 @@ window._addAdminImpl = function(){
     password:  pass,
     level,
     assignedUsers: RESTRICTED_ADMIN_ROLES.includes(level)
-      ? Array.from(document.getElementById('newAdminAssignedUsers')?.selectedOptions||[]).map(o=>o.value)
+      ? _getAssignedFromChips('newAdminChips')
       : [],
     status:    'active',
     createdAt: new Date().toISOString(),
@@ -6464,12 +6503,8 @@ function openEditAdminModal(adminId){
   document.getElementById('editAdminEmail').disabled = false;
   document.getElementById('editAdminLevel').disabled = false;
   _updateEditLevelBadge();
-  // Populate assigned users panel
-  _toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers');
-  const assignedSel = document.getElementById('editAdminAssignedUsers');
-  if(assignedSel && Array.isArray(a.assignedUsers)){
-    Array.from(assignedSel.options).forEach(opt=>{ opt.selected = a.assignedUsers.includes(opt.value); });
-  }
+  // Populate assigned users panel with existing chips
+  _toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips', a.assignedUsers||[]);
   openModal('editAdminModal');
 }
 
@@ -6524,7 +6559,7 @@ function saveEditAdmin(){
   admins[idx].title         = title;
   admins[idx].level         = level;
   admins[idx].assignedUsers = RESTRICTED_ADMIN_ROLES.includes(level)
-    ? Array.from(document.getElementById('editAdminAssignedUsers')?.selectedOptions||[]).map(o=>o.value)
+    ? _getAssignedFromChips('editAdminChips')
     : [];
   if(pass) admins[idx].password = pass;
 
