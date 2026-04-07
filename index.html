@@ -1488,8 +1488,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div id="ot-policy-panel" class="card" style="margin-bottom:18px;display:none;border:2px solid var(--gold,#FAC231);">
         <div class="card-header" style="background:linear-gradient(135deg,rgba(250,194,49,.08),rgba(250,194,49,.03));">
           <div>
-            <div class="card-title">🔒 Extra Hours Policy</div>
-            <div class="card-sub">Overtime rates applied when weekly hours exceed the threshold — visible to Super Admin &amp; Owner only</div>
+            <div class="card-title">🔒 Overtime Policy</div>
+            <div class="card-sub">Hours above threshold are automatically paid at 1.5× the regular rate — visible to Super Admin &amp; Owner only</div>
           </div>
           <button class="btn btn-primary btn-sm" onclick="saveOTPolicyBtn()">Save Policy</button>
         </div>
@@ -1499,10 +1499,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <label class="form-label">Overtime Threshold (hours/week)</label>
               <input class="form-input" type="number" id="ot-threshold" value="40" min="1" max="80" step="1" style="width:120px;">
             </div>
-            <div style="font-size:12px;color:var(--text-light);padding-bottom:8px;">Any hours above this threshold are paid at the user's overtime rate.</div>
+            <div style="font-size:12px;color:var(--text-light);padding-bottom:8px;">Hours above this threshold are automatically paid at <strong>1.5×</strong> the user's regular hourly rate.</div>
           </div>
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Per-User Overtime Rates</div>
-          <div id="ot-user-rates" style="display:flex;flex-direction:column;gap:8px;"></div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">OT Eligibility Per User</div>
+          <div id="ot-user-rates" style="display:flex;flex-direction:column;gap:4px;"></div>
         </div>
       </div>
 
@@ -2158,6 +2158,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="form-hint">Paste a shared link to their resume document</div>
         </div>
         <div class="form-group"><label class="form-label">Emergency Contact</label><input class="form-input" id="editEmergencyContact" placeholder="Name — Relationship — Phone"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Probation Start</label><input class="form-input" type="date" id="editProbationStart" placeholder="YYYY-MM-DD"></div>
+          <div class="form-group"><label class="form-label">Probation End</label><input class="form-input" type="date" id="editProbationEnd" placeholder="YYYY-MM-DD"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:-8px;margin-bottom:12px;">Leave blank if not on probation. Probation users are excluded from overtime by default.</div>
         <div class="form-group"><label class="form-label">Notes (Admin Only)</label><textarea class="form-textarea" id="editAdminNotes" rows="3" placeholder="Internal notes — not visible to the user…"></textarea></div>
       </div>
 
@@ -2876,6 +2881,8 @@ function openEditUserModal(userIdOrName){
   document.getElementById('editLinkedin').value=u.linkedin||'';
   document.getElementById('editResumeUrl').value=u.resumeUrl||'';
   document.getElementById('editEmergencyContact').value=u.emergencyContact||'';
+  document.getElementById('editProbationStart').value=u.probationStart||'';
+  document.getElementById('editProbationEnd').value=u.probationEnd||'';
   document.getElementById('editAdminNotes').value=u.adminNotes||'';
   // Tenure banner
   const tenBanner = document.getElementById('eu-tenure-banner');
@@ -3048,13 +3055,18 @@ function renderUserTable(){
     const statusClass = u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending');
     const statusLabel = u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending');
     const badgeClass  = u.role==='Employee'?'badge-working':'badge-blue';
+    const probation   = _isOnProbation(u);
+    const probEnd     = u.probationEnd ? new Date(u.probationEnd).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${initials}</div>
         <div><div>${u.name}</div><div class="td-sub">${u.email}</div></div>
       </div></td>
       <td><div>${u.title||'—'}</div><div class="td-sub">${u.resp||''}</div></td>
-      <td><span class="status-badge ${badgeClass}">${u.role||'Contractor'}</span></td>
+      <td>
+        <span class="status-badge ${badgeClass}">${u.role||'Contractor'}</span>
+        ${probation?`<span class="status-badge" style="background:#f59e0b18;color:#d97706;border:1px solid #d97706aa;margin-left:4px;" title="Probation ends ${probEnd}">Probation</span>`:''}
+      </td>
       <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>
@@ -5560,15 +5572,19 @@ function initPayroll(){
 
   container.innerHTML = headerHtml + allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
-    const otRate = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
-    const extraRate = otRate > 0 ? otRate : rate; // use OT rate if set, else regular rate
+    const isProbation = _isOnProbation(u);
+    // OT enabled: from saved policy; default true unless on probation
+    const otOn = otPolicy.userOTEnabled ? (otPolicy.userOTEnabled[u.id] !== undefined ? otPolicy.userOTEnabled[u.id] : !isProbation) : !isProbation;
+    const otRate15 = (rate * 1.5).toFixed(2);
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const _pc=_payPalette[i%_payPalette.length];
-    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" data-extra-rate="${extraRate}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    const probationBadge = isProbation ? `<span style="font-size:9px;background:#f59e0b22;color:#d97706;border:1px solid #d97706aa;border-radius:10px;padding:1px 6px;margin-left:6px;font-weight:700;vertical-align:middle;">Probation</span>` : '';
+    const otBadge = otOn ? `<span style="font-size:9px;background:#d9770618;color:#d97706;border:1px solid #d9770644;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">OT 1.5×</span>` : `<span style="font-size:9px;background:#6b728018;color:#6b7280;border:1px solid #6b728044;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">No OT</span>`;
+    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-enabled="${otOn}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
-        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${u.name}</div>
-        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr${otRate>0?' · Extra: $'+otRate+'/hr':''} · ${u.title||u.role||''}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);"><span class="pay-name">${u.name}</span>${probationBadge}${otBadge}</div>
+        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr reg${otOn?' · OT: $'+otRate15+'/hr':''} · ${u.title||u.role||''}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
         <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-reg-hrs" style="width:75px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
@@ -5589,126 +5605,164 @@ function initPayroll(){
 }
 
 function initOTPolicyPanel(users){
-  // Load saved policy
   const policy = dbGet(DB_KEYS.otPolicy)||{};
   const threshold = policy.threshold ?? 40;
-  const userRates = policy.userRates || {};
+  const userOTEnabled = policy.userOTEnabled || {};
 
-  // Restore threshold input
   const tInput = document.getElementById('ot-threshold');
   if(tInput) tInput.value = threshold;
 
-  // Build per-user rate rows
   const container = document.getElementById('ot-user-rates');
   if(!container) return;
   const activeUsers = (users||[]).filter(u=>u.status==='active'||!u.status);
   container.innerHTML = activeUsers.map(u=>{
-    // Pre-fill: saved policy rate → user.overtimeRate → default 0 (Sarah Ibrahim default 12.75)
-    let saved = userRates[u.id];
-    if(saved === undefined) saved = parseFloat(u.overtimeRate)||0;
-    // Default Sarah Ibrahim to 12.75 if never set
-    if(!saved && u.name && u.name.toLowerCase().includes('sarah ibrahim')) saved = 12.75;
+    const rate = parseFloat(u.payRate)||0;
+    const otRate = (rate * 1.5).toFixed(2);
+    // Default: probation users OFF, everyone else ON (unless explicitly saved)
+    const isProbation = _isOnProbation(u);
+    let enabled = userOTEnabled[u.id];
+    if(enabled === undefined) enabled = !isProbation; // default on for non-probation
+    const toggleId = `ot-toggle-${u.id}`;
     return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
-      <div style="flex:1;font-size:13px;font-weight:600;color:var(--text-dark);">${u.name}</div>
-      <div style="font-size:11px;color:var(--text-light);flex:1;">${u.title||u.role||''}</div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <span style="font-size:12px;color:var(--text-mid);">OT Rate $</span>
-        <input type="number" min="0" step="0.01" value="${saved||''}" placeholder="0.00"
-          class="form-input" style="width:90px;padding:6px 10px;font-size:13px;"
-          id="ot-rate-${u.id}" data-uid="${u.id}">
-        <span style="font-size:11px;color:var(--text-light);">/hr</span>
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;min-width:0;">
+        <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
+          <input type="checkbox" id="${toggleId}" data-uid="${u.id}" ${enabled?'checked':''} style="opacity:0;width:0;height:0;position:absolute;"
+            onchange="document.getElementById('${toggleId}').closest('div').parentElement.querySelector('.ot-rate-label').style.color=this.checked?'var(--gold,#d97706)':'var(--text-light)'">
+          <span onclick="document.getElementById('${toggleId}').click()" style="position:absolute;inset:0;background:${enabled?'var(--gold,#d97706)':'#ccc'};border-radius:20px;transition:.2s;cursor:pointer;"
+            id="ot-track-${u.id}"></span>
+          <span onclick="document.getElementById('${toggleId}').click()" style="position:absolute;left:${enabled?'18':'2'}px;top:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;cursor:pointer;"
+            id="ot-thumb-${u.id}"></span>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text-dark);">${u.name}${isProbation?'<span style="font-size:10px;background:#f59e0b22;color:#d97706;border:1px solid #d97706aa;border-radius:10px;padding:1px 7px;margin-left:7px;font-weight:700;">Probation</span>':''}</div>
+          <div style="font-size:11px;color:var(--text-light);">${u.title||u.role||''} · $${rate}/hr regular</div>
+        </div>
+      </label>
+      <div class="ot-rate-label" style="font-size:12px;font-weight:700;color:${enabled?'var(--gold,#d97706)':'var(--text-light)'};white-space:nowrap;">
+        ${enabled?`OT: $${otRate}/hr (1.5×)`:'OT disabled'}
       </div>
     </div>`;
   }).join('');
+
+  // Wire toggles to update track/thumb color and label live
+  container.querySelectorAll('input[type="checkbox"][data-uid]').forEach(cb=>{
+    const uid = cb.dataset.uid;
+    cb.addEventListener('change', ()=>{
+      const track = document.getElementById('ot-track-'+uid);
+      const thumb = document.getElementById('ot-thumb-'+uid);
+      const label = cb.closest('div[style]').querySelector('.ot-rate-label');
+      const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===uid);
+      const rate = parseFloat(u?.payRate)||0;
+      if(track){ track.style.background = cb.checked ? 'var(--gold,#d97706)' : '#ccc'; }
+      if(thumb){ thumb.style.left = cb.checked ? '18px' : '2px'; }
+      if(label){ label.textContent = cb.checked ? `OT: $${(rate*1.5).toFixed(2)}/hr (1.5×)` : 'OT disabled'; label.style.color = cb.checked ? 'var(--gold,#d97706)' : 'var(--text-light)'; }
+    });
+  });
 }
 
 function saveOTPolicyBtn(){
   const threshold = parseFloat(document.getElementById('ot-threshold')?.value)||40;
-  const userRates = {};
-  document.querySelectorAll('#ot-user-rates input[type="number"]').forEach(inp=>{
-    const uid = inp.dataset.uid;
-    const val = parseFloat(inp.value)||0;
-    if(uid) userRates[uid] = val;
+  const userOTEnabled = {};
+  document.querySelectorAll('#ot-user-rates input[type="checkbox"][data-uid]').forEach(cb=>{
+    userOTEnabled[cb.dataset.uid] = cb.checked;
   });
-  const policy = { threshold, userRates };
+  const policy = { threshold, userOTEnabled };
   dbSet(DB_KEYS.otPolicy, policy);
-
-  // Also persist overtimeRate on each user record for reference
-  const allUsers = dbGet(DB_KEYS.users)||[];
-  allUsers.forEach(u=>{
-    if(userRates[u.id] !== undefined) u.overtimeRate = userRates[u.id];
-  });
-  dbSet(DB_KEYS.users, allUsers);
   cloudAutoSync(true);
-
-  // Refresh payroll rows to reflect new rates
   initPayroll();
-  showToast('Extra Hours Policy saved!', 'success');
+  showToast('Overtime Policy saved ✓');
 }
 
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
-  let total = 0, totalExtraPay = 0;
-  const extraLines = []; // for breakdown panel
+  const otPolicy   = dbGet(DB_KEYS.otPolicy)||{};
+  const threshold  = parseFloat(otPolicy.threshold)||40;
+  const userOTEnabled = otPolicy.userOTEnabled || {};
+  let total = 0, totalOTPay = 0, totalExtraPay = 0;
+  const otLines = [], extraLines = [];
+
   rows.forEach(row=>{
-    const rate      = parseFloat(row.dataset.rate)||0;
-    const otRate    = parseFloat(row.dataset.otRate)||0;
-    const extraRate = parseFloat(row.dataset.extraRate)||rate; // OT rate if set, else regular rate
-    const uid       = row.dataset.uid;
-    const nameEl    = row.querySelector('div > div:first-child');
-    const name      = nameEl ? nameEl.textContent.trim() : uid;
+    const rate    = parseFloat(row.dataset.rate)||0;
+    const otOn    = row.dataset.otEnabled === 'true'; // set at render time
+    const uid     = row.dataset.uid;
+    const nameEl  = row.querySelector('.pay-name');
+    const name    = nameEl ? nameEl.textContent.trim() : uid;
     const regInput   = row.querySelector('.pay-reg-hrs');
     const extraInput = row.querySelector('.pay-extra-hrs');
     const hours      = parseFloat(regInput?.value)||0;
     const extraHours = parseFloat(extraInput?.value)||0;
-    const regPay   = hours * rate;
-    const xPay     = extraHours * extraRate;
-    const pay      = regPay + xPay;
+
+    // Regular pay with auto OT at 1.5x above threshold
+    let regPay = 0, otHours = 0, otPay = 0;
+    if(otOn && hours > threshold){
+      otHours = hours - threshold;
+      regPay  = threshold * rate;
+      otPay   = otHours * rate * 1.5;
+      otLines.push({name, otHours, rate, otPay});
+    } else {
+      regPay = hours * rate;
+    }
+
+    // Extra hours always at regular rate
+    const xPay = extraHours * rate;
+    if(extraHours > 0) extraLines.push({name, extraHours, rate, xPay});
+
+    const pay = regPay + otPay + xPay;
+    total += pay;
+    totalOTPay   += otPay;
+    totalExtraPay += xPay;
+
     let noteText;
-    if(extraHours > 0){
+    if(otHours > 0 && extraHours > 0){
+      noteText = `${threshold}h + ${otHours.toFixed(1)}h OT + ${extraHours}h extra`;
+    } else if(otHours > 0){
+      noteText = `${threshold}h reg + ${otHours.toFixed(1)}h OT @1.5×`;
+    } else if(extraHours > 0){
       noteText = `${hours}h reg + ${extraHours}h extra`;
-      extraLines.push({name, extraHours, extraRate, xPay});
     } else {
       noteText = hours > 0 ? hours+'h regular' : 'this week';
     }
-    total += pay;
-    totalExtraPay += xPay;
+
     const payEl  = document.getElementById('pay-'+uid);
     const noteEl = document.getElementById('pay-note-'+uid);
     if(payEl)  payEl.textContent  = '$'+pay.toFixed(2);
     if(noteEl) noteEl.textContent = noteText;
-    // Update extra pay label under extra hrs input
+
+    // Extra hrs label
     const otPayEl = document.getElementById('ot-pay-'+uid);
     if(otPayEl){
       if(extraHours > 0){
         otPayEl.textContent = '+$'+xPay.toFixed(2);
         otPayEl.style.color = 'var(--gold,#d97706)';
       } else {
-        otPayEl.textContent = otRate>0?'@ $'+otRate+'/hr':'@ $'+rate+'/hr';
+        otPayEl.textContent = '@ $'+rate+'/hr';
         otPayEl.style.color = 'var(--text-light)';
       }
     }
   });
-  // Update extra total in footer
+
+  const grandExtra = totalOTPay + totalExtraPay;
   const otTotEl = document.getElementById('payrollOtTotal');
-  if(otTotEl) otTotEl.textContent = totalExtraPay > 0 ? '(incl. $'+totalExtraPay.toFixed(2)+' extra hrs)' : '';
+  if(otTotEl) otTotEl.textContent = grandExtra > 0 ? '(incl. $'+grandExtra.toFixed(2)+' OT/extra)' : '';
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
-  // Extra hours breakdown panel
+
+  // Breakdown panel
   const breakdown = document.getElementById('ot-breakdown');
   const bdRows    = document.getElementById('ot-breakdown-rows');
   if(breakdown && bdRows){
-    if(extraLines.length){
-      bdRows.innerHTML = extraLines.map(l=>
-        `<div style="display:flex;justify-content:space-between;font-size:12px;">
-          <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
-          <span style="color:var(--text-mid);">${l.extraHours}h × $${l.extraRate.toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.xPay.toFixed(2)}</strong></span>
-        </div>`
-      ).join('');
-      breakdown.style.display = 'block';
-    } else {
-      breakdown.style.display = 'none';
-    }
+    const lines = [
+      ...otLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
+        <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
+        <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h OT × $${(l.rate*1.5).toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
+      </div>`),
+      ...extraLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
+        <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
+        <span style="color:var(--text-mid);">${l.extraHours}h extra × $${l.rate.toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.xPay.toFixed(2)}</strong></span>
+      </div>`)
+    ];
+    if(lines.length){ bdRows.innerHTML = lines.join(''); breakdown.style.display='block'; }
+    else breakdown.style.display='none';
   }
 }
 
@@ -5839,6 +5893,8 @@ window.saveEditUser = function(){
     allUsers[idx].linkedin        = document.getElementById('editLinkedin')?.value||allUsers[idx].linkedin||'';
     allUsers[idx].resumeUrl       = document.getElementById('editResumeUrl')?.value||allUsers[idx].resumeUrl||'';
     allUsers[idx].emergencyContact= document.getElementById('editEmergencyContact')?.value||allUsers[idx].emergencyContact||'';
+    allUsers[idx].probationStart  = document.getElementById('editProbationStart')?.value||'';
+    allUsers[idx].probationEnd    = document.getElementById('editProbationEnd')?.value||'';
     allUsers[idx].adminNotes      = document.getElementById('editAdminNotes')?.value||allUsers[idx].adminNotes||'';
     dbSet(DB_KEYS.users, allUsers);
 
@@ -5925,6 +5981,12 @@ function renderPlatformsList(){
 }
 
 function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function _isOnProbation(u){
+  if(!u || !u.probationEnd) return false;
+  const today = new Date().toISOString().slice(0,10);
+  return u.probationEnd > today;
+}
 
 let _platformsLocal = null;
 function updatePlatformField(pid, field, val){
@@ -6631,6 +6693,36 @@ document.addEventListener('DOMContentLoaded', ()=>{
     _populateAdminLevelSelect();
   }, 200);
 });
+
+// ── Probation data migration — run once on load ──
+(function _migrateProbation(){
+  const users = dbGet(DB_KEYS.users)||[];
+  if(!users.length) return;
+  let changed = false;
+  users.forEach(u=>{
+    const nm = (u.name||'').toLowerCase();
+    if(nm.includes('nadia fahmey') || nm.includes('rania morsy')){
+      // 2-month probation starting April 1 2026, if not already set
+      if(!u.probationStart){
+        u.probationStart = '2026-04-01';
+        u.probationEnd   = '2026-06-01';
+        changed = true;
+      }
+    }
+    if(nm.includes('sarah ibrahim')){
+      // Probation finished — clear probation fields
+      if(u.probationEnd){
+        u.probationStart = '';
+        u.probationEnd   = '';
+        changed = true;
+      }
+    }
+  });
+  if(changed){
+    dbSet(DB_KEYS.users, users);
+    cloudAutoSync(true);
+  }
+})();
 
 // ── Re-populate level select whenever modal opens ──
 const _origOpenAddAdminModal = window.openAddAdminModal;
