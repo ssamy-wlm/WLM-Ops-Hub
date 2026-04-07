@@ -1521,6 +1521,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card-body">
           <div style="font-size:12px;color:var(--text-mid);margin-bottom:16px;">Enter hours worked for each team member. Pay is calculated based on their set hourly rate.</div>
           <div id="payrollRows" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <!-- OT breakdown — only shown when someone has overtime hours -->
+          <div id="ot-breakdown" style="display:none;margin-top:14px;padding:12px 16px;background:rgba(250,194,49,.06);border:1px solid rgba(250,194,49,.3);border-radius:10px;">
+            <div style="font-size:11px;font-weight:700;color:var(--gold,#d97706);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">⏱ Extra Hours Breakdown</div>
+            <div id="ot-breakdown-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
             <div style="font-size:13px;font-weight:700;color:var(--text);">Total Payroll This Week</div>
             <div style="font-size:22px;font-weight:800;font-family:'Playfair Display',serif;color:var(--text-dark);" id="payrollTotal">$0.00</div>
@@ -3299,6 +3304,11 @@ function removeUser(btn, userId){
     // Remove their reports and blockers from active lists (they live in archive now)
     dbSet(DB_KEYS.eods,     (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user!==u.name));
     dbSet(DB_KEYS.blockers, (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user!==u.name));
+    // Track deleted user ID so cloud pull never restores them
+    if(u.id){
+      const delUids=dbGet(DB_KEYS.deletedUserIds)||[];
+      if(!delUids.includes(u.id)){ delUids.push(u.id); dbSet(DB_KEYS.deletedUserIds, delUids.slice(-200)); }
+    }
   }
   if(btn && btn.closest('tr')){
     btn.closest('tr').style.transition='opacity .3s';
@@ -4271,8 +4281,10 @@ const DB_KEYS = {
   goals:    'wl_goals_db',
   orgNodes: 'wl_org_nodes',
   orgLinks: 'wl_org_links',
-  admins:   'wl_admins_db',
-  otPolicy: 'wl_ot_policy',
+  admins:        'wl_admins_db',
+  otPolicy:      'wl_ot_policy',
+  deletedEodIds: 'wl_deleted_eod_ids',
+  deletedUserIds:'wl_deleted_user_ids',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -4809,11 +4821,13 @@ function loadAdminReportsTab(){
   const now = new Date();
   const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
   const todayStr = now.toISOString().slice(0,10);
+  const activeUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status!=='archived');
+  const activeCount = activeUsers.length || 1;
   const thisWeek = _allEodReports.filter(e=>new Date(e.submittedAt||e.date+'T00:00:00')>=startOfWeek).length;
-  const pendingToday = Math.max(0, 4 - _allEodReports.filter(e=>e.date===todayStr).length);
+  const pendingToday = Math.max(0, activeCount - _allEodReports.filter(e=>e.date===todayStr).length);
   const el1=document.getElementById('admin-eod-week'); if(el1) el1.textContent=thisWeek;
   const el2=document.getElementById('admin-pending-today'); if(el2) el2.textContent=pendingToday;
-  const rate = _allEodReports.length ? Math.round((_allEodReports.filter(e=>e.date>=startOfWeek.toISOString().slice(0,10)).length / Math.max(1, 4*7)) * 100)+'%' : '—';
+  const rate = _allEodReports.length ? Math.round((_allEodReports.filter(e=>e.date>=startOfWeek.toISOString().slice(0,10)).length / Math.max(1, activeCount*7)) * 100)+'%' : '—';
   const el3=document.getElementById('admin-submit-rate'); if(el3) el3.textContent=rate;
   // Populate user filter
   const users=[...new Set(_allEodReports.map(e=>e.user))];
@@ -4920,6 +4934,11 @@ function deleteEODReport(idx){
   const updated=e.id!=null ? allEods.filter(x=>x.id!==e.id) : allEods.filter(x=>!(x.date===e.date&&x.user===e.user));
   dbSet(DB_KEYS.eods, updated);
   _allEodReports=updated;
+  // Track deletion so cloud sync never restores this report
+  if(e.id!=null){
+    const delIds=dbGet(DB_KEYS.deletedEodIds)||[];
+    if(!delIds.includes(e.id)){ delIds.push(e.id); dbSet(DB_KEYS.deletedEodIds, delIds.slice(-500)); }
+  }
   showToast('Report deleted ✓');
   cloudAutoSync();
   filterAdminReports();
@@ -5051,10 +5070,25 @@ async function cloudPushAll(silent=false){
       if(r0.ok){ const d=await r0.json(); cloudRecord=d?.record||{}; }
     } catch(e){}
 
+    // Merge deleted IDs from cloud so all devices share the tombstone list
+    const localDelEods  = dbGet(DB_KEYS.deletedEodIds)||[];
+    const cloudDelEods  = cloudRecord.deletedEodIds||[];
+    const deletedEodIds = [...new Set([...localDelEods, ...cloudDelEods])];
+    dbSet(DB_KEYS.deletedEodIds, deletedEodIds);
+
+    const localDelUsers  = dbGet(DB_KEYS.deletedUserIds)||[];
+    const cloudDelUsers  = cloudRecord.deletedUserIds||[];
+    const deletedUserIds = [...new Set([...localDelUsers, ...cloudDelUsers])];
+    dbSet(DB_KEYS.deletedUserIds, deletedUserIds);
+
+    // Filter deleted reports and users from cloud before merging
+    const cloudEodsFiltered  = (cloudRecord.eods||[]).filter(e=>!deletedEodIds.includes(e.id));
+    const cloudUsersFiltered = (cloudRecord.users||[]).filter(u=>!deletedUserIds.includes(u.id));
+
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       dbGet(DB_KEYS.admins)||[],
-      eods:         _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
+      eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
       blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
       feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
@@ -5065,6 +5099,8 @@ async function cloudPushAll(silent=false){
       orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
       primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
+      deletedEodIds,
+      deletedUserIds,
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5108,10 +5144,25 @@ async function cloudPullAll(silent=false){
     const data = await res.json();
     const r = data?.record || {};
 
-    // Users and admins: cloud is source of truth — replace local (prevents phantom/deleted accounts reappearing)
-    if(r.users)        dbSet(DB_KEYS.users,    r.users);
+    // Merge tombstone lists (deleted IDs) — union of cloud + local
+    const pulledDelEods  = r.deletedEodIds||[];
+    const pulledDelUsers = r.deletedUserIds||[];
+    const mergedDelEods  = [...new Set([...(dbGet(DB_KEYS.deletedEodIds)||[]), ...pulledDelEods])];
+    const mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])];
+    dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
+    dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
+
+    // Users: cloud wins, but filter out locally-deleted user IDs
+    if(r.users){
+      const filtered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
+      dbSet(DB_KEYS.users, filtered);
+    }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
-    if(r.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(r.eods,     dbGet(DB_KEYS.eods)||[], 300));
+    // EODs: merge, but always filter out deleted report IDs
+    if(r.eods){
+      const filtered = r.eods.filter(e=>!mergedDelEods.includes(e.id));
+      dbSet(DB_KEYS.eods, _mergeCloudArr(filtered, (dbGet(DB_KEYS.eods)||[]).filter(e=>!mergedDelEods.includes(e.id)), 300));
+    }
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeCloudArr(r.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
     if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
@@ -5536,18 +5587,23 @@ function calcPayroll(){
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const threshold = parseFloat(otPolicy.threshold)||40;
   let total = 0;
+  const otLines = []; // for breakdown panel
   rows.forEach(row=>{
     const rate   = parseFloat(row.dataset.rate)||0;
     const otRate = parseFloat(row.dataset.otRate)||0;
     const uid    = row.dataset.uid;
+    const nameEl = row.querySelector('div > div:first-child');
+    const name   = nameEl ? nameEl.textContent.trim() : uid;
     const hoursInput = row.querySelector('input[type="number"]');
     const hours  = parseFloat(hoursInput?.value)||0;
     let pay, noteText;
     if(otRate > 0 && hours > threshold){
-      const regPay = threshold * rate;
-      const otPay  = (hours - threshold) * otRate;
+      const otHours = hours - threshold;
+      const regPay  = threshold * rate;
+      const otPay   = otHours * otRate;
       pay = regPay + otPay;
-      noteText = `${threshold}h reg + ${(hours-threshold).toFixed(1)}h OT`;
+      noteText = `${threshold}h reg + ${otHours.toFixed(1)}h OT`;
+      otLines.push({name, otHours, otRate, otPay});
     } else {
       pay = rate * hours;
       noteText = 'this week';
@@ -5560,6 +5616,22 @@ function calcPayroll(){
   });
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
+  // OT breakdown panel
+  const breakdown = document.getElementById('ot-breakdown');
+  const bdRows    = document.getElementById('ot-breakdown-rows');
+  if(breakdown && bdRows){
+    if(otLines.length){
+      bdRows.innerHTML = otLines.map(l=>
+        `<div style="display:flex;justify-content:space-between;font-size:12px;">
+          <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
+          <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h × $${l.otRate.toFixed(2)}/hr OT = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
+        </div>`
+      ).join('');
+      breakdown.style.display = 'block';
+    } else {
+      breakdown.style.display = 'none';
+    }
+  }
 }
 
 function savePayrollWeek(){
