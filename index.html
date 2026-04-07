@@ -1527,7 +1527,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div id="ot-breakdown-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
           </div>
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-            <div style="font-size:13px;font-weight:700;color:var(--text);">Total Payroll This Week</div>
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);">Total Payroll This Week</div>
+              <div style="font-size:11px;color:var(--gold,#d97706);margin-top:2px;" id="payrollOtTotal"></div>
+            </div>
             <div style="font-size:22px;font-weight:800;font-family:'Playfair Display',serif;color:var(--text-dark);" id="payrollTotal">$0.00</div>
           </div>
         </div>
@@ -5499,13 +5502,36 @@ function initPayroll(){
     return;
   }
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
+  const threshold = parseFloat(otPolicy.threshold)||40;
+  // Check if any user has an OT rate configured — if so, show the Extra Hours column
+  const anyOT = allUsers.some(u=>{
+    const r = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
+    return r > 0;
+  });
   const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
-  container.innerHTML = allUsers.map((u,i)=>{
+
+  // Header row
+  const gridCols = anyOT ? 'auto 1fr auto auto auto' : 'auto 1fr auto auto';
+  const headerHtml = anyOT ? `
+    <div style="display:grid;grid-template-columns:${gridCols};gap:12px;padding:0 0 8px;border-bottom:2px solid var(--border);margin-bottom:4px;">
+      <div></div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Team Member</div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Hours</div>
+      <div style="font-size:10px;font-weight:700;color:var(--gold,#d97706);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Extra Hours</div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:right;">Pay</div>
+    </div>` : '';
+
+  container.innerHTML = headerHtml + allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
     const otRate = parseFloat(otPolicy.userRates?.[u.id] ?? u.overtimeRate ?? 0)||0;
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const _pc=_payPalette[i%_payPalette.length];
-    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" style="display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    const extraHoursCol = anyOT ? `
+      <div style="text-align:center;min-width:110px;">
+        <div style="font-size:13px;font-weight:700;color:var(--gold,#d97706);" id="ot-hrs-${u.id}">—</div>
+        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otRate>0?'$'+otRate+'/hr OT':'no OT rate'}</div>
+      </div>` : '';
+    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-rate="${otRate}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${u.name}</div>
@@ -5515,6 +5541,7 @@ function initPayroll(){
         <label style="font-size:12px;color:var(--text-mid);">Hours:</label>
         <input type="number" min="0" max="168" step="0.5" value="0" class="form-input" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}">
       </div>
+      ${extraHoursCol}
       <div style="text-align:right;min-width:90px;">
         <div style="font-size:15px;font-weight:800;color:var(--text-dark);" id="pay-${u.id}">$0.00</div>
         <div style="font-size:10px;color:var(--text-light);" id="pay-note-${u.id}">this week</div>
@@ -5587,7 +5614,7 @@ function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const threshold = parseFloat(otPolicy.threshold)||40;
-  let total = 0;
+  let total = 0, totalOtPay = 0;
   const otLines = []; // for breakdown panel
   rows.forEach(row=>{
     const rate   = parseFloat(row.dataset.rate)||0;
@@ -5597,11 +5624,11 @@ function calcPayroll(){
     const name   = nameEl ? nameEl.textContent.trim() : uid;
     const hoursInput = row.querySelector('input[type="number"]');
     const hours  = parseFloat(hoursInput?.value)||0;
-    let pay, noteText;
+    let pay, noteText, otHours = 0, otPay = 0;
     if(otRate > 0 && hours > threshold){
-      const otHours = hours - threshold;
-      const regPay  = threshold * rate;
-      const otPay   = otHours * otRate;
+      otHours = hours - threshold;
+      const regPay = threshold * rate;
+      otPay = otHours * otRate;
       pay = regPay + otPay;
       noteText = `${threshold}h reg + ${otHours.toFixed(1)}h OT`;
       otLines.push({name, otHours, otRate, otPay});
@@ -5610,11 +5637,29 @@ function calcPayroll(){
       noteText = 'this week';
     }
     total += pay;
+    totalOtPay += otPay;
     const payEl  = document.getElementById('pay-'+uid);
     const noteEl = document.getElementById('pay-note-'+uid);
     if(payEl)  payEl.textContent  = '$'+pay.toFixed(2);
     if(noteEl) noteEl.textContent = noteText;
+    // Update Extra Hours column
+    const otHrsEl = document.getElementById('ot-hrs-'+uid);
+    const otPayEl = document.getElementById('ot-pay-'+uid);
+    if(otHrsEl){
+      if(otRate > 0 && otHours > 0){
+        otHrsEl.textContent = otHours.toFixed(1)+'h';
+        otHrsEl.style.color = 'var(--gold,#d97706)';
+        if(otPayEl){ otPayEl.textContent = '+$'+otPay.toFixed(2); otPayEl.style.color='var(--gold,#d97706)'; }
+      } else if(otRate > 0){
+        otHrsEl.textContent = '—';
+        otHrsEl.style.color = 'var(--text-light)';
+        if(otPayEl){ otPayEl.textContent = '$'+otRate+'/hr OT'; otPayEl.style.color='var(--text-light)'; }
+      }
+    }
   });
+  // Update OT total in footer
+  const otTotEl = document.getElementById('payrollOtTotal');
+  if(otTotEl) otTotEl.textContent = totalOtPay > 0 ? '(incl. $'+totalOtPay.toFixed(2)+' OT)' : '';
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
   // OT breakdown panel
