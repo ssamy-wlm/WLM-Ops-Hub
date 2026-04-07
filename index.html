@@ -2070,6 +2070,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="newUserPayRate" placeholder="0.00" min="0" step="0.01"></div>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Probation Start</label>
+          <input class="form-input" type="date" id="newUserProbationStart">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Probation End</label>
+          <input class="form-input" type="date" id="newUserProbationEnd">
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-light);margin-top:-8px;margin-bottom:14px;">New users default to a 2-month probation. Clear both dates to skip probation.</div>
       <div class="section-divider">Credentials & Platform Access</div>
       <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;line-height:1.5;">
         ✏️ Enter the login credentials for each platform this user will have access to. Leave blank to skip. Platforms are managed in <strong>Business Setup → Platforms & Tools</strong>.
@@ -2963,6 +2974,8 @@ function addUser(){
   const hours=document.getElementById('newUserHours').value;
   const payRate=parseFloat(document.getElementById('newUserPayRate')?.value)||0;
   const managerId=document.getElementById('newUserManager')?.value||'';
+  const probationStart=document.getElementById('newUserProbationStart')?.value||'';
+  const probationEnd=document.getElementById('newUserProbationEnd')?.value||'';
   if(!first||!last||!email||!title){showToast('Please fill all required fields');return;}
   if(!pass){showToast('An initial password is required');return;}
   if(pass.length<6){showToast('Password must be at least 6 characters');return;}
@@ -2984,6 +2997,8 @@ function addUser(){
     hours,
     payRate,
     managerId,
+    probationStart,
+    probationEnd,
     status: 'active',
     createdAt: new Date().toISOString(),
     firstLogin: null
@@ -6253,6 +6268,14 @@ window.openAddUserModal = function(){
   populateManagerDropdownFull();
   renderNewUserCredRows();
   _platformsLocal = getPlatforms();
+  // Default probation: today → +2 months
+  const today = new Date();
+  const end   = new Date(today.getFullYear(), today.getMonth()+2, today.getDate());
+  const fmt   = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const ps = document.getElementById('newUserProbationStart');
+  const pe = document.getElementById('newUserProbationEnd');
+  if(ps) ps.value = fmt(today);
+  if(pe) pe.value = fmt(end);
 };
 
 // ═══════════════════════════════════════════════════════════════════
