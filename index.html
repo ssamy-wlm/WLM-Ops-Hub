@@ -5607,7 +5607,7 @@ function initPayroll(){
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
         <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-extra-hrs" style="width:75px;padding:7px 10px;font-size:13px;border-color:var(--gold,#d97706)66;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
-        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otRate>0?'@ $'+otRate+'/hr':'@ $'+rate+'/hr'}</div>
+        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otOn?'@ $'+otRate15+'/hr OT':'@ $'+rate+'/hr'}</div>
       </div>
       <div style="text-align:right;min-width:90px;">
         <div style="font-size:15px;font-weight:800;color:var(--text-dark);" id="pay-${u.id}">$0.00</div>
@@ -5792,19 +5792,23 @@ function savePayrollWeek(){
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const otThreshold = parseFloat(otPolicy.threshold)||40;
   document.querySelectorAll('.payroll-row').forEach(row=>{
-    const uid=row.dataset.uid;
-    const u=allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
-    const hours=parseFloat(row.querySelector('input')?.value)||0;
-    const rate=parseFloat(row.dataset.rate)||0;
-    const otRate=parseFloat(row.dataset.otRate)||0;
-    let pay;
-    if(otRate>0 && hours>otThreshold){
-      pay = otThreshold*rate + (hours-otThreshold)*otRate;
+    const uid      = row.dataset.uid;
+    const u        = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
+    const rate     = parseFloat(row.dataset.rate)||0;
+    const otOn     = row.dataset.otEnabled === 'true';
+    const regHrs   = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
+    const extraHrs = parseFloat(row.querySelector('.pay-extra-hrs')?.value)||0;
+    let regPay = 0, otPay = 0;
+    if(otOn && regHrs > otThreshold){
+      regPay = otThreshold * rate;
+      otPay  = (regHrs - otThreshold) * rate * 1.5;
     } else {
-      pay = rate*hours;
+      regPay = regHrs * rate;
     }
-    total+=pay;
-    entries.push({userId:uid,name:u.name,hours,rate,otRate,pay});
+    const xPay = extraHrs * rate;
+    const pay  = regPay + otPay + xPay;
+    total += pay;
+    entries.push({userId:uid, name:u.name, hours:regHrs, extraHours:extraHrs, rate, otEnabled:otOn, pay});
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
@@ -5839,7 +5843,10 @@ function renderSavedPayrolls(){
   if(!list) return;
   if(!saved.length){list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div>';return;}
   list.innerHTML=saved.map(p=>{
-    const rows=p.entries.filter(e=>e.hours>0).map(e=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${e.name}</span><span>${e.hours}h × $${e.rate} = <strong>$${e.pay.toFixed(2)}</strong></span></div>`).join('');
+    const rows=p.entries.filter(e=>e.hours>0||e.extraHours>0).map(e=>{
+      const xPart = e.extraHours>0 ? ` + ${e.extraHours}h extra` : '';
+      return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${e.name}</span><span>${e.hours}h${xPart} × $${e.rate} = <strong>$${e.pay.toFixed(2)}</strong></span></div>`;
+    }).join('');
     return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div><div style="font-size:13px;font-weight:700;color:var(--text-dark);">Week ${p.weekStart} → ${p.weekEnd}</div>
