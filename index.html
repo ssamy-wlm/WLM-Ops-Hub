@@ -6326,6 +6326,7 @@ window._addAdminImpl = function(){
   };
   existing.push(newAdmin);
   dbSet(DB_KEYS.admins, existing);
+  cloudAutoSync(); // persist to cloud so it survives page refresh / live sync
 
   // Re-render table
   window._renderAdminTableImpl();
@@ -6456,6 +6457,7 @@ function saveEditAdmin(){
   if(pass) admins[idx].password = pass;
 
   dbSet(DB_KEYS.admins, admins);
+  cloudAutoSync(); // persist to cloud so changes survive live sync pulls
   window._renderAdminTableImpl();
   closeModal('editAdminModal');
   showToast(`${name} updated ✓`);
