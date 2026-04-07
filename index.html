@@ -1011,8 +1011,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-stats">
         <div class="admin-stat"><div class="as-val" id="ov-total-users">0</div><div class="as-label">Total Users</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-eods-week">0</div><div class="as-label">EODs This Week</div></div>
+        <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Total Reports</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-blockers">0</div><div class="as-label">Active Blockers</div></div>
-        <div class="admin-stat"><div class="as-val" id="ov-ontime">0%</div><div class="as-label">On-Time Rate</div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
         <div class="card">
@@ -4866,7 +4866,7 @@ function renderAdminReportsTable(eods){
   }
   tbody.innerHTML=_renderedEodReports.map((e,idx)=>{
     const taskLines=(e.tasks||'').split('\n').filter(Boolean).length||0;
-    const hasIssue=e.issues&&e.issues.trim().length>0;
+    const hasIssue=(e.blockerCount>0)||(e.blockerCount==null&&e.issues&&e.issues.trim().length>0);
     const rating=(e.rating||'').substring(0,4);
     const hasComment=!!(e.adminComment);
     return `<tr>
@@ -4874,7 +4874,7 @@ function renderAdminReportsTable(eods){
       <td><div>${e.user||'—'}</div><div class="td-sub">${e.title||''}</div></td>
       <td>${e.projects?`<div style="font-size:12px;color:var(--text-mid);">${e.projects.substring(0,40)}</div>`:taskLines?taskLines+' tasks':'—'}</td>
       <td>${e.hours||'—'}</td>
-      <td>${hasIssue?'<span class="status-badge badge-pending">⚠ Yes</span>':'<span style="color:var(--text-light);font-size:12px;">None</span>'}</td>
+      <td>${hasIssue?`<span class="status-badge badge-pending">⚠ ${e.blockerCount!=null?e.blockerCount:''} Yes</span>`.replace('  ',' '):'<span style="color:var(--text-light);font-size:12px;">None</span>'}</td>
       <td style="font-size:12px;">${rating||'—'}</td>
       <td><span class="cred-status cred-set">Submitted</span>${hasComment?' <span style="font-size:10px;color:var(--orange);">💬</span>':''}</td>
       <td style="display:flex;gap:6px;">
@@ -5272,6 +5272,7 @@ function refreshAdminOverview(){
 
   const el1=document.getElementById('ov-total-users'); if(el1) el1.textContent=allUsers.length||0;
   const el2=document.getElementById('ov-eods-week'); if(el2) el2.textContent=weekEods.length||0;
+  const elTot=document.getElementById('ov-total-reports'); if(elTot) elTot.textContent=eods.length||0;
   const el3=document.getElementById('ov-blockers'); if(el3) el3.textContent=activeBlockers.length||0;
   const el4=document.getElementById('ov-ontime'); if(el4) el4.textContent=onTimeRate+'%';
 

@@ -776,7 +776,19 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       </div>
       <div class="eod-step" id="eod-step2">
         <div class="form-group"><label class="form-label">Wins Today 🎉</label><textarea class="form-textarea" id="eodWins" rows="3" placeholder="What went well today?"></textarea></div>
-        <div class="form-group"><label class="form-label">Issues or Blockers ⚠️</label><textarea class="form-textarea" id="eodIssues" rows="3" placeholder="Any problems or things blocking progress?"></textarea></div>
+        <div class="form-group">
+          <label class="form-label">Issues or Blockers ⚠️</label>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <label style="font-size:13px;color:var(--text-mid);">Number of blockers today:</label>
+            <div style="display:flex;gap:6px;" id="blocker-count-btns">
+              <button type="button" class="blocker-cnt-btn active" data-n="0" onclick="selectBlockerCount(0)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--primary);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">0</button>
+              <button type="button" class="blocker-cnt-btn" data-n="1" onclick="selectBlockerCount(1)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">1</button>
+              <button type="button" class="blocker-cnt-btn" data-n="2" onclick="selectBlockerCount(2)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">2</button>
+              <button type="button" class="blocker-cnt-btn" data-n="3" onclick="selectBlockerCount(3)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">3+</button>
+            </div>
+          </div>
+          <textarea class="form-textarea" id="eodIssues" rows="3" placeholder="Describe your blocker(s)…" style="display:none;"></textarea>
+        </div>
       </div>
       <div class="eod-step" id="eod-step3">
         <div class="form-group"><label class="form-label">Tomorrow's Priority Tasks</label><textarea class="form-textarea" id="eodTomorrow" rows="3" placeholder="What will you tackle first tomorrow?"></textarea></div>
@@ -1418,6 +1430,19 @@ function openEODModal(){
   initCal(); eodCurrentStep=1; updateEODStep();
   document.getElementById('eodModal').classList.add('open');
 }
+let _eodBlockerCount = 0;
+function selectBlockerCount(n){
+  _eodBlockerCount = n;
+  document.querySelectorAll('.blocker-cnt-btn').forEach(btn=>{
+    const isActive = parseInt(btn.dataset.n)===n || (btn.dataset.n==='3' && n>=3);
+    btn.style.background = isActive ? 'var(--primary,#2D6BB6)' : 'var(--card,#fff)';
+    btn.style.color      = isActive ? '#fff' : 'var(--text)';
+    btn.style.borderColor= isActive ? 'var(--primary,#2D6BB6)' : 'var(--border)';
+  });
+  const ta = document.getElementById('eodIssues');
+  if(ta) ta.style.display = n>0 ? 'block' : 'none';
+  if(ta && n===0) ta.value = '';
+}
 function eodStep(dir){
   const newStep=eodCurrentStep+dir;
   if(newStep<1||newStep>3){
@@ -1436,13 +1461,15 @@ function submitEOD(){
   const selDate=new Date(calYear,calMonth,selectedCalDate).toISOString().slice(0,10);
   const name=currentUser?.name||'User';
   const title=currentUser?.title||'';
+  const issuesText = _eodBlockerCount>0 ? (document.getElementById('eodIssues')?.value||'') : '';
   const eodReport={
     id:Date.now(), user:name, title, date:selDate, submittedAt:new Date().toISOString(),
     tasks:document.getElementById('eodTasks')?.value||'',
     projects:document.getElementById('eodProjects')?.value||'',
     hours:document.getElementById('eodHours')?.value||'',
     wins:document.getElementById('eodWins')?.value||'',
-    issues:document.getElementById('eodIssues')?.value||'',
+    blockerCount:_eodBlockerCount,
+    issues:issuesText,
     tomorrow:document.getElementById('eodTomorrow')?.value||'',
     support:document.getElementById('eodSupport')?.value||'',
     rating:document.getElementById('eodRating')?.value||''
@@ -1451,6 +1478,8 @@ function submitEOD(){
   logActivity('eod', name, 'Submitted EOD report for '+selDate, 'Rating: '+eodReport.rating.substring(0,4));
   // Clear fields
   ['eodTasks','eodProjects','eodHours','eodWins','eodIssues','eodTomorrow','eodSupport'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  // Reset blocker count selector
+  selectBlockerCount(0);
   closeModal('eodModal');
   showToast('EOD Report submitted! ✓');
   loadOpsStats();
