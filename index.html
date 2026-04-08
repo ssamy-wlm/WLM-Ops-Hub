@@ -1489,18 +1489,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card-header" style="background:linear-gradient(135deg,rgba(250,194,49,.08),rgba(250,194,49,.03));">
           <div>
             <div class="card-title">🔒 Overtime Policy</div>
-            <div class="card-sub">Hours above threshold are automatically paid at 1.5× the regular rate — visible to Super Admin &amp; Owner only</div>
+            <div class="card-sub">Hours above 40/week are automatically paid at 1.5× the regular rate — visible to Super Admin &amp; Owner only</div>
           </div>
           <button class="btn btn-primary btn-sm" onclick="saveOTPolicyBtn()">Save Policy</button>
         </div>
         <div class="card-body">
-          <div style="display:flex;gap:16px;align-items:flex-end;margin-bottom:20px;flex-wrap:wrap;">
-            <div class="form-group" style="margin:0;">
-              <label class="form-label">Overtime Threshold (hours/week)</label>
-              <input class="form-input" type="number" id="ot-threshold" value="40" min="1" max="80" step="1" style="width:120px;">
-            </div>
-            <div style="font-size:12px;color:var(--text-light);padding-bottom:8px;">Hours above this threshold are automatically paid at <strong>1.5×</strong> the user's regular hourly rate.</div>
-          </div>
+          <div style="font-size:12px;color:var(--text-light);margin-bottom:16px;">Any hours above <strong>40/week</strong> are automatically paid at <strong>1.5×</strong> the employee's regular hourly rate.</div>
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">OT Eligibility Per User</div>
           <div id="ot-user-rates" style="display:flex;flex-direction:column;gap:4px;"></div>
         </div>
@@ -5571,7 +5565,6 @@ function initPayroll(){
     return;
   }
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
-  const threshold = parseFloat(otPolicy.threshold)||40;
   const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
 
   // Extra Hours column is always visible — allows manual entry per user
@@ -5621,11 +5614,7 @@ function initPayroll(){
 
 function initOTPolicyPanel(users){
   const policy = dbGet(DB_KEYS.otPolicy)||{};
-  const threshold = policy.threshold ?? 40;
   const userOTEnabled = policy.userOTEnabled || {};
-
-  const tInput = document.getElementById('ot-threshold');
-  if(tInput) tInput.value = threshold;
 
   const container = document.getElementById('ot-user-rates');
   if(!container) return;
@@ -5676,12 +5665,11 @@ function initOTPolicyPanel(users){
 }
 
 function saveOTPolicyBtn(){
-  const threshold = parseFloat(document.getElementById('ot-threshold')?.value)||40;
   const userOTEnabled = {};
   document.querySelectorAll('#ot-user-rates input[type="checkbox"][data-uid]').forEach(cb=>{
     userOTEnabled[cb.dataset.uid] = cb.checked;
   });
-  const policy = { threshold, userOTEnabled };
+  const policy = { userOTEnabled };
   dbSet(DB_KEYS.otPolicy, policy);
   cloudAutoSync(true);
   initPayroll();
@@ -5691,7 +5679,6 @@ function saveOTPolicyBtn(){
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
   const otPolicy   = dbGet(DB_KEYS.otPolicy)||{};
-  const threshold  = parseFloat(otPolicy.threshold)||40;
   const userOTEnabled = otPolicy.userOTEnabled || {};
   let total = 0, totalOTPay = 0, totalExtraPay = 0;
   const otLines = [], extraLines = [];
@@ -5709,9 +5696,9 @@ function calcPayroll(){
 
     // Regular pay with auto OT at 1.5x above threshold
     let regPay = 0, otHours = 0, otPay = 0;
-    if(otOn && hours > threshold){
-      otHours = hours - threshold;
-      regPay  = threshold * rate;
+    if(otOn && hours > 40){
+      otHours = hours - 40;
+      regPay  = 40 * rate;
       otPay   = otHours * rate * 1.5;
       otLines.push({name, otHours, rate, otPay});
     } else {
@@ -5729,9 +5716,9 @@ function calcPayroll(){
 
     let noteText;
     if(otHours > 0 && extraHours > 0){
-      noteText = `${threshold}h + ${otHours.toFixed(1)}h OT + ${extraHours}h extra`;
+      noteText = `40h + ${otHours.toFixed(1)}h OT + ${extraHours}h extra`;
     } else if(otHours > 0){
-      noteText = `${threshold}h reg + ${otHours.toFixed(1)}h OT @1.5×`;
+      noteText = `40h reg + ${otHours.toFixed(1)}h OT @1.5×`;
     } else if(extraHours > 0){
       noteText = `${hours}h reg + ${extraHours}h extra`;
     } else {
@@ -5789,8 +5776,6 @@ function savePayrollWeek(){
   const fri = new Date(mon); fri.setDate(mon.getDate()+4);
   const entries=[];
   let total=0;
-  const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
-  const otThreshold = parseFloat(otPolicy.threshold)||40;
   document.querySelectorAll('.payroll-row').forEach(row=>{
     const uid      = row.dataset.uid;
     const u        = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
@@ -5799,9 +5784,9 @@ function savePayrollWeek(){
     const regHrs   = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
     const extraHrs = parseFloat(row.querySelector('.pay-extra-hrs')?.value)||0;
     let regPay = 0, otPay = 0;
-    if(otOn && regHrs > otThreshold){
-      regPay = otThreshold * rate;
-      otPay  = (regHrs - otThreshold) * rate * 1.5;
+    if(otOn && regHrs > 40){
+      regPay = 40 * rate;
+      otPay  = (regHrs - 40) * rate * 1.5;
     } else {
       regPay = regHrs * rate;
     }
