@@ -6739,6 +6739,37 @@ document.addEventListener('DOMContentLoaded', ()=>{
   }
 })();
 
+// ── Restore missing admin accounts ──
+(function _seedMissingAdmins(){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const emails = admins.map(a=>a.email);
+  let changed = false;
+
+  if(!emails.includes('dj@weblightmedia.com')){
+    admins.push({
+      id:'adm_david_joslin', name:'David Joslin', email:'dj@weblightmedia.com',
+      title:'CEO', initials:'DJ', password:'WLMedia2024!',
+      level:'owner', assignedUsers:[], status:'active',
+      createdAt:'2024-01-01T00:00:00.000Z'
+    });
+    changed = true;
+  }
+  if(!emails.includes('aconklin@weblightmedia.com')){
+    admins.push({
+      id:'adm_abby_conklin', name:'Abby Conklin', email:'aconklin@weblightmedia.com',
+      title:'Director of Production', initials:'AC', password:'WLMedia2024!',
+      level:'production_manager', assignedUsers:[], status:'active',
+      createdAt:'2024-01-01T00:00:00.000Z'
+    });
+    changed = true;
+  }
+  if(changed){
+    dbSet(DB_KEYS.admins, admins);
+    if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
+    if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+  }
+})();
+
 // ── Re-populate level select whenever modal opens ──
 const _origOpenAddAdminModal = window.openAddAdminModal;
 window.openAddAdminModal = function(){
