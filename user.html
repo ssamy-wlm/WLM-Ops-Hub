@@ -373,7 +373,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div class="topbar-sub" id="pageSubtitle"></div>
       </div>
       <div class="topbar-right">
-        <div class="notif-btn" id="notifBtn" onclick="checkAnnouncements()">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div></div>
+        <div class="notif-btn" id="notifBtn" onclick="checkAnnouncements();showSection('operations',document.querySelector('.nav-item[onclick*=operations]'))">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div></div>
         <button class="btn btn-primary btn-sm" onclick="openEODModal()">+ Submit EOD</button>
       </div>
     </div>
@@ -382,6 +382,16 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <!-- ── OPERATIONS ── -->
       <div id="sec-operations" class="page-section active">
         <!-- Announcement Banner -->
+        <!-- Active blocker notification banner -->
+        <div id="blockerNotifBanner" style="display:none;background:linear-gradient(135deg,rgba(245,158,11,.1),rgba(245,158,11,.05));border:1px solid #f59e0b88;border-radius:12px;padding:14px 18px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <span style="font-size:18px;">🚧</span>
+            <div style="font-size:12px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.06em;">Unresolved Blockers</div>
+            <div id="blockerNotifCount" style="font-size:11px;font-weight:700;background:#f59e0b22;color:#d97706;border:1px solid #f59e0b66;border-radius:20px;padding:1px 8px;"></div>
+          </div>
+          <div id="blockerNotifList" style="display:flex;flex-direction:column;gap:6px;"></div>
+        </div>
+
         <div id="announcementBanner" class="announcement-banner" style="display:none;">
           <div style="font-size:20px;">📣</div>
           <div style="flex:1;">
@@ -444,7 +454,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
               </div>
             </div>
             <div class="card">
-              <div class="card-header"><div class="card-title">Quick Links</div><button class="btn btn-outline btn-sm" onclick="openModal('editQLModal')" style="font-size:11px;">✏️ Edit</button></div>
+              <div class="card-header"><div class="card-title">Quick Links</div></div>
               <div class="card-body" id="ql-user-display">
                 <div class="ql-item" onclick="window.open('#','_blank')">📱 Sync CRM <span class="ql-arrow">↗</span></div>
                 <div class="ql-item" onclick="window.open('#','_blank')">📅 ScheduleDrop <span class="ql-arrow">↗</span></div>
@@ -840,6 +850,31 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
   </div>
 </div>
 
+<!-- Resolve Blocker Modal -->
+<div id="resolveBlockerModal" class="modal-overlay">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <div><div class="modal-title">✅ Resolve Blocker</div><div class="modal-sub" id="resolveBlockerTitle"></div></div>
+      <button class="modal-close" onclick="closeModal('resolveBlockerModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="resolveBlockerId">
+      <div class="form-group">
+        <label class="form-label">What happened? How was it resolved?</label>
+        <textarea class="form-textarea" id="resolveBlockerNote" rows="4" placeholder="Describe the resolution — what you did, who helped, and how the issue was closed…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Resolved On</label>
+        <input class="form-input" type="date" id="resolveBlockerDate">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('resolveBlockerModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmResolveBlocker()">Mark Resolved ✓</button>
+    </div>
+  </div>
+</div>
+
 <!-- Goal Modal -->
 <div id="goalModal" class="modal-overlay">
   <div class="modal">
@@ -1203,8 +1238,19 @@ function initApp(){
   if(document.getElementById('accountRole')) document.getElementById('accountRole').textContent = user.role||'Team Member';
   if(document.getElementById('accountType')) document.getElementById('accountType').textContent = user.role||'Contractor';
 
-  // Shift date
-  document.getElementById('shiftDate').textContent = today.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  // Shift date — set now and auto-update at midnight
+  function _updateShiftDate(){
+    const d = new Date();
+    document.getElementById('shiftDate').textContent = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  }
+  _updateShiftDate();
+  // Recalculate ms until next midnight and refresh then
+  function _scheduleShiftDateRefresh(){
+    const now = new Date();
+    const msUntilMidnight = new Date(now.getFullYear(),now.getMonth(),now.getDate()+1) - now;
+    setTimeout(()=>{ _updateShiftDate(); _scheduleShiftDateRefresh(); }, msUntilMidnight);
+  }
+  _scheduleShiftDateRefresh();
 
   // Load CoC from shared storage
   loadCoC();
@@ -1283,7 +1329,21 @@ function renderBlockersList(blockers){
   blockers.forEach(b=>{
     const el = document.createElement('div');
     el.className='blocker-item';
-    el.innerHTML=`<div class="blocker-header"><span class="status-badge badge-pending">⚠ ${b.sev?.split(' ')[0]||'Warning'}</span><div class="blocker-title">${b.title}</div><button class="btn btn-sm btn-outline" onclick="resolveBlocker(${b.id},this)">Resolve</button></div><div class="blocker-desc">${b.desc||''}</div><div class="blocker-meta"><span>📅 ${new Date(b.date).toLocaleDateString()}</span><span>🏢 ${b.proj||'General'}</span></div>`;
+    const startDate = b.date ? new Date(b.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+    const daysOpen  = b.date ? Math.floor((Date.now()-new Date(b.date))/(86400000)) : 0;
+    const daysLabel = daysOpen===0 ? 'Today' : daysOpen===1 ? '1 day open' : daysOpen+' days open';
+    el.innerHTML=`
+      <div class="blocker-header">
+        <span class="status-badge badge-pending">⚠ ${b.sev?.split(' ')[0]||'Warning'}</span>
+        <div class="blocker-title">${b.title}</div>
+        <button class="btn btn-sm btn-outline" onclick="openResolveModal(${b.id})">Resolve</button>
+      </div>
+      <div class="blocker-desc">${b.desc||''}</div>
+      <div class="blocker-meta">
+        <span>📅 Started: ${startDate}</span>
+        <span style="color:${daysOpen>3?'var(--orange)':'var(--text-light)'};">⏱ ${daysLabel}</span>
+        <span>🏢 ${b.proj||'General'}</span>
+      </div>`;
     list.appendChild(el);
   });
   // Update blocker stats
@@ -1291,30 +1351,77 @@ function renderBlockersList(blockers){
   document.getElementById('b-warn').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('escalated')).length;
   document.getElementById('b-crit').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('critical')).length;
   document.getElementById('b-warning').textContent = blockers.filter(b=>(b.sev||'').toLowerCase().includes('warning')).length;
+  // Refresh notification banner to reflect resolved blockers
+  checkAnnouncements();
 }
 
-function resolveBlocker(id, btn){
+function openResolveModal(id){
+  const all = dbGet(DB_KEYS.blockers)||[];
+  const b   = all.find(x=>x.id===id);
+  if(!b) return;
+  document.getElementById('resolveBlockerId').value = id;
+  document.getElementById('resolveBlockerTitle').textContent = b.title;
+  document.getElementById('resolveBlockerNote').value = '';
+  // Default date to today
+  const fmt = d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  document.getElementById('resolveBlockerDate').value = fmt(new Date());
+  openModal('resolveBlockerModal');
+}
+
+function confirmResolveBlocker(){
+  const id   = parseInt(document.getElementById('resolveBlockerId').value);
+  const note = document.getElementById('resolveBlockerNote').value.trim();
+  const date = document.getElementById('resolveBlockerDate').value;
+  if(!note){ showToast('Please describe how the blocker was resolved'); return; }
   const all = dbGet(DB_KEYS.blockers)||[];
   const idx = all.findIndex(b=>b.id===id);
-  if(idx>-1){ all[idx].status='resolved'; dbSet(DB_KEYS.blockers,all); }
-  btn.closest('.blocker-item').style.opacity='0';
-  btn.closest('.blocker-item').style.transition='opacity .3s';
-  setTimeout(()=>loadOpsStats(), 350);
+  if(idx>-1){
+    all[idx].status       = 'resolved';
+    all[idx].resolvedNote = note;
+    all[idx].resolvedAt   = date || new Date().toISOString().slice(0,10);
+    dbSet(DB_KEYS.blockers, all);
+    cloudPushData();
+  }
+  closeModal('resolveBlockerModal');
   showToast('Blocker resolved ✓');
-  logActivity('blocker', currentUser?.name||'User', 'Resolved blocker: '+(all[idx]?.title||''), '');
+  logActivity('blocker', currentUser?.name||'User', 'Resolved blocker: '+(all[idx]?.title||''), note.substring(0,60));
+  setTimeout(()=>loadOpsStats(), 200);
 }
 
 function checkAnnouncements(){
   const msg = dbGet(DB_KEYS.announcement);
   const banner = document.getElementById('announcementBanner');
-  const dot = document.getElementById('notifDot');
   if(msg && msg.text){
     document.getElementById('announcementText').textContent = msg.text;
     banner.style.display = 'flex';
-    dot.style.display = 'block';
   } else {
     banner.style.display = 'none';
-    dot.style.display = 'none';
+  }
+  // Blocker notification banner
+  const name = currentUser?.name||'';
+  const openBlockers = (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user===name && b.status==='open');
+  const notifBanner = document.getElementById('blockerNotifBanner');
+  const notifList   = document.getElementById('blockerNotifList');
+  const notifCount  = document.getElementById('blockerNotifCount');
+  const dot         = document.getElementById('notifDot');
+  if(notifBanner && openBlockers.length){
+    notifCount.textContent = openBlockers.length + ' unresolved';
+    notifList.innerHTML = openBlockers.map(b=>{
+      const startDate = b.date ? new Date(b.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+      const daysOpen  = b.date ? Math.floor((Date.now()-new Date(b.date))/86400000) : 0;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.6);border-radius:8px;padding:7px 12px;gap:10px;">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${b.title}</div>
+          <div style="font-size:11px;color:var(--text-light);">Since ${startDate} · ${daysOpen===0?'logged today':daysOpen+' day'+(daysOpen!==1?'s':'')+' open'}</div>
+        </div>
+        <button class="btn btn-sm" style="background:#d97706;color:#fff;white-space:nowrap;font-size:11px;padding:4px 10px;" onclick="showSection('blockers',document.querySelector('.nav-item[onclick*=blockers]'))">Go to Blockers →</button>
+      </div>`;
+    }).join('');
+    notifBanner.style.display = 'block';
+    dot.style.display = 'block';
+  } else {
+    if(notifBanner) notifBanner.style.display = 'none';
+    dot.style.display = msg?.text ? 'block' : 'none';
   }
 }
 
