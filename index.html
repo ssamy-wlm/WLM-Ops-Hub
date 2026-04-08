@@ -5119,9 +5119,19 @@ async function cloudPushAll(silent=false){
     const cloudEodsFiltered  = (cloudRecord.eods||[]).filter(e=>!deletedEodIds.includes(e.id));
     const cloudUsersFiltered = (cloudRecord.users||[]).filter(u=>!deletedUserIds.includes(u.id));
 
+    // Merge admins: union of cloud + local by email so neither side can wipe the other
+    const localAdmins = dbGet(DB_KEYS.admins)||[];
+    const cloudAdmins = cloudRecord.admins||[];
+    const mergedAdmins = [...cloudAdmins];
+    localAdmins.forEach(la=>{
+      const idx = mergedAdmins.findIndex(ca=>ca.email===la.email);
+      if(idx>-1) mergedAdmins[idx]=la; // local wins for updates
+      else mergedAdmins.push(la);       // new local admin added to cloud
+    });
+
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
-      admins:       dbGet(DB_KEYS.admins)||[],
+      admins:       mergedAdmins,
       eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
       blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -6748,7 +6758,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(!emails.includes('dj@weblightmedia.com')){
     admins.push({
       id:'adm_david_joslin', name:'David Joslin', email:'dj@weblightmedia.com',
-      title:'CEO', initials:'DJ', password:'WLMedia2024!',
+      title:'CEO', initials:'DJ', password:'123456',
       level:'owner', assignedUsers:[], status:'active',
       createdAt:'2024-01-01T00:00:00.000Z'
     });
@@ -6757,7 +6767,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(!emails.includes('aconklin@weblightmedia.com')){
     admins.push({
       id:'adm_abby_conklin', name:'Abby Conklin', email:'aconklin@weblightmedia.com',
-      title:'Director of Production', initials:'AC', password:'WLMedia2024!',
+      title:'Director of Production', initials:'AC', password:'123456',
       level:'production_manager', assignedUsers:[], status:'active',
       createdAt:'2024-01-01T00:00:00.000Z'
     });
