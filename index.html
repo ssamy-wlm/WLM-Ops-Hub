@@ -4529,6 +4529,7 @@ function clearFeed(){
   if(!confirm('Clear the entire activity feed? This cannot be undone.')) return;
   dbSet(DB_KEYS.feed, []);
   refreshLiveFeed();
+  cloudAutoSync(true);
   showToast('Live feed cleared');
 }
 
@@ -5221,9 +5222,17 @@ async function cloudPullAll(silent=false){
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
     updateCloudStatusUI();
+    // Refresh all UI sections that may have changed
     renderUserTable();
-    // Refresh admin table so CEO/Owner sees newly added admin accounts
     if(typeof window._renderAdminTableImpl === 'function') window._renderAdminTableImpl();
+    if(typeof refreshAdminOverview === 'function') refreshAdminOverview();
+    if(typeof refreshLiveFeed === 'function') refreshLiveFeed();
+    if(typeof renderAdminTimeOff === 'function') renderAdminTimeOff();
+    if(typeof renderSavedPayrolls === 'function') renderSavedPayrolls();
+    if(typeof refreshArchive === 'function') refreshArchive();
+    // Reload reports tab if currently visible
+    const reportsTab = document.getElementById('tab-allreports');
+    if(reportsTab && reportsTab.classList.contains('active') && typeof loadAdminReportsTab === 'function') loadAdminReportsTab();
     if(!silent) showToast('✅ All data pulled from cloud');
   } catch(e){
     setCloudStatus('Pull failed: '+e.message,'error');
@@ -5249,10 +5258,8 @@ function startLiveSync(level){
   if(!syncRoles.includes(level)) return;
   _liveSyncInterval = setInterval(async ()=>{
     if(!cloudIsConfigured()) return;
-    await cloudPullAll(true);
-    renderUserTable();
-    refreshAdminOverview();
-  }, 45000); // every 45 seconds
+    await cloudPullAll(true); // cloudPullAll refreshes all UI sections
+  }, 30000); // every 30 seconds
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5542,6 +5549,7 @@ function reviewTimeOff(id, decision){
   if(note) requests[idx].adminNote = note;
   dbSet('wl_timeoff_requests', requests);
   renderAdminTimeOff();
+  cloudAutoSync(true);
   showToast(`Time off request ${decision} ✓`);
   logActivity('admin','Admin',`Time off ${decision} for ${requests[idx].userName}`, requests[idx].startDate+' → '+requests[idx].endDate);
 }
@@ -5821,6 +5829,7 @@ function savePayrollWeek(){
   }
   dbSet('wl_saved_payrolls',saved.slice(0,52)); // keep 1 year
   renderSavedPayrolls();
+  cloudAutoSync(true);
   logActivity('admin','Admin','Saved payroll for week of '+weekStart,'$'+total.toFixed(2));
 }
 
@@ -5829,6 +5838,7 @@ function deletePayrollRecord(id){
   const saved=(dbGet('wl_saved_payrolls')||[]).filter(p=>p.id!==id);
   dbSet('wl_saved_payrolls',saved);
   renderSavedPayrolls();
+  cloudAutoSync(true);
   showToast('Payroll record deleted');
 }
 
@@ -6042,6 +6052,7 @@ function savePlatforms(){
   });
   _platformsLocal = _platformsLocal.filter(p=>p.name);
   dbSet(WL_PLATFORMS_KEY, _platformsLocal);
+  cloudAutoSync(true);
   const badge = document.getElementById('platforms-saved-badge');
   if(badge){ badge.style.display='inline'; setTimeout(()=>badge.style.display='none',2500); }
   showToast('Platforms saved ✓ — will appear on next Add User');
@@ -6552,6 +6563,7 @@ window._removeAdminImpl = function(btn, adminId){
   if(!confirm(`Remove admin access for ${displayName}?\nThis cannot be undone.`)) return;
   dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
   window._renderAdminTableImpl();
+  cloudAutoSync(true);
   showToast(`${displayName} removed from admins`);
   logActivity('admin','Admin','Removed admin: '+displayName,'');
 };
