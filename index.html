@@ -1706,9 +1706,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <div class="form-group" style="margin:0"><label class="form-label">Job Title</label><input class="form-input" id="org-new-title" placeholder="e.g. Designer"></div>
               <div class="form-group" style="margin:0"><label class="form-label">Level / Color</label>
                 <select class="form-select" id="org-new-level">
-                  <option value="director">Director</option>
-                  <option value="manager" selected>Manager</option>
-                  <option value="member">Team Member</option>
+                  <option value="director">Director (Teal)</option>
+                  <option value="partner">Partner (Dark Blue)</option>
+                  <option value="manager">Manager (Purple)</option>
+                  <option value="member" selected>Team Member (Green)</option>
                 </select>
               </div>
               <div class="form-group" style="margin:0"><label class="form-label">Photo (optional)</label><input type="file" accept="image/*" id="org-new-photo" class="form-input" style="padding:5px;font-size:11px;"></div>
@@ -1720,9 +1721,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="org-edit-panel" style="display:none;padding:18px;border-top:1px solid var(--border);background:var(--bg);">
             <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:14px;">✏️ Edit Member</div>
             <input type="hidden" id="org-edit-id">
-            <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:end;">
               <div class="form-group" style="margin:0"><label class="form-label">Full Name</label><input class="form-input" id="org-edit-name"></div>
               <div class="form-group" style="margin:0"><label class="form-label">Job Title</label><input class="form-input" id="org-edit-title"></div>
+              <div class="form-group" style="margin:0"><label class="form-label">Level / Color</label>
+                <select class="form-select" id="org-edit-level">
+                  <option value="ceo">CEO (Dark Navy)</option>
+                  <option value="director">Director (Teal)</option>
+                  <option value="partner">Partner (Dark Blue)</option>
+                  <option value="manager">Manager (Purple)</option>
+                  <option value="member">Team Member (Green)</option>
+                </select>
+              </div>
               <div class="form-group" style="margin:0"><label class="form-label">New Photo</label><input type="file" accept="image/*" id="org-edit-photo" class="form-input" style="padding:5px;font-size:11px;"></div>
               <div style="display:flex;gap:8px;align-items:flex-end;">
                 <button class="btn btn-primary" onclick="saveOrgEdit()" style="height:38px;">Save</button>
@@ -3496,24 +3506,40 @@ function saveQuickLinks(){
 // ── DRAG-AND-DROP ORG CHART ──
 // ═══════════════════════════════════════════════════
 const orgColors = {
-  ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',
-  director: 'linear-gradient(135deg,#9333ea,#c084fc)',
-  manager:  'linear-gradient(135deg,#0891b2,#67e8f9)',
-  member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'
+  ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
+  director: 'linear-gradient(135deg,#0d7a5f,#2dc59f)',   // teal       — Abby
+  partner:  'linear-gradient(135deg,#1e4080,#3b6fc7)',   // dark blue  — Jacob
+  manager:  'linear-gradient(135deg,#6b4fa0,#c084fc)',   // purple     — Sarah
+  member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'   // green      — team
 };
 
-// ── Default org chart data (used only when localStorage is empty) ──
+// ── Default org chart data ──
 const ORG_NODES_DEFAULT = [
-  {id:'david',  name:'David Joslin',  title:'CEO & Founder',                      photo:null, level:'ceo',      x:383, y:20,  fixed:true},
-  {id:'abby',   name:'Abby Conklin',  title:'Production Manager',                 photo:null, level:'director', x:100, y:200},
-  {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                            photo:null, level:'director', x:383, y:200},
-  {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations',   photo:null, level:'director', x:666, y:200},
-  {id:'ahmed',  name:'Ahmed Nuhan',   title:'Content Creator',                    photo:null, level:'member',   x:30,  y:400},
-  {id:'neha',   name:'Neha',          title:'Web Developer',                      photo:null, level:'member',   x:200, y:400},
-  {id:'nadia',  name:'Nadia Fahmey',  title:'Marketing Specialist',               photo:null, level:'member',   x:370, y:400},
-  {id:'rania',  name:'Rania Morsy',   title:'Lead Generation Manager',            photo:null, level:'member',   x:540, y:400},
+  // Row 1 — CEO
+  {id:'david',   name:'David Joslin',     title:'CEO & Founder',                                   photo:null, level:'ceo',      x:406, y:20,  fixed:true},
+  // Row 2 — Directors
+  {id:'abby',    name:'Abby Conklin',     title:'Production Manager / Reel Motion PM',              photo:null, level:'director', x:106, y:200},
+  {id:'sarah',   name:'Sarah Samy',       title:'Integrator / Director of Systems & Operations',   photo:null, level:'manager',  x:406, y:200},
+  {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
+  // Row 3 — Left group
+  {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
+  {id:'nadia',   name:'Nadia Fahmey',     title:'Marketing Specialist',                             photo:null, level:'member',   x:140, y:390},
+  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:260, y:390},
+  // Row 3 — Right group
+  {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
+  {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:512, y:390},
+  {id:'neha',    name:'Neha',             title:'Web Developer',                                    photo:null, level:'member',   x:604, y:390},
+  {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:696, y:390},
+  {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:788, y:390},
+  // Row 4 — Bottom members
+  {id:'money',   name:'Money Maker',      title:'Sales and Account Management',                     photo:null, level:'member',   x:60,  y:565},
+  {id:'adman',   name:'Ad Man',           title:'PPC / SEO / Analytics Specialist',                 photo:null, level:'member',   x:195, y:565},
+  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:330, y:565},
+  {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:465, y:565},
 ];
-const ORG_LINKS_DEFAULT = [];
+const ORG_LINKS_DEFAULT = [
+  ['david','abby'], ['david','sarah'], ['david','jacob']
+];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──
 let orgNodes = [];
@@ -3532,23 +3558,35 @@ function orgSave(){
 }
 
 function orgLoad(){
+  const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
+  const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
   try{
-    const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
-    const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
-    // Load saved positions/links — fall back to defaults only if nothing saved yet
-    orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : [];
-    // One-time migration: update David's title from old default to CEO & Founder
-    const _dn = orgNodes.find(n => n.id === 'david');
-    if(_dn && _dn.title === 'CEO & Overseer'){
-      _dn.title = 'CEO & Founder';
-      try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
+    if(savedNodes && savedNodes.length){
+      orgNodes = savedNodes;
+      // Merge: add any default nodes missing from saved data (preserves existing positions)
+      let mergeChanged = false;
+      ORG_NODES_DEFAULT.forEach(def=>{
+        if(!orgNodes.find(n=>n.id===def.id)){
+          orgNodes.push(JSON.parse(JSON.stringify(def)));
+          mergeChanged = true;
+        }
+      });
+      // Migrate David's title if still on old default
+      const _dn = orgNodes.find(n=>n.id==='david');
+      if(_dn && _dn.title==='CEO & Overseer'){
+        _dn.title='CEO & Founder'; mergeChanged=true;
+      }
+      if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
+    } else {
+      orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     }
+    // Use saved links if present, otherwise seed the default hierarchy links
+    orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = [];
+    orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
   }
 }
 
@@ -3742,6 +3780,7 @@ function onOrgBubbleClick(e, id){
   document.getElementById('org-edit-id').value=id;
   document.getElementById('org-edit-name').value=node.name;
   document.getElementById('org-edit-title').value=node.title;
+  document.getElementById('org-edit-level').value=node.level||'member';
   document.getElementById('org-add-panel').style.display='none';
   document.getElementById('org-edit-panel').style.display='block';
 }
@@ -3797,9 +3836,11 @@ function saveOrgEdit(){
   const photoInput=document.getElementById('org-edit-photo');
   const node=orgNodes.find(n=>n.id===id);
   if(!node) return;
+  const level=document.getElementById('org-edit-level').value;
   const doSave=(photoData)=>{
     node.name=name||node.name;
     node.title=title||node.title;
+    node.level=level||node.level;
     if(photoData) node.photo=photoData;
     orgSave();
     renderOrgChart();
