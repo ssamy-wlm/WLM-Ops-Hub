@@ -3556,10 +3556,42 @@ let orgDragging = null, orgDragOffset = {x:0,y:0};
 let connectMode = false, connectFrom = null;
 let orgIdCounter = 200;
 
+// Ensure every registered user account appears in the org chart.
+// Called after orgLoad() so both admins always see the full team,
+// regardless of which admin originally added the user account.
+function _syncUsersToOrgChart(){
+  if(typeof DB_KEYS === 'undefined') return false;
+  const users = (dbGet(DB_KEYS.users)||[]).filter(u=>!u.archived && (u.status==='active'||!u.status));
+  if(!users.length) return false;
+  let added = 0;
+  users.forEach(u=>{
+    const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
+    if(!fullName) return;
+    const alreadyIn = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
+    if(alreadyIn) return;
+    // Position new nodes below the current lowest row
+    const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 400;
+    const memberCount = orgNodes.filter(n=>n.level==='member').length;
+    orgNodes.push({
+      id: 'u_'+(u.id||Date.now()+'_'+added),
+      name: fullName,
+      title: u.title||u.role||'Team Member',
+      photo: null,
+      level: 'member',
+      x: 60 + (memberCount % 5) * 160,
+      y: maxY + 140
+    });
+    added++;
+  });
+  return added > 0;
+}
+
 function initOrgChart(){
   const canvas = document.getElementById('org-canvas');
   if(!canvas) return;
   orgLoad();
+  // Add any registered users not yet in the chart, then sync to cloud
+  if(_syncUsersToOrgChart()) orgSave();
   renderOrgChart();
   // Only add listeners once
   if(!canvas._orgListeners){
@@ -5138,6 +5170,10 @@ async function cloudPullAll(silent=false){
     // Reload org chart into memory and re-render if canvas is visible
     if(r.orgNodes || r.orgLinks){
       if(typeof orgLoad === 'function') orgLoad();
+      // Auto-add any registered users not yet in the chart
+      if(typeof _syncUsersToOrgChart === 'function' && _syncUsersToOrgChart()){
+        if(typeof orgSave === 'function') orgSave();
+      }
       if(document.getElementById('org-canvas') && typeof renderOrgChart === 'function') renderOrgChart();
     }
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
