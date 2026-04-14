@@ -3572,6 +3572,8 @@ function orgSave(){
     localStorage.setItem(nk, JSON.stringify(orgNodes));
     localStorage.setItem(lk, JSON.stringify(orgLinks));
   }catch(e){}
+  // Auto-sync every save so all admins see changes immediately
+  if(typeof cloudAutoSync === 'function') cloudAutoSync(true);
 }
 
 function orgLoad(){
@@ -3580,17 +3582,9 @@ function orgLoad(){
     const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
-    // If old data still has links, wipe it and use new pyramid default
-    if(savedLinks && Array.isArray(savedLinks) && savedLinks.length > 0){
-      localStorage.removeItem(nk);
-      localStorage.removeItem(lk);
-      orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-      orgLinks = [];
-      orgSave();
-    } else {
-      orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-      orgLinks = [];
-    }
+    // Load saved positions/links — fall back to defaults only if nothing saved yet
+    orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+    orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : [];
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     orgLinks = [];
@@ -5216,6 +5210,11 @@ async function cloudPullAll(silent=false){
     if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
     if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+    // Reload org chart into memory and re-render if canvas is visible
+    if(r.orgNodes || r.orgLinks){
+      if(typeof orgLoad === 'function') orgLoad();
+      if(document.getElementById('org-canvas') && typeof renderOrgChart === 'function') renderOrgChart();
+    }
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
 
