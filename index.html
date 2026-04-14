@@ -3549,7 +3549,7 @@ const orgColors = {
 
 // ── Default org chart data (used only when localStorage is empty) ──
 const ORG_NODES_DEFAULT = [
-  {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                     photo:null, level:'ceo',      x:383, y:20,  fixed:true},
+  {id:'david',  name:'David Joslin',  title:'CEO & Founder',                      photo:null, level:'ceo',      x:383, y:20,  fixed:true},
   {id:'abby',   name:'Abby Conklin',  title:'Production Manager',                 photo:null, level:'director', x:100, y:200},
   {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                            photo:null, level:'director', x:383, y:200},
   {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations',   photo:null, level:'director', x:666, y:200},
@@ -3585,6 +3585,12 @@ function orgLoad(){
     // Load saved positions/links — fall back to defaults only if nothing saved yet
     orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : [];
+    // One-time migration: update David's title from old default to CEO & Founder
+    const _dn = orgNodes.find(n => n.id === 'david');
+    if(_dn && _dn.title === 'CEO & Overseer'){
+      _dn.title = 'CEO & Founder';
+      try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
+    }
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     orgLinks = [];
@@ -4357,6 +4363,12 @@ window.doLogin = async function(){
   const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
   if(hardcodedAdmin){
     errEl.style.display='none';
+    // Pull latest cloud data before showing UI so all panels are up to date immediately
+    if(cloudIsConfigured()){
+      if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
+      await cloudPullAll(true);
+      if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+    }
     currentRole='admin';
     logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
     showAdminApp();
