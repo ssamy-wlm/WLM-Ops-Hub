@@ -5319,9 +5319,8 @@ async function cloudPullAll(silent=false){
     if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
     if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
-    // Sync layout version from cloud (or clear so orgLoad triggers a reset)
+    // Sync layout version from cloud; if cloud has none yet, preserve local version
     if(r.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
-    else localStorage.removeItem('wl_org_layout_ver');
     // Reload org chart into memory and re-render if canvas is visible
     if(r.orgNodes || r.orgLinks){
       if(typeof orgLoad === 'function') orgLoad();
