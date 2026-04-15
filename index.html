@@ -1708,9 +1708,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <div class="form-group" style="margin:0"><label class="form-label">Job Title</label><input class="form-input" id="org-new-title" placeholder="e.g. Designer"></div>
               <div class="form-group" style="margin:0"><label class="form-label">Level / Color</label>
                 <select class="form-select" id="org-new-level">
-                  <option value="director">Director</option>
-                  <option value="manager" selected>Manager</option>
-                  <option value="member">Team Member</option>
+                  <option value="director">Director (Teal)</option>
+                  <option value="partner">Partner (Dark Blue)</option>
+                  <option value="manager">Manager (Purple)</option>
+                  <option value="member" selected>Team Member (Green)</option>
                 </select>
               </div>
               <div class="form-group" style="margin:0"><label class="form-label">Photo (optional)</label><input type="file" accept="image/*" id="org-new-photo" class="form-input" style="padding:5px;font-size:11px;"></div>
@@ -1722,9 +1723,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="org-edit-panel" style="display:none;padding:18px;border-top:1px solid var(--border);background:var(--bg);">
             <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:14px;">✏️ Edit Member</div>
             <input type="hidden" id="org-edit-id">
-            <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:end;">
               <div class="form-group" style="margin:0"><label class="form-label">Full Name</label><input class="form-input" id="org-edit-name"></div>
               <div class="form-group" style="margin:0"><label class="form-label">Job Title</label><input class="form-input" id="org-edit-title"></div>
+              <div class="form-group" style="margin:0"><label class="form-label">Level / Color</label>
+                <select class="form-select" id="org-edit-level">
+                  <option value="ceo">CEO (Dark Navy)</option>
+                  <option value="director">Director (Teal)</option>
+                  <option value="partner">Partner (Dark Blue)</option>
+                  <option value="manager">Manager (Purple)</option>
+                  <option value="member">Team Member (Green)</option>
+                </select>
+              </div>
               <div class="form-group" style="margin:0"><label class="form-label">New Photo</label><input type="file" accept="image/*" id="org-edit-photo" class="form-input" style="padding:5px;font-size:11px;"></div>
               <div style="display:flex;gap:8px;align-items:flex-end;">
                 <button class="btn btn-primary" onclick="saveOrgEdit()" style="height:38px;">Save</button>
@@ -3001,29 +3011,34 @@ function addUser(){
   dbSet(DB_KEYS.users, existing);
 
   // ── Auto-add to org chart ──
-  orgLoad(); // make sure orgNodes/orgLinks are current
+  // Reload from localStorage so in-memory state is current, then apply the
+  // layout migration before adding the new node (avoids pushing stale data).
+  orgLoad();
   const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
   if(!alreadyInOrg){
-    // Determine level from role
+    // If this person is already in the canonical chart defaults, use their correct title/level/position
+    const defNode = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
     const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
-    const nodeLevel = levelMap[role] || 'member';
-    // Place new bubble below manager if manager is known
-    let nx = 100 + Math.random()*300, ny = 500;
-    if(managerId){
+    const nodeLevel = defNode ? defNode.level : (levelMap[role] || 'member');
+    const nodeTitle = defNode ? defNode.title : (title || 'Team Member');
+    // Place below deepest row (or at canonical position if in defaults)
+    const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 480;
+    const memberCount = orgNodes.filter(n=>n.level==='member').length;
+    let nx = defNode ? defNode.x : 60 + (memberCount % 6) * 140;
+    let ny = defNode ? defNode.y : maxY + 140;
+    if(!defNode && managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
-      if(mgrNode){ nx = mgrNode.x + (Math.random()*200-100); ny = mgrNode.y + 150; }
+      if(mgrNode){ nx = Math.max(0, mgrNode.x + (Math.random()*160-80)); ny = mgrNode.y + 150; }
     }
-    const newNodeId = 'u_node_'+Date.now();
-    orgNodes.push({id:newNodeId, name:fullName, title:title||'Team Member', photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
-    // Link to manager in org chart
+    const newNodeId = defNode ? defNode.id : 'u_node_'+Date.now();
+    orgNodes.push({id:newNodeId, name:fullName, title:nodeTitle, photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
     if(managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
       if(mgrNode && !orgLinks.find(l=>(l[0]===mgrNode.id&&l[1]===newNodeId)||(l[0]===newNodeId&&l[1]===mgrNode.id))){
         orgLinks.push([mgrNode.id, newNodeId]);
       }
     }
-    orgSave();
-    // Re-render if org chart canvas is visible
+    orgSave(); // saves to localStorage + pushes to cloud via cloudAutoSync
     if(document.getElementById('org-canvas')) renderOrgChart();
   }
 
@@ -3540,54 +3555,94 @@ function saveQuickLinks(){
 // ═══════════════════════════════════════════════════
 // ── DRAG-AND-DROP ORG CHART ──
 // ═══════════════════════════════════════════════════
+
+// Bump this string whenever the default layout changes — every device
+// will reset to the new defaults exactly once on next load.
+const ORG_LAYOUT_VERSION = 'v3_20260415';
+
 const orgColors = {
-  ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',
-  director: 'linear-gradient(135deg,#9333ea,#c084fc)',
-  manager:  'linear-gradient(135deg,#0891b2,#67e8f9)',
-  member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'
+  ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
+  director: 'linear-gradient(135deg,#0d7a5f,#2dc59f)',   // teal       — Abby
+  partner:  'linear-gradient(135deg,#1e4080,#3b6fc7)',   // dark blue  — Jacob
+  manager:  'linear-gradient(135deg,#6b4fa0,#c084fc)',   // purple     — Sarah
+  member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'   // green      — team
 };
 
-// ── Default org chart data (used only when localStorage is empty) ──
+// ── Default org chart data ──
 const ORG_NODES_DEFAULT = [
-  {id:'david',  name:'David Joslin',  title:'CEO & Overseer',                     photo:null, level:'ceo',      x:383, y:20,  fixed:true},
-  {id:'abby',   name:'Abby Conklin',  title:'Production Manager',                 photo:null, level:'director', x:100, y:200},
-  {id:'jacob',  name:'Jacob Joslin',  title:'Partner',                            photo:null, level:'director', x:383, y:200},
-  {id:'sarah',  name:'Sarah Samy',    title:'Director of Systems & Operations',   photo:null, level:'director', x:666, y:200},
-  {id:'ahmed',  name:'Ahmed Nuhan',   title:'Content Creator',                    photo:null, level:'member',   x:30,  y:400},
-  {id:'neha',   name:'Neha',          title:'Web Developer',                      photo:null, level:'member',   x:200, y:400},
-  {id:'nadia',  name:'Nadia Fahmey',  title:'Marketing Specialist',               photo:null, level:'member',   x:370, y:400},
-  {id:'rania',  name:'Rania Morsy',   title:'Lead Generation Manager',            photo:null, level:'member',   x:540, y:400},
+  // Row 1 — CEO
+  {id:'david',   name:'David Joslin',     title:'CEO & Founder',                                   photo:null, level:'ceo',      x:406, y:20,  fixed:true},
+  // Row 2 — Directors
+  {id:'abby',    name:'Abby Conklin',     title:'Production Manager / Reel Motion PM',              photo:null, level:'director', x:106, y:200},
+  {id:'sarah',   name:'Sarah Samy',       title:'Integrator / Director of Systems & Operations',   photo:null, level:'manager',  x:406, y:200},
+  {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
+  // Row 3 — Left group
+  {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
+  {id:'nadia',   name:'Nadia Fahmey',     title:'Marketing Specialist',                             photo:null, level:'member',   x:140, y:390},
+  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:260, y:390},
+  // Row 3 — Right group
+  {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
+  {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:512, y:390},
+  {id:'neha',    name:'Neha',             title:'Web Developer',                                    photo:null, level:'member',   x:604, y:390},
+  {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:696, y:390},
+  {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:788, y:390},
+  // Row 4 — Bottom members
+  {id:'money',   name:'Money Maker',      title:'Sales and Account Management',                     photo:null, level:'member',   x:60,  y:565},
+  {id:'adman',   name:'Ad Man',           title:'PPC / SEO / Analytics Specialist',                 photo:null, level:'member',   x:195, y:565},
+  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:330, y:565},
+  {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:465, y:565},
 ];
-const ORG_LINKS_DEFAULT = [];
+const ORG_LINKS_DEFAULT = [
+  ['david','abby'], ['david','sarah'], ['david','jacob']
+];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──
 let orgNodes = [];
 let orgLinks = [];
 
 function orgSave(){
-  // DB_KEYS may not exist yet when called early; use direct key names as fallback
   const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
   const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
   try{
     localStorage.setItem(nk, JSON.stringify(orgNodes));
     localStorage.setItem(lk, JSON.stringify(orgLinks));
+    localStorage.setItem('wl_org_layout_ver', ORG_LAYOUT_VERSION);
   }catch(e){}
   // Auto-sync every save so all admins see changes immediately
   if(typeof cloudAutoSync === 'function') cloudAutoSync(true);
 }
 
 function orgLoad(){
+  const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
+  const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
   try{
-    const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
-    const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
-    // Load saved positions/links — fall back to defaults only if nothing saved yet
-    orgNodes = savedNodes && savedNodes.length ? savedNodes : JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : [];
+    const savedVer   = localStorage.getItem('wl_org_layout_ver');
+    if(savedNodes && savedNodes.length && savedVer === ORG_LAYOUT_VERSION){
+      // Layout version matches — use saved positions (preserves dragged positions)
+      orgNodes = savedNodes;
+      orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      // Merge in any new default nodes added after the last save
+      let mergeChanged = false;
+      ORG_NODES_DEFAULT.forEach(def=>{
+        if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
+      });
+      if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
+    } else {
+      // Version mismatch or first load — reset to canonical default layout.
+      // _syncUsersToOrgChart() will re-add any registered team members afterward.
+      orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+      orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      try{
+        localStorage.setItem(nk, JSON.stringify(orgNodes));
+        localStorage.setItem(lk, JSON.stringify(orgLinks));
+        localStorage.setItem('wl_org_layout_ver', ORG_LAYOUT_VERSION);
+      }catch(e){}
+    }
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = [];
+    orgLinks  = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
   }
 }
 
@@ -3595,10 +3650,54 @@ let orgDragging = null, orgDragOffset = {x:0,y:0};
 let connectMode = false, connectFrom = null;
 let orgIdCounter = 200;
 
+// Ensure every registered user account appears in the org chart.
+// Called after orgLoad() so both admins always see the full team,
+// regardless of which admin originally added the user account.
+function _syncUsersToOrgChart(){
+  if(typeof DB_KEYS === 'undefined') return false;
+  const users = (dbGet(DB_KEYS.users)||[]).filter(u=>!u.archived && (u.status==='active'||!u.status));
+  if(!users.length) return false;
+  let added = 0;
+  users.forEach(u=>{
+    const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
+    if(!fullName) return;
+    // If already in chart, just make sure the name/title matches the canonical default
+    const existing = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
+    const defNode  = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
+    if(existing){
+      // Sync title and level from canonical default if this node is still using a generic placeholder
+      if(defNode){
+        if(existing.title==='Team Member'||existing.title===existing.level) existing.title=defNode.title;
+        if(existing.level==='member'&&defNode.level!=='member') existing.level=defNode.level;
+      }
+      return;
+    }
+    // Not in chart yet — add below the deepest row
+    const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 400;
+    const memberCount = orgNodes.filter(n=>n.level==='member').length;
+    // Use canonical chart title/level if this person is in the defaults
+    const nodeTitle = defNode ? defNode.title : (u.title||u.role||'Team Member');
+    const nodeLevel = defNode ? defNode.level : 'member';
+    orgNodes.push({
+      id: 'u_'+(u.id||Date.now()+'_'+added),
+      name: fullName,
+      title: nodeTitle,
+      photo: null,
+      level: nodeLevel,
+      x: defNode ? defNode.x : 60 + (memberCount % 5) * 160,
+      y: defNode ? defNode.y : maxY + 140
+    });
+    added++;
+  });
+  return added > 0;
+}
+
 function initOrgChart(){
   const canvas = document.getElementById('org-canvas');
   if(!canvas) return;
   orgLoad();
+  // Add any registered users not yet in the chart, then sync to cloud
+  if(_syncUsersToOrgChart()) orgSave();
   renderOrgChart();
   // Only add listeners once
   if(!canvas._orgListeners){
@@ -3749,6 +3848,7 @@ function onOrgBubbleClick(e, id){
   document.getElementById('org-edit-id').value=id;
   document.getElementById('org-edit-name').value=node.name;
   document.getElementById('org-edit-title').value=node.title;
+  document.getElementById('org-edit-level').value=node.level||'member';
   document.getElementById('org-add-panel').style.display='none';
   document.getElementById('org-edit-panel').style.display='block';
 }
@@ -3804,9 +3904,11 @@ function saveOrgEdit(){
   const photoInput=document.getElementById('org-edit-photo');
   const node=orgNodes.find(n=>n.id===id);
   if(!node) return;
+  const level=document.getElementById('org-edit-level').value;
   const doSave=(photoData)=>{
     node.name=name||node.name;
     node.title=title||node.title;
+    node.level=level||node.level;
     if(photoData) node.photo=photoData;
     orgSave();
     renderOrgChart();
@@ -4357,6 +4459,12 @@ window.doLogin = async function(){
   const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
   if(hardcodedAdmin){
     errEl.style.display='none';
+    // Pull latest cloud data before showing UI so all panels are up to date immediately
+    if(cloudIsConfigured()){
+      if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
+      await cloudPullAll(true);
+      if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+    }
     currentRole='admin';
     logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
     showAdminApp();
@@ -5134,8 +5242,9 @@ async function cloudPushAll(silent=false){
       announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
       coc:          dbGet(DB_KEYS.coc) || cloudRecord.coc || null,
       settings:     dbGet(DB_KEYS.settings) || cloudRecord.settings || null,
-      orgNodes:     dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
-      orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+      orgNodes:        dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
+      orgLinks:        dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+      orgLayoutVersion: localStorage.getItem('wl_org_layout_ver') || cloudRecord.orgLayoutVersion || null,
       primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
       deletedEodIds,
@@ -5210,9 +5319,16 @@ async function cloudPullAll(silent=false){
     if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
     if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+    // Sync layout version from cloud (or clear so orgLoad triggers a reset)
+    if(r.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
+    else localStorage.removeItem('wl_org_layout_ver');
     // Reload org chart into memory and re-render if canvas is visible
     if(r.orgNodes || r.orgLinks){
       if(typeof orgLoad === 'function') orgLoad();
+      // Auto-add any registered users not yet in the chart
+      if(typeof _syncUsersToOrgChart === 'function' && _syncUsersToOrgChart()){
+        if(typeof orgSave === 'function') orgSave();
+      }
       if(document.getElementById('org-canvas') && typeof renderOrgChart === 'function') renderOrgChart();
     }
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
