@@ -2981,19 +2981,22 @@ function addUser(){
   orgLoad();
   const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
   if(!alreadyInOrg){
+    // If this person is already in the canonical chart defaults, use their correct title/level/position
+    const defNode = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
     const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
-    const nodeLevel = levelMap[role] || 'member';
-    // Place below deepest row so new members don't overlap existing chart
+    const nodeLevel = defNode ? defNode.level : (levelMap[role] || 'member');
+    const nodeTitle = defNode ? defNode.title : (title || 'Team Member');
+    // Place below deepest row (or at canonical position if in defaults)
     const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 480;
     const memberCount = orgNodes.filter(n=>n.level==='member').length;
-    let nx = 60 + (memberCount % 6) * 140;
-    let ny = maxY + 140;
-    if(managerId){
+    let nx = defNode ? defNode.x : 60 + (memberCount % 6) * 140;
+    let ny = defNode ? defNode.y : maxY + 140;
+    if(!defNode && managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
       if(mgrNode){ nx = Math.max(0, mgrNode.x + (Math.random()*160-80)); ny = mgrNode.y + 150; }
     }
-    const newNodeId = 'u_node_'+Date.now();
-    orgNodes.push({id:newNodeId, name:fullName, title:title||'Team Member', photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
+    const newNodeId = defNode ? defNode.id : 'u_node_'+Date.now();
+    orgNodes.push({id:newNodeId, name:fullName, title:nodeTitle, photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
     if(managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
       if(mgrNode && !orgLinks.find(l=>(l[0]===mgrNode.id&&l[1]===newNodeId)||(l[0]===newNodeId&&l[1]===mgrNode.id))){
@@ -3507,6 +3510,11 @@ function saveQuickLinks(){
 // ═══════════════════════════════════════════════════
 // ── DRAG-AND-DROP ORG CHART ──
 // ═══════════════════════════════════════════════════
+
+// Bump this string whenever the default layout changes — every device
+// will reset to the new defaults exactly once on next load.
+const ORG_LAYOUT_VERSION = 'v3_20260415';
+
 const orgColors = {
   ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
   director: 'linear-gradient(135deg,#0d7a5f,#2dc59f)',   // teal       — Abby
@@ -3548,12 +3556,12 @@ let orgNodes = [];
 let orgLinks = [];
 
 function orgSave(){
-  // DB_KEYS may not exist yet when called early; use direct key names as fallback
   const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
   const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
   try{
     localStorage.setItem(nk, JSON.stringify(orgNodes));
     localStorage.setItem(lk, JSON.stringify(orgLinks));
+    localStorage.setItem('wl_org_layout_ver', ORG_LAYOUT_VERSION);
   }catch(e){}
   // Auto-sync every save so all admins see changes immediately
   if(typeof cloudAutoSync === 'function') cloudAutoSync(true);
@@ -3565,34 +3573,31 @@ function orgLoad(){
   try{
     const savedNodes = JSON.parse(localStorage.getItem(nk)||'null');
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
-    if(savedNodes && savedNodes.length){
+    const savedVer   = localStorage.getItem('wl_org_layout_ver');
+    if(savedNodes && savedNodes.length && savedVer === ORG_LAYOUT_VERSION){
+      // Layout version matches — use saved positions (preserves dragged positions)
       orgNodes = savedNodes;
-      orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
-      // ── One-time layout migration: old data has 'ahmed' who was removed ──
-      // Reset everything to the new default layout so the chart matches the company structure.
-      // Any custom-added bubbles (Yehia, Mostafa, etc.) will be re-added by _syncUsersToOrgChart().
-      if(orgNodes.find(n=>n.id==='ahmed')){
-        orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-        orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
-        try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); localStorage.setItem(lk, JSON.stringify(orgLinks)); }catch(e){}
-      } else {
-        // Merge: add any default node missing from saved data (preserves custom positions)
-        let mergeChanged = false;
-        ORG_NODES_DEFAULT.forEach(def=>{
-          if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
-        });
-        // Migrate David's title if still on old default
-        const _dn = orgNodes.find(n=>n.id==='david');
-        if(_dn && _dn.title==='CEO & Overseer'){ _dn.title='CEO & Founder'; mergeChanged=true; }
-        if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
-      }
+      orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      // Merge in any new default nodes added after the last save
+      let mergeChanged = false;
+      ORG_NODES_DEFAULT.forEach(def=>{
+        if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
+      });
+      if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
     } else {
+      // Version mismatch or first load — reset to canonical default layout.
+      // _syncUsersToOrgChart() will re-add any registered team members afterward.
       orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
       orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      try{
+        localStorage.setItem(nk, JSON.stringify(orgNodes));
+        localStorage.setItem(lk, JSON.stringify(orgLinks));
+        localStorage.setItem('wl_org_layout_ver', ORG_LAYOUT_VERSION);
+      }catch(e){}
     }
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+    orgLinks  = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
   }
 }
 
@@ -3611,19 +3616,31 @@ function _syncUsersToOrgChart(){
   users.forEach(u=>{
     const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
     if(!fullName) return;
-    const alreadyIn = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
-    if(alreadyIn) return;
-    // Position new nodes below the current lowest row
+    // If already in chart, just make sure the name/title matches the canonical default
+    const existing = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
+    const defNode  = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
+    if(existing){
+      // Sync title and level from canonical default if this node is still using a generic placeholder
+      if(defNode){
+        if(existing.title==='Team Member'||existing.title===existing.level) existing.title=defNode.title;
+        if(existing.level==='member'&&defNode.level!=='member') existing.level=defNode.level;
+      }
+      return;
+    }
+    // Not in chart yet — add below the deepest row
     const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 400;
     const memberCount = orgNodes.filter(n=>n.level==='member').length;
+    // Use canonical chart title/level if this person is in the defaults
+    const nodeTitle = defNode ? defNode.title : (u.title||u.role||'Team Member');
+    const nodeLevel = defNode ? defNode.level : 'member';
     orgNodes.push({
       id: 'u_'+(u.id||Date.now()+'_'+added),
       name: fullName,
-      title: u.title||u.role||'Team Member',
+      title: nodeTitle,
       photo: null,
-      level: 'member',
-      x: 60 + (memberCount % 5) * 160,
-      y: maxY + 140
+      level: nodeLevel,
+      x: defNode ? defNode.x : 60 + (memberCount % 5) * 160,
+      y: defNode ? defNode.y : maxY + 140
     });
     added++;
   });
@@ -5155,8 +5172,9 @@ async function cloudPushAll(silent=false){
       announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
       coc:          dbGet(DB_KEYS.coc) || cloudRecord.coc || null,
       settings:     dbGet(DB_KEYS.settings) || cloudRecord.settings || null,
-      orgNodes:     dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
-      orgLinks:     dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+      orgNodes:        dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
+      orgLinks:        dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
+      orgLayoutVersion: localStorage.getItem('wl_org_layout_ver') || cloudRecord.orgLayoutVersion || null,
       primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
     };
@@ -5214,6 +5232,9 @@ async function cloudPullAll(silent=false){
     if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
     if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
+    // Sync layout version from cloud (or clear so orgLoad triggers a reset)
+    if(r.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
+    else localStorage.removeItem('wl_org_layout_ver');
     // Reload org chart into memory and re-render if canvas is visible
     if(r.orgNodes || r.orgLinks){
       if(typeof orgLoad === 'function') orgLoad();
