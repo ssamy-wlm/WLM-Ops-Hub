@@ -3011,29 +3011,31 @@ function addUser(){
   dbSet(DB_KEYS.users, existing);
 
   // ── Auto-add to org chart ──
-  orgLoad(); // make sure orgNodes/orgLinks are current
+  // Reload from localStorage so in-memory state is current, then apply the
+  // layout migration before adding the new node (avoids pushing stale data).
+  orgLoad();
   const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
   if(!alreadyInOrg){
-    // Determine level from role
     const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
     const nodeLevel = levelMap[role] || 'member';
-    // Place new bubble below manager if manager is known
-    let nx = 100 + Math.random()*300, ny = 500;
+    // Place below deepest row so new members don't overlap existing chart
+    const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 480;
+    const memberCount = orgNodes.filter(n=>n.level==='member').length;
+    let nx = 60 + (memberCount % 6) * 140;
+    let ny = maxY + 140;
     if(managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
-      if(mgrNode){ nx = mgrNode.x + (Math.random()*200-100); ny = mgrNode.y + 150; }
+      if(mgrNode){ nx = Math.max(0, mgrNode.x + (Math.random()*160-80)); ny = mgrNode.y + 150; }
     }
     const newNodeId = 'u_node_'+Date.now();
     orgNodes.push({id:newNodeId, name:fullName, title:title||'Team Member', photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
-    // Link to manager in org chart
     if(managerId){
       const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
       if(mgrNode && !orgLinks.find(l=>(l[0]===mgrNode.id&&l[1]===newNodeId)||(l[0]===newNodeId&&l[1]===mgrNode.id))){
         orgLinks.push([mgrNode.id, newNodeId]);
       }
     }
-    orgSave();
-    // Re-render if org chart canvas is visible
+    orgSave(); // saves to localStorage + pushes to cloud via cloudAutoSync
     if(document.getElementById('org-canvas')) renderOrgChart();
   }
 
@@ -3610,25 +3612,29 @@ function orgLoad(){
     const savedLinks = JSON.parse(localStorage.getItem(lk)||'null');
     if(savedNodes && savedNodes.length){
       orgNodes = savedNodes;
-      // Merge: add any default nodes missing from saved data (preserves existing positions)
-      let mergeChanged = false;
-      ORG_NODES_DEFAULT.forEach(def=>{
-        if(!orgNodes.find(n=>n.id===def.id)){
-          orgNodes.push(JSON.parse(JSON.stringify(def)));
-          mergeChanged = true;
-        }
-      });
-      // Migrate David's title if still on old default
-      const _dn = orgNodes.find(n=>n.id==='david');
-      if(_dn && _dn.title==='CEO & Overseer'){
-        _dn.title='CEO & Founder'; mergeChanged=true;
+      orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      // ── One-time layout migration: old data has 'ahmed' who was removed ──
+      // Reset everything to the new default layout so the chart matches the company structure.
+      // Any custom-added bubbles (Yehia, Mostafa, etc.) will be re-added by _syncUsersToOrgChart().
+      if(orgNodes.find(n=>n.id==='ahmed')){
+        orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+        orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+        try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); localStorage.setItem(lk, JSON.stringify(orgLinks)); }catch(e){}
+      } else {
+        // Merge: add any default node missing from saved data (preserves custom positions)
+        let mergeChanged = false;
+        ORG_NODES_DEFAULT.forEach(def=>{
+          if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
+        });
+        // Migrate David's title if still on old default
+        const _dn = orgNodes.find(n=>n.id==='david');
+        if(_dn && _dn.title==='CEO & Overseer'){ _dn.title='CEO & Founder'; mergeChanged=true; }
+        if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
       }
-      if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
     } else {
       orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
+      orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
     }
-    // Use saved links if present, otherwise seed the default hierarchy links
-    orgLinks = (savedLinks && Array.isArray(savedLinks)) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
     orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
