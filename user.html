@@ -264,6 +264,19 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 ::-webkit-scrollbar{width:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px;}
+/* ── Messaging ── */
+.msg-wrap{display:flex;flex-direction:column;height:calc(100vh - 160px);max-height:680px;}
+.msg-thread{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--bg2);border-radius:12px;margin-bottom:12px;}
+.msg-bubble{max-width:72%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.55;word-break:break-word;}
+.msg-bubble.from-me{align-self:flex-end;background:var(--text,#1a1a2e);color:#fff;border-bottom-right-radius:3px;}
+.msg-bubble.from-other{align-self:flex-start;background:#fff;color:var(--text-dark);border:1px solid var(--border);border-bottom-left-radius:3px;}
+.msg-meta{font-size:10px;opacity:.55;margin-top:5px;}
+.msg-sender-name{font-size:10px;font-weight:700;color:var(--text-light);margin-bottom:4px;}
+.msg-compose{display:flex;gap:10px;align-items:flex-end;}
+.msg-compose textarea{flex:1;resize:none;min-height:44px;max-height:110px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;}
+.msg-compose textarea:focus{border-color:var(--text);}
+.msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
+.msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
 </style>
 </head>
 <body>
@@ -348,6 +361,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni">🔑</span>Credentials</div>
       <div class="nav-group-label">HR</div>
       <div class="nav-item" onclick="showSection('timeoff',this)"><span class="ni">🏖</span>Time Off</div>
+      <div class="nav-group-label">Communication</div>
+      <div class="nav-item" onclick="showSection('messages',this)" id="nav-messages"><span class="ni">💬</span>Messages<span class="msg-nav-badge" id="msg-nav-badge" style="display:none;">0</span></div>
     </div>
     <div class="sidebar-user">
       <div class="sidebar-user-card">
@@ -747,6 +762,25 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
       </div>
 
+      <!-- ── MESSAGES ── -->
+      <div id="sec-messages" class="page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+          <div>
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">Messages</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with your admin team</div>
+          </div>
+        </div>
+        <div class="msg-wrap">
+          <div class="msg-thread" id="msg-user-thread">
+            <div class="msg-empty">No messages yet. Send a message to your admin below to get started.</div>
+          </div>
+          <div class="msg-compose">
+            <textarea id="msg-user-input" placeholder="Write a message to your admin…" rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUserMessage();}"></textarea>
+            <button class="btn btn-primary" onclick="sendUserMessage()" style="height:44px;padding:0 20px;flex-shrink:0;">Send</button>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main -->
 </div><!-- /userApp -->
@@ -932,6 +966,7 @@ const DB_KEYS = {
   settings: 'wl_settings',
   goals:    'wl_goals_db',
   announcement: 'wl_announcement',
+  messages:     'wl_messages_db',
 };
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
@@ -986,6 +1021,7 @@ async function cloudFetchUsers(){
     if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
     if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
     if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
+    if(record.messages)     dbSet(DB_KEYS.messages, _mergeCloudArr(record.messages, dbGet(DB_KEYS.messages)||[], 500));
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
     return Array.isArray(users) ? users : null;
   }catch(e){ return null; }
@@ -1009,6 +1045,7 @@ async function cloudPushData(){
       blockers: _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:    _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
       feed:     _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
+      messages: _mergeCloudArr(cloudRecord.messages, dbGet(DB_KEYS.messages)||[], 500),
     };
     await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
       method:'PUT',
@@ -1218,6 +1255,8 @@ function initApp(){
   renderUserQuickLinks();
   // Load operations data
   loadOpsStats();
+  // Update messages unread badge
+  updateUserMsgBadge();
   // Check announcement
   checkAnnouncements();
   // Load goals
@@ -1419,7 +1458,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile'};
+  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -1428,6 +1467,7 @@ function showSection(id, el){
   if(id==='goals') loadGoals();
   if(id==='blockers') loadOpsStats();
   if(id==='bizSetup') loadCoC();
+  if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
 }
 
 // ── MY REPORTS ──
@@ -1872,6 +1912,93 @@ function renderUserCredVault(){
 }
 
 function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ═══════════════════════════════════════════════════
+// ── MESSAGING ──
+// ═══════════════════════════════════════════════════
+let _msgPollInterval = null;
+
+function loadMessages(){
+  // Pull latest from cloud then render
+  cloudFetchUsers().then(()=>{
+    renderUserThread();
+    markUserMessagesRead();
+  });
+  // Poll every 15s while on messages section
+  clearInterval(_msgPollInterval);
+  _msgPollInterval = setInterval(()=>{
+    cloudFetchUsers().then(()=>{ renderUserThread(); updateUserMsgBadge(); });
+  }, 15000);
+}
+
+function renderUserThread(){
+  const thread = document.getElementById('msg-user-thread');
+  if(!thread || !currentUser) return;
+  const all = dbGet(DB_KEYS.messages)||[];
+  const msgs = all.filter(m=>m.threadUser===currentUser.email).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+  if(!msgs.length){
+    thread.innerHTML='<div class="msg-empty">No messages yet. Send a message to your admin below to get started.</div>';
+    return;
+  }
+  thread.innerHTML = msgs.map(m=>{
+    const isMe = m.from===currentUser.email;
+    const time  = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+    const date  = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    return `<div style="display:flex;flex-direction:column;">
+      <div class="msg-bubble ${isMe?'from-me':'from-other'}">
+        ${!isMe?`<div class="msg-sender-name">${escHtmlUser(m.fromName)}</div>`:''}
+        ${escHtmlUser(m.content)}
+        <div class="msg-meta">${date} · ${time}</div>
+      </div>
+    </div>`;
+  }).join('');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function sendUserMessage(){
+  const input = document.getElementById('msg-user-input');
+  const content = input?.value.trim();
+  if(!content || !currentUser) return;
+  const msg = {
+    id: Date.now() + Math.random(),
+    threadUser: currentUser.email,
+    from: currentUser.email,
+    fromName: currentUser.name || currentUser.email,
+    fromRole: 'user',
+    content,
+    timestamp: new Date().toISOString(),
+    readBy: [currentUser.email]
+  };
+  const all = dbGet(DB_KEYS.messages)||[];
+  all.push(msg);
+  dbSet(DB_KEYS.messages, all);
+  input.value = '';
+  renderUserThread();
+  cloudPushData();
+}
+
+function markUserMessagesRead(){
+  if(!currentUser) return;
+  const all = dbGet(DB_KEYS.messages)||[];
+  let changed = false;
+  all.forEach(m=>{
+    if(m.threadUser===currentUser.email && m.fromRole==='admin' && !(m.readBy||[]).includes(currentUser.email)){
+      if(!m.readBy) m.readBy=[];
+      m.readBy.push(currentUser.email);
+      changed = true;
+    }
+  });
+  if(changed){ dbSet(DB_KEYS.messages, all); cloudPushData(); }
+  updateUserMsgBadge();
+}
+
+function updateUserMsgBadge(){
+  if(!currentUser) return;
+  const all = dbGet(DB_KEYS.messages)||[];
+  const unread = all.filter(m=>m.threadUser===currentUser.email && m.fromRole==='admin' && !(m.readBy||[]).includes(currentUser.email)).length;
+  const badge = document.getElementById('msg-nav-badge');
+  if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
+}
 
 // Render on page load if credentials section is active
 

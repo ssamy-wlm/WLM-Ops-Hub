@@ -995,6 +995,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-item" onclick="switchAdminTab(this,'timeoff')">Time Off</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'archive')">Archive</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
+        <div class="admin-nav-item" onclick="switchAdminTab(this,'messages')" id="admin-nav-messages">Messages<span class="admin-msg-nav-badge" id="admin-msg-badge" style="display:none;">0</span></div>
       </div>
       <button class="btn" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);" onclick="logout()">↩ Sign Out</button>
     </div>
@@ -1801,6 +1802,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
           <div style="margin-top:16px;"><button class="btn btn-primary btn-sm" onclick="showToast('Roadmap saved ✓')">Save Roadmap</button></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── MESSAGES ── -->
+    <div id="admin-messages" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);">Messages</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with your team members</div>
+        </div>
+      </div>
+      <div id="admin-msg-wrap">
+        <div class="msg-empty">No messages yet. Team members can message you from their portal.</div>
       </div>
     </div>
 
@@ -2696,6 +2710,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 <script>
 // ── STATE ──
 let currentRole = 'admin';
+let currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy'};
 let calYear, calMonth, selectedCalDate;
 let eodCurrentStep = 1;
 const today = new Date();
@@ -2730,6 +2745,7 @@ function showAdminApp(){
   document.getElementById('adminApp').classList.add('visible');
   document.getElementById('userApp').classList.remove('visible');
   try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
+  setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
 }
 
 function showUserApp(){
@@ -2775,6 +2791,7 @@ function switchAdminTab(el, tab){
   document.getElementById('admin-'+tab).classList.add('active');
   document.querySelectorAll('.admin-nav-item').forEach(n=>n.classList.remove('active'));
   el.classList.add('active');
+  if(tab==='messages') renderAdminMessages();
 }
 
 // ── REPORT TABS ──
@@ -4391,6 +4408,29 @@ window.switchAdminTab = function(el, tab){
 .sum-metric{background:var(--bg);border-radius:10px;padding:12px 16px;text-align:center;}
 .sum-metric-val{font-family:'Playfair Display',serif;font-size:22px;color:var(--text-dark);}
 .sum-metric-label{font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-top:3px;}
+/* ── Admin Messaging ── */
+.msg-layout{display:grid;grid-template-columns:260px 1fr;gap:20px;height:580px;}
+.msg-inbox-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;height:100%;}
+.msg-inbox-item{display:flex;align-items:center;gap:12px;padding:11px 13px;background:var(--bg);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:background .15s;}
+.msg-inbox-item:hover{background:var(--bg2);}
+.msg-inbox-item.msg-active{border-color:var(--text);background:var(--bg2);}
+.msg-inbox-avatar{width:36px;height:36px;border-radius:50%;background:var(--text);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;}
+.msg-inbox-name{font-size:13px;font-weight:700;color:var(--text-dark);display:flex;align-items:center;gap:6px;}
+.msg-inbox-preview{font-size:11px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.msg-unread-badge{min-width:18px;height:18px;background:#e05555;color:#fff;border-radius:9px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;}
+.msg-conv-panel{display:flex;flex-direction:column;min-width:0;}
+.msg-conv-head{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;}
+.msg-thread{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--bg2);border-radius:12px;margin-bottom:12px;}
+.msg-bubble{max-width:72%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.55;word-break:break-word;}
+.msg-bubble.from-me{align-self:flex-end;background:var(--text,#1a1a2e);color:#fff;border-bottom-right-radius:3px;}
+.msg-bubble.from-other{align-self:flex-start;background:#fff;color:var(--text-dark);border:1px solid var(--border);border-bottom-left-radius:3px;}
+.msg-meta{font-size:10px;opacity:.55;margin-top:5px;}
+.msg-sender-name{font-size:10px;font-weight:700;color:var(--text-light);margin-bottom:4px;}
+.msg-compose{display:flex;gap:10px;align-items:flex-end;}
+.msg-compose textarea{flex:1;resize:none;min-height:44px;max-height:110px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;}
+.msg-compose textarea:focus{border-color:var(--text);}
+.msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
+.admin-msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
 </style>
 
 <script>
@@ -4414,6 +4454,7 @@ const DB_KEYS = {
   otPolicy:      'wl_ot_policy',
   deletedEodIds: 'wl_deleted_eod_ids',
   deletedUserIds:'wl_deleted_user_ids',
+  messages:      'wl_messages_db',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -4465,6 +4506,7 @@ window.doLogin = async function(){
       if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
     }
     currentRole='admin';
+    currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy'};
     logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
     showAdminApp();
     startLiveSync('owner');
@@ -4483,6 +4525,7 @@ window.doLogin = async function(){
   if(dynamicAdmin){
     errEl.style.display='none';
     currentRole='admin';
+    currentAdminInfo = {email: dynamicAdmin.email, name: dynamicAdmin.name||'Admin'};
     logActivity('login',`Admin (${dynamicAdmin.name||'Admin'})`,'Admin signed in','admin panel');
     // Store level so session restore can apply restrictions
     try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:dynamicAdmin.level||'admin', adminId:dynamicAdmin.id, ts:Date.now()})); }catch(e){}
@@ -5248,6 +5291,7 @@ async function cloudPushAll(silent=false){
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
       deletedEodIds,
       deletedUserIds,
+      messages: _mergeCloudArr(cloudRecord.messages, dbGet(DB_KEYS.messages)||[], 500),
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5333,6 +5377,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     }
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
+    if(r.messages)       dbSet(DB_KEYS.messages,  _mergeCloudArr(r.messages, dbGet(DB_KEYS.messages)||[], 500));
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -5348,6 +5393,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // Reload reports tab if currently visible
     const reportsTab = document.getElementById('tab-allreports');
     if(reportsTab && reportsTab.classList.contains('active') && typeof loadAdminReportsTab === 'function') loadAdminReportsTab();
+    if(typeof updateAdminMsgBadge === 'function') updateAdminMsgBadge();
+    if(typeof _refreshAdminMessagesIfOpen === 'function') _refreshAdminMessagesIfOpen();
     if(!silent) showToast('✅ All data pulled from cloud');
   } catch(e){
     setCloudStatus('Pull failed: '+e.message,'error');
@@ -6940,6 +6987,148 @@ window.openAddAdminModal = function(){
     }
   }catch(e){}
 })();
+
+// ═══════════════════════════════════════════════════
+// ── ADMIN MESSAGING ──
+// ═══════════════════════════════════════════════════
+let _openConvEmail = null;
+
+function escHtmlAdmin(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderAdminMessages(){
+  const wrap = document.getElementById('admin-msg-wrap');
+  if(!wrap) return;
+  const all = dbGet(DB_KEYS.messages)||[];
+
+  // Group by threadUser (the regular user's email)
+  const threads = {};
+  all.forEach(m=>{ if(!threads[m.threadUser]) threads[m.threadUser]=[]; threads[m.threadUser].push(m); });
+  const sorted = Object.entries(threads).sort((a,b)=>{
+    const tA = Math.max(...a[1].map(m=>new Date(m.timestamp)));
+    const tB = Math.max(...b[1].map(m=>new Date(m.timestamp)));
+    return tB - tA;
+  });
+
+  if(!sorted.length){
+    wrap.innerHTML='<div class="msg-empty">No messages yet. Team members can message you from their portal 💬</div>';
+    return;
+  }
+
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+
+  const inboxHTML = sorted.map(([email, msgs])=>{
+    const latest = [...msgs].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp))[0];
+    const unread  = msgs.filter(m=>m.fromRole==='user'&&!(m.readBy||[]).includes(adminEmail)).length;
+    const initials= (latest.fromName||email).split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+    const preview = latest.content.length>55 ? latest.content.substring(0,55)+'…' : latest.content;
+    const active  = _openConvEmail===email ? 'msg-active' : '';
+    return `<div class="msg-inbox-item ${active}" onclick="openAdminConversation('${escHtmlAdmin(email).replace(/'/g,'\\&#39;')}')">
+      <div class="msg-inbox-avatar">${initials}</div>
+      <div class="msg-inbox-info">
+        <div class="msg-inbox-name">${escHtmlAdmin(latest.fromName||email)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}</div>
+        <div class="msg-inbox-preview">${escHtmlAdmin(preview)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text-light);flex-shrink:0;">${new Date(latest.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+    </div>`;
+  }).join('');
+
+  let convHTML = '';
+  if(_openConvEmail && threads[_openConvEmail]){
+    const msgs = [...threads[_openConvEmail]].sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+    const convUser = msgs.find(m=>m.fromRole==='user') || msgs[0];
+    const userName = convUser?.fromName || _openConvEmail;
+    const userInitials = userName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+
+    const bubbles = msgs.map(m=>{
+      const isAdmin = m.fromRole==='admin';
+      const time    = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+      const date    = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      return `<div style="display:flex;flex-direction:column;">
+        <div class="msg-bubble ${isAdmin?'from-me':'from-other'}">
+          ${!isAdmin?`<div class="msg-sender-name">${escHtmlAdmin(m.fromName)}</div>`:''}
+          ${escHtmlAdmin(m.content)}
+          <div class="msg-meta">${date} · ${time}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    convHTML = `<div class="msg-conv-panel">
+      <div class="msg-conv-head">
+        <div class="msg-inbox-avatar" style="width:32px;height:32px;font-size:11px;">${userInitials}</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(userName)}</div>
+        <div style="font-size:12px;color:var(--text-light);margin-left:4px;">— ${escHtmlAdmin(_openConvEmail)}</div>
+      </div>
+      <div class="msg-thread" id="admin-msg-thread">${bubbles}</div>
+      <div class="msg-compose">
+        <textarea id="admin-msg-input" placeholder="Reply to ${escHtmlAdmin(userName)}…" rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminMessage();}"></textarea>
+        <button class="btn btn-primary" onclick="sendAdminMessage()" style="height:44px;padding:0 20px;flex-shrink:0;">Send</button>
+      </div>
+    </div>`;
+  } else {
+    convHTML = `<div style="display:flex;align-items:center;justify-content:center;background:var(--bg2);border-radius:12px;color:var(--text-light);font-size:13px;">Select a conversation</div>`;
+  }
+
+  wrap.innerHTML = `<div class="msg-layout"><div><div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Conversations (${sorted.length})</div><div class="msg-inbox-list">${inboxHTML}</div></div>${convHTML}</div>`;
+
+  const thread = document.getElementById('admin-msg-thread');
+  if(thread) thread.scrollTop = thread.scrollHeight;
+  updateAdminMsgBadge();
+}
+
+function openAdminConversation(email){
+  _openConvEmail = email;
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const all = dbGet(DB_KEYS.messages)||[];
+  let changed = false;
+  all.forEach(m=>{
+    if(m.threadUser===email && m.fromRole==='user' && !(m.readBy||[]).includes(adminEmail)){
+      if(!m.readBy) m.readBy=[];
+      m.readBy.push(adminEmail);
+      changed = true;
+    }
+  });
+  if(changed){ dbSet(DB_KEYS.messages, all); cloudAutoSync(true); }
+  renderAdminMessages();
+}
+
+function sendAdminMessage(){
+  const input   = document.getElementById('admin-msg-input');
+  const content = input?.value.trim();
+  if(!content || !_openConvEmail) return;
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const adminName  = currentAdminInfo?.name||'Admin';
+  const msg = {
+    id: Date.now() + Math.random(),
+    threadUser: _openConvEmail,
+    from: adminEmail,
+    fromName: adminName,
+    fromRole: 'admin',
+    content,
+    timestamp: new Date().toISOString(),
+    readBy: [adminEmail]
+  };
+  const all = dbGet(DB_KEYS.messages)||[];
+  all.push(msg);
+  dbSet(DB_KEYS.messages, all);
+  input.value = '';
+  renderAdminMessages();
+  cloudAutoSync(true);
+}
+
+function updateAdminMsgBadge(){
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const all   = dbGet(DB_KEYS.messages)||[];
+  const unread = all.filter(m=>m.fromRole==='user'&&!(m.readBy||[]).includes(adminEmail)).length;
+  const badge  = document.getElementById('admin-msg-badge');
+  if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
+}
+
+// Refresh messages panel if it's currently open (called after background sync)
+function _refreshAdminMessagesIfOpen(){
+  const section = document.getElementById('admin-messages');
+  if(section && section.classList.contains('active')) renderAdminMessages();
+  else updateAdminMsgBadge();
+}
 </script>
 </body>
 </html>
