@@ -265,18 +265,32 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px;}
 /* ── Messaging ── */
-.msg-wrap{display:flex;flex-direction:column;height:calc(100vh - 200px);min-height:400px;}
+.msg-layout{display:grid;grid-template-columns:240px 1fr;gap:16px;height:calc(100vh - 230px);min-height:420px;}
+.msg-inbox-panel{display:flex;flex-direction:column;height:100%;min-height:0;}
+.msg-inbox-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1;}
+.msg-inbox-item{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:background .15s;}
+.msg-inbox-item:hover{background:var(--bg2);}
+.msg-inbox-item.msg-active{border-color:var(--text);background:var(--bg2);}
+.msg-inbox-avatar{width:34px;height:34px;border-radius:50%;background:var(--text);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+.msg-inbox-info{flex:1;min-width:0;}
+.msg-inbox-name{font-size:13px;font-weight:700;color:var(--text-dark);display:flex;align-items:center;gap:6px;}
+.msg-inbox-preview{font-size:11px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.msg-unread-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;}
+.msg-conv-panel{display:flex;flex-direction:column;height:100%;min-height:0;}
+.msg-conv-head{display:flex;align-items:center;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;flex-shrink:0;}
 .msg-thread{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--bg2);border-radius:12px;margin-bottom:14px;}
 .msg-bubble{max-width:72%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.55;word-break:break-word;}
 .msg-bubble.from-me{align-self:flex-end;background:var(--text,#1a1a2e);color:#fff;border-bottom-right-radius:3px;}
 .msg-bubble.from-other{align-self:flex-start;background:#fff;color:var(--text-dark);border:1px solid var(--border);border-bottom-left-radius:3px;}
 .msg-meta{font-size:10px;opacity:.55;margin-top:5px;}
 .msg-sender-name{font-size:10px;font-weight:700;color:var(--text-light);margin-bottom:4px;}
-.msg-compose{display:flex;flex-direction:column;gap:8px;}
+.msg-compose{display:flex;flex-direction:column;gap:8px;flex-shrink:0;}
 .msg-compose textarea{width:100%;box-sizing:border-box;resize:none;height:80px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;}
 .msg-compose textarea:focus{border-color:var(--text);}
 .msg-compose-actions{display:flex;justify-content:flex-end;}
 .msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
+.msg-new-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;background:var(--btn);color:#1a3f6f;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px;width:100%;font-family:inherit;transition:background .15s;flex-shrink:0;}
+.msg-new-btn:hover{background:var(--btn-hover);}
 .msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
 </style>
 </head>
@@ -767,18 +781,34 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
           <div>
             <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">Messages</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with your admin team</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with anyone on your team</div>
           </div>
         </div>
-        <div class="msg-wrap">
-          <div class="msg-thread" id="msg-user-thread">
-            <div class="msg-empty">No messages yet. Send a message to your admin below to get started.</div>
-          </div>
-          <div class="msg-compose">
-            <textarea id="msg-user-input" placeholder="Write a message to your admin… (Enter to send, Shift+Enter for new line)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUserMessage();}"></textarea>
-            <div class="msg-compose-actions">
-              <button class="btn btn-primary" onclick="sendUserMessage()" style="padding:0 28px;height:38px;">Send</button>
+        <div class="msg-layout">
+          <!-- Left: inbox list -->
+          <div class="msg-inbox-panel">
+            <button class="msg-new-btn" onclick="openNewMessagePicker()">✏️ New Message</button>
+            <div class="msg-inbox-list" id="msg-user-inbox">
+              <div class="msg-empty" style="padding:20px 10px;font-size:12px;">No conversations yet.</div>
             </div>
+          </div>
+          <!-- Right: conversation -->
+          <div id="msg-user-conv-panel" style="display:flex;align-items:center;justify-content:center;background:var(--bg2);border-radius:12px;color:var(--text-light);font-size:13px;height:100%;">
+            Select a conversation or start a new one
+          </div>
+        </div>
+      </div>
+
+      <!-- Contact Picker Modal -->
+      <div id="msg-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+        <div class="modal" style="max-width:420px;width:92%;">
+          <div class="modal-header">
+            <div class="modal-title">New Message</div>
+            <button class="modal-close" onclick="document.getElementById('msg-picker-modal').style.display='none'">✕</button>
+          </div>
+          <div style="padding:16px 20px 20px;">
+            <input id="msg-picker-search" type="text" class="form-input" placeholder="Search people…" oninput="renderContactPicker()" style="margin-bottom:12px;">
+            <div id="msg-picker-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
           </div>
         </div>
       </div>
@@ -1919,33 +1949,124 @@ function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 // ── MESSAGING ──
 // ═══════════════════════════════════════════════════
 let _msgPollInterval = null;
+let _userOpenConvEmail = null;
+
+// Derive a stable thread ID from a message (supports old + new model)
+function _getThreadId(m){
+  if(m.from && m.to) return [m.from, m.to].sort().join('::');
+  // backward compat: old model had threadUser + fromRole
+  if(m.fromRole === 'admin') return [m.from, m.threadUser].sort().join('::');
+  // old user-sent message: from=user, threadUser=user → thread with default admin
+  return [m.from, 'ssamy@weblightmedia.com'].sort().join('::');
+}
+
+// Build contact list: all users except self + all admins
+function _getContactList(){
+  const users  = dbGet(DB_KEYS.users)||[];
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const myEmail = currentUser?.email||'';
+  const contacts = [];
+  users.forEach(u=>{
+    if(u.email && u.email!==myEmail)
+      contacts.push({email:u.email, name:u.name||u.email, role:'user'});
+  });
+  const seenAdmins = new Set();
+  admins.forEach(a=>{
+    if(a.email && !seenAdmins.has(a.email)){
+      seenAdmins.add(a.email);
+      contacts.push({email:a.email, name:a.name||a.email, role:'admin'});
+    }
+  });
+  if(!seenAdmins.has('ssamy@weblightmedia.com'))
+    contacts.push({email:'ssamy@weblightmedia.com', name:'Sarah Samy', role:'admin'});
+  return contacts;
+}
 
 function loadMessages(){
-  // Pull latest from cloud then render
   cloudFetchUsers().then(()=>{
-    renderUserThread();
-    markUserMessagesRead();
+    renderUserMessages();
+    if(_userOpenConvEmail) markConvRead(_userOpenConvEmail);
   });
-  // Poll every 15s while on messages section
   clearInterval(_msgPollInterval);
   _msgPollInterval = setInterval(()=>{
-    cloudFetchUsers().then(()=>{ renderUserThread(); updateUserMsgBadge(); });
+    cloudFetchUsers().then(()=>{ renderUserMessages(); updateUserMsgBadge(); });
   }, 15000);
 }
 
-function renderUserThread(){
-  const thread = document.getElementById('msg-user-thread');
-  if(!thread || !currentUser) return;
-  const all = dbGet(DB_KEYS.messages)||[];
-  const msgs = all.filter(m=>m.threadUser===currentUser.email).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-  if(!msgs.length){
-    thread.innerHTML='<div class="msg-empty">No messages yet. Send a message to your admin below to get started.</div>';
+function renderUserMessages(){
+  if(!currentUser) return;
+  renderUserInbox();
+  if(_userOpenConvEmail) renderUserConv(_userOpenConvEmail);
+  updateUserMsgBadge();
+}
+
+function renderUserInbox(){
+  const inbox = document.getElementById('msg-user-inbox');
+  if(!inbox) return;
+  const all     = dbGet(DB_KEYS.messages)||[];
+  const myEmail = currentUser.email;
+
+  // Group messages into threads that involve me
+  const threads = {};
+  all.forEach(m=>{
+    const tid = _getThreadId(m);
+    if(!tid.split('::').includes(myEmail)) return;
+    if(!threads[tid]) threads[tid]=[];
+    threads[tid].push(m);
+  });
+
+  const sorted = Object.entries(threads).sort((a,b)=>{
+    const tA = Math.max(...a[1].map(m=>new Date(m.timestamp)));
+    const tB = Math.max(...b[1].map(m=>new Date(m.timestamp)));
+    return tB - tA;
+  });
+
+  if(!sorted.length){
+    inbox.innerHTML='<div class="msg-empty" style="padding:20px 10px;font-size:12px;">No conversations yet.<br>Tap ✏️ New Message to start.</div>';
     return;
   }
-  thread.innerHTML = msgs.map(m=>{
-    const isMe = m.from===currentUser.email;
-    const time  = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
-    const date  = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+
+  const contacts = _getContactList();
+  inbox.innerHTML = sorted.map(([tid, msgs])=>{
+    const latest      = [...msgs].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp))[0];
+    const unread      = msgs.filter(m=>m.from!==myEmail && !(m.readBy||[]).includes(myEmail)).length;
+    const parts       = tid.split('::');
+    const partnerEmail= parts.find(e=>e!==myEmail)||parts[0];
+    const contact     = contacts.find(c=>c.email===partnerEmail);
+    const partnerName = contact?.name || latest.fromName || partnerEmail;
+    const initials    = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+    const preview     = (latest.content||'').length>50 ? latest.content.substring(0,50)+'…' : latest.content;
+    const active      = _userOpenConvEmail===partnerEmail ? 'msg-active' : '';
+    const safeEmail   = escHtmlUser(partnerEmail).replace(/'/g,'&#39;');
+    return `<div class="msg-inbox-item ${active}" onclick="openUserConversation('${safeEmail}')">
+      <div class="msg-inbox-avatar">${escHtmlUser(initials)}</div>
+      <div class="msg-inbox-info">
+        <div class="msg-inbox-name">${escHtmlUser(partnerName)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}</div>
+        <div class="msg-inbox-preview">${escHtmlUser(preview)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text-light);flex-shrink:0;">${new Date(latest.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderUserConv(partnerEmail){
+  const panel = document.getElementById('msg-user-conv-panel');
+  if(!panel || !currentUser) return;
+  const myEmail = currentUser.email;
+  const tid     = [myEmail, partnerEmail].sort().join('::');
+  const all     = dbGet(DB_KEYS.messages)||[];
+  const msgs    = all.filter(m=>_getThreadId(m)===tid).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+
+  const contacts     = _getContactList();
+  const contact      = contacts.find(c=>c.email===partnerEmail);
+  const firstMsg     = msgs[0];
+  const partnerName  = contact?.name || (firstMsg ? (firstMsg.from===partnerEmail ? firstMsg.fromName : (firstMsg.toName||partnerEmail)) : partnerEmail);
+  const initials     = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+
+  const bubbles = msgs.map(m=>{
+    const isMe = m.from===myEmail;
+    const time = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+    const date = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
     return `<div style="display:flex;flex-direction:column;">
       <div class="msg-bubble ${isMe?'from-me':'from-other'}">
         ${!isMe?`<div class="msg-sender-name">${escHtmlUser(m.fromName)}</div>`:''}
@@ -1954,39 +2075,42 @@ function renderUserThread(){
       </div>
     </div>`;
   }).join('');
-  thread.scrollTop = thread.scrollHeight;
+
+  panel.innerHTML = `<div class="msg-conv-panel">
+    <div class="msg-conv-head">
+      <div class="msg-inbox-avatar" style="width:32px;height:32px;font-size:11px;">${escHtmlUser(initials)}</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlUser(partnerName)}</div>
+      <div style="font-size:12px;color:var(--text-light);margin-left:4px;">— ${escHtmlUser(partnerEmail)}</div>
+    </div>
+    <div class="msg-thread" id="msg-user-thread">${bubbles||'<div class="msg-empty">No messages yet. Say hello! 👋</div>'}</div>
+    <div class="msg-compose">
+      <textarea id="msg-user-input" placeholder="Message ${escHtmlUser(partnerName)}… (Enter to send, Shift+Enter for new line)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUserMessage();}"></textarea>
+      <div class="msg-compose-actions">
+        <button class="btn btn-primary" onclick="sendUserMessage()" style="padding:0 28px;height:38px;">Send</button>
+      </div>
+    </div>
+  </div>`;
+
+  const thread = document.getElementById('msg-user-thread');
+  if(thread) thread.scrollTop = thread.scrollHeight;
 }
 
-function sendUserMessage(){
-  const input = document.getElementById('msg-user-input');
-  const content = input?.value.trim();
-  if(!content || !currentUser) return;
-  const msg = {
-    id: Date.now() + Math.random(),
-    threadUser: currentUser.email,
-    from: currentUser.email,
-    fromName: currentUser.name || currentUser.email,
-    fromRole: 'user',
-    content,
-    timestamp: new Date().toISOString(),
-    readBy: [currentUser.email]
-  };
-  const all = dbGet(DB_KEYS.messages)||[];
-  all.push(msg);
-  dbSet(DB_KEYS.messages, all);
-  input.value = '';
-  renderUserThread();
-  cloudPushData();
+function openUserConversation(partnerEmail){
+  _userOpenConvEmail = partnerEmail;
+  markConvRead(partnerEmail);
+  renderUserMessages();
 }
 
-function markUserMessagesRead(){
+function markConvRead(partnerEmail){
   if(!currentUser) return;
-  const all = dbGet(DB_KEYS.messages)||[];
-  let changed = false;
+  const myEmail = currentUser.email;
+  const tid     = [myEmail, partnerEmail].sort().join('::');
+  const all     = dbGet(DB_KEYS.messages)||[];
+  let changed   = false;
   all.forEach(m=>{
-    if(m.threadUser===currentUser.email && m.fromRole==='admin' && !(m.readBy||[]).includes(currentUser.email)){
+    if(_getThreadId(m)===tid && m.from!==myEmail && !(m.readBy||[]).includes(myEmail)){
       if(!m.readBy) m.readBy=[];
-      m.readBy.push(currentUser.email);
+      m.readBy.push(myEmail);
       changed = true;
     }
   });
@@ -1994,13 +2118,82 @@ function markUserMessagesRead(){
   updateUserMsgBadge();
 }
 
+function sendUserMessage(){
+  const input   = document.getElementById('msg-user-input');
+  const content = input?.value.trim();
+  if(!content || !currentUser || !_userOpenConvEmail) return;
+  const contacts = _getContactList();
+  const contact  = contacts.find(c=>c.email===_userOpenConvEmail);
+  const toName   = contact?.name || _userOpenConvEmail;
+  const msg = {
+    id:        Date.now() + Math.random(),
+    from:      currentUser.email,
+    fromName:  currentUser.name || currentUser.email,
+    to:        _userOpenConvEmail,
+    toName,
+    content,
+    timestamp: new Date().toISOString(),
+    readBy:    [currentUser.email]
+  };
+  const all = dbGet(DB_KEYS.messages)||[];
+  all.push(msg);
+  dbSet(DB_KEYS.messages, all);
+  input.value = '';
+  renderUserMessages();
+  cloudPushData();
+}
+
 function updateUserMsgBadge(){
   if(!currentUser) return;
-  const all = dbGet(DB_KEYS.messages)||[];
-  const unread = all.filter(m=>m.threadUser===currentUser.email && m.fromRole==='admin' && !(m.readBy||[]).includes(currentUser.email)).length;
-  const badge = document.getElementById('msg-nav-badge');
+  const myEmail = currentUser.email;
+  const all     = dbGet(DB_KEYS.messages)||[];
+  const unread  = all.filter(m=>m.from!==myEmail && _getThreadId(m).split('::').includes(myEmail) && !(m.readBy||[]).includes(myEmail)).length;
+  const badge   = document.getElementById('msg-nav-badge');
   if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
 }
+
+function openNewMessagePicker(){
+  const modal = document.getElementById('msg-picker-modal');
+  if(!modal) return;
+  const search = document.getElementById('msg-picker-search');
+  if(search) search.value = '';
+  renderContactPicker();
+  modal.style.display = 'flex';
+}
+
+function renderContactPicker(){
+  const search   = (document.getElementById('msg-picker-search')?.value||'').toLowerCase();
+  const list     = document.getElementById('msg-picker-list');
+  if(!list) return;
+  const contacts = _getContactList();
+  const filtered = search ? contacts.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.email||'').toLowerCase().includes(search)) : contacts;
+  if(!filtered.length){
+    list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-light);font-size:13px;">No contacts found</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(c=>{
+    const initials  = (c.name||c.email).split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+    const roleLabel = c.role==='admin' ? `<span style="font-size:10px;background:rgba(37,99,168,.12);color:var(--text);border-radius:4px;padding:1px 6px;margin-left:4px;">Admin</span>` : '';
+    const safeEmail = escHtmlUser(c.email).replace(/'/g,'&#39;');
+    const safeName  = escHtmlUser(c.name||c.email).replace(/'/g,'&#39;');
+    return `<div class="msg-inbox-item" onclick="startNewConversation('${safeEmail}','${safeName}')">
+      <div class="msg-inbox-avatar">${escHtmlUser(initials)}</div>
+      <div class="msg-inbox-info">
+        <div class="msg-inbox-name">${escHtmlUser(c.name||c.email)}${roleLabel}</div>
+        <div class="msg-inbox-preview">${escHtmlUser(c.email)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function startNewConversation(email){
+  document.getElementById('msg-picker-modal').style.display = 'none';
+  _userOpenConvEmail = email;
+  renderUserMessages();
+}
+
+// Legacy alias kept for safety
+function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenConvEmail); }
 
 // Render on page load if credentials section is active
 

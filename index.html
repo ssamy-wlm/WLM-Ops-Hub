@@ -1810,11 +1810,26 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
         <div>
           <div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);">Messages</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with your team members</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with anyone on your team</div>
         </div>
+        <button class="btn btn-outline btn-sm" onclick="openAdminNewMsgPicker()" style="font-size:12px;">✏️ New Message</button>
       </div>
       <div id="admin-msg-wrap">
-        <div class="msg-empty">No messages yet. Team members can message you from their portal.</div>
+        <div class="msg-empty">No messages yet. Use ✏️ New Message to start a conversation.</div>
+      </div>
+    </div>
+
+    <!-- Admin Contact Picker Modal -->
+    <div id="admin-msg-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+      <div class="modal" style="max-width:420px;width:92%;">
+        <div class="modal-header">
+          <div class="modal-title">New Message</div>
+          <button class="modal-close" onclick="document.getElementById('admin-msg-picker-modal').style.display='none'">✕</button>
+        </div>
+        <div style="padding:16px 20px 20px;">
+          <input id="admin-msg-picker-search" type="text" class="form-input" placeholder="Search people…" oninput="renderAdminContactPicker()" style="margin-bottom:12px;">
+          <div id="admin-msg-picker-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
+        </div>
       </div>
     </div>
 
@@ -4426,9 +4441,10 @@ window.switchAdminTab = function(el, tab){
 .msg-bubble.from-other{align-self:flex-start;background:#fff;color:var(--text-dark);border:1px solid var(--border);border-bottom-left-radius:3px;}
 .msg-meta{font-size:10px;opacity:.55;margin-top:5px;}
 .msg-sender-name{font-size:10px;font-weight:700;color:var(--text-light);margin-bottom:4px;}
-.msg-compose{display:flex;gap:10px;align-items:flex-end;}
-.msg-compose textarea{flex:1;resize:none;min-height:44px;max-height:110px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;}
+.msg-compose{display:flex;flex-direction:column;gap:8px;flex-shrink:0;}
+.msg-compose textarea{width:100%;box-sizing:border-box;resize:none;height:80px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;}
 .msg-compose textarea:focus{border-color:var(--text);}
+.msg-compose-actions{display:flex;justify-content:flex-end;}
 .msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
 .admin-msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
 </style>
@@ -6995,14 +7011,50 @@ let _openConvEmail = null;
 
 function escHtmlAdmin(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+// Derive stable thread ID (supports old + new message model)
+function _getAdminThreadId(m){
+  if(m.from && m.to) return [m.from, m.to].sort().join('::');
+  // backward compat: old model had threadUser + fromRole
+  if(m.fromRole === 'admin') return [m.from, m.threadUser].sort().join('::');
+  return [m.from, 'ssamy@weblightmedia.com'].sort().join('::');
+}
+
+// Build admin contact list: all users + all admins except self
+function _getAdminContactList(){
+  const users    = dbGet(DB_KEYS.users)||[];
+  const admins   = dbGet(DB_KEYS.admins)||[];
+  const myEmail  = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const contacts = [];
+  users.forEach(u=>{
+    if(u.email) contacts.push({email:u.email, name:u.name||u.email, role:'user'});
+  });
+  const seen = new Set();
+  admins.forEach(a=>{
+    if(a.email && a.email!==myEmail && !seen.has(a.email)){
+      seen.add(a.email);
+      contacts.push({email:a.email, name:a.name||a.email, role:'admin'});
+    }
+  });
+  if(myEmail!=='ssamy@weblightmedia.com' && !seen.has('ssamy@weblightmedia.com'))
+    contacts.push({email:'ssamy@weblightmedia.com', name:'Sarah Samy', role:'admin'});
+  return contacts;
+}
+
 function renderAdminMessages(){
   const wrap = document.getElementById('admin-msg-wrap');
   if(!wrap) return;
-  const all = dbGet(DB_KEYS.messages)||[];
+  const all        = dbGet(DB_KEYS.messages)||[];
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
 
-  // Group by threadUser (the regular user's email)
+  // Group by thread ID — only threads that involve me
   const threads = {};
-  all.forEach(m=>{ if(!threads[m.threadUser]) threads[m.threadUser]=[]; threads[m.threadUser].push(m); });
+  all.forEach(m=>{
+    const tid = _getAdminThreadId(m);
+    if(!tid.split('::').includes(adminEmail)) return;
+    if(!threads[tid]) threads[tid]=[];
+    threads[tid].push(m);
+  });
+
   const sorted = Object.entries(threads).sort((a,b)=>{
     const tA = Math.max(...a[1].map(m=>new Date(m.timestamp)));
     const tB = Math.max(...b[1].map(m=>new Date(m.timestamp)));
@@ -7010,22 +7062,27 @@ function renderAdminMessages(){
   });
 
   if(!sorted.length){
-    wrap.innerHTML='<div class="msg-empty">No messages yet. Team members can message you from their portal 💬</div>';
+    wrap.innerHTML='<div class="msg-empty">No messages yet. Use ✏️ New Message to start a conversation 💬</div>';
     return;
   }
 
-  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const contacts = _getAdminContactList();
 
-  const inboxHTML = sorted.map(([email, msgs])=>{
-    const latest = [...msgs].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp))[0];
-    const unread  = msgs.filter(m=>m.fromRole==='user'&&!(m.readBy||[]).includes(adminEmail)).length;
-    const initials= (latest.fromName||email).split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
-    const preview = latest.content.length>55 ? latest.content.substring(0,55)+'…' : latest.content;
-    const active  = _openConvEmail===email ? 'msg-active' : '';
-    return `<div class="msg-inbox-item ${active}" onclick="openAdminConversation('${escHtmlAdmin(email).replace(/'/g,'\\&#39;')}')">
-      <div class="msg-inbox-avatar">${initials}</div>
+  const inboxHTML = sorted.map(([tid, msgs])=>{
+    const latest       = [...msgs].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp))[0];
+    const unread       = msgs.filter(m=>m.from!==adminEmail && !(m.readBy||[]).includes(adminEmail)).length;
+    const parts        = tid.split('::');
+    const partnerEmail = parts.find(e=>e!==adminEmail)||parts[0];
+    const contact      = contacts.find(c=>c.email===partnerEmail);
+    const partnerName  = contact?.name || latest.fromName || partnerEmail;
+    const initials     = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+    const preview      = (latest.content||'').length>55 ? latest.content.substring(0,55)+'…' : latest.content;
+    const active       = _openConvEmail===partnerEmail ? 'msg-active' : '';
+    const safeEmail    = escHtmlAdmin(partnerEmail).replace(/'/g,'&#39;');
+    return `<div class="msg-inbox-item ${active}" onclick="openAdminConversation('${safeEmail}')">
+      <div class="msg-inbox-avatar">${escHtmlAdmin(initials)}</div>
       <div class="msg-inbox-info">
-        <div class="msg-inbox-name">${escHtmlAdmin(latest.fromName||email)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}</div>
+        <div class="msg-inbox-name">${escHtmlAdmin(partnerName)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}</div>
         <div class="msg-inbox-preview">${escHtmlAdmin(preview)}</div>
       </div>
       <div style="font-size:10px;color:var(--text-light);flex-shrink:0;">${new Date(latest.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
@@ -7033,19 +7090,21 @@ function renderAdminMessages(){
   }).join('');
 
   let convHTML = '';
-  if(_openConvEmail && threads[_openConvEmail]){
-    const msgs = [...threads[_openConvEmail]].sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-    const convUser = msgs.find(m=>m.fromRole==='user') || msgs[0];
-    const userName = convUser?.fromName || _openConvEmail;
-    const userInitials = userName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+  if(_openConvEmail){
+    const tid     = [adminEmail, _openConvEmail].sort().join('::');
+    const cMsgs   = all.filter(m=>_getAdminThreadId(m)===tid).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+    const contact = contacts.find(c=>c.email===_openConvEmail);
+    const firstM  = cMsgs[0];
+    const partnerName = contact?.name || (firstM ? (firstM.from===_openConvEmail ? firstM.fromName : (firstM.toName||_openConvEmail)) : _openConvEmail);
+    const initials    = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
 
-    const bubbles = msgs.map(m=>{
-      const isAdmin = m.fromRole==='admin';
-      const time    = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
-      const date    = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const bubbles = cMsgs.map(m=>{
+      const isMe = m.from===adminEmail;
+      const time = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+      const date = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
       return `<div style="display:flex;flex-direction:column;">
-        <div class="msg-bubble ${isAdmin?'from-me':'from-other'}">
-          ${!isAdmin?`<div class="msg-sender-name">${escHtmlAdmin(m.fromName)}</div>`:''}
+        <div class="msg-bubble ${isMe?'from-me':'from-other'}">
+          ${!isMe?`<div class="msg-sender-name">${escHtmlAdmin(m.fromName)}</div>`:''}
           ${escHtmlAdmin(m.content)}
           <div class="msg-meta">${date} · ${time}</div>
         </div>
@@ -7054,14 +7113,16 @@ function renderAdminMessages(){
 
     convHTML = `<div class="msg-conv-panel">
       <div class="msg-conv-head">
-        <div class="msg-inbox-avatar" style="width:32px;height:32px;font-size:11px;">${userInitials}</div>
-        <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(userName)}</div>
+        <div class="msg-inbox-avatar" style="width:32px;height:32px;font-size:11px;">${escHtmlAdmin(initials)}</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(partnerName)}</div>
         <div style="font-size:12px;color:var(--text-light);margin-left:4px;">— ${escHtmlAdmin(_openConvEmail)}</div>
       </div>
-      <div class="msg-thread" id="admin-msg-thread">${bubbles}</div>
+      <div class="msg-thread" id="admin-msg-thread">${bubbles||'<div class="msg-empty">No messages yet. Say hello! 👋</div>'}</div>
       <div class="msg-compose">
-        <textarea id="admin-msg-input" placeholder="Reply to ${escHtmlAdmin(userName)}…" rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminMessage();}"></textarea>
-        <button class="btn btn-primary" onclick="sendAdminMessage()" style="height:44px;padding:0 20px;flex-shrink:0;">Send</button>
+        <textarea id="admin-msg-input" placeholder="Message ${escHtmlAdmin(partnerName)}…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminMessage();}"></textarea>
+        <div class="msg-compose-actions">
+          <button class="btn btn-primary" onclick="sendAdminMessage()" style="padding:0 20px;height:38px;">Send</button>
+        </div>
       </div>
     </div>`;
   } else {
@@ -7075,13 +7136,14 @@ function renderAdminMessages(){
   updateAdminMsgBadge();
 }
 
-function openAdminConversation(email){
-  _openConvEmail = email;
+function openAdminConversation(partnerEmail){
+  _openConvEmail   = partnerEmail;
   const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
-  const all = dbGet(DB_KEYS.messages)||[];
-  let changed = false;
+  const tid        = [adminEmail, partnerEmail].sort().join('::');
+  const all        = dbGet(DB_KEYS.messages)||[];
+  let changed      = false;
   all.forEach(m=>{
-    if(m.threadUser===email && m.fromRole==='user' && !(m.readBy||[]).includes(adminEmail)){
+    if(_getAdminThreadId(m)===tid && m.from!==adminEmail && !(m.readBy||[]).includes(adminEmail)){
       if(!m.readBy) m.readBy=[];
       m.readBy.push(adminEmail);
       changed = true;
@@ -7092,20 +7154,23 @@ function openAdminConversation(email){
 }
 
 function sendAdminMessage(){
-  const input   = document.getElementById('admin-msg-input');
-  const content = input?.value.trim();
+  const input      = document.getElementById('admin-msg-input');
+  const content    = input?.value.trim();
   if(!content || !_openConvEmail) return;
   const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
   const adminName  = currentAdminInfo?.name||'Admin';
+  const contacts   = _getAdminContactList();
+  const contact    = contacts.find(c=>c.email===_openConvEmail);
+  const toName     = contact?.name || _openConvEmail;
   const msg = {
-    id: Date.now() + Math.random(),
-    threadUser: _openConvEmail,
-    from: adminEmail,
-    fromName: adminName,
-    fromRole: 'admin',
+    id:        Date.now() + Math.random(),
+    from:      adminEmail,
+    fromName:  adminName,
+    to:        _openConvEmail,
+    toName,
     content,
     timestamp: new Date().toISOString(),
-    readBy: [adminEmail]
+    readBy:    [adminEmail]
   };
   const all = dbGet(DB_KEYS.messages)||[];
   all.push(msg);
@@ -7117,10 +7182,49 @@ function sendAdminMessage(){
 
 function updateAdminMsgBadge(){
   const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
-  const all   = dbGet(DB_KEYS.messages)||[];
-  const unread = all.filter(m=>m.fromRole==='user'&&!(m.readBy||[]).includes(adminEmail)).length;
-  const badge  = document.getElementById('admin-msg-badge');
+  const all        = dbGet(DB_KEYS.messages)||[];
+  const unread     = all.filter(m=>m.from!==adminEmail && _getAdminThreadId(m).split('::').includes(adminEmail) && !(m.readBy||[]).includes(adminEmail)).length;
+  const badge      = document.getElementById('admin-msg-badge');
   if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
+}
+
+function openAdminNewMsgPicker(){
+  const modal = document.getElementById('admin-msg-picker-modal');
+  if(!modal) return;
+  const search = document.getElementById('admin-msg-picker-search');
+  if(search) search.value = '';
+  renderAdminContactPicker();
+  modal.style.display = 'flex';
+}
+
+function renderAdminContactPicker(){
+  const search   = (document.getElementById('admin-msg-picker-search')?.value||'').toLowerCase();
+  const list     = document.getElementById('admin-msg-picker-list');
+  if(!list) return;
+  const contacts = _getAdminContactList();
+  const filtered = search ? contacts.filter(c=>(c.name||'').toLowerCase().includes(search)||(c.email||'').toLowerCase().includes(search)) : contacts;
+  if(!filtered.length){
+    list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-light);font-size:13px;">No contacts found</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(c=>{
+    const initials  = (c.name||c.email).split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+    const roleLabel = c.role==='admin' ? `<span style="font-size:10px;background:rgba(37,99,168,.12);color:var(--text);border-radius:4px;padding:1px 6px;margin-left:4px;">Admin</span>` : '';
+    const safeEmail = escHtmlAdmin(c.email).replace(/'/g,'&#39;');
+    return `<div class="msg-inbox-item" onclick="startAdminConversation('${safeEmail}')">
+      <div class="msg-inbox-avatar">${escHtmlAdmin(initials)}</div>
+      <div class="msg-inbox-info">
+        <div class="msg-inbox-name">${escHtmlAdmin(c.name||c.email)}${roleLabel}</div>
+        <div class="msg-inbox-preview">${escHtmlAdmin(c.email)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function startAdminConversation(email){
+  document.getElementById('admin-msg-picker-modal').style.display = 'none';
+  _openConvEmail = email;
+  renderAdminMessages();
 }
 
 // Refresh messages panel if it's currently open (called after background sync)
