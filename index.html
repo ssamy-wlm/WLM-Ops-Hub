@@ -3558,7 +3558,7 @@ function saveQuickLinks(){
 
 // Bump this string whenever the default layout changes — every device
 // will reset to the new defaults exactly once on next load.
-const ORG_LAYOUT_VERSION = 'v3_20260415';
+const ORG_LAYOUT_VERSION = 'v4_20260416';
 
 const orgColors = {
   ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
@@ -3576,21 +3576,20 @@ const ORG_NODES_DEFAULT = [
   {id:'abby',    name:'Abby Conklin',     title:'Production Manager / Reel Motion PM',              photo:null, level:'director', x:106, y:200},
   {id:'sarah',   name:'Sarah Samy',       title:'Integrator / Director of Systems & Operations',   photo:null, level:'manager',  x:406, y:200},
   {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
-  // Row 3 — Left group
+  // Row 3 — Left group (under Abby)
   {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
-  {id:'nadia',   name:'Nadia Fahmey',     title:'Marketing Specialist',                             photo:null, level:'member',   x:140, y:390},
-  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:260, y:390},
-  // Row 3 — Right group
+  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:160, y:390},
+  // Row 3 — Right group (under Sarah/Jacob)
   {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
-  {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:512, y:390},
-  {id:'neha',    name:'Neha',             title:'Web Developer',                                    photo:null, level:'member',   x:604, y:390},
-  {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:696, y:390},
-  {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:788, y:390},
+  {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:520, y:390},
+  {id:'neha',    name:'Neha',             title:'Web Developer',                                    photo:null, level:'member',   x:620, y:390},
+  {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:720, y:390},
+  {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:820, y:390},
   // Row 4 — Bottom members
-  {id:'money',   name:'Money Maker',      title:'Sales and Account Management',                     photo:null, level:'member',   x:60,  y:565},
-  {id:'adman',   name:'Ad Man',           title:'PPC / SEO / Analytics Specialist',                 photo:null, level:'member',   x:195, y:565},
-  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:330, y:565},
-  {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:465, y:565},
+  {id:'yehia',   name:'Yehia Elaify',     title:'Sales & Marketing Specialist',                     photo:null, level:'member',   x:60,  y:565},
+  {id:'mostafa', name:'Mostafa Jamal',    title:'Ads and SEO Specialist',                           photo:null, level:'member',   x:210, y:565},
+  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:360, y:565},
+  {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:500, y:565},
 ];
 const ORG_LINKS_DEFAULT = [
   ['david','abby'], ['david','sarah'], ['david','jacob']
@@ -5279,7 +5278,7 @@ async function cloudPushAll(silent=false){
 }
 
 // Pull ALL data from JSONBin and merge into localStorage
-async function cloudPullAll(silent=false){
+async function cloudPullAll(silent=false, fromLiveSync=false){
   const cfg = getCloudConfig();
   if(!cfg.apiKey || !cfg.binId){
     if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
@@ -5321,8 +5320,10 @@ async function cloudPullAll(silent=false){
     if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
     // Sync layout version from cloud; if cloud has none yet, preserve local version
     if(r.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
-    // Reload org chart into memory and re-render if canvas is visible
-    if(r.orgNodes || r.orgLinks){
+    // Only reload the org chart canvas on explicit pulls (login / manual).
+    // Background live-sync updates localStorage silently so the user's current
+    // editing session is never interrupted by a mid-edit canvas reset.
+    if(!fromLiveSync && (r.orgNodes || r.orgLinks)){
       if(typeof orgLoad === 'function') orgLoad();
       // Auto-add any registered users not yet in the chart
       if(typeof _syncUsersToOrgChart === 'function' && _syncUsersToOrgChart()){
@@ -5372,7 +5373,7 @@ function startLiveSync(level){
   if(!syncRoles.includes(level)) return;
   _liveSyncInterval = setInterval(async ()=>{
     if(!cloudIsConfigured()) return;
-    await cloudPullAll(true); // cloudPullAll refreshes all UI sections
+    await cloudPullAll(true, true); // silent background sync — does NOT reset org chart canvas
   }, 30000); // every 30 seconds
 }
 
