@@ -453,13 +453,9 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
                 <div class="coc-item urgent-coc"><div class="coc-icon" style="background:var(--red)">⚡</div><div><div class="coc-role">Urgent Issues</div><div class="coc-name">David Joslin</div></div></div>
               </div>
             </div>
-            <div class="card">
+            <div class="card" id="ql-card" style="display:none;">
               <div class="card-header"><div class="card-title">Quick Links</div></div>
-              <div class="card-body" id="ql-user-display">
-                <div class="ql-item" onclick="window.open('#','_blank')">📱 Sync CRM <span class="ql-arrow">↗</span></div>
-                <div class="ql-item" onclick="window.open('#','_blank')">📅 ScheduleDrop <span class="ql-arrow">↗</span></div>
-                <div class="ql-item" onclick="window.open('#','_blank')">🤖 Delphi AI <span class="ql-arrow">↗</span></div>
-              </div>
+              <div class="card-body" id="ql-user-display"></div>
             </div>
           </div>
         </div>
@@ -917,42 +913,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
   </div>
 </div>
 
-<!-- Edit Quick Links Modal -->
-<div id="editQLModal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <div><div class="modal-title">✏️ Edit Quick Links</div><div class="modal-sub">Changes apply instantly to your dashboard</div></div>
-      <button class="modal-close" onclick="closeModal('editQLModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="ql-edit-rows">
-        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
-          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">📱</span>
-          <input class="form-input" placeholder="Label" value="Sync CRM" style="font-size:13px;">
-          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
-          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-        </div>
-        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
-          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">📅</span>
-          <input class="form-input" placeholder="Label" value="ScheduleDrop" style="font-size:13px;">
-          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
-          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-        </div>
-        <div class="ql-edit-row" style="display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;">
-          <span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">🤖</span>
-          <input class="form-input" placeholder="Label" value="Delphi AI" style="font-size:13px;">
-          <input class="form-input" placeholder="https://…" value="#" style="font-size:13px;">
-          <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-        </div>
-      </div>
-      <button class="btn btn-outline btn-sm" onclick="addQLEditRow()" style="margin-top:4px;">+ Add Link</button>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('editQLModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveQuickLinks()">Save &amp; Apply</button>
-    </div>
-  </div>
-</div>
 
 <!-- Toast -->
 <div id="toast" class="toast"></div>
@@ -1254,6 +1214,8 @@ function initApp(){
 
   // Load CoC from shared storage
   loadCoC();
+  // Render credential-linked quick links (hidden if none configured for this user)
+  renderUserQuickLinks();
   // Load operations data
   loadOpsStats();
   // Check announcement
@@ -1263,6 +1225,32 @@ function initApp(){
   // Load theme
   const saved = localStorage.getItem('wl_theme');
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
+}
+
+// Quick Links — only shown when admin has set a URL + passcode for this user
+function renderUserQuickLinks(){
+  const card    = document.getElementById('ql-card');
+  const display = document.getElementById('ql-user-display');
+  if(!card || !display || !currentUser) return;
+
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const dbUser   = allUsers.find(u=>u.email===currentUser.email||u.id===currentUser.id);
+  const userCreds = dbUser?.credentials || {};
+
+  // A "quick link" is any credential entry that has both a URL and a password/passcode
+  const links = Object.values(userCreds).filter(c=>c.url && c.password);
+
+  if(!links.length){
+    card.style.display='none';
+    return;
+  }
+
+  card.style.display='';
+  display.innerHTML = links.map(c=>{
+    const label = escHtmlUser(c.platform||'Link');
+    const url   = escHtmlUser(c.url);
+    return `<div class="ql-item" onclick="window.open('${url}','_blank')">🔗 ${label} <span class="ql-arrow">↗</span></div>`;
+  }).join('');
 }
 
 function loadCoC(){
@@ -1734,38 +1722,6 @@ function selectTheme(el,theme){
   showToast('Theme updated: '+theme);
 }
 
-// ── QUICK LINKS ──
-function addQLEditRow(){
-  const el=document.getElementById('ql-edit-rows');
-  const row=document.createElement('div');
-  row.className='ql-edit-row';
-  row.style.cssText='display:grid;grid-template-columns:auto 1fr 2fr auto;gap:10px;align-items:center;margin-bottom:10px;';
-  row.innerHTML=`<span style="font-size:18px;cursor:pointer;" onclick="promptQLEmoji(this)">🔗</span><input class="form-input" placeholder="Label" style="font-size:13px;"><input class="form-input" placeholder="https://…" style="font-size:13px;"><button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>`;
-  el.appendChild(row);
-}
-function promptQLEmoji(el){
-  const e=prompt('Enter an emoji:',el.textContent);
-  if(e) el.textContent=e.trim().charAt(0)||'🔗';
-}
-function saveQuickLinks(){
-  const rows=document.querySelectorAll('#ql-edit-rows .ql-edit-row');
-  const display=document.getElementById('ql-user-display');
-  if(!display){ closeModal('editQLModal'); return; }
-  display.innerHTML='';
-  rows.forEach(row=>{
-    const emoji=row.querySelector('span')?.textContent||'🔗';
-    const inputs=row.querySelectorAll('input');
-    const label=inputs[0]?.value||'Link';
-    const url=inputs[1]?.value||'#';
-    const div=document.createElement('div');
-    div.className='ql-item';
-    div.innerHTML=`${emoji} ${label} <span class="ql-arrow">↗</span>`;
-    div.onclick=()=>window.open(url,'_blank');
-    display.appendChild(div);
-  });
-  closeModal('editQLModal');
-  showToast('Quick links updated ✓');
-}
 
 // ── PASSWORD VIS ──
 function togglePwVis(inputId,btn){
