@@ -5976,14 +5976,12 @@ function initPayroll(){
   const otPolicy = dbGet(DB_KEYS.otPolicy)||{};
   const _payPalette=['linear-gradient(135deg,#2D6BB6,#87ABD5)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
 
-  // Extra Hours column is always visible — allows manual entry per user
-  const gridCols = 'auto 1fr auto auto auto';
+  const gridCols = 'auto 1fr auto auto';
   const headerHtml = `
     <div style="display:grid;grid-template-columns:${gridCols};gap:12px;padding:0 0 8px;border-bottom:2px solid var(--border);margin-bottom:4px;">
       <div></div>
       <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Team Member</div>
-      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Regular Hrs</div>
-      <div style="font-size:10px;font-weight:700;color:var(--gold,#d97706);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Extra Hrs</div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:center;">Hours</div>
       <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:right;">Pay</div>
     </div>`;
 
@@ -6004,12 +6002,8 @@ function initPayroll(){
         <div style="font-size:11px;color:var(--text-light);">$${rate}/hr reg${otOn?' · OT: $'+otRate15+'/hr':''} · ${u.title||u.role||''}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-reg-hrs" style="width:75px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
-        <div style="font-size:10px;color:var(--text-light);">@ $${rate}/hr</div>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-extra-hrs" style="width:75px;padding:7px 10px;font-size:13px;border-color:var(--gold,#d97706)66;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
-        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">${otOn?'@ $'+otRate15+'/hr OT':'@ $'+rate+'/hr'}</div>
+        <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-reg-hrs" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
+        <div style="font-size:10px;color:var(--text-light);" id="ot-pay-${u.id}">@ $${rate}/hr</div>
       </div>
       <div style="text-align:right;min-width:90px;">
         <div style="font-size:15px;font-weight:800;color:var(--text-dark);" id="pay-${u.id}">$0.00</div>
@@ -6087,23 +6081,16 @@ function saveOTPolicyBtn(){
 
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
-  const otPolicy   = dbGet(DB_KEYS.otPolicy)||{};
-  const userOTEnabled = otPolicy.userOTEnabled || {};
-  let total = 0, totalOTPay = 0, totalExtraPay = 0;
-  const otLines = [], extraLines = [];
+  let total = 0, totalOTPay = 0;
+  const otLines = [];
 
   rows.forEach(row=>{
-    const rate    = parseFloat(row.dataset.rate)||0;
-    const otOn    = row.dataset.otEnabled === 'true'; // set at render time
-    const uid     = row.dataset.uid;
-    const nameEl  = row.querySelector('.pay-name');
-    const name    = nameEl ? nameEl.textContent.trim() : uid;
-    const regInput   = row.querySelector('.pay-reg-hrs');
-    const extraInput = row.querySelector('.pay-extra-hrs');
-    const hours      = parseFloat(regInput?.value)||0;
-    const extraHours = parseFloat(extraInput?.value)||0;
+    const rate   = parseFloat(row.dataset.rate)||0;
+    const otOn   = row.dataset.otEnabled === 'true';
+    const uid    = row.dataset.uid;
+    const name   = (row.querySelector('.pay-name')||{}).textContent?.trim() || uid;
+    const hours  = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
 
-    // Regular pay with auto OT at 1.5x above threshold
     let regPay = 0, otHours = 0, otPay = 0;
     if(otOn && hours > 40){
       otHours = hours - 40;
@@ -6114,64 +6101,42 @@ function calcPayroll(){
       regPay = hours * rate;
     }
 
-    // Extra hours always at regular rate
-    const xPay = extraHours * rate;
-    if(extraHours > 0) extraLines.push({name, extraHours, rate, xPay});
+    const pay = regPay + otPay;
+    total     += pay;
+    totalOTPay += otPay;
 
-    const pay = regPay + otPay + xPay;
-    total += pay;
-    totalOTPay   += otPay;
-    totalExtraPay += xPay;
-
-    let noteText;
-    if(otHours > 0 && extraHours > 0){
-      noteText = `40h + ${otHours.toFixed(1)}h OT + ${extraHours}h extra`;
-    } else if(otHours > 0){
-      noteText = `40h reg + ${otHours.toFixed(1)}h OT @1.5×`;
-    } else if(extraHours > 0){
-      noteText = `${hours}h reg + ${extraHours}h extra`;
-    } else {
-      noteText = hours > 0 ? hours+'h regular' : 'this week';
-    }
+    const noteText = otHours > 0
+      ? `40h reg + ${otHours.toFixed(1)}h OT @1.5×`
+      : (hours > 0 ? hours+'h regular' : 'this week');
 
     const payEl  = document.getElementById('pay-'+uid);
     const noteEl = document.getElementById('pay-note-'+uid);
+    const rateLbl = document.getElementById('ot-pay-'+uid);
     if(payEl)  payEl.textContent  = '$'+pay.toFixed(2);
     if(noteEl) noteEl.textContent = noteText;
-
-    // Extra hrs label
-    const otPayEl = document.getElementById('ot-pay-'+uid);
-    if(otPayEl){
-      if(extraHours > 0){
-        otPayEl.textContent = '+$'+xPay.toFixed(2);
-        otPayEl.style.color = 'var(--gold,#d97706)';
+    if(rateLbl){
+      if(otOn && hours > 40){
+        rateLbl.textContent = `${hours}h (incl. ${otHours.toFixed(1)}h @1.5×)`;
+        rateLbl.style.color = 'var(--gold,#d97706)';
       } else {
-        otPayEl.textContent = '@ $'+rate+'/hr';
-        otPayEl.style.color = 'var(--text-light)';
+        rateLbl.textContent = '@ $'+rate+'/hr';
+        rateLbl.style.color = 'var(--text-light)';
       }
     }
   });
 
-  const grandExtra = totalOTPay + totalExtraPay;
   const otTotEl = document.getElementById('payrollOtTotal');
-  if(otTotEl) otTotEl.textContent = grandExtra > 0 ? '(incl. $'+grandExtra.toFixed(2)+' OT/extra)' : '';
+  if(otTotEl) otTotEl.textContent = totalOTPay > 0 ? '(incl. $'+totalOTPay.toFixed(2)+' OT)' : '';
   const tot = document.getElementById('payrollTotal');
   if(tot) tot.textContent = '$'+total.toFixed(2);
 
-  // Breakdown panel
   const breakdown = document.getElementById('ot-breakdown');
   const bdRows    = document.getElementById('ot-breakdown-rows');
   if(breakdown && bdRows){
-    const lines = [
-      ...otLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
-        <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
-        <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h OT × $${(l.rate*1.5).toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
-      </div>`),
-      ...extraLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
-        <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
-        <span style="color:var(--text-mid);">${l.extraHours}h extra × $${l.rate.toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.xPay.toFixed(2)}</strong></span>
-      </div>`)
-    ];
+    const lines = otLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
+      <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
+      <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h OT × $${(l.rate*1.5).toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
+    </div>`);
     if(lines.length){ bdRows.innerHTML = lines.join(''); breakdown.style.display='block'; }
     else breakdown.style.display='none';
   }
@@ -6190,8 +6155,7 @@ function savePayrollWeek(){
     const u        = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
     const rate     = parseFloat(row.dataset.rate)||0;
     const otOn     = row.dataset.otEnabled === 'true';
-    const regHrs   = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
-    const extraHrs = parseFloat(row.querySelector('.pay-extra-hrs')?.value)||0;
+    const regHrs = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
     let regPay = 0, otPay = 0;
     if(otOn && regHrs > 40){
       regPay = 40 * rate;
@@ -6199,10 +6163,9 @@ function savePayrollWeek(){
     } else {
       regPay = regHrs * rate;
     }
-    const xPay = extraHrs * rate;
-    const pay  = regPay + otPay + xPay;
+    const pay = regPay + otPay;
     total += pay;
-    entries.push({userId:uid, name:u.name, hours:regHrs, extraHours:extraHrs, rate, otEnabled:otOn, pay});
+    entries.push({userId:uid, name:u.name, hours:regHrs, rate, otEnabled:otOn, pay});
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
@@ -6239,9 +6202,8 @@ function renderSavedPayrolls(){
   if(!list) return;
   if(!saved.length){list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div>';return;}
   list.innerHTML=saved.map(p=>{
-    const rows=p.entries.filter(e=>e.hours>0||e.extraHours>0).map(e=>{
-      const xPart = e.extraHours>0 ? ` + ${e.extraHours}h extra` : '';
-      return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${e.name}</span><span>${e.hours}h${xPart} × $${e.rate} = <strong>$${e.pay.toFixed(2)}</strong></span></div>`;
+    const rows=p.entries.filter(e=>e.hours>0).map(e=>{
+      return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${e.name}</span><span>${e.hours}h × $${e.rate} = <strong>$${e.pay.toFixed(2)}</strong></span></div>`;
     }).join('');
     return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
