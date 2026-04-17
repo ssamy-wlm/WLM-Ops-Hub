@@ -5441,6 +5441,23 @@ function _mergeCloudArr(cloudArr, localArr, limit=200){
                  .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
 }
 
+// Merge roadmap tasks by updated_at so the most recently changed version wins
+// This prevents live-sync from reverting archives, bucket moves, etc.
+function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
+  const map = new Map();
+  (Array.isArray(cloudArr)?cloudArr:[]).forEach(t=>{ if(t?.id!=null) map.set(String(t.id), t); });
+  (Array.isArray(localArr)?localArr:[]).forEach(t=>{
+    if(t?.id==null){ return; }
+    const key = String(t.id);
+    const existing = map.get(key);
+    if(!existing){ map.set(key,t); return; }
+    const lt = new Date(t.updated_at||t.created_at||0).getTime();
+    const ct = new Date(existing.updated_at||existing.created_at||0).getTime();
+    if(lt >= ct) map.set(key, t); // local wins on tie (just edited)
+  });
+  return [...map.values()].slice(0, limit);
+}
+
 // Push ALL data to JSONBin (read-modify-write to avoid overwriting others)
 async function cloudPushAll(silent=false){
   const cfg = getCloudConfig();
@@ -5500,7 +5517,7 @@ async function cloudPushAll(silent=false){
       deletedEodIds,
       deletedUserIds,
       messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], 500),
-      roadmapTasks: _mergeCloudArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], 1000),
+      roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]),
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5587,7 +5604,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
     if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
-    if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeCloudArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], 1000));
+    if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeRoadmapArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]));
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
