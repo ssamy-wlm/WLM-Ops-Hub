@@ -4620,6 +4620,8 @@ window.switchAdminTab = function(el, tab){
 .rm-source{font-size:10px;color:var(--text-light);font-style:italic;margin-left:auto;max-width:100px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
 .rm-done-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:6px;width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text-light);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;}
 .rm-done-btn:hover{background:var(--green);color:#fff;border-color:var(--green);}
+.rm-card-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
+.rm-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
 .rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
 .rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
 .rm-archive-header:hover{background:var(--bg2);}
@@ -7573,9 +7575,14 @@ const RM_CATEGORIES = {
 function _rmCalcDueDate(bucket, fromDateISO){
   const days = {'7':7,'30':30,'60':60,'90':90};
   if(!days[bucket]) return null;
-  const base = fromDateISO ? new Date(fromDateISO) : new Date();
-  base.setDate(base.getDate() + days[bucket]);
-  return base.toISOString().slice(0,10);
+  let date = fromDateISO ? new Date(fromDateISO) : new Date();
+  let added = 0;
+  while(added < days[bucket]){
+    date.setDate(date.getDate() + 1);
+    const dow = date.getDay();
+    if(dow !== 0 && dow !== 6) added++; // skip Sat(6) and Sun(0)
+  }
+  return date.toISOString().slice(0,10);
 }
 
 function _rmDueBadgeHtml(t){
@@ -7598,10 +7605,19 @@ function _rmIsSimilar(a, b){
 }
 
 // ── Main render ──
+function _rmIsNew(t){
+  const pageLoad = parseInt(sessionStorage.getItem('wl_rm_page_load')||'0');
+  return new Date(t.created_at||0).getTime() > pageLoad + 800;
+}
+
 function loadRoadmap(){
   const wrap = document.getElementById('rm-biz-wrap');
   if(wrap) wrap.style.display = _canViewRoadmap() ? '' : 'none';
   if(!_canViewRoadmap()) return;
+  // Record page-load time once per session so tasks added AFTER this are flagged new
+  if(!sessionStorage.getItem('wl_rm_page_load')){
+    sessionStorage.setItem('wl_rm_page_load', Date.now().toString());
+  }
   const dateInput = document.getElementById('rm-meeting-date');
   if(dateInput && !dateInput.value){
     dateInput.value = new Date().toISOString().slice(0,10);
@@ -7639,11 +7655,13 @@ function _rmRenderCard(t){
   const ownerLabel = t.owner==='sarah'?'Sarah':t.owner==='david'?'David':'Both';
   const safeId     = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
   const catLabel   = RM_CATEGORIES[t.category]||'';
-  return `<div class="rm-card" draggable="true"
+  const isNew      = _rmIsNew(t);
+  return `<div class="rm-card${isNew?' rm-card-new':''}" draggable="true"
       ondragstart="rmDragStart(event,'${safeId}')"
       ondragend="rmDragEnd(event)">
     <div class="rm-card-text">${escHtmlAdmin(t.text)}</div>
     <div class="rm-card-footer">
+      ${isNew?'<span class="rm-new-tag">New</span>':''}
       ${_rmDueBadgeHtml(t)}
       ${catLabel?`<span class="rm-cat">${escHtmlAdmin(catLabel)}</span>`:''}
       <span class="rm-badge ${t.owner}">${ownerLabel}</span>
