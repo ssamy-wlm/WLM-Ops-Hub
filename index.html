@@ -1811,32 +1811,87 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <button id="rm-extract-btn" class="btn btn-primary" onclick="rmExtractTranscript()" style="min-width:180px;">Extract &amp; Add Tasks</button>
             </div>
 
-            <!-- Filter bar -->
-            <div class="rm-filter-bar" style="margin:18px 18px 0;">
-              <span class="rm-filter-label">Filter:</span>
-              <button class="rm-filter-btn rm-active" data-filter="all"  onclick="rmSetFilter('all')">All</button>
-              <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
-              <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
-              <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
+            <!-- Filter + Manual Add bar -->
+            <div style="margin:18px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+              <div class="rm-filter-bar" style="margin:0;">
+                <span class="rm-filter-label">Filter:</span>
+                <button class="rm-filter-btn rm-active" data-filter="all"  onclick="rmSetFilter('all')">All</button>
+                <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
+                <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
+                <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="rmToggleAddForm()" style="font-size:12px;white-space:nowrap;">+ Add Task</button>
             </div>
 
-            <!-- Four bucket columns -->
-            <div class="rm-cols" style="margin:18px 18px 0;">
+            <!-- Manual Add Form (collapsed by default) -->
+            <div id="rm-add-form" style="display:none;margin:12px 18px 0;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+              <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:12px;">Add Task Manually</div>
+              <div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px;">
+                <input id="rm-add-text" class="form-input" placeholder="Task description…">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px;">
+                <div>
+                  <label class="form-label" style="font-size:11px;">Bucket</label>
+                  <select id="rm-add-bucket" class="form-select" style="font-size:12px;">
+                    <option value="7">7 Days</option>
+                    <option value="30" selected>30 Days</option>
+                    <option value="60">60 Days</option>
+                    <option value="90">90 Days</option>
+                    <option value="dream">Dream</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11px;">Owner</label>
+                  <select id="rm-add-owner" class="form-select" style="font-size:12px;">
+                    <option value="sarah">Sarah</option>
+                    <option value="david">David</option>
+                    <option value="both" selected>Both</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11px;">Category</label>
+                  <select id="rm-add-category" class="form-select" style="font-size:12px;">
+                    <option value="">— None —</option>
+                    <option value="hr">HR &amp; Compensation</option>
+                    <option value="finance">Finance</option>
+                    <option value="security">Security &amp; Protocol</option>
+                    <option value="systems">Systems</option>
+                    <option value="production">Production</option>
+                    <option value="clients">Clients</option>
+                    <option value="personal">Personal</option>
+                    <option value="operations">Operations</option>
+                    <option value="marketing">Marketing</option>
+                    <option value="sales">Sales &amp; Pipeline</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:8px;">
+                  <button class="btn btn-primary btn-sm" onclick="rmAddManualTask()" style="height:38px;flex:1;">Add</button>
+                  <button class="btn btn-outline btn-sm" onclick="rmToggleAddForm()" style="height:38px;">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Five bucket columns -->
+            <div class="rm-cols" style="margin:18px 18px 0;grid-template-columns:repeat(5,1fr);">
+              <div class="rm-col rm-col-7">
+                <div class="rm-col-head"><span class="rm-col-title">7 Days</span><span class="rm-col-count" id="rm-count-7">0</span></div>
+                <div class="rm-col-body" id="rm-col-7" ondragover="rmDragOver(event)" ondrop="rmDrop(event,'7')" ondragleave="rmDragLeave(event)"></div>
+              </div>
               <div class="rm-col rm-col-30">
                 <div class="rm-col-head"><span class="rm-col-title">30 Days</span><span class="rm-col-count" id="rm-count-30">0</span></div>
-                <div class="rm-col-body" id="rm-col-30"></div>
+                <div class="rm-col-body" id="rm-col-30" ondragover="rmDragOver(event)" ondrop="rmDrop(event,'30')" ondragleave="rmDragLeave(event)"></div>
               </div>
               <div class="rm-col rm-col-60">
                 <div class="rm-col-head"><span class="rm-col-title">60 Days</span><span class="rm-col-count" id="rm-count-60">0</span></div>
-                <div class="rm-col-body" id="rm-col-60"></div>
+                <div class="rm-col-body" id="rm-col-60" ondragover="rmDragOver(event)" ondrop="rmDrop(event,'60')" ondragleave="rmDragLeave(event)"></div>
               </div>
               <div class="rm-col rm-col-90">
                 <div class="rm-col-head"><span class="rm-col-title">90 Days</span><span class="rm-col-count" id="rm-count-90">0</span></div>
-                <div class="rm-col-body" id="rm-col-90"></div>
+                <div class="rm-col-body" id="rm-col-90" ondragover="rmDragOver(event)" ondrop="rmDrop(event,'90')" ondragleave="rmDragLeave(event)"></div>
               </div>
               <div class="rm-col rm-col-dream">
                 <div class="rm-col-head"><span class="rm-col-title">Dreams &amp; Vision</span><span class="rm-col-count" id="rm-count-dream">0</span></div>
-                <div class="rm-col-body" id="rm-col-dream"></div>
+                <div class="rm-col-body" id="rm-col-dream" ondragover="rmDragOver(event)" ondrop="rmDrop(event,'dream')" ondragleave="rmDragLeave(event)"></div>
               </div>
             </div>
 
@@ -4535,7 +4590,9 @@ window.switchAdminTab = function(el, tab){
 .rm-filter-btn:hover{border-color:var(--text);color:var(--text);}
 .rm-filter-btn.rm-active{background:var(--text);color:#fff;border-color:var(--text);}
 .rm-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
-.rm-col{background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column;}
+.rm-col{background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column;transition:box-shadow .15s;}
+.rm-col.drag-over{box-shadow:0 0 0 2px #2D6BB6;background:rgba(45,107,182,.04);}
+.rm-col-7{border-top:3px solid #c2185b;}
 .rm-col-30{border-top:3px solid #e05555;}
 .rm-col-60{border-top:3px solid #d97706;}
 .rm-col-90{border-top:3px solid var(--text);}
@@ -4544,16 +4601,25 @@ window.switchAdminTab = function(el, tab){
 .rm-col-title{font-family:'Playfair Display',serif;font-size:14px;color:var(--text-dark);}
 .rm-col-count{font-size:11px;background:var(--bg);border-radius:20px;padding:2px 9px;color:var(--text-light);font-weight:700;}
 .rm-col-body{padding:12px;display:flex;flex-direction:column;gap:8px;min-height:80px;flex:1;}
-.rm-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:all .15s;}
+.rm-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:grab;transition:all .15s;position:relative;}
 .rm-card:hover{border-color:var(--text-light);background:var(--bg2);transform:translateY(-1px);box-shadow:var(--shadow);}
+.rm-card.dragging{opacity:.4;cursor:grabbing;}
 .rm-card-text{font-size:13px;color:var(--text-dark);line-height:1.5;margin-bottom:8px;}
-.rm-card-footer{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.rm-card-footer{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
 .rm-date{font-size:10px;color:var(--text-light);}
+.rm-due{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;flex-shrink:0;}
+.rm-due.normal{background:rgba(0,0,0,.06);color:var(--text-mid);}
+.rm-due.soon{background:rgba(217,119,6,.15);color:#d97706;}
+.rm-due.today{background:rgba(224,85,85,.15);color:#e05555;}
+.rm-due.overdue{background:#e05555;color:#fff;}
+.rm-cat{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(45,107,182,.1);color:var(--text);font-weight:600;flex-shrink:0;}
 .rm-badge{font-size:10px;font-weight:700;padding:2px 9px;border-radius:12px;flex-shrink:0;}
 .rm-badge.sarah{background:rgba(37,99,168,.12);color:var(--text);}
 .rm-badge.david{background:rgba(46,158,110,.12);color:var(--green);}
 .rm-badge.both{background:rgba(147,51,234,.1);color:#9333ea;}
-.rm-source{font-size:10px;color:var(--text-light);font-style:italic;margin-left:auto;max-width:120px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
+.rm-source{font-size:10px;color:var(--text-light);font-style:italic;margin-left:auto;max-width:100px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
+.rm-done-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:6px;width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text-light);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;}
+.rm-done-btn:hover{background:var(--green);color:#fff;border-color:var(--green);}
 .rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
 .rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
 .rm-archive-header:hover{background:var(--bg2);}
@@ -4562,9 +4628,13 @@ window.switchAdminTab = function(el, tab){
 .rm-archive-label{font-size:13px;font-weight:600;color:var(--text-mid);}
 .rm-archive-count{font-size:11px;background:var(--bg);border-radius:20px;padding:2px 9px;color:var(--text-light);font-weight:700;}
 .rm-archive-body{display:none;margin-top:8px;display:flex;flex-direction:column;gap:6px;}
-.rm-archive-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;}
-.rm-archive-text{font-size:12px;color:var(--text-mid);text-decoration:line-through;flex:1;line-height:1.4;}
-.rm-archive-meta{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.rm-archive-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+.rm-archive-text{font-size:12px;color:var(--text-mid);text-decoration:line-through;flex:1;line-height:1.4;min-width:160px;}
+.rm-archive-meta{display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;}
+.rm-restore-btn{font-size:11px;padding:3px 10px;border-radius:8px;border:1px solid var(--green);color:var(--green);background:none;cursor:pointer;font-family:inherit;transition:all .15s;}
+.rm-restore-btn:hover{background:var(--green);color:#fff;}
+.rm-edit-archived-btn{font-size:11px;padding:3px 10px;border-radius:8px;border:1px solid var(--border);color:var(--text-mid);background:none;cursor:pointer;font-family:inherit;transition:all .15s;}
+.rm-edit-archived-btn:hover{border-color:var(--text);color:var(--text);}
 .rm-bucket-tag{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:600;background:var(--bg2);color:var(--text-light);}
 .rm-del-btn{font-size:10px;padding:3px 8px;border-radius:6px;background:transparent;color:var(--red);border:1px solid rgba(224,85,85,.2);cursor:pointer;font-family:inherit;transition:all .15s;}
 .rm-del-btn:hover{background:rgba(224,85,85,.08);}
@@ -7468,6 +7538,48 @@ function _seedRoadmapTasks(){
   dbSet(DB_KEYS.roadmapTasks, tasks);
 }
 
+// ── Category map ──
+const RM_CATEGORIES = {
+  hr:         'HR & Compensation',
+  finance:    'Finance',
+  security:   'Security & Protocol',
+  systems:    'Systems',
+  production: 'Production',
+  clients:    'Clients',
+  personal:   'Personal',
+  operations: 'Operations',
+  marketing:  'Marketing',
+  sales:      'Sales & Pipeline',
+};
+
+// ── Due-date helpers ──
+function _rmCalcDueDate(bucket, fromDateISO){
+  const days = {'7':7,'30':30,'60':60,'90':90};
+  if(!days[bucket]) return null;
+  const base = fromDateISO ? new Date(fromDateISO) : new Date();
+  base.setDate(base.getDate() + days[bucket]);
+  return base.toISOString().slice(0,10);
+}
+
+function _rmDueBadgeHtml(t){
+  if(!t.due_date || t.bucket==='dream') return '';
+  const due      = new Date(t.due_date+'T12:00:00');
+  const diffDays = Math.round((due - new Date()) / 86400000);
+  let cls='normal', label='Due '+due.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  if(diffDays<0){cls='overdue';label='Overdue';}
+  else if(diffDays===0){cls='today';label='Due Today';}
+  else if(diffDays<=3){cls='soon';label=`Due in ${diffDays}d`;}
+  return `<span class="rm-due ${cls}">${label}</span>`;
+}
+
+// ── Similar task detection (merge from transcript) ──
+function _rmIsSimilar(a, b){
+  const norm = s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(w=>w.length>3);
+  const wa=new Set(norm(a)), wb=norm(b);
+  const overlap=wb.filter(w=>wa.has(w)).length;
+  return overlap>=2 && overlap/Math.max(wa.size||1, wb.length||1)>=0.4;
+}
+
 // ── Main render ──
 function loadRoadmap(){
   const wrap = document.getElementById('rm-biz-wrap');
@@ -7487,12 +7599,10 @@ function renderRoadmap(){
   const archived = all.filter(t=>t.archived);
   const filtered = _rmFilter==='all' ? active : active.filter(t=>t.owner===_rmFilter);
 
-  // Subtitle count
   const countEl = document.getElementById('rm-task-count');
   if(countEl) countEl.textContent = `${active.length} open task${active.length!==1?'s':''}`;
 
-  // Columns
-  ['30','60','90','dream'].forEach(bucket=>{
+  ['7','30','60','90','dream'].forEach(bucket=>{
     const body  = document.getElementById('rm-col-'+bucket);
     const count = document.getElementById('rm-count-'+bucket);
     if(!body) return;
@@ -7500,27 +7610,28 @@ function renderRoadmap(){
     if(count) count.textContent = tasks.length;
     body.innerHTML = tasks.length
       ? tasks.map(_rmRenderCard).join('')
-      : '<div class="rm-empty">No tasks</div>';
+      : '<div style="color:var(--text-light);font-size:12px;padding:8px 4px;text-align:center;">No tasks</div>';
   });
 
-  // Archive
   const archCount = document.getElementById('rm-archive-count');
   if(archCount) archCount.textContent = archived.length;
   _rmRenderArchive(archived);
 }
 
 function _rmRenderCard(t){
-  const dateStr = t.source_date
-    ? new Date(t.source_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})
-    : '';
-  const ownerLabel = t.owner==='sarah' ? 'Sarah' : t.owner==='david' ? 'David' : 'Both';
-  const safeId = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
-  return `<div class="rm-card" onclick="rmArchiveTask('${safeId}')" title="Click to archive">
+  const ownerLabel = t.owner==='sarah'?'Sarah':t.owner==='david'?'David':'Both';
+  const safeId     = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
+  const catLabel   = RM_CATEGORIES[t.category]||'';
+  return `<div class="rm-card" draggable="true"
+      ondragstart="rmDragStart(event,'${safeId}')"
+      ondragend="rmDragEnd(event)">
     <div class="rm-card-text">${escHtmlAdmin(t.text)}</div>
     <div class="rm-card-footer">
-      ${dateStr?`<span class="rm-date">${dateStr}</span>`:''}
+      ${_rmDueBadgeHtml(t)}
+      ${catLabel?`<span class="rm-cat">${escHtmlAdmin(catLabel)}</span>`:''}
       <span class="rm-badge ${t.owner}">${ownerLabel}</span>
       ${t.source?`<span class="rm-source" title="${escHtmlAdmin(t.source)}">${escHtmlAdmin(t.source)}</span>`:''}
+      <button class="rm-done-btn" onclick="event.stopPropagation();rmArchiveTask('${safeId}')" title="Mark done">✓</button>
     </div>
   </div>`;
 }
@@ -7528,72 +7639,166 @@ function _rmRenderCard(t){
 function _rmRenderArchive(archived){
   const body = document.getElementById('rm-archive-body');
   if(!body) return;
-  const bucketLabels = {'30':'30 Days','60':'60 Days','90':'90 Days','dream':'Dream'};
+  const bucketLabels={'7':'7 Days','30':'30 Days','60':'60 Days','90':'90 Days','dream':'Dream'};
   if(!archived.length){
     body.innerHTML='<div style="color:var(--text-light);font-size:13px;padding:4px 0;">No archived tasks yet.</div>';
     return;
   }
-  const sorted = [...archived].sort((a,b)=>new Date(b.archived_at||0)-new Date(a.archived_at||0));
-  body.innerHTML = sorted.map(t=>{
-    const dateStr = t.source_date
-      ? new Date(t.source_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})
+  const sorted=[...archived].sort((a,b)=>new Date(b.archived_at||0)-new Date(a.archived_at||0));
+  body.innerHTML=sorted.map(t=>{
+    const safeId    = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
+    const ownerLabel= t.owner==='sarah'?'Sarah':t.owner==='david'?'David':'Both';
+    const archivedOn= t.archived_at
+      ? new Date(t.archived_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
       : '';
-    const ownerLabel = t.owner==='sarah' ? 'Sarah' : t.owner==='david' ? 'David' : 'Both';
-    const safeId = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
+    const catLabel  = RM_CATEGORIES[t.category]||'';
     return `<div class="rm-archive-card">
-      <span class="rm-archive-text">${escHtmlAdmin(t.text)}</span>
+      <div class="rm-archive-text">${escHtmlAdmin(t.text)}</div>
       <div class="rm-archive-meta">
-        ${dateStr?`<span class="rm-date">${dateStr}</span>`:''}
+        ${archivedOn?`<span style="font-size:10px;color:var(--text-light);">Done ${archivedOn}</span>`:''}
+        ${catLabel?`<span class="rm-cat" style="opacity:.7;">${escHtmlAdmin(catLabel)}</span>`:''}
         <span class="rm-badge ${t.owner}" style="opacity:.7;">${ownerLabel}</span>
-        <span class="rm-bucket-tag">${bucketLabels[t.bucket]||t.bucket}</span>
-        <button class="rm-del-btn" onclick="event.stopPropagation();rmDeleteTask('${safeId}')">Delete</button>
+        <span style="font-size:10px;background:var(--bg);border-radius:10px;padding:2px 7px;color:var(--text-light);">${bucketLabels[t.bucket]||t.bucket}</span>
+        <button class="rm-restore-btn" onclick="rmRestoreTask('${safeId}')">↩ Restore</button>
+        <button class="rm-edit-archived-btn" onclick="rmEditArchivedTask('${safeId}')">✏️ Edit</button>
+        <button class="rm-del-btn" onclick="rmDeleteTask('${safeId}')" style="font-size:11px;padding:3px 8px;border-radius:8px;border:1px solid #e05555;color:#e05555;background:none;cursor:pointer;">Delete</button>
       </div>
     </div>`;
   }).join('');
 }
 
 function rmArchiveTask(id){
-  const all = dbGet(DB_KEYS.roadmapTasks)||[];
-  const idx = all.findIndex(t=>String(t.id)===String(id));
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  const idx=all.findIndex(t=>String(t.id)===String(id));
   if(idx<0) return;
-  all[idx].archived    = true;
-  all[idx].archived_at = new Date().toISOString();
-  all[idx].updated_at  = new Date().toISOString();
-  dbSet(DB_KEYS.roadmapTasks, all);
+  all[idx].archived   =true;
+  all[idx].archived_at=new Date().toISOString();
+  all[idx].updated_at =new Date().toISOString();
+  dbSet(DB_KEYS.roadmapTasks,all);
+  renderRoadmap();
+  cloudAutoSync();
+}
+
+function rmRestoreTask(id){
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  const idx=all.findIndex(t=>String(t.id)===String(id));
+  if(idx<0) return;
+  all[idx].archived   =false;
+  all[idx].archived_at=null;
+  all[idx].updated_at =new Date().toISOString();
+  dbSet(DB_KEYS.roadmapTasks,all);
+  renderRoadmap();
+  cloudAutoSync();
+}
+
+function rmEditArchivedTask(id){
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  const t=all.find(t=>String(t.id)===String(id));
+  if(!t) return;
+  const newText=prompt('Edit task text:',t.text);
+  if(newText===null||!newText.trim()) return;
+  t.text      =newText.trim();
+  t.updated_at=new Date().toISOString();
+  dbSet(DB_KEYS.roadmapTasks,all);
   renderRoadmap();
   cloudAutoSync();
 }
 
 function rmDeleteTask(id){
-  const all = dbGet(DB_KEYS.roadmapTasks)||[];
-  dbSet(DB_KEYS.roadmapTasks, all.filter(t=>String(t.id)!==String(id)));
+  if(!confirm('Permanently delete this task?')) return;
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  dbSet(DB_KEYS.roadmapTasks,all.filter(t=>String(t.id)!==String(id)));
   renderRoadmap();
   cloudAutoSync();
 }
 
 function rmSetFilter(owner){
-  _rmFilter = owner;
+  _rmFilter=owner;
   document.querySelectorAll('.rm-filter-btn').forEach(b=>{
-    b.classList.toggle('rm-active', b.dataset.filter===owner);
+    b.classList.toggle('rm-active',b.dataset.filter===owner);
   });
   renderRoadmap();
 }
 
 function rmToggleArchive(){
-  _rmArchiveOpen = !_rmArchiveOpen;
-  const body    = document.getElementById('rm-archive-body');
-  const chevron = document.getElementById('rm-archive-chevron');
-  if(body)    body.style.display    = _rmArchiveOpen ? 'flex' : 'none';
-  if(chevron) chevron.textContent   = _rmArchiveOpen ? '▼' : '▶';
+  _rmArchiveOpen=!_rmArchiveOpen;
+  const body   =document.getElementById('rm-archive-body');
+  const chevron=document.getElementById('rm-archive-chevron');
+  if(body)    body.style.display  =_rmArchiveOpen?'flex':'none';
+  if(chevron) chevron.textContent =_rmArchiveOpen?'▼':'▶';
+}
+
+function rmToggleAddForm(){
+  const f=document.getElementById('rm-add-form');
+  if(!f) return;
+  f.style.display=f.style.display==='none'?'block':'none';
+  if(f.style.display==='block') document.getElementById('rm-add-text').focus();
+}
+
+function rmAddManualTask(){
+  const text    =document.getElementById('rm-add-text').value.trim();
+  const bucket  =document.getElementById('rm-add-bucket').value;
+  const owner   =document.getElementById('rm-add-owner').value;
+  const category=document.getElementById('rm-add-category').value;
+  if(!text){showToast('Enter a task description','error');return;}
+  const now=new Date().toISOString();
+  const task={
+    id:         'rm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    text, bucket, owner, category,
+    source:     'Manual',
+    source_date:new Date().toISOString().slice(0,10),
+    due_date:   _rmCalcDueDate(bucket, now),
+    archived:false, archived_at:null,
+    created_at:now, updated_at:now
+  };
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  all.push(task);
+  dbSet(DB_KEYS.roadmapTasks,all);
+  cloudAutoSync();
+  document.getElementById('rm-add-text').value='';
+  document.getElementById('rm-add-form').style.display='none';
+  renderRoadmap();
+  showToast('Task added ✓');
+}
+
+// ── Drag & Drop ──
+let _rmDragId=null;
+function rmDragStart(e,id){
+  _rmDragId=id;
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.classList.add('dragging');
+}
+function rmDragEnd(e){ e.currentTarget.classList.remove('dragging'); }
+function rmDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  e.currentTarget.classList.add('drag-over');
+}
+function rmDragLeave(e){ e.currentTarget.classList.remove('drag-over'); }
+function rmDrop(e,newBucket){
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if(!_rmDragId) return;
+  const all=dbGet(DB_KEYS.roadmapTasks)||[];
+  const idx=all.findIndex(t=>String(t.id)===String(_rmDragId));
+  if(idx<0){_rmDragId=null;return;}
+  if(all[idx].bucket===newBucket){_rmDragId=null;return;}
+  all[idx].bucket    =newBucket;
+  all[idx].due_date  =_rmCalcDueDate(newBucket, new Date().toISOString());
+  all[idx].updated_at=new Date().toISOString();
+  dbSet(DB_KEYS.roadmapTasks,all);
+  cloudAutoSync();
+  _rmDragId=null;
+  renderRoadmap();
 }
 
 // ── Transcript processor ──
 async function rmExtractTranscript(){
-  const meetingName = document.getElementById('rm-meeting-name').value.trim();
-  const meetingDate = document.getElementById('rm-meeting-date').value;
-  const transcript  = document.getElementById('rm-transcript').value.trim();
-  const btn         = document.getElementById('rm-extract-btn');
-  const statusBar   = document.getElementById('rm-status-bar');
+  const meetingName=document.getElementById('rm-meeting-name').value.trim();
+  const meetingDate=document.getElementById('rm-meeting-date').value;
+  const transcript =document.getElementById('rm-transcript').value.trim();
+  const btn        =document.getElementById('rm-extract-btn');
+  const statusBar  =document.getElementById('rm-status-bar');
 
   statusBar.style.display='none';
   statusBar.className='rm-status-bar';
@@ -7604,64 +7809,79 @@ async function rmExtractTranscript(){
     statusBar.style.display='block';
     return;
   }
-
-  btn.disabled    = true;
-  btn.textContent = 'Reading transcript…';
+  btn.disabled=true; btn.textContent='Reading transcript…';
 
   try{
-    const res = await fetch('/api/process-transcript', {
+    const res=await fetch('/api/process-transcript',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
+      body:JSON.stringify({
         transcript,
-        meeting_name: meetingName || 'Untitled Meeting',
-        meeting_date: meetingDate || new Date().toISOString().slice(0,10),
+        meeting_name:meetingName||'Untitled Meeting',
+        meeting_date:meetingDate||new Date().toISOString().slice(0,10),
       })
     });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||`Server error ${res.status}`);
 
-    // Deduplicate and insert into localStorage
-    const all = dbGet(DB_KEYS.roadmapTasks)||[];
-    let added=0, skipped=0;
+    const all=dbGet(DB_KEYS.roadmapTasks)||[];
+    let added=0,merged=0,skipped=0;
+    const baseDate=meetingDate||new Date().toISOString().slice(0,10);
+
     (data.tasks||[]).forEach(t=>{
-      const isDupe = all.filter(x=>!x.archived).some(x=>
+      // Exact duplicate check
+      const exactDupe=all.filter(x=>!x.archived).find(x=>
         x.text.toLowerCase().trim()===t.text.toLowerCase().trim() && x.bucket===t.bucket
       );
-      if(isDupe){ skipped++; return; }
+      if(exactDupe){skipped++;return;}
+
+      // Similar task — update existing instead of creating new
+      const similar=all.filter(x=>!x.archived).find(x=>_rmIsSimilar(x.text,t.text));
+      if(similar){
+        similar.text      =t.text;
+        similar.bucket    =t.bucket;
+        similar.owner     =t.owner||similar.owner;
+        similar.category  =t.category||similar.category||'';
+        similar.due_date  =_rmCalcDueDate(t.bucket, baseDate);
+        similar.source    =t.source||meetingName||'Untitled Meeting';
+        similar.source_date=t.source_date||baseDate;
+        similar.updated_at=new Date().toISOString();
+        merged++; return;
+      }
+
       all.push({
-        id:          'rm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
-        text:        t.text,
-        bucket:      t.bucket,
-        owner:       t.owner || 'both',
-        source:      t.source || meetingName || 'Untitled Meeting',
-        source_date: t.source_date || meetingDate || new Date().toISOString().slice(0,10),
-        archived:    false,
-        archived_at: null,
-        created_at:  new Date().toISOString(),
-        updated_at:  new Date().toISOString()
+        id:         'rm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+        text:       t.text,
+        bucket:     t.bucket,
+        owner:      t.owner||'both',
+        category:   t.category||'',
+        source:     t.source||meetingName||'Untitled Meeting',
+        source_date:t.source_date||baseDate,
+        due_date:   _rmCalcDueDate(t.bucket, baseDate),
+        archived:false, archived_at:null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       });
       added++;
     });
-    dbSet(DB_KEYS.roadmapTasks, all);
+
+    dbSet(DB_KEYS.roadmapTasks,all);
     cloudAutoSync();
 
     statusBar.className='rm-status-bar success';
-    const summary = data.summary ? data.summary + ' — ' : '';
-    statusBar.textContent = `✅ ${summary}Added ${added} task${added!==1?'s':''}, skipped ${skipped} duplicate${skipped!==1?'s':''}.`;
+    const summary=data.summary?data.summary+' — ':'';
+    statusBar.textContent=`✅ ${summary}Added ${added}, merged ${merged}, skipped ${skipped} duplicate${skipped!==1?'s':''}.`;
     statusBar.style.display='block';
-
-    // Clear transcript and meeting name on success; keep date
-    document.getElementById('rm-transcript').value   = '';
-    document.getElementById('rm-meeting-name').value = '';
+    document.getElementById('rm-transcript').value='';
+    document.getElementById('rm-meeting-name').value='';
     renderRoadmap();
   }catch(err){
     statusBar.className='rm-status-bar error';
-    statusBar.textContent = '❌ ' + (err.message || 'Failed to process transcript');
+    statusBar.textContent='❌ '+(err.message||'Failed to process transcript');
     statusBar.style.display='block';
   }finally{
-    btn.disabled    = false;
-    btn.textContent = 'Extract & Add Tasks';
+    btn.disabled=false;
+    btn.textContent='Extract & Add Tasks';
   }
 }
 </script>

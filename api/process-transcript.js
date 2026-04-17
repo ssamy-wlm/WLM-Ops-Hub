@@ -1,9 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
+
 const SYSTEM_PROMPT = `You are a planning assistant for a small business called Weblight Media. Read this meeting transcript and extract every task, action item, goal, or idea mentioned.
 
 Sort each item into one of these buckets based on urgency:
-- "30": urgent or immediate, overdue, or blocking other work
+- "7": critical or overdue, must happen within the week
+- "30": urgent, needed within the month
 - "60": medium-term, 1-2 months out
 - "90": longer runway, no immediate pressure
 - "dream": big picture, long-term vision, someday goals
@@ -13,13 +16,24 @@ Identify who owns each task:
 - "david" if owned by David
 - "both" if it is a shared responsibility
 
-Always spell these names and terms correctly: Servpro, Wuzzuf, Rania, Weblight Media, Candidates.
+Assign one category to each task from this list:
+- "hr" — hiring, compensation, onboarding, team management
+- "finance" — payments, payroll, invoices, budget
+- "security" — passwords, access, VPN, protocols
+- "systems" — tools, software, automations, integrations
+- "production" — design, development, content creation, delivery
+- "clients" — client work, deliverables, communication
+- "personal" — personal goals, equipment, self-development
+- "operations" — internal processes, SOPs, meetings, scheduling
+- "marketing" — ads, social media, outreach, branding
+- "sales" — leads, pipelines, proposals, follow-ups
+
+Always spell these names and terms correctly: Servpro, Wuzzuf, Rania, Weblight Media, Candidates, GoHighLevel.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"bucket":"30","text":"Concise task description under 10 words","owner":"sarah"}],"summary":"One sentence about what this meeting covered."}`;
+{"tasks":[{"bucket":"30","text":"Concise task description under 10 words","owner":"sarah","category":"hr"}],"summary":"One sentence about what this meeting covered."}`;
 
 export default async function handler(req, res) {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-claude-api-key');
@@ -32,7 +46,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Auth: accept x-claude-api-key header OR rely on caller being from same origin (session-gated UI)
   const apiKeyHeader = req.headers['x-claude-api-key'];
   const expectedKey  = process.env.CLAUDE_ROADMAP_KEY;
   if (apiKeyHeader && expectedKey && apiKeyHeader !== expectedKey) {
@@ -68,7 +81,6 @@ ${transcript.trim()}`;
 
     let parsed;
     try {
-      // Strip any accidental markdown fences
       const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
       parsed = JSON.parse(cleaned);
     } catch {
@@ -78,16 +90,16 @@ ${transcript.trim()}`;
     const tasks   = Array.isArray(parsed.tasks) ? parsed.tasks : [];
     const summary = typeof parsed.summary === 'string' ? parsed.summary : '';
 
-    // Validate and normalise each task
     const valid = tasks.filter(t =>
       t && typeof t.text === 'string' && t.text.trim() &&
-      ['30', '60', '90', 'dream'].includes(t.bucket) &&
+      ['7', '30', '60', '90', 'dream'].includes(t.bucket) &&
       ['sarah', 'david', 'both'].includes(t.owner)
     ).map(t => ({
-      bucket: t.bucket,
-      text:   t.text.trim(),
-      owner:  t.owner,
-      source: meeting_name || 'Untitled Meeting',
+      bucket:      t.bucket,
+      text:        t.text.trim(),
+      owner:       t.owner,
+      category:    VALID_CATEGORIES.includes(t.category) ? t.category : '',
+      source:      meeting_name || 'Untitled Meeting',
       source_date: meeting_date || new Date().toISOString().slice(0, 10),
     }));
 
