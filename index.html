@@ -1788,44 +1788,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
-      <!-- 30-60-90 Day Roadmap editor -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">📍 30–60–90 Day Roadmap</div><div class="card-sub">Milestone targets shown on every user's Operations dashboard</div></div>
-        <div class="card-body">
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
-            <div>
-              <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">First 14 Days</div>
-              <div id="rm-phase1">
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Account access completed" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Design system reviewed" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Core training completed" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="First mockups ready" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-              </div>
-              <button class="btn btn-outline btn-sm" style="font-size:11px;" onclick="addRMItem('rm-phase1')">+ Add</button>
-            </div>
-            <div>
-              <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Days 15–30</div>
-              <div id="rm-phase2">
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Client pages live" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Ad creatives delivered" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="First revision cycle done" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-              </div>
-              <button class="btn btn-outline btn-sm" style="font-size:11px;" onclick="addRMItem('rm-phase2')">+ Add</button>
-            </div>
-            <div>
-              <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Days 31–90</div>
-              <div id="rm-phase3">
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Optimization routines" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Scaling workflows" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-                <div style="display:flex;gap:6px;margin-bottom:6px;"><input class="form-input" value="Reduced hand-holding" style="font-size:12px;padding:7px 10px;"><button class="btn btn-danger btn-sm" style="padding:6px 8px;" onclick="this.parentElement.remove()">✕</button></div>
-              </div>
-              <button class="btn btn-outline btn-sm" style="font-size:11px;" onclick="addRMItem('rm-phase3')">+ Add</button>
-            </div>
-          </div>
-          <div style="margin-top:16px;"><button class="btn btn-primary btn-sm" onclick="showToast('Roadmap saved ✓')">Save Roadmap</button></div>
-        </div>
-      </div>
-
       <!-- ── MANAGEMENT ROADMAP (Sarah & David only) ── -->
       <div id="rm-biz-wrap" style="display:none;margin-top:18px;">
         <div class="card">
@@ -3785,10 +3747,13 @@ function _syncUsersToOrgChart(){
   if(typeof DB_KEYS === 'undefined') return false;
   const users = (dbGet(DB_KEYS.users)||[]).filter(u=>!u.archived && (u.status==='active'||!u.status));
   if(!users.length) return false;
+  const excluded = _orgGetExcluded();
   let added = 0;
   users.forEach(u=>{
     const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
     if(!fullName) return;
+    // Skip names that were manually removed from the chart
+    if(excluded.includes(fullName.toLowerCase())) return;
     // If already in chart, just make sure the name/title matches the canonical default
     const existing = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
     const defNode  = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
@@ -4051,11 +4016,17 @@ function saveOrgEdit(){
   } else doSave(null);
 }
 
+const ORG_EXCLUDED_KEY = 'wl_org_excluded_names';
+function _orgGetExcluded(){ try{ return JSON.parse(localStorage.getItem(ORG_EXCLUDED_KEY)||'[]'); }catch(e){ return []; } }
+function _orgAddExcluded(name){ const ex=_orgGetExcluded(); const n=name.trim().toLowerCase(); if(!ex.includes(n)){ ex.push(n); try{ localStorage.setItem(ORG_EXCLUDED_KEY,JSON.stringify(ex)); }catch(e){} } }
+
 function deleteOrgBubble(){
   const id=document.getElementById('org-edit-id').value;
   const node=orgNodes.find(n=>n.id===id);
   if(node?.fixed){showToast('CEO position is fixed and cannot be removed');return;}
   if(!confirm('Remove this member from the org chart?')) return;
+  // Remember this name so _syncUsersToOrgChart won't re-add them on refresh
+  if(node?.name) _orgAddExcluded(node.name);
   orgNodes=orgNodes.filter(n=>n.id!==id);
   orgLinks=orgLinks.filter(l=>l[0]!==id&&l[1]!==id);
   orgSave();
