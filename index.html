@@ -1014,7 +1014,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-item" onclick="switchAdminTab(this,'clients')">Clients</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')">Payroll</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
-        <div class="admin-nav-item" onclick="switchAdminTab(this,'roadmap')" id="admin-nav-roadmap" style="display:none;">🔒 Roadmap</div>
       </div>
 
       <!-- Messages — separated, sits right before Sign Out -->
@@ -1826,6 +1825,73 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="margin-top:16px;"><button class="btn btn-primary btn-sm" onclick="showToast('Roadmap saved ✓')">Save Roadmap</button></div>
         </div>
       </div>
+
+      <!-- ── MANAGEMENT ROADMAP (Sarah & David only) ── -->
+      <div id="rm-biz-wrap" style="display:none;margin-top:18px;">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🔒 Management Roadmap</div>
+              <div class="card-sub" id="rm-task-count">Loading…</div>
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;">
+
+            <!-- Transcript Processor -->
+            <div class="rm-transcript-panel" style="margin:18px 18px 0;">
+              <div class="rm-transcript-title">🎙 Transcript Processor</div>
+              <div class="rm-transcript-inputs">
+                <input id="rm-meeting-name" type="text" class="form-input" placeholder="Meeting name (e.g. Apr 16 standup)">
+                <input id="rm-meeting-date" type="date" class="form-input">
+              </div>
+              <textarea id="rm-transcript" class="rm-transcript-textarea" placeholder="Paste the full meeting transcript here…"></textarea>
+              <div id="rm-status-bar" class="rm-status-bar"></div>
+              <button id="rm-extract-btn" class="btn btn-primary" onclick="rmExtractTranscript()" style="min-width:180px;">Extract &amp; Add Tasks</button>
+            </div>
+
+            <!-- Filter bar -->
+            <div class="rm-filter-bar" style="margin:18px 18px 0;">
+              <span class="rm-filter-label">Filter:</span>
+              <button class="rm-filter-btn rm-active" data-filter="all"  onclick="rmSetFilter('all')">All</button>
+              <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
+              <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
+              <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
+            </div>
+
+            <!-- Four bucket columns -->
+            <div class="rm-cols" style="margin:18px 18px 0;">
+              <div class="rm-col rm-col-30">
+                <div class="rm-col-head"><span class="rm-col-title">30 Days</span><span class="rm-col-count" id="rm-count-30">0</span></div>
+                <div class="rm-col-body" id="rm-col-30"></div>
+              </div>
+              <div class="rm-col rm-col-60">
+                <div class="rm-col-head"><span class="rm-col-title">60 Days</span><span class="rm-col-count" id="rm-count-60">0</span></div>
+                <div class="rm-col-body" id="rm-col-60"></div>
+              </div>
+              <div class="rm-col rm-col-90">
+                <div class="rm-col-head"><span class="rm-col-title">90 Days</span><span class="rm-col-count" id="rm-count-90">0</span></div>
+                <div class="rm-col-body" id="rm-col-90"></div>
+              </div>
+              <div class="rm-col rm-col-dream">
+                <div class="rm-col-head"><span class="rm-col-title">Dreams &amp; Vision</span><span class="rm-col-count" id="rm-count-dream">0</span></div>
+                <div class="rm-col-body" id="rm-col-dream"></div>
+              </div>
+            </div>
+
+            <!-- Archive -->
+            <div style="margin:18px;">
+              <div class="rm-archive-header" onclick="rmToggleArchive()">
+                <span class="rm-archive-chevron" id="rm-archive-chevron">▶</span>
+                <span class="rm-archive-label">Archived Tasks</span>
+                <span class="rm-archive-count" id="rm-archive-count">0</span>
+              </div>
+              <div id="rm-archive-body" class="rm-archive-body" style="display:none;"></div>
+            </div>
+
+          </div>
+        </div>
+      </div><!-- /rm-biz-wrap -->
+
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -1841,82 +1907,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="msg-empty">No messages yet. Use ✏️ New Message to start a conversation.</div>
       </div>
     </div>
-
-    <!-- ── MANAGEMENT ROADMAP ── -->
-    <div id="admin-roadmap" class="page-section">
-
-      <!-- Header -->
-      <div class="rm-page-header">
-        <div>
-          <div class="rm-page-title">Management Roadmap <span class="rm-lock-icon">🔒</span></div>
-          <div class="rm-page-sub" id="rm-task-count">Loading…</div>
-        </div>
-      </div>
-
-      <!-- Transcript Processor -->
-      <div class="rm-transcript-panel">
-        <div class="rm-transcript-title">🎙 Transcript Processor</div>
-        <div class="rm-transcript-inputs">
-          <input id="rm-meeting-name" type="text" class="form-input" placeholder="Meeting name (e.g. Apr 16 standup)">
-          <input id="rm-meeting-date" type="date" class="form-input">
-        </div>
-        <textarea id="rm-transcript" class="rm-transcript-textarea" placeholder="Paste the full meeting transcript here…"></textarea>
-        <div id="rm-status-bar" class="rm-status-bar"></div>
-        <button id="rm-extract-btn" class="btn btn-primary" onclick="rmExtractTranscript()" style="min-width:180px;">Extract &amp; Add Tasks</button>
-      </div>
-
-      <!-- Filter bar -->
-      <div class="rm-filter-bar">
-        <span class="rm-filter-label">Filter:</span>
-        <button class="rm-filter-btn rm-active" data-filter="all"  onclick="rmSetFilter('all')">All</button>
-        <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
-        <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
-        <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
-      </div>
-
-      <!-- Four bucket columns -->
-      <div class="rm-cols">
-        <div class="rm-col rm-col-30">
-          <div class="rm-col-head">
-            <span class="rm-col-title">30 Days</span>
-            <span class="rm-col-count" id="rm-count-30">0</span>
-          </div>
-          <div class="rm-col-body" id="rm-col-30"></div>
-        </div>
-        <div class="rm-col rm-col-60">
-          <div class="rm-col-head">
-            <span class="rm-col-title">60 Days</span>
-            <span class="rm-col-count" id="rm-count-60">0</span>
-          </div>
-          <div class="rm-col-body" id="rm-col-60"></div>
-        </div>
-        <div class="rm-col rm-col-90">
-          <div class="rm-col-head">
-            <span class="rm-col-title">90 Days</span>
-            <span class="rm-col-count" id="rm-count-90">0</span>
-          </div>
-          <div class="rm-col-body" id="rm-col-90"></div>
-        </div>
-        <div class="rm-col rm-col-dream">
-          <div class="rm-col-head">
-            <span class="rm-col-title">Dreams &amp; Vision</span>
-            <span class="rm-col-count" id="rm-count-dream">0</span>
-          </div>
-          <div class="rm-col-body" id="rm-col-dream"></div>
-        </div>
-      </div>
-
-      <!-- Archive -->
-      <div>
-        <div class="rm-archive-header" onclick="rmToggleArchive()">
-          <span class="rm-archive-chevron" id="rm-archive-chevron">▶</span>
-          <span class="rm-archive-label">Archived Tasks</span>
-          <span class="rm-archive-count" id="rm-archive-count">0</span>
-        </div>
-        <div id="rm-archive-body" class="rm-archive-body" style="display:none;"></div>
-      </div>
-
-    </div><!-- /admin-roadmap -->
 
     <!-- Admin Contact Picker Modal -->
     <div id="admin-msg-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
@@ -2912,8 +2902,8 @@ function switchAdminTab(el, tab){
     const trigger = parentDropdown.querySelector('.admin-drop-trigger');
     if(trigger) trigger.classList.add('active');
   }
-  if(tab==='messages') renderAdminMessages();
-  if(tab==='roadmap')  loadRoadmap();
+  if(tab==='messages')    renderAdminMessages();
+  if(tab==='bizSettings') loadRoadmap();
 }
 
 // ── REPORT TABS ──
@@ -7415,9 +7405,9 @@ function _canViewRoadmap(level, adminObj){
 }
 
 function updateRoadmapNavVisibility(level, adminObj){
-  const nav = document.getElementById('admin-nav-roadmap');
-  if(!nav) return;
-  nav.style.display = _canViewRoadmap(level, adminObj) ? '' : 'none';
+  const wrap = document.getElementById('rm-biz-wrap');
+  if(!wrap) return;
+  wrap.style.display = _canViewRoadmap(level, adminObj) ? '' : 'none';
 }
 
 // ── Seed tasks on first load ──
@@ -7509,13 +7499,9 @@ function _seedRoadmapTasks(){
 
 // ── Main render ──
 function loadRoadmap(){
-  if(!_canViewRoadmap()){
-    // Silently redirect away
-    const first = document.querySelector('.admin-nav-item');
-    if(first) switchAdminTab(first, 'overview');
-    return;
-  }
-  // Set today as default date for transcript processor
+  const wrap = document.getElementById('rm-biz-wrap');
+  if(wrap) wrap.style.display = _canViewRoadmap() ? '' : 'none';
+  if(!_canViewRoadmap()) return;
   const dateInput = document.getElementById('rm-meeting-date');
   if(dateInput && !dateInput.value){
     dateInput.value = new Date().toISOString().slice(0,10);
