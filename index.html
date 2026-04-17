@@ -1014,6 +1014,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-item" onclick="switchAdminTab(this,'clients')">Clients</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')">Payroll</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
+        <div class="admin-nav-item" onclick="switchAdminTab(this,'roadmap')" id="admin-nav-roadmap" style="display:none;">🔒 Roadmap</div>
       </div>
 
       <!-- Messages — separated, sits right before Sign Out -->
@@ -1840,6 +1841,82 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="msg-empty">No messages yet. Use ✏️ New Message to start a conversation.</div>
       </div>
     </div>
+
+    <!-- ── MANAGEMENT ROADMAP ── -->
+    <div id="admin-roadmap" class="page-section">
+
+      <!-- Header -->
+      <div class="rm-page-header">
+        <div>
+          <div class="rm-page-title">Management Roadmap <span class="rm-lock-icon">🔒</span></div>
+          <div class="rm-page-sub" id="rm-task-count">Loading…</div>
+        </div>
+      </div>
+
+      <!-- Transcript Processor -->
+      <div class="rm-transcript-panel">
+        <div class="rm-transcript-title">🎙 Transcript Processor</div>
+        <div class="rm-transcript-inputs">
+          <input id="rm-meeting-name" type="text" class="form-input" placeholder="Meeting name (e.g. Apr 16 standup)">
+          <input id="rm-meeting-date" type="date" class="form-input">
+        </div>
+        <textarea id="rm-transcript" class="rm-transcript-textarea" placeholder="Paste the full meeting transcript here…"></textarea>
+        <div id="rm-status-bar" class="rm-status-bar"></div>
+        <button id="rm-extract-btn" class="btn btn-primary" onclick="rmExtractTranscript()" style="min-width:180px;">Extract &amp; Add Tasks</button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="rm-filter-bar">
+        <span class="rm-filter-label">Filter:</span>
+        <button class="rm-filter-btn rm-active" data-filter="all"  onclick="rmSetFilter('all')">All</button>
+        <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
+        <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
+        <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
+      </div>
+
+      <!-- Four bucket columns -->
+      <div class="rm-cols">
+        <div class="rm-col rm-col-30">
+          <div class="rm-col-head">
+            <span class="rm-col-title">30 Days</span>
+            <span class="rm-col-count" id="rm-count-30">0</span>
+          </div>
+          <div class="rm-col-body" id="rm-col-30"></div>
+        </div>
+        <div class="rm-col rm-col-60">
+          <div class="rm-col-head">
+            <span class="rm-col-title">60 Days</span>
+            <span class="rm-col-count" id="rm-count-60">0</span>
+          </div>
+          <div class="rm-col-body" id="rm-col-60"></div>
+        </div>
+        <div class="rm-col rm-col-90">
+          <div class="rm-col-head">
+            <span class="rm-col-title">90 Days</span>
+            <span class="rm-col-count" id="rm-count-90">0</span>
+          </div>
+          <div class="rm-col-body" id="rm-col-90"></div>
+        </div>
+        <div class="rm-col rm-col-dream">
+          <div class="rm-col-head">
+            <span class="rm-col-title">Dreams &amp; Vision</span>
+            <span class="rm-col-count" id="rm-count-dream">0</span>
+          </div>
+          <div class="rm-col-body" id="rm-col-dream"></div>
+        </div>
+      </div>
+
+      <!-- Archive -->
+      <div>
+        <div class="rm-archive-header" onclick="rmToggleArchive()">
+          <span class="rm-archive-chevron" id="rm-archive-chevron">▶</span>
+          <span class="rm-archive-label">Archived Tasks</span>
+          <span class="rm-archive-count" id="rm-archive-count">0</span>
+        </div>
+        <div id="rm-archive-body" class="rm-archive-body" style="display:none;"></div>
+      </div>
+
+    </div><!-- /admin-roadmap -->
 
     <!-- Admin Contact Picker Modal -->
     <div id="admin-msg-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
@@ -2783,6 +2860,7 @@ function showAdminApp(){
   document.getElementById('userApp').classList.remove('visible');
   try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
+  setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
 
 function showUserApp(){
@@ -2835,6 +2913,7 @@ function switchAdminTab(el, tab){
     if(trigger) trigger.classList.add('active');
   }
   if(tab==='messages') renderAdminMessages();
+  if(tab==='roadmap')  loadRoadmap();
 }
 
 // ── REPORT TABS ──
@@ -4475,6 +4554,59 @@ window.switchAdminTab = function(el, tab){
 .msg-compose-actions{display:flex;justify-content:flex-end;}
 .msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
 .admin-msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
+
+/* ── Management Roadmap ── */
+.rm-page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;}
+.rm-page-title{font-family:'Playfair Display',serif;font-size:22px;color:var(--text-dark);display:flex;align-items:center;gap:10px;}
+.rm-lock-icon{font-size:16px;opacity:.55;}
+.rm-page-sub{font-size:12px;color:var(--text-light);margin-top:4px;}
+.rm-transcript-panel{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:24px;margin-bottom:24px;}
+.rm-transcript-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+.rm-transcript-inputs{display:grid;grid-template-columns:1fr 180px;gap:12px;margin-bottom:12px;}
+.rm-transcript-textarea{width:100%;min-height:140px;resize:vertical;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:13px;font-family:inherit;background:var(--bg);color:var(--text-dark);outline:none;transition:border-color .15s;margin-bottom:12px;box-sizing:border-box;}
+.rm-transcript-textarea:focus{border-color:var(--text);}
+.rm-status-bar{border-radius:10px;padding:12px 16px;font-size:13px;margin-bottom:4px;display:none;}
+.rm-status-bar.success{background:#e8f8f0;border:1px solid rgba(46,158,110,.25);color:var(--green);}
+.rm-status-bar.error{background:#fde8e8;border:1px solid rgba(224,85,85,.25);color:var(--red);}
+.rm-filter-bar{display:flex;gap:8px;margin-bottom:20px;align-items:center;}
+.rm-filter-label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-right:4px;}
+.rm-filter-btn{padding:6px 16px;border-radius:20px;border:1px solid var(--border);background:var(--card);color:var(--text-mid);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;}
+.rm-filter-btn:hover{border-color:var(--text);color:var(--text);}
+.rm-filter-btn.rm-active{background:var(--text);color:#fff;border-color:var(--text);}
+.rm-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
+.rm-col{background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column;}
+.rm-col-30{border-top:3px solid #e05555;}
+.rm-col-60{border-top:3px solid #d97706;}
+.rm-col-90{border-top:3px solid var(--text);}
+.rm-col-dream{border-top:3px solid #9333ea;}
+.rm-col-head{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.rm-col-title{font-family:'Playfair Display',serif;font-size:14px;color:var(--text-dark);}
+.rm-col-count{font-size:11px;background:var(--bg);border-radius:20px;padding:2px 9px;color:var(--text-light);font-weight:700;}
+.rm-col-body{padding:12px;display:flex;flex-direction:column;gap:8px;min-height:80px;flex:1;}
+.rm-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:all .15s;}
+.rm-card:hover{border-color:var(--text-light);background:var(--bg2);transform:translateY(-1px);box-shadow:var(--shadow);}
+.rm-card-text{font-size:13px;color:var(--text-dark);line-height:1.5;margin-bottom:8px;}
+.rm-card-footer{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.rm-date{font-size:10px;color:var(--text-light);}
+.rm-badge{font-size:10px;font-weight:700;padding:2px 9px;border-radius:12px;flex-shrink:0;}
+.rm-badge.sarah{background:rgba(37,99,168,.12);color:var(--text);}
+.rm-badge.david{background:rgba(46,158,110,.12);color:var(--green);}
+.rm-badge.both{background:rgba(147,51,234,.1);color:#9333ea;}
+.rm-source{font-size:10px;color:var(--text-light);font-style:italic;margin-left:auto;max-width:120px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
+.rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
+.rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
+.rm-archive-header:hover{background:var(--bg2);}
+.rm-archive-chevron{font-size:11px;color:var(--text-light);transition:transform .2s;}
+.rm-archive-chevron.open{transform:rotate(90deg);}
+.rm-archive-label{font-size:13px;font-weight:600;color:var(--text-mid);}
+.rm-archive-count{font-size:11px;background:var(--bg);border-radius:20px;padding:2px 9px;color:var(--text-light);font-weight:700;}
+.rm-archive-body{display:none;margin-top:8px;display:flex;flex-direction:column;gap:6px;}
+.rm-archive-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;}
+.rm-archive-text{font-size:12px;color:var(--text-mid);text-decoration:line-through;flex:1;line-height:1.4;}
+.rm-archive-meta{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.rm-bucket-tag{font-size:10px;padding:2px 8px;border-radius:12px;font-weight:600;background:var(--bg2);color:var(--text-light);}
+.rm-del-btn{font-size:10px;padding:3px 8px;border-radius:6px;background:transparent;color:var(--red);border:1px solid rgba(224,85,85,.2);cursor:pointer;font-family:inherit;transition:all .15s;}
+.rm-del-btn:hover{background:rgba(224,85,85,.08);}
 </style>
 
 <script>
@@ -4499,6 +4631,7 @@ const DB_KEYS = {
   deletedEodIds: 'wl_deleted_eod_ids',
   deletedUserIds:'wl_deleted_user_ids',
   messages:      'wl_messages_db',
+  roadmapTasks:  'wl_roadmap_tasks',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -5335,7 +5468,8 @@ async function cloudPushAll(silent=false){
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
       deletedEodIds,
       deletedUserIds,
-      messages: _mergeCloudArr(cloudRecord.messages, dbGet(DB_KEYS.messages)||[], 500),
+      messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], 500),
+      roadmapTasks: _mergeCloudArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], 1000),
     };
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
@@ -5421,7 +5555,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     }
     if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
-    if(r.messages)       dbSet(DB_KEYS.messages,  _mergeCloudArr(r.messages, dbGet(DB_KEYS.messages)||[], 500));
+    if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
+    if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeCloudArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], 1000));
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6571,6 +6706,7 @@ let _adminAssignedUsers = []; // user names/ids this admin can see
 function applyAdminRoleRestrictions(level, adminObj){
   _adminLevel = level;
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
+  updateRoadmapNavVisibility(level, adminObj);
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs
   const hideTabs = ['payroll','timeoff','archive','bizSettings','livefeed'];
@@ -7260,6 +7396,316 @@ function _refreshAdminMessagesIfOpen(){
   const section = document.getElementById('admin-messages');
   if(section && section.classList.contains('active')) renderAdminMessages();
   else updateAdminMsgBadge();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ── MANAGEMENT ROADMAP ──
+// ═══════════════════════════════════════════════════════════════
+const ROADMAP_ALLOWED_EMAILS = ['ssamy@weblightmedia.com','dj@weblightmedia.com','david@weblightmedia.com'];
+let _rmFilter = 'all';
+let _rmArchiveOpen = false;
+
+function _canViewRoadmap(level, adminObj){
+  const email = (adminObj?.email || currentAdminInfo?.email || '').toLowerCase();
+  const sess  = JSON.parse(localStorage.getItem('wl_admin_session')||'{}');
+  const lvl   = level || sess.level || '';
+  return ['super','owner'].includes(lvl) ||
+         ROADMAP_ALLOWED_EMAILS.includes(email) ||
+         !sess.level; // primary hardcoded admin has no level stored → always allowed
+}
+
+function updateRoadmapNavVisibility(level, adminObj){
+  const nav = document.getElementById('admin-nav-roadmap');
+  if(!nav) return;
+  nav.style.display = _canViewRoadmap(level, adminObj) ? '' : 'none';
+}
+
+// ── Seed tasks on first load ──
+function _seedRoadmapTasks(){
+  const existing = dbGet(DB_KEYS.roadmapTasks);
+  if(existing && existing.length > 0) return;
+  const mk = (text, bucket, owner, dateStr, src) => ({
+    id: 'rm_seed_' + Math.random().toString(36).slice(2, 10),
+    text, bucket, owner,
+    source: src || 'Apr 16 standup',
+    source_date: dateStr,
+    archived: false, archived_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+  const tasks = [
+    // 30-day
+    mk('Finalize job titles for all roles','30','both','2026-04-16','Apr 16 standup'),
+    mk('Set up email signatures for everyone','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Grant David editing access to all Google Docs','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Research anti-cheat English test platforms','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Plan full hiring process with testing phases','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Find and hire trusted technical assistant','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Remove PDF files from Weblight Media library after SOP finalization','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Proofread existing job descriptions wording only','30','both','2026-04-16','Apr 16 standup'),
+    mk('Add admin access to operations hub chat feature','30','sarah','2026-04-16','Apr 16 standup'),
+    mk('Schedule interviews with Shireen ASAP','30','both','2026-04-09','Apr 9 standup'),
+    mk('Send warm onboarding acceptance email to candidates','30','sarah','2026-04-09','Apr 9 standup'),
+    mk('Remove Nadia email and Clockify access','30','david','2026-04-09','Apr 9 standup'),
+    mk('Talk to Rania about task prioritization and time management','30','sarah','2026-04-09','Apr 9 standup'),
+    mk('Start interviewing candidates found on Indeed','30','david','2026-04-09','Apr 9 standup'),
+    mk('Design Servpro internal review doc branded','30','sarah','2026-04-09','Apr 9 standup'),
+    mk('Send Nadia final payroll 7 hours','30','sarah','2026-04-09','Apr 9 standup'),
+    mk('Copy Lemlist scripts into GoHighLevel','30','sarah','2026-04-08','Apr 8 standup'),
+    mk('Manually search Wuzzuf for Cairo candidates','30','sarah','2026-04-08','Apr 8 standup'),
+    mk('Terminate Norhan send moving in another direction email','30','david','2026-04-06','Apr 6 standup'),
+    mk('Email Rahma re Payoneer transfer deadline','30','david','2026-04-06','Apr 6 standup'),
+    mk('Add overtime logic 1.5x after 40hrs to hub calculator','30','sarah','2026-04-06','Apr 6 standup'),
+    mk('Fill platform tool list with LastPass passwords per account','30','sarah','2026-04-06','Apr 6 standup'),
+    mk('Review services sheet and fill missing details','30','david','2026-04-06','Apr 6 standup'),
+    mk('Document Sarah $8.50/hr raise in hub starting Monday','30','sarah','2026-04-03','Apr 3 standup'),
+    mk('Prepare Google Drive with Word SOP docs for David review','30','sarah','2026-04-03','Apr 3 standup'),
+    mk('Abby look into new desktop setup blocker','30','david','2026-04-03','Apr 3 standup'),
+    mk('Create 2 Google Business Profile posts for Babber Law','30','both','2026-04-03','Apr 3 standup'),
+    mk('Complete EOS training fully','30','sarah','2026-04-08','Apr 8 standup'),
+    mk('Buy laptop visit shops and finalize choice','30','sarah','2026-04-08','Apr 8 standup'),
+    mk('Draft canned LinkedIn reply answers','30','sarah','2026-04-08','Apr 8 standup'),
+    mk('Schedule daily 6am operational meeting on calendar','30','sarah','2026-04-08','Apr 8 standup'),
+    // 60-day
+    mk('Launch email signatures after titles are finalized','60','both','2026-04-16','Apr 16 standup'),
+    mk('Run 3-day unpaid trial for first hired Egyptian candidate','60','sarah','2026-04-16','Apr 16 standup'),
+    mk('Conduct in-person interviews in Cairo Zamalek Mohandeseen','60','sarah','2026-04-16','Apr 16 standup'),
+    mk('Onboard first hired designer full training plan','60','sarah','2026-04-09','Apr 9 standup'),
+    mk('Set up Yaha and Mustafa full onboarding week','60','sarah','2026-04-09','Apr 9 standup'),
+    mk('Define decision rights for each team member in hub','60','sarah','2026-04-06','Apr 6 standup'),
+    mk('Build org chart with pyramid structure in hub','60','david','2026-04-06','Apr 6 standup'),
+    mk('Create placeholder seats for future hires in hub','60','david','2026-04-06','Apr 6 standup'),
+    mk('Create pre-hire skills tests for candidates','60','sarah','2026-04-06','Apr 6 standup'),
+    mk('Define all job descriptions for current and future seats','60','both','2026-04-03','Apr 3 standup'),
+    mk('Launch Rania on GoHighLevel campaigns','60','sarah','2026-04-09','Apr 9 standup'),
+    mk('Finalize SOP for website design process','60','sarah','2026-04-08','Apr 8 standup'),
+    mk('Research and set up Asana integration in operations hub','60','sarah','2026-03-26','Mar 26 standup'),
+    mk('Write standard Egyptian offer letter template','60','sarah','2026-03-30','Mar 30 standup'),
+    mk('Sort through Indeed salesperson account manager candidates','60','sarah','2026-04-06','Apr 6 standup'),
+    mk('Review Rania scripts before GoHighLevel launch','60','david','2026-04-08','Apr 8 standup'),
+    // 90-day
+    mk('Implement quarterly EOS review with full team','90','both','2026-04-09','Apr 9 standup'),
+    mk('Hire US-based account manager salesperson','90','david','2026-04-06','Apr 6 standup'),
+    mk('Define vacation and salary policy for Egyptian team','90','both','2026-03-30','Mar 30 standup'),
+    mk('Set up bonus and raise structure quarterly yearly','90','david','2026-03-30','Mar 30 standup'),
+    mk('Move lead tracking from Google Sheets into GoHighLevel','90','sarah','2026-03-30','Mar 30 standup'),
+    mk('Grow Shireen into Art Director role over time','90','sarah','2026-04-09','Apr 9 standup'),
+    mk('Train Nadia on Adobe Premiere via Coursera','90','david','2026-04-02','Apr 2 standup'),
+    mk('VPN training SOP for all new Egyptian hires','90','sarah','2026-04-06','Apr 6 standup'),
+    mk('Build out client bundle structure for new content designers','90','sarah','2026-04-06','Apr 6 standup'),
+    mk('Connect GoHighLevel prospects to outreach outcomes','90','sarah','2026-03-30','Mar 30 standup'),
+    // dream
+    mk('David in semi-retirement with self-running team','dream','david','2026-04-08','Apr 8 standup'),
+    mk('Build and sell operations hub as a product','dream','sarah','2026-03-26','Mar 26 standup'),
+    mk('Hire full Egyptian team with 10-year growth paths','dream','both','2026-04-06','Apr 6 standup'),
+    mk('Hire sales team across the US 5 to 10 reps','dream','david','2026-03-30','Mar 30 standup'),
+    mk('Elevate Sarah to COO with matching income level','dream','david','2026-04-08','Apr 8 standup'),
+    mk('Weblight Media becomes a model remote-first culture company','dream','both','2026-04-03','Apr 3 standup'),
+    mk('AI agents handling recurring revenue work fully','dream','david','2026-04-08','Apr 8 standup'),
+    mk('3-year company vision documented and team-aligned','dream','david','2026-03-30','Mar 30 standup'),
+  ];
+  dbSet(DB_KEYS.roadmapTasks, tasks);
+}
+
+// ── Main render ──
+function loadRoadmap(){
+  if(!_canViewRoadmap()){
+    // Silently redirect away
+    const first = document.querySelector('.admin-nav-item');
+    if(first) switchAdminTab(first, 'overview');
+    return;
+  }
+  // Set today as default date for transcript processor
+  const dateInput = document.getElementById('rm-meeting-date');
+  if(dateInput && !dateInput.value){
+    dateInput.value = new Date().toISOString().slice(0,10);
+  }
+  _seedRoadmapTasks();
+  renderRoadmap();
+}
+
+function renderRoadmap(){
+  const all      = dbGet(DB_KEYS.roadmapTasks)||[];
+  const active   = all.filter(t=>!t.archived);
+  const archived = all.filter(t=>t.archived);
+  const filtered = _rmFilter==='all' ? active : active.filter(t=>t.owner===_rmFilter);
+
+  // Subtitle count
+  const countEl = document.getElementById('rm-task-count');
+  if(countEl) countEl.textContent = `${active.length} open task${active.length!==1?'s':''}`;
+
+  // Columns
+  ['30','60','90','dream'].forEach(bucket=>{
+    const body  = document.getElementById('rm-col-'+bucket);
+    const count = document.getElementById('rm-count-'+bucket);
+    if(!body) return;
+    const tasks = filtered.filter(t=>t.bucket===bucket);
+    if(count) count.textContent = tasks.length;
+    body.innerHTML = tasks.length
+      ? tasks.map(_rmRenderCard).join('')
+      : '<div class="rm-empty">No tasks</div>';
+  });
+
+  // Archive
+  const archCount = document.getElementById('rm-archive-count');
+  if(archCount) archCount.textContent = archived.length;
+  _rmRenderArchive(archived);
+}
+
+function _rmRenderCard(t){
+  const dateStr = t.source_date
+    ? new Date(t.source_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})
+    : '';
+  const ownerLabel = t.owner==='sarah' ? 'Sarah' : t.owner==='david' ? 'David' : 'Both';
+  const safeId = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
+  return `<div class="rm-card" onclick="rmArchiveTask('${safeId}')" title="Click to archive">
+    <div class="rm-card-text">${escHtmlAdmin(t.text)}</div>
+    <div class="rm-card-footer">
+      ${dateStr?`<span class="rm-date">${dateStr}</span>`:''}
+      <span class="rm-badge ${t.owner}">${ownerLabel}</span>
+      ${t.source?`<span class="rm-source" title="${escHtmlAdmin(t.source)}">${escHtmlAdmin(t.source)}</span>`:''}
+    </div>
+  </div>`;
+}
+
+function _rmRenderArchive(archived){
+  const body = document.getElementById('rm-archive-body');
+  if(!body) return;
+  const bucketLabels = {'30':'30 Days','60':'60 Days','90':'90 Days','dream':'Dream'};
+  if(!archived.length){
+    body.innerHTML='<div style="color:var(--text-light);font-size:13px;padding:4px 0;">No archived tasks yet.</div>';
+    return;
+  }
+  const sorted = [...archived].sort((a,b)=>new Date(b.archived_at||0)-new Date(a.archived_at||0));
+  body.innerHTML = sorted.map(t=>{
+    const dateStr = t.source_date
+      ? new Date(t.source_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})
+      : '';
+    const ownerLabel = t.owner==='sarah' ? 'Sarah' : t.owner==='david' ? 'David' : 'Both';
+    const safeId = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
+    return `<div class="rm-archive-card">
+      <span class="rm-archive-text">${escHtmlAdmin(t.text)}</span>
+      <div class="rm-archive-meta">
+        ${dateStr?`<span class="rm-date">${dateStr}</span>`:''}
+        <span class="rm-badge ${t.owner}" style="opacity:.7;">${ownerLabel}</span>
+        <span class="rm-bucket-tag">${bucketLabels[t.bucket]||t.bucket}</span>
+        <button class="rm-del-btn" onclick="event.stopPropagation();rmDeleteTask('${safeId}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function rmArchiveTask(id){
+  const all = dbGet(DB_KEYS.roadmapTasks)||[];
+  const idx = all.findIndex(t=>String(t.id)===String(id));
+  if(idx<0) return;
+  all[idx].archived    = true;
+  all[idx].archived_at = new Date().toISOString();
+  all[idx].updated_at  = new Date().toISOString();
+  dbSet(DB_KEYS.roadmapTasks, all);
+  renderRoadmap();
+  cloudAutoSync();
+}
+
+function rmDeleteTask(id){
+  const all = dbGet(DB_KEYS.roadmapTasks)||[];
+  dbSet(DB_KEYS.roadmapTasks, all.filter(t=>String(t.id)!==String(id)));
+  renderRoadmap();
+  cloudAutoSync();
+}
+
+function rmSetFilter(owner){
+  _rmFilter = owner;
+  document.querySelectorAll('.rm-filter-btn').forEach(b=>{
+    b.classList.toggle('rm-active', b.dataset.filter===owner);
+  });
+  renderRoadmap();
+}
+
+function rmToggleArchive(){
+  _rmArchiveOpen = !_rmArchiveOpen;
+  const body    = document.getElementById('rm-archive-body');
+  const chevron = document.getElementById('rm-archive-chevron');
+  if(body)    body.style.display    = _rmArchiveOpen ? 'flex' : 'none';
+  if(chevron) chevron.textContent   = _rmArchiveOpen ? '▼' : '▶';
+}
+
+// ── Transcript processor ──
+async function rmExtractTranscript(){
+  const meetingName = document.getElementById('rm-meeting-name').value.trim();
+  const meetingDate = document.getElementById('rm-meeting-date').value;
+  const transcript  = document.getElementById('rm-transcript').value.trim();
+  const btn         = document.getElementById('rm-extract-btn');
+  const statusBar   = document.getElementById('rm-status-bar');
+
+  statusBar.style.display='none';
+  statusBar.className='rm-status-bar';
+
+  if(!transcript){
+    statusBar.className='rm-status-bar error';
+    statusBar.textContent='Please paste a transcript before extracting.';
+    statusBar.style.display='block';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = 'Reading transcript…';
+
+  try{
+    const res = await fetch('/api/process-transcript', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        transcript,
+        meeting_name: meetingName || 'Untitled Meeting',
+        meeting_date: meetingDate || new Date().toISOString().slice(0,10),
+      })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+
+    // Deduplicate and insert into localStorage
+    const all = dbGet(DB_KEYS.roadmapTasks)||[];
+    let added=0, skipped=0;
+    (data.tasks||[]).forEach(t=>{
+      const isDupe = all.filter(x=>!x.archived).some(x=>
+        x.text.toLowerCase().trim()===t.text.toLowerCase().trim() && x.bucket===t.bucket
+      );
+      if(isDupe){ skipped++; return; }
+      all.push({
+        id:          'rm_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+        text:        t.text,
+        bucket:      t.bucket,
+        owner:       t.owner || 'both',
+        source:      t.source || meetingName || 'Untitled Meeting',
+        source_date: t.source_date || meetingDate || new Date().toISOString().slice(0,10),
+        archived:    false,
+        archived_at: null,
+        created_at:  new Date().toISOString(),
+        updated_at:  new Date().toISOString()
+      });
+      added++;
+    });
+    dbSet(DB_KEYS.roadmapTasks, all);
+    cloudAutoSync();
+
+    statusBar.className='rm-status-bar success';
+    const summary = data.summary ? data.summary + ' — ' : '';
+    statusBar.textContent = `✅ ${summary}Added ${added} task${added!==1?'s':''}, skipped ${skipped} duplicate${skipped!==1?'s':''}.`;
+    statusBar.style.display='block';
+
+    // Clear transcript and meeting name on success; keep date
+    document.getElementById('rm-transcript').value   = '';
+    document.getElementById('rm-meeting-name').value = '';
+    renderRoadmap();
+  }catch(err){
+    statusBar.className='rm-status-bar error';
+    statusBar.textContent = '❌ ' + (err.message || 'Failed to process transcript');
+    statusBar.style.display='block';
+  }finally{
+    btn.disabled    = false;
+    btn.textContent = 'Extract & Add Tasks';
+  }
 }
 </script>
 </body>

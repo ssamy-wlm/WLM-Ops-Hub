@@ -3,11 +3,15 @@
   "version": "1.0.0",
   "description": "WebLight Media Operations Hub — Admin + Team Portal",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "npx serve .",
     "dev": "npx serve ."
   },
   "devDependencies": {
     "serve": "^14.2.6"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
   }
 }
