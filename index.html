@@ -1309,32 +1309,55 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-clients" class="page-section">
 
       <!-- Top toolbar -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="font-size:20px;font-weight:800;color:var(--text-dark);">🏢 Client Accounts</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Manage clients, projects, sub-projects, timelines and team assignments</div>
+      <div style="margin-bottom:18px;">
+        <!-- Row 1: title + action buttons -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <div>
+            <div style="font-size:20px;font-weight:800;color:var(--text-dark);">🏢 Client Accounts</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Manage clients, projects, sub-projects, timelines and team assignments</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-primary" onclick="openClientModal()">+ New Client</button>
+            <a href="client.html" target="_blank" class="btn btn-outline" style="font-size:13px;" title="Open full production tracker">📋 Full Tracker ↗</a>
+          </div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <input class="form-input" id="client-search" placeholder="🔍 Search clients…" oninput="filterClients()" style="width:200px;font-size:13px;padding:9px 12px;">
-          <select class="form-select" id="client-filter-status" onchange="filterClients()" style="font-size:13px;width:140px;">
+        <!-- Row 2: filters -->
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input class="form-input" id="client-search" placeholder="🔍 Search clients…" oninput="filterClients()" style="flex:1;min-width:160px;max-width:220px;font-size:13px;padding:8px 12px;">
+          <select class="form-select" id="client-filter-status" onchange="filterClients()" style="font-size:13px;min-width:130px;">
             <option value="">All Statuses</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="completed">Completed</option>
+            <option value="active">✅ Active</option>
+            <option value="inactive">⏸ Inactive</option>
+            <option value="paused">⏸ Paused</option>
+            <option value="completed">✔ Completed</option>
           </select>
-          <button class="btn btn-primary" onclick="openClientModal()">+ New Client</button>
-          <a href="client.html" target="_blank" class="btn btn-outline" style="font-size:12px;padding:8px 14px;" title="Open full production tracker">📋 Full Tracker ↗</a>
+          <select class="form-select" id="client-filter-service" onchange="filterClients()" style="font-size:13px;min-width:160px;">
+            <option value="">All Services</option>
+          </select>
+          <select class="form-select" id="client-filter-proj-type" onchange="filterClients()" style="font-size:13px;min-width:150px;">
+            <option value="">All Project Types</option>
+          </select>
+          <select class="form-select" id="client-filter-proj-status" onchange="filterClients()" style="font-size:13px;min-width:155px;">
+            <option value="">All Project Statuses</option>
+            <option value="not-started">Not Started</option>
+            <option value="in-progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="on-hold">On Hold</option>
+          </select>
+          <button class="btn btn-outline" onclick="clearClientFilters()" style="font-size:12px;padding:8px 12px;white-space:nowrap;" title="Clear all filters">✕ Clear</button>
         </div>
+        <!-- Active filter chips -->
+        <div id="client-filter-chips" style="display:none;margin-top:8px;gap:6px;flex-wrap:wrap;"></div>
       </div>
 
       <!-- Client Tracker integration notice -->
-      <div style="background:linear-gradient(90deg,rgba(45,107,182,.08),rgba(135,171,213,.06));border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:20px;">📋</span>
-        <div style="flex:1;">
+      <div style="background:linear-gradient(90deg,rgba(45,107,182,.08),rgba(135,171,213,.06));border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:12px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:18px;flex-shrink:0;">📋</span>
+        <div style="flex:1;min-width:0;">
           <div style="font-size:12px;font-weight:700;color:var(--text-dark);">Full Client &amp; Production Tracker available</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Projects, sub-projects, tasks, recurring services, milestones, progress logs, sales funnel, service schedule and team assignments — all in <strong>client.html</strong>.</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Projects, sub-projects, tasks, recurring services, milestones, progress logs, sales funnel, service schedule and team assignments.</div>
         </div>
-        <a href="client.html" target="_blank" class="btn btn-primary btn-sm">Open Tracker →</a>
+        <a href="client.html" target="_blank" class="btn btn-outline btn-sm" style="white-space:nowrap;flex-shrink:0;">Open Tracker →</a>
       </div>
 
       <!-- Stats bar -->
@@ -4216,17 +4239,105 @@ function updateClientStats(){
     const cnBadge = document.getElementById('client-notif-badge');
     if(cnBadge){ cnBadge.textContent=unreadClient; cnBadge.style.display=unreadClient>0?'inline-flex':'none'; }
   }catch(e){}
+  // Keep filter dropdowns up-to-date
+  if(document.getElementById('client-filter-service')) populateClientFilterDropdowns();
 }
 
 function filterClients(){
-  const q = (document.getElementById('client-search')?.value||'').toLowerCase();
-  const st = document.getElementById('client-filter-status')?.value||'';
-  const live = _getClientDB();
-  renderClientGrid(live.filter(c=>{
-    const matchQ = !q || (c.name||'').toLowerCase().includes(q) || (c.industry||'').toLowerCase().includes(q) || (c.code||'').toLowerCase().includes(q) || (c.accountManager||'').toLowerCase().includes(q);
+  const q       = (document.getElementById('client-search')?.value||'').toLowerCase().trim();
+  const st      = document.getElementById('client-filter-status')?.value||'';
+  const svc     = document.getElementById('client-filter-service')?.value||'';       // service name
+  const pjType  = document.getElementById('client-filter-proj-type')?.value||'';    // project type
+  const pjSt    = document.getElementById('client-filter-proj-status')?.value||'';  // project status
+  const live    = _getClientDB();
+
+  const filtered = live.filter(c=>{
+    // text search
+    const matchQ = !q ||
+      (c.name||'').toLowerCase().includes(q) ||
+      (c.industry||'').toLowerCase().includes(q) ||
+      (c.code||'').toLowerCase().includes(q) ||
+      (c.accountManager||'').toLowerCase().includes(q) ||
+      (c.ownerName||'').toLowerCase().includes(q);
+
+    // client status
     const matchSt = !st || (c.status||'active')===st;
-    return matchQ && matchSt;
-  }));
+
+    // service filter — match any service whose name contains the selected value
+    const matchSvc = !svc || (c.services||[]).some(s=>(s.name||'').toLowerCase()===svc.toLowerCase()||s.catalogId===svc);
+
+    // project type filter — match any project with that type
+    const matchPjType = !pjType || (c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjType.toLowerCase());
+
+    // project status filter — match any project with that status
+    const matchPjSt = !pjSt || (c.projects||[]).some(p=>(p.status||'')=== pjSt);
+
+    return matchQ && matchSt && matchSvc && matchPjType && matchPjSt;
+  });
+
+  renderClientGrid(filtered);
+  renderClientFilterChips();
+}
+
+function clearClientFilters(){
+  ['client-search','client-filter-status','client-filter-service','client-filter-proj-type','client-filter-proj-status']
+    .forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  renderClientGrid();
+  renderClientFilterChips();
+}
+
+// Populate service & project-type dropdowns dynamically from live data
+function populateClientFilterDropdowns(){
+  const live = _getClientDB();
+
+  // ── Services ──
+  const svcNames = new Set();
+  live.forEach(c=>(c.services||[]).forEach(s=>{ if(s.name) svcNames.add(s.name); }));
+  // Also pull from service catalog stored in localStorage
+  try{
+    const cat = JSON.parse(localStorage.getItem('wl_service_catalog')||'[]');
+    cat.forEach(s=>{ if(s.name) svcNames.add(s.name); });
+  }catch(e){}
+  const svcSel = document.getElementById('client-filter-service');
+  if(svcSel){
+    const cur = svcSel.value;
+    svcSel.innerHTML = '<option value="">All Services</option>' +
+      [...svcNames].sort().map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join('');
+  }
+
+  // ── Project Types ──
+  const projTypes = new Set();
+  live.forEach(c=>(c.projects||[]).forEach(p=>{ if(p.type) projTypes.add(p.type); }));
+  const ptSel = document.getElementById('client-filter-proj-type');
+  if(ptSel){
+    const cur = ptSel.value;
+    ptSel.innerHTML = '<option value="">All Project Types</option>' +
+      [...projTypes].sort().map(t=>`<option value="${t}"${cur===t?' selected':''}>${t}</option>`).join('');
+  }
+}
+
+// Show active filter chips below the filter bar
+function renderClientFilterChips(){
+  const wrap = document.getElementById('client-filter-chips');
+  if(!wrap) return;
+  const chips = [];
+  const q    = document.getElementById('client-search')?.value?.trim();
+  const st   = document.getElementById('client-filter-status')?.value;
+  const svc  = document.getElementById('client-filter-service')?.value;
+  const pt   = document.getElementById('client-filter-proj-type')?.value;
+  const ps   = document.getElementById('client-filter-proj-status')?.value;
+  if(q)   chips.push({label:'Search: "'+q+'"',    clear:()=>{ document.getElementById('client-search').value='';              filterClients(); }});
+  if(st)  chips.push({label:'Status: '+st,         clear:()=>{ document.getElementById('client-filter-status').value='';      filterClients(); }});
+  if(svc) chips.push({label:'Service: '+svc,       clear:()=>{ document.getElementById('client-filter-service').value='';     filterClients(); }});
+  if(pt)  chips.push({label:'Type: '+pt,           clear:()=>{ document.getElementById('client-filter-proj-type').value='';   filterClients(); }});
+  if(ps)  chips.push({label:'Project: '+ps.replace('-',' '), clear:()=>{ document.getElementById('client-filter-proj-status').value=''; filterClients(); }});
+  if(!chips.length){ wrap.style.display='none'; return; }
+  wrap.style.display='flex';
+  wrap.innerHTML = chips.map((ch,i)=>`
+    <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 11px;background:rgba(45,107,182,.1);border:1px solid rgba(45,107,182,.2);border-radius:20px;font-size:11px;font-weight:600;color:#2D6BB6;">
+      ${ch.label}
+      <button onclick="(${ch.clear.toString()})()" style="background:none;border:none;cursor:pointer;color:#2D6BB6;font-size:13px;line-height:1;padding:0 0 0 2px;" title="Remove filter">✕</button>
+    </span>`).join('');
 }
 
 // ── Client Detail Panel ──
@@ -4550,7 +4661,7 @@ function saveProgress(){
 const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
-  if(tab==='clients'){ renderClientGrid(); updateClientStats(); }
+  if(tab==='clients'){ populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
 };

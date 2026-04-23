@@ -120,7 +120,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .pb-urgent{background:#1a3f6f;color:#fff;}
 
 /* ── TOOLBAR ── */
-.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+.toolbar{display:flex;flex-direction:column;gap:0;margin-bottom:18px;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:12px 14px;}
 .toolbar-left{flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .search-wrap{position:relative;}
 .search-wrap input{padding-left:30px;}
@@ -383,34 +383,60 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
       </div>
 
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <div class="search-wrap">
+      <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:0;">
+        <!-- Row 1: search + actions -->
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="search-wrap" style="flex:1;min-width:160px;max-width:240px;">
             <span class="si">🔍</span>
-            <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:220px;font-size:11px;padding:7px 11px 7px 28px;">
+            <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:100%;font-size:11px;padding:7px 11px 7px 28px;">
           </div>
-          <select class="form-select" id="filter-status" onchange="filterClients()" style="width:130px;font-size:11px;padding:7px 10px;">
+          <div style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
+            <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
+          </div>
+        </div>
+        <!-- Row 2: filters -->
+        <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px;">
+          <select class="form-select" id="filter-status" onchange="filterClients()" style="flex:1;min-width:110px;max-width:140px;font-size:11px;padding:7px 10px;">
             <option value="">All Statuses</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
             <option value="paused">Paused</option>
           </select>
-          <select class="form-select" id="filter-service" onchange="filterClients()" style="width:160px;font-size:11px;padding:7px 10px;">
+          <select class="form-select" id="filter-service" onchange="filterClients()" style="flex:1;min-width:130px;max-width:170px;font-size:11px;padding:7px 10px;">
             <option value="">All Services</option>
           </select>
-          <select class="form-select" id="filter-manager" onchange="filterClients()" style="width:150px;font-size:11px;padding:7px 10px;">
-            <option value="">All Account Managers</option>
+          <select class="form-select" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
+            <option value="">All Project Types</option>
+            <option value="Web Design">Web Design</option>
+            <option value="Web Development">Web Development</option>
+            <option value="SEO">SEO</option>
+            <option value="Social Media Management">Social Media</option>
+            <option value="Paid Ads">Paid Ads</option>
+            <option value="Branding">Branding</option>
+            <option value="Content Creation">Content Creation</option>
+            <option value="Email Marketing">Email Marketing</option>
+            <option value="Video Production">Video Production</option>
           </select>
-          <select class="form-select" id="filter-sort" onchange="filterClients()" style="width:140px;font-size:11px;padding:7px 10px;">
+          <select class="form-select" id="filter-proj-status" onchange="filterClients()" style="flex:1;min-width:130px;max-width:160px;font-size:11px;padding:7px 10px;">
+            <option value="">All Project Statuses</option>
+            <option value="not-started">Not Started</option>
+            <option value="in-progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="on-hold">On Hold</option>
+          </select>
+          <select class="form-select" id="filter-manager" onchange="filterClients()" style="flex:1;min-width:120px;max-width:155px;font-size:11px;padding:7px 10px;">
+            <option value="">All Managers</option>
+          </select>
+          <select class="form-select" id="filter-sort" onchange="filterClients()" style="flex:1;min-width:120px;max-width:145px;font-size:11px;padding:7px 10px;">
             <option value="name">Sort: Name</option>
             <option value="start">Sort: Start Date</option>
             <option value="progress">Sort: Progress</option>
             <option value="status">Sort: Status</option>
           </select>
+          <button onclick="clearClientFilters()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:11px;cursor:pointer;color:var(--text-light);white-space:nowrap;" title="Clear all filters">✕ Clear</button>
         </div>
-        <div style="display:flex;gap:7px;" id="admin-only-btns">
-          <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
-        </div>
+        <!-- Active filter chips -->
+        <div id="client-filter-chips" style="display:none;gap:5px;flex-wrap:wrap;margin-top:7px;"></div>
       </div>
 
       <div class="client-grid" id="client-grid"></div>
@@ -1182,7 +1208,7 @@ function showPage(name, el){
   _el('page-title').textContent=title;
   _el('page-sub').textContent=sub;
   _el('notif-panel').classList.remove('open');
-  if(name==='clients'){ populateScheduleClientFilter(); renderClientGrid(); }
+  if(name==='clients'){ populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
   if(name==='services-schedule'){ populateScheduleClientFilter(); renderSchedule(); }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
@@ -1224,8 +1250,20 @@ function populateServiceDropdown(){
   const cat=getCatalog();
   const opts=cat.map(s=>`<option value="${s.id}" data-freq="${s.freq}">${s.name}</option>`).join('');
   const el=_el('svc-name'); if(el) el.innerHTML=`<option value="">— Select service —</option>`+opts;
-  const flt=_el('filter-service'); if(!flt) return;
-  flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  // Filter-service dropdown: use catalogId so matching is exact
+  const flt=_el('filter-service');
+  if(flt){
+    const cur=flt.value;
+    flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.id}"${cur===s.id?' selected':''}>${s.name}</option>`).join('');
+  }
+  // Populate project-type dropdown dynamically from live client data
+  const ptSel=_el('filter-proj-type');
+  if(ptSel){
+    const cur=ptSel.value;
+    const typeSet=new Set(['Web Design','Web Development','SEO','Social Media Management','Paid Ads','Branding','Content Creation','Email Marketing','Video Production']);
+    getClients().forEach(c=>(c.projects||[]).forEach(p=>{ if(p.type) typeSet.add(p.type); }));
+    ptSel.innerHTML=`<option value="">All Project Types</option>`+[...typeSet].sort().map(t=>`<option value="${t}"${cur===t?' selected':''}>${t}</option>`).join('');
+  }
 }
 function populateScheduleClientFilter(){
   const sel=_el('schedule-client-filter'); if(!sel) return;
@@ -1323,36 +1361,90 @@ function updateStats(){
 }
 
 function filterClients(){
-  const q=(_el('client-search')?.value||'').toLowerCase();
+  const q=(_el('client-search')?.value||'').toLowerCase().trim();
   const st=_el('filter-status')?.value||'';
   const sv=_el('filter-service')?.value||'';
+  const pjType=_el('filter-proj-type')?.value||'';
+  const pjSt=_el('filter-proj-status')?.value||'';
   const mg=_el('filter-manager')?.value||'';
   const sort=_el('filter-sort')?.value||'name';
   let list=getClients();
+
+  // text search
   if(q) list=list.filter(c=>
-    c.name.toLowerCase().includes(q)||(c.code||'').toLowerCase().includes(q)||
+    (c.name||'').toLowerCase().includes(q)||(c.code||'').toLowerCase().includes(q)||
     (c.accountManager||'').toLowerCase().includes(q)||(c.ownerName||'').toLowerCase().includes(q)||
     (c.industry||'').toLowerCase().includes(q)
   );
+
+  // client status
   if(st) list=list.filter(c=>(c.status||'active')===st);
-  if(sv) list=list.filter(c=>(c.services||[]).some(s=>s.catalogId===sv));
+
+  // service type — match catalogId or service name
+  if(sv) list=list.filter(c=>(c.services||[]).some(s=>s.catalogId===sv||(s.name||'').toLowerCase()===sv.toLowerCase()));
+
+  // project type — match any project whose type equals selected
+  if(pjType) list=list.filter(c=>(c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjType.toLowerCase()));
+
+  // project status — match any project with that status
+  if(pjSt) list=list.filter(c=>(c.projects||[]).some(p=>(p.status||'')===pjSt));
+
+  // account manager
   if(mg) list=list.filter(c=>c.managerId===mg);
+
   // Sort
   list.sort((a,b)=>{
     if(sort==='name') return a.name.localeCompare(b.name);
     if(sort==='start') return (a.start||'').localeCompare(b.start||'');
     if(sort==='status') return (a.status||'').localeCompare(b.status||'');
     if(sort==='progress'){
-      const pa=a.projects?.length?Math.round(a.projects.reduce((s,p)=>s+p.progress,0)/a.projects.length):0;
-      const pb=b.projects?.length?Math.round(b.projects.reduce((s,p)=>s+p.progress,0)/b.projects.length):0;
+      const pa=a.projects?.length?Math.round(a.projects.reduce((s,p)=>s+(p.progress||0),0)/a.projects.length):0;
+      const pb=b.projects?.length?Math.round(b.projects.reduce((s,p)=>s+(p.progress||0),0)/b.projects.length):0;
       return pb-pa;
     }
     return 0;
   });
+
   if(_activeClientId && !list.find(c=>c.id===_activeClientId)){
     _el('client-detail-panel').style.display='none'; _activeClientId=null;
   }
   renderClientGrid(list);
+  renderClientFilterChips();
+}
+
+function clearClientFilters(){
+  ['client-search','filter-status','filter-service','filter-proj-type','filter-proj-status','filter-manager']
+    .forEach(id=>{ const el=_el(id); if(el) el.value=''; });
+  _el('filter-sort').value='name';
+  renderClientGrid();
+  renderClientFilterChips();
+}
+
+function renderClientFilterChips(){
+  const wrap=_el('client-filter-chips'); if(!wrap) return;
+  const chips=[];
+  const q=_el('client-search')?.value?.trim();
+  const st=_el('filter-status')?.value;
+  const sv=_el('filter-service')?.value;
+  const pt=_el('filter-proj-type')?.value;
+  const ps=_el('filter-proj-status')?.value;
+  const mg=_el('filter-manager')?.value;
+  // Find label text for service
+  const svcLabel = sv ? (_el('filter-service')?.querySelector(`option[value="${sv}"]`)?.textContent||sv) : '';
+  const mgLabel  = mg ? (_el('filter-manager')?.querySelector(`option[value="${mg}"]`)?.textContent||mg) : '';
+  if(q)  chips.push({label:'Search: "'+q+'"',       id:'client-search',   reset:''});
+  if(st) chips.push({label:'Status: '+st,            id:'filter-status',   reset:''});
+  if(sv) chips.push({label:'Service: '+svcLabel,     id:'filter-service',  reset:''});
+  if(pt) chips.push({label:'Project Type: '+pt,      id:'filter-proj-type',reset:''});
+  if(ps) chips.push({label:'Project Status: '+ps.replace('-',' '), id:'filter-proj-status', reset:''});
+  if(mg) chips.push({label:'Manager: '+mgLabel,      id:'filter-manager',  reset:''});
+  if(!chips.length){ wrap.style.display='none'; return; }
+  wrap.style.display='flex';
+  wrap.innerHTML=chips.map(ch=>`
+    <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 11px;background:rgba(45,107,182,.1);border:1px solid rgba(45,107,182,.2);border-radius:20px;font-size:10px;font-weight:600;color:#2D6BB6;cursor:default;">
+      ${ch.label}
+      <button onclick="(function(){var el=document.getElementById('${ch.id}');if(el)el.value='';filterClients();})()" style="background:none;border:none;cursor:pointer;color:#2D6BB6;font-size:12px;line-height:1;padding:0 0 0 2px;">✕</button>
+    </span>`).join('');
 }
 
 // ═══════════════════════════════════════════════════════
