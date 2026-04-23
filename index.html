@@ -1011,7 +1011,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
 
         <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')">Live Feed</div>
-        <div class="admin-nav-item" onclick="switchAdminTab(this,'clients')">Clients</div>
+        <div class="admin-nav-item" onclick="switchAdminTab(this,'clients')">Clients<span id="client-notif-badge" style="display:none;background:#e05555;color:#fff;font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:6px;min-width:18px;text-align:center;"></span></div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')">Payroll</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
       </div>
@@ -1323,7 +1323,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="completed">Completed</option>
           </select>
           <button class="btn btn-primary" onclick="openClientModal()">+ New Client</button>
+          <a href="client.html" target="_blank" class="btn btn-outline" style="font-size:12px;padding:8px 14px;" title="Open full production tracker">📋 Full Tracker ↗</a>
         </div>
+      </div>
+
+      <!-- Client Tracker integration notice -->
+      <div style="background:linear-gradient(90deg,rgba(45,107,182,.08),rgba(135,171,213,.06));border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:20px;">📋</span>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">Full Client &amp; Production Tracker available</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Projects, sub-projects, tasks, recurring services, milestones, progress logs, sales funnel, service schedule and team assignments — all in <strong>client.html</strong>.</div>
+        </div>
+        <a href="client.html" target="_blank" class="btn btn-primary btn-sm">Open Tracker →</a>
       </div>
 
       <!-- Stats bar -->
@@ -4107,39 +4118,15 @@ window.switchAdminTab = function(el, tab){
 // CLIENT MODULE — Data + Logic
 // ═══════════════════════════════════════════════════════════════
 
-// ── In-memory client store ──
-let clientDB = [
-  {
-    id:'c1', name:'Sunrise Realty', industry:'Real Estate', status:'active',
-    color:'#2D6BB6', start:'2024-01-15', end:'', notes:'Full digital marketing retainer.',
-    projects:[
-      {id:'p1', name:'Website Redesign', type:'Web Design', status:'in-progress', start:'2024-02-01', due:'2024-05-01',
-       priority:'high', color:'#2D6BB6', desc:'Full site overhaul with new branding.', users:['u1','u2'], progress:68,
-       progressLog:[{date:'2024-03-10',pct:40,note:'Wireframes approved.'},{date:'2024-04-01',pct:68,note:'Dev 70% done.'}],
-       milestones:[{id:'m1',title:'Wireframes Signed Off',date:'2024-03-08',notes:'Client approved v2.'},{id:'m2',title:'Dev Complete',date:'2024-05-01',notes:'Pending.'}],
-       subprojects:[{id:'sp1',name:'Homepage',status:'completed'},{id:'sp2',name:'Services Page',status:'in-progress'},{id:'sp3',name:'Blog',status:'not-started'}]
-      },
-      {id:'p2', name:'SEO Campaign', type:'SEO', status:'in-progress', start:'2024-01-15', due:'2024-12-31',
-       priority:'medium', color:'#9333ea', desc:'Ongoing monthly SEO retainer.', users:['u2'], progress:45,
-       progressLog:[{date:'2024-03-01',pct:30,note:'On-page audit done.'},{date:'2024-04-01',pct:45,note:'15 keywords ranking.'}],
-       milestones:[{id:'m3',title:'100 Keywords Ranking',date:'2024-08-01',notes:'Target milestone.'}],
-       subprojects:[]
-      }
-    ]
-  },
-  {
-    id:'c2', name:'NovaTech Labs', industry:'Technology', status:'active',
-    color:'#9333ea', start:'2024-03-01', end:'', notes:'Paid ads + social media management.',
-    projects:[
-      {id:'p3', name:'Meta Ads Q2', type:'Paid Ads', status:'completed', start:'2024-04-01', due:'2024-06-30',
-       priority:'high', color:'#9333ea', desc:'Q2 Meta ad campaigns.', users:['u4'], progress:100,
-       progressLog:[{date:'2024-06-30',pct:100,note:'All campaigns wrapped. ROAS 4.2x.'}],
-       milestones:[{id:'m4',title:'Q2 ROAS Target Hit',date:'2024-06-30',notes:'4.2x achieved.'}],
-       subprojects:[{id:'sp4',name:'Awareness Campaign',status:'completed'},{id:'sp5',name:'Retargeting',status:'completed'}]
-      }
-    ]
-  }
-];
+// ── Live client store — reads from shared localStorage (written by client.html) ──
+const _CL_DB_KEY = 'wl_clients_db';
+function _getClientDB(){ try{ return JSON.parse(localStorage.getItem(_CL_DB_KEY)||'null')||[]; }catch(e){ return []; } }
+function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify(arr)); }catch(e){} }
+// Proxy accessor so legacy code using `clientDB` still works
+let _clientDBCache = null;
+const clientDBHandler = { get(t,p){ return _getClientDB()[p]; }, set(t,p,v){ return true; } };
+// Keep a live reference that always reads from storage
+Object.defineProperty(window,'clientDB',{ get:()=>_getClientDB(), set:(v)=>_saveClientDB(v) });
 
 let selectedClientColor = '#2D6BB6';
 let activeClientId = null;
@@ -4157,44 +4144,48 @@ function buildTeamRoster(){
 }
 let TEAM_ROSTER=[]; // populated lazily in openProjectModal once DB_KEYS is defined
 
-// ── Render client grid ──
+// ── Render client grid (always reads live data from localStorage) ──
 function renderClientGrid(list){
-  list = list || clientDB;
+  list = list || _getClientDB();
   const grid = document.getElementById('client-grid');
   if(!grid) return;
   grid.innerHTML = '';
-  if(list.length === 0){
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients found. Click <strong>+ New Client</strong> to add your first.</div>';
+  if(!list.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="client.html" target="_blank" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
+    updateClientStats();
     return;
   }
   list.forEach(c => {
-    const totalPct = c.projects.length ? Math.round(c.projects.reduce((s,p)=>s+p.progress,0)/c.projects.length) : 0;
-    const initials = c.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-    const statusChip = `<span class="status-chip chip-${c.status}">${c.status}</span>`;
-    const projPills = c.projects.slice(0,3).map(p=>`<span class="proj-pill" style="background:${p.color}">${p.name}</span>`).join('');
-    const extra = c.projects.length > 3 ? `<span style="font-size:11px;color:var(--text-light);margin-left:4px;">+${c.projects.length-3} more</span>` : '';
+    const projs = c.projects||[];
+    const totalPct = projs.length ? Math.round(projs.reduce((s,p)=>s+(p.progress||0),0)/projs.length) : 0;
+    const initials = (c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+    const statusLabel = c.status||'active';
+    const statusChip = `<span class="status-chip chip-${statusLabel}">${statusLabel}</span>`;
+    const svcBadges = (c.services||[]).slice(0,3).map(s=>`<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:#2D6BB6;margin-right:3px;">${s.name}</span>`).join('');
+    const projPills = projs.slice(0,3).map(p=>`<span class="proj-pill" style="background:${p.color||c.color||'#2D6BB6'}">${p.name}</span>`).join('');
+    const extra = projs.length > 3 ? `<span style="font-size:11px;color:var(--text-light);margin-left:4px;">+${projs.length-3} more</span>` : '';
 
     const card = document.createElement('div');
-    card.className = 'client-card';
+    card.className = 'client-card'+(statusLabel==='inactive'||statusLabel==='paused'?' inactive-card':'');
     card.onclick = () => openClientDetail(c.id);
     card.innerHTML = `
-      <div style="height:5px;background:${c.color};"></div>
+      <div style="height:5px;background:${c.color||'#2D6BB6'};"></div>
       <div class="client-card-header">
-        <div class="client-avatar" style="background:${c.color};">${initials}</div>
+        <div class="client-avatar" style="background:${c.color||'#2D6BB6'};">${initials}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:15px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${c.industry||'—'} ${statusChip}</div>
+          <div style="font-size:14px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${c.accountManager||c.industry||'—'} ${statusChip}</div>
         </div>
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();editClient('${c.id}')" style="font-size:11px;">✏️</button>
-          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteClient('${c.id}')" style="font-size:11px;">✕</button>
+        <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
+          <button class="btn btn-sm btn-outline" onclick="editClient('${c.id}')" style="font-size:11px;">✏️</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteClient('${c.id}')" style="font-size:11px;">✕</button>
         </div>
       </div>
       <div class="client-card-body">
-        <div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">${c.projects.length} project${c.projects.length!==1?'s':''} · ${c.start ? 'Since '+c.start : ''}</div>
-        <div class="proj-bar-wrap"><div class="proj-bar-fill" style="width:${totalPct}%;background:${c.color};"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);margin-bottom:10px;"><span>Overall progress</span><span style="font-weight:700;color:var(--text-dark);">${totalPct}%</span></div>
-        <div>${projPills}${extra}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">${projs.length} project${projs.length!==1?'s':''} · ${c.start ? 'Since '+c.start : ''}</div>
+        <div class="proj-bar-wrap"><div class="proj-bar-fill" style="width:${totalPct}%;background:${c.color||'#2D6BB6'};"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);margin-bottom:8px;"><span>Overall progress</span><span style="font-weight:700;color:var(--text-dark);">${totalPct}%</span></div>
+        <div>${svcBadges||projPills}${extra}</div>
       </div>`;
     grid.appendChild(card);
   });
@@ -4208,23 +4199,32 @@ function updateClientStats(){
   const op= document.getElementById('stat-ongoing-projects');
   const od= document.getElementById('stat-overdue-projects');
   if(!t) return;
-  const today = new Date().toISOString().slice(0,10);
-  const allProjects = clientDB.reduce((arr,c)=>arr.concat(c.projects),[]);
-  t.textContent = clientDB.length;
-  a.textContent = clientDB.filter(c=>c.status==='active').length;
+  const todayStr = new Date().toISOString().slice(0,10);
+  const liveClients = _getClientDB();
+  const allProjects = liveClients.reduce((arr,c)=>arr.concat(c.projects||[]),[]);
+  t.textContent = liveClients.length;
+  a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
   if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
   const ongoing = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold');
   if(op) op.textContent = ongoing.length;
-  const overdue = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<today);
+  const overdue = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr);
   if(od){ od.textContent = overdue.length; od.style.color = overdue.length>0?'var(--red)':'var(--text-light)'; }
+  // ── Client notification badge in nav ──
+  try{
+    const clientNotifs = JSON.parse(localStorage.getItem('wl_client_notifications')||'[]');
+    const unreadClient = clientNotifs.filter(n=>!n.read).length;
+    const cnBadge = document.getElementById('client-notif-badge');
+    if(cnBadge){ cnBadge.textContent=unreadClient; cnBadge.style.display=unreadClient>0?'inline-flex':'none'; }
+  }catch(e){}
 }
 
 function filterClients(){
   const q = (document.getElementById('client-search')?.value||'').toLowerCase();
   const st = document.getElementById('client-filter-status')?.value||'';
-  renderClientGrid(clientDB.filter(c=>{
-    const matchQ = !q || c.name.toLowerCase().includes(q) || (c.industry||'').toLowerCase().includes(q);
-    const matchSt = !st || c.status===st;
+  const live = _getClientDB();
+  renderClientGrid(live.filter(c=>{
+    const matchQ = !q || (c.name||'').toLowerCase().includes(q) || (c.industry||'').toLowerCase().includes(q) || (c.code||'').toLowerCase().includes(q) || (c.accountManager||'').toLowerCase().includes(q);
+    const matchSt = !st || (c.status||'active')===st;
     return matchQ && matchSt;
   }));
 }
@@ -4232,7 +4232,7 @@ function filterClients(){
 // ── Client Detail Panel ──
 function openClientDetail(clientId){
   activeClientId = clientId;
-  const c = clientDB.find(x=>x.id===clientId);
+  const c = _getClientDB().find(x=>x.id===clientId);
   if(!c) return;
   const panel = document.getElementById('client-detail-panel');
   panel.style.display = 'block';
@@ -4331,7 +4331,7 @@ function renderClientDetail(c){
 function openClientModal(){ 
   document.getElementById('clientModalTitle').textContent='New Client';
   document.getElementById('client-edit-id').value='';
-  ['cf-name','cf-industry','cf-notes','cf-start','cf-end'].forEach(id=>document.getElementById(id).value='');
+  ['cf-name','cf-industry','cf-notes','cf-start','cf-end'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   document.getElementById('cf-status').value='active';
   selectedClientColor='#2D6BB6';
   document.querySelectorAll('.cl-swatch').forEach(s=>s.classList.remove('sel'));
@@ -4339,16 +4339,16 @@ function openClientModal(){
   openModal('clientModal');
 }
 function editClient(id){
-  const c=clientDB.find(x=>x.id===id);if(!c)return;
+  const live=_getClientDB(); const c=live.find(x=>x.id===id); if(!c) return;
   document.getElementById('clientModalTitle').textContent='Edit Client';
   document.getElementById('client-edit-id').value=id;
-  document.getElementById('cf-name').value=c.name;
+  document.getElementById('cf-name').value=c.name||'';
   document.getElementById('cf-industry').value=c.industry||'';
-  document.getElementById('cf-status').value=c.status;
+  document.getElementById('cf-status').value=c.status||'active';
   document.getElementById('cf-start').value=c.start||'';
   document.getElementById('cf-end').value=c.end||'';
   document.getElementById('cf-notes').value=c.notes||'';
-  selectedClientColor=c.color;
+  selectedClientColor=c.color||'#2D6BB6';
   document.querySelectorAll('.cl-swatch').forEach(s=>{s.classList.toggle('sel',s.dataset.color===c.color);});
   openModal('clientModal');
 }
@@ -4364,23 +4364,38 @@ function saveClient(){
     notes:document.getElementById('cf-notes').value,
     color:selectedClientColor
   };
+  const live=_getClientDB();
   if(editId){
-    const c=clientDB.find(x=>x.id===editId);
-    if(c){Object.assign(c,data);}
+    const idx=live.findIndex(x=>x.id===editId);
+    if(idx>=0) Object.assign(live[idx],data);
   } else {
-    const newC={id:'c'+Date.now(),...data,projects:[]};
-    clientDB.push(newC);
+    const newC={id:'c'+Date.now(),...data,projects:[],services:[]};
+    live.unshift(newC);
+    // Push to live feed so admin feed sees the new client
+    try{
+      const feed=JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
+      feed.unshift({id:'lf'+Date.now(),type:'client',user:'Admin',desc:'New client added: '+name,ts:Date.now()});
+      localStorage.setItem('wl_live_feed',JSON.stringify(feed.slice(0,500)));
+      // Update client notif badge
+      const cNotifs=JSON.parse(localStorage.getItem('wl_client_notifications')||'[]');
+      cNotifs.unshift({id:'cn'+Date.now(),ts:Date.now(),read:false,title:'New client: '+name,body:'Added from Admin panel.',icon:'🏢'});
+      localStorage.setItem('wl_client_notifications',JSON.stringify(cNotifs.slice(0,200)));
+    }catch(e){}
   }
+  _saveClientDB(live);
   closeModal('clientModal');
   renderClientGrid();
-  if(activeClientId===editId && editId) renderClientDetail(clientDB.find(x=>x.id===editId));
+  updateClientStats();
+  if(activeClientId===editId && editId){ const uc=live.find(x=>x.id===editId); if(uc) renderClientDetail(uc); }
   showToast(editId?'Client updated ✓':'Client added ✓');
 }
 function deleteClient(id){
   if(!confirm('Delete this client and all their projects?')) return;
-  clientDB=clientDB.filter(c=>c.id!==id);
+  const live=_getClientDB().filter(c=>c.id!==id);
+  _saveClientDB(live);
   if(activeClientId===id){ document.getElementById('client-detail-panel').style.display='none'; activeClientId=null; }
   renderClientGrid();
+  updateClientStats();
   showToast('Client deleted');
 }
 function selectClientColor(el){
@@ -4391,7 +4406,7 @@ function selectClientColor(el){
 
 // ── Project CRUD ──
 function openProjectModal(clientId, projId){
-  const c=clientDB.find(x=>x.id===clientId);if(!c)return;
+  const c=_getClientDB().find(x=>x.id===clientId);if(!c)return;
   TEAM_ROSTER=buildTeamRoster();
   document.getElementById('projectModalTitle').textContent = projId ? 'Edit Project' : 'New Project';
   document.getElementById('projectModalSub').textContent = c.name;
@@ -4434,7 +4449,8 @@ function saveProject(){
   const editId=document.getElementById('proj-edit-id').value;
   const name=document.getElementById('pf-name').value.trim();
   if(!name){showToast('Project name is required');return;}
-  const c=clientDB.find(x=>x.id===clientId);if(!c)return;
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===clientId);if(!c)return;
   const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
   const progressVal=parseInt(document.getElementById('pf-progress')?.value||0,10);
   const data={
@@ -4445,15 +4461,16 @@ function saveProject(){
     priority:document.getElementById('pf-priority').value,
     color:document.getElementById('pf-color').value,
     desc:document.getElementById('pf-desc').value,
-    progress:progressVal,
-    users
+    progress:progressVal, users
   };
   if(editId){
-    const p=c.projects.find(x=>x.id===editId);
+    const p=(c.projects||[]).find(x=>x.id===editId);
     if(p) Object.assign(p,data);
   } else {
-    c.projects.push({id:'p'+Date.now(),...data,progressLog:[],milestones:[],subprojects:[]});
+    if(!c.projects) c.projects=[];
+    c.projects.push({id:'p'+Date.now(),...data,progressLog:[],milestones:[],subprojects:[],tasks:[]});
   }
+  _saveClientDB(live);
   closeModal('projectModal');
   renderClientGrid();
   renderClientDetail(c);
@@ -4461,8 +4478,10 @@ function saveProject(){
 }
 function deleteProject(clientId,projId){
   if(!confirm('Delete this project?'))return;
-  const c=clientDB.find(x=>x.id===clientId);if(!c)return;
-  c.projects=c.projects.filter(p=>p.id!==projId);
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===clientId);if(!c)return;
+  c.projects=(c.projects||[]).filter(p=>p.id!==projId);
+  _saveClientDB(live);
   renderClientGrid();
   renderClientDetail(c);
   showToast('Project deleted');
@@ -4481,8 +4500,12 @@ function saveMilestone(){
   if(!title){showToast('Milestone title required');return;}
   const cid=document.getElementById('ms-client-id').value;
   const pid=document.getElementById('ms-proj-id').value;
-  const c=clientDB.find(x=>x.id===cid);const p=c?.projects.find(x=>x.id===pid);if(!p)return;
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===cid); if(!c)return;
+  const p=(c.projects||[]).find(x=>x.id===pid); if(!p)return;
+  if(!p.milestones) p.milestones=[];
   p.milestones.push({id:'ms'+Date.now(),title,date:document.getElementById('ms-date').value,notes:document.getElementById('ms-notes').value});
+  _saveClientDB(live);
   closeModal('milestoneModal');
   renderClientDetail(c);
   updateClientStats();
@@ -4491,11 +4514,11 @@ function saveMilestone(){
 
 // ── Progress ──
 function openProgressModal(clientId,projId){
-  const c=clientDB.find(x=>x.id===clientId);const p=c?.projects.find(x=>x.id===projId);if(!p)return;
+  const c=_getClientDB().find(x=>x.id===clientId); const p=(c?.projects||[]).find(x=>x.id===projId); if(!p)return;
   document.getElementById('prog-client-id').value=clientId;
   document.getElementById('prog-proj-id').value=projId;
-  document.getElementById('progress-modal-sub').textContent=p.name+' — current: '+p.progress+'%';
-  document.getElementById('prog-pct').value=p.progress;
+  document.getElementById('progress-modal-sub').textContent=p.name+' — current: '+(p.progress||0)+'%';
+  document.getElementById('prog-pct').value=p.progress||0;
   document.getElementById('prog-note').value='';
   document.getElementById('prog-date').value=new Date().toISOString().slice(0,10);
   openModal('progressModal');
@@ -4504,10 +4527,19 @@ function saveProgress(){
   const pct=parseInt(document.getElementById('prog-pct').value)||0;
   const cid=document.getElementById('prog-client-id').value;
   const pid=document.getElementById('prog-proj-id').value;
-  const c=clientDB.find(x=>x.id===cid);const p=c?.projects.find(x=>x.id===pid);if(!p)return;
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===cid); const p=(c?.projects||[]).find(x=>x.id===pid); if(!p)return;
   p.progress=Math.min(100,Math.max(0,pct));
   if(p.progress===100) p.status='completed';
+  if(!p.progressLog) p.progressLog=[];
   p.progressLog.push({date:document.getElementById('prog-date').value,pct:p.progress,note:document.getElementById('prog-note').value});
+  _saveClientDB(live);
+  // Push progress event to live feed
+  try{
+    const feed=JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
+    feed.unshift({id:'lf'+Date.now(),type:'client',user:'Admin',desc:'Progress update: '+p.name+' ('+c.name+')',detail:p.progress+'% complete',ts:Date.now()});
+    localStorage.setItem('wl_live_feed',JSON.stringify(feed.slice(0,500)));
+  }catch(e){}
   closeModal('progressModal');
   renderClientGrid();
   renderClientDetail(c);
@@ -4518,10 +4550,12 @@ function saveProgress(){
 const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
-  if(tab==='clients'){ renderClientGrid(); }
+  if(tab==='clients'){ renderClientGrid(); updateClientStats(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
 };
+// Refresh client badge on every tab switch and periodically
+setInterval(updateClientStats, 30000);
 
 </script>
 
@@ -4862,9 +4896,9 @@ function renderFeedList(events){
     list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet.</div>';
     return;
   }
-  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊'};
-  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod'};
-  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)'};
+  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢'};
+  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod',client:'feed-icon-eod'};
+  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)'};
   list.innerHTML = events.map(e=>{
     const t = new Date(e.time);
     const timeStr = t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' · ' + e.date;
