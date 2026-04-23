@@ -369,6 +369,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="nav-item" onclick="showSection('blockers',this)"><span class="ni">🚧</span>Blockers</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni">📋</span>Downtime Tasks</div>
       <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni">🎨</span>Brand Rights</div>
+      <div class="nav-item" onclick="showSection('myassignments',this)" id="nav-myassignments"><span class="ni">🏢</span>My Assignments<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
       <div class="nav-group-label">Control</div>
       <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni">🛡️</span>Decision Rights</div>
       <div class="nav-item" onclick="showSection('goals',this)"><span class="ni">🎯</span>Goals</div>
@@ -773,6 +774,43 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
               <button class="btn btn-primary" onclick="changeUserPassword()">Update Password</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── MY ASSIGNMENTS (from client.html / wl_clients_db) ── -->
+      <div id="sec-myassignments" class="page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">🏢 My Assignments</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Projects, tasks, services and notifications assigned to you</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <a href="client.html" target="_blank" class="btn btn-outline btn-sm">📋 Open Tracker ↗</a>
+            <button class="btn btn-primary btn-sm" onclick="loadMyAssignments()">↺ Refresh</button>
+          </div>
+        </div>
+
+        <!-- Notification cards from client module -->
+        <div id="assign-notif-banner" style="display:none;background:linear-gradient(90deg,rgba(45,107,182,.09),rgba(135,171,213,.05));border:1px solid rgba(45,107,182,.18);border-radius:12px;padding:14px 18px;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:11px;">
+            <span style="font-size:18px;">🔔</span>
+            <div style="font-size:12px;font-weight:700;color:var(--text-dark);text-transform:uppercase;letter-spacing:.06em;">Client Notifications</div>
+            <div id="assign-notif-count" style="font-size:11px;font-weight:700;background:rgba(45,107,182,.12);color:#2D6BB6;border:1px solid rgba(45,107,182,.2);border-radius:20px;padding:1px 9px;"></div>
+            <button class="btn btn-xs btn-outline" style="margin-left:auto;" onclick="markAssignNotifRead()">Mark all read</button>
+          </div>
+          <div id="assign-notif-list"></div>
+        </div>
+
+        <!-- Stats row -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+          <div class="stat-card"><div class="stat-label">Tasks Assigned</div><div class="stat-value" id="as-task-count" style="font-size:24px;">0</div><div class="stat-sub">Pending tasks</div></div>
+          <div class="stat-card"><div class="stat-label">Services</div><div class="stat-value" id="as-svc-count" style="font-size:24px;">0</div><div class="stat-sub">Recurring services</div></div>
+          <div class="stat-card"><div class="stat-label">Projects</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Projects assigned</div></div>
+          <div class="stat-card"><div class="stat-label">Services Due</div><div class="stat-value" id="as-due-count" style="font-size:24px;color:var(--orange);">0</div><div class="stat-sub">Within 7 days</div></div>
+        </div>
+
+        <div id="my-assignments-list">
+          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">Loading assignments…</div>
         </div>
       </div>
 
@@ -1293,6 +1331,8 @@ function initApp(){
   checkAnnouncements();
   // Load goals
   loadGoals();
+  // Check for client assignments from wl_clients_db / wl_client_notifications
+  updateAssignmentsBadge();
   // Load theme
   const saved = localStorage.getItem('wl_theme');
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
@@ -1484,13 +1524,209 @@ function checkAnnouncements(){
   }
 }
 
+// ── MY ASSIGNMENTS (reads from shared wl_clients_db written by client.html) ──
+const _ASSIGN_CL_KEY     = 'wl_clients_db';
+const _ASSIGN_NOTIF_KEY  = 'wl_client_notifications';
+const _ASSIGN_USER_KEY   = 'wl_user_assignments';
+
+function _getAssignClients(){ try{ return JSON.parse(localStorage.getItem(_ASSIGN_CL_KEY)||'[]')||[]; }catch(e){ return []; } }
+function _getAssignNotifs(){
+  try{
+    const myId = currentUser?.id||currentUser?.name||'';
+    const myName = currentUser?.name||'';
+    // wl_user_assignments: personal alerts written by client.html pushNotif()
+    const userAlerts = (JSON.parse(localStorage.getItem(_ASSIGN_USER_KEY)||'[]')||[]).filter(n=>!n.userId||(n.userId===myId||n.userId===myName));
+    // wl_client_notifications: general client module notifications
+    const allNotifs  = JSON.parse(localStorage.getItem(_ASSIGN_NOTIF_KEY)||'[]')||[];
+    // Merge, deduplicate by id
+    const combined = [...userAlerts, ...allNotifs];
+    const seen = new Set();
+    return combined.filter(n=>{ const k=n.id||JSON.stringify(n); if(seen.has(k))return false; seen.add(k); return true; })
+                   .sort((a,b)=>b.ts-a.ts).slice(0,30);
+  }catch(e){ return []; }
+}
+
+function updateAssignmentsBadge(){
+  try{
+    const myId   = currentUser?.id||currentUser?.name||'';
+    const myName = currentUser?.name||'';
+    const clients= _getAssignClients();
+    const todayStr = new Date().toISOString().slice(0,10);
+    const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+    let taskCount=0, projCount=0, svcCount=0, dueCount=0;
+    clients.forEach(c=>{
+      (c.projects||[]).forEach(p=>{
+        if((p.users||[]).some(u=>u===myId||u===myName)) projCount++;
+        (p.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===myName)&&!t.done) taskCount++; });
+        (p.subprojects||[]).forEach(sp=>{
+          if((sp.users||[]).some(u=>u===myId||u===myName)) projCount++;
+          (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===myName)&&!t.done) taskCount++; });
+        });
+      });
+      (c.services||[]).forEach(s=>{
+        if(s.assigneeId===myId||s.assigneeName===myName){
+          svcCount++;
+          if(s.due&&s.due<=in7s) dueCount++;
+        }
+      });
+    });
+    const total = taskCount+dueCount;
+    const badge = document.getElementById('assignments-badge');
+    if(badge){ badge.textContent=total; badge.style.display=total>0?'inline-flex':'none'; }
+    // Also show notification dot on topbar if unread client notifs exist
+    const unread = _getAssignNotifs().filter(n=>!n.read).length;
+    const dot = document.getElementById('notifDot');
+    if(dot && unread>0) dot.style.display='block';
+  }catch(e){}
+}
+
+function loadMyAssignments(){
+  const myId   = currentUser?.id||currentUser?.name||'';
+  const myName = currentUser?.name||'';
+  const clients= _getAssignClients();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const in7  = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+
+  // ── Notification banner ──
+  const notifs  = _getAssignNotifs();
+  const unread  = notifs.filter(n=>!n.read);
+  const banner  = document.getElementById('assign-notif-banner');
+  const nList   = document.getElementById('assign-notif-list');
+  const nCount  = document.getElementById('assign-notif-count');
+  if(banner && notifs.length){
+    banner.style.display='block';
+    if(nCount) nCount.textContent = unread.length+' unread';
+    if(nList) nList.innerHTML = notifs.slice(0,8).map(n=>`
+      <div style="display:flex;align-items:flex-start;gap:9px;background:rgba(255,255,255,.65);border-radius:9px;padding:8px 12px;margin-bottom:6px;${!n.read?'border-left:3px solid #2D6BB6;':''}">
+        <span style="font-size:16px;flex-shrink:0;">${n.icon||'🔔'}</span>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${n.title||''}</div>
+          ${n.body?`<div style="font-size:11px;color:var(--text-mid);margin-top:1px;">${n.body}</div>`:''}
+          <div style="font-size:10px;color:var(--text-light);margin-top:3px;">${n.ts?new Date(n.ts).toLocaleString():''}</div>
+        </div>
+      </div>`).join('');
+  } else if(banner){
+    banner.style.display='none';
+  }
+
+  // ── Build assignment items ──
+  let taskCount=0, projCount=0, svcCount=0, dueCount=0;
+  let html=''; let found=false;
+
+  clients.forEach(c=>{
+    (c.projects||[]).forEach(p=>{
+      const onProject=(p.users||[]).some(u=>u===myId||u===myName);
+      const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
+      const mySubTasks=(p.subprojects||[]).flatMap(sp=>
+        (sp.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done)
+                      .map(t=>({...t,_spName:sp.name}))
+      );
+      const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).some(u=>u===myId||u===myName));
+      const mySvcs=(c.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===myName);
+      if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length) return;
+      found=true;
+      if(onProject) projCount++;
+      taskCount+=myTasks.length+mySubTasks.length;
+      mySvcs.forEach(s=>{ svcCount++; if(s.due&&s.due<=in7s) dueCount++; });
+
+      html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;overflow:hidden;box-shadow:0 2px 12px rgba(37,99,168,.07);">
+        <div style="padding:14px 18px;background:linear-gradient(135deg,${c.color||'#2D6BB6'}18,transparent);border-bottom:1px solid rgba(45,107,182,.1);display:flex;align-items:center;gap:11px;">
+          <div style="width:34px;height:34px;border-radius:9px;background:${c.color||'#2D6BB6'};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;flex-shrink:0;">${(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}</div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:800;color:var(--text-dark);">${c.name} <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code||''}</span></div>
+            <div style="font-size:10px;color:var(--text-light);">${p.name} · <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2D6BB6;">${p.status.replace('-',' ')}</span> · ${p.progress||0}% complete</div>
+          </div>
+          <a href="client.html" target="_blank" style="font-size:10px;color:var(--text-mid);text-decoration:none;padding:4px 9px;border:1px solid rgba(45,107,182,.2);border-radius:7px;">Open ↗</a>
+        </div>
+        <div style="padding:13px 18px;">`;
+
+      if(myTasks.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;letter-spacing:.07em;">My Tasks (${myTasks.length})</div>`;
+        myTasks.forEach(t=>{
+          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
+            <span style="font-size:14px;">⬜</span>
+            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${t.name}</span>
+            ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
+          </div>`;
+        });
+      }
+      if(mySubTasks.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">Sub-Project Tasks (${mySubTasks.length})</div>`;
+        mySubTasks.forEach(t=>{
+          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
+            <span style="font-size:14px;">⬜</span>
+            <span style="flex:1;font-size:11px;color:var(--text-dark);">${t.name} <span style="color:var(--text-light);font-size:9px;">· ${t._spName||''}</span></span>
+            ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
+          </div>`;
+        });
+      }
+      if(mySubs.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">My Sub-Projects (${mySubs.length})</div>`;
+        mySubs.forEach(sp=>{
+          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${c.color||'#2D6BB6'};flex-shrink:0;"></span>
+            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${sp.name}</span>
+            <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2D6BB6;">${sp.status.replace('-',' ')}</span>
+          </div>`;
+        });
+      }
+      if(mySvcs.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">My Recurring Services</div>`;
+        mySvcs.forEach(s=>{
+          const isOver=s.due&&s.due<todayStr; const isSoon=s.due&&!isOver&&s.due<=in7s;
+          const icon=isOver?'🔴':isSoon?'🟡':'🟢';
+          const days=s.due?Math.ceil((new Date(s.due)-new Date(todayStr))/86400000):null;
+          const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
+          html+=`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'var(--bg)'};border-radius:8px;margin-bottom:4px;">
+            <span style="font-size:14px;">${icon}</span>
+            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+            <span style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;background:rgba(45,107,182,.08);color:#2D6BB6;">${s.freq}</span>
+            ${s.due?`<span style="font-size:9px;color:${isOver?'var(--red)':isSoon?'var(--orange)':'var(--text-light)'};">📅 ${s.due}${daysLabel?' ('+daysLabel+')':''}</span>`:''}
+          </div>`;
+        });
+      }
+      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length && !mySvcs.length){
+        html+=`<div style="font-size:11px;color:var(--text-mid);padding:5px 0;">You're a team member on this project.</div>`;
+      }
+      html+=`</div></div>`;
+    });
+  });
+
+  // Update stats
+  const set=(id,v,col)=>{ const e=document.getElementById(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
+  set('as-task-count',taskCount); set('as-svc-count',svcCount); set('as-proj-count',projCount);
+  set('as-due-count',dueCount,dueCount>0?'var(--orange)':'var(--text-dark)');
+
+  const list=document.getElementById('my-assignments-list');
+  if(list){
+    list.innerHTML=found?html:`<div style="text-align:center;padding:60px;color:var(--text-light);">
+      <div style="font-size:40px;margin-bottom:12px;">✅</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No assignments yet</div>
+      <div style="font-size:12px;">Your tasks, projects and services from the <a href="client.html" target="_blank" style="color:var(--text);">Client Tracker</a> will appear here.</div>
+    </div>`;
+  }
+  updateAssignmentsBadge();
+}
+
+function markAssignNotifRead(){
+  try{
+    // Mark wl_client_notifications read
+    const all=(JSON.parse(localStorage.getItem(_ASSIGN_NOTIF_KEY)||'[]')||[]).map(n=>({...n,read:true}));
+    localStorage.setItem(_ASSIGN_NOTIF_KEY,JSON.stringify(all));
+    // Mark wl_user_assignments read
+    const ua=(JSON.parse(localStorage.getItem(_ASSIGN_USER_KEY)||'[]')||[]).map(n=>({...n,read:true}));
+    localStorage.setItem(_ASSIGN_USER_KEY,JSON.stringify(ua));
+  }catch(e){}
+  loadMyAssignments();
+}
+
 // ── SECTION NAV ──
 function showSection(id, el){
   document.querySelectorAll('#userApp .page-section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages'};
+  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',myassignments:'My Assignments'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -1499,6 +1735,7 @@ function showSection(id, el){
   if(id==='goals') loadGoals();
   if(id==='blockers') loadOpsStats();
   if(id==='bizSetup') loadCoC();
+  if(id==='myassignments') loadMyAssignments();
   if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
 }
 
@@ -1817,6 +2054,7 @@ setInterval(()=>{
   if(document.getElementById('userApp')?.classList.contains('visible')){
     loadCoC();
     checkAnnouncements();
+    updateAssignmentsBadge(); // check for new client assignments
   }
 },20000);
 

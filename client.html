@@ -1,0 +1,2572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebLight Media – Client & Production Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Nunito:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#EAEFF5; --bg2:#F0F4F8; --card:#FFFFFF; --sidebar:#FFFFFF;
+  --text:#2563A8; --text-dark:#1a3f6f; --text-mid:#3B74BC; --text-light:#7AAAD4;
+  --btn:#FAC231; --btn-hover:#D4A017; --accent:#87ABD5;
+  --gold:#FAC231; --gold-dark:#D4A017; --gold-light:rgba(250,194,49,0.13);
+  --cream:#FBF1D1; --border:rgba(37,99,168,0.12); --border-hover:rgba(37,99,168,0.3);
+  --shadow:0 2px 12px rgba(37,99,168,0.08); --shadow-md:0 4px 24px rgba(37,99,168,0.13);
+  --red:#e05555; --green:#2e9e6e; --orange:#d97706; --purple:#9333ea; --cyan:#0891b2;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+
+/* ── SIDEBAR ── */
+.sidebar{width:240px;min-height:100vh;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:50;box-shadow:2px 0 12px rgba(45,107,182,.06);}
+.sidebar-logo{padding:18px 16px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.sidebar-logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--text),var(--accent));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Playfair Display',serif;font-size:16px;font-weight:700;flex-shrink:0;}
+.sidebar-logo-name{font-family:'Playfair Display',serif;font-size:13px;color:var(--text-dark);line-height:1.2;}
+.sidebar-logo-sub{font-size:9px;color:var(--text-light);letter-spacing:.07em;text-transform:uppercase;}
+.sidebar-nav{flex:1;padding:10px 7px;overflow-y:auto;}
+.nav-group-label{font-size:9px;font-weight:700;color:var(--text-light);letter-spacing:.12em;text-transform:uppercase;padding:11px 10px 4px;}
+.nav-item{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-mid);transition:all .15s;margin-bottom:2px;position:relative;}
+.nav-item:hover{background:var(--bg);color:var(--text-dark);}
+.nav-item.active{background:linear-gradient(90deg,rgba(45,107,182,.12),rgba(45,107,182,.04));color:var(--text);border-left:3px solid var(--text);padding-left:8px;}
+.nav-item .ni{font-size:14px;flex-shrink:0;width:19px;text-align:center;}
+.nav-badge{background:var(--red);color:#fff;font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:auto;min-width:18px;text-align:center;}
+.nav-badge-gold{background:var(--gold);color:#1a3f6f;}
+.nav-badge-green{background:var(--green);color:#fff;}
+.sidebar-bottom{padding:10px 13px;border-top:1px solid var(--border);}
+.sb-user{display:flex;align-items:center;gap:9px;background:var(--bg);border-radius:9px;padding:8px 10px;margin-bottom:7px;}
+.sb-avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#2D6BB6,#87ABD5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;flex-shrink:0;}
+.sb-name{font-size:11px;font-weight:700;color:var(--text-dark);}
+.sb-role{font-size:9px;color:var(--text-light);}
+.sb-links{display:flex;gap:5px;}
+.sb-link{flex:1;text-align:center;padding:5px 4px;border-radius:7px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;text-decoration:none;display:inline-block;}
+.sb-link:hover{background:var(--bg2);color:var(--text);}
+
+/* ── MAIN ── */
+.main{margin-left:240px;flex:1;min-height:100vh;display:flex;flex-direction:column;}
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 26px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40;}
+.topbar-left{display:flex;flex-direction:column;}
+.topbar-title{font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);}
+.topbar-sub{font-size:10px;color:var(--text-light);margin-top:1px;}
+.topbar-right{display:flex;align-items:center;gap:10px;}
+.notif-btn{width:33px;height:33px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;position:relative;transition:background .15s;}
+.notif-btn:hover{background:var(--bg2);}
+.notif-dot{width:7px;height:7px;background:var(--red);border-radius:50%;position:absolute;top:5px;right:5px;border:2px solid var(--card);}
+.content{padding:22px 26px;flex:1;}
+.page-section{display:none;}
+.page-section.active{display:block;}
+
+/* ── BUTTONS ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:9px;font-family:'Nunito',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:all .18s;white-space:nowrap;}
+.btn-primary{background:var(--btn);color:#1a3f6f;}
+.btn-primary:hover{background:var(--btn-hover);color:#fff;transform:translateY(-1px);}
+.btn-blue{background:var(--text);color:#fff;}
+.btn-blue:hover{background:var(--text-dark);}
+.btn-outline{background:transparent;color:var(--text);border:1.5px solid var(--border-hover);}
+.btn-outline:hover{background:var(--bg);border-color:var(--text);}
+.btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
+.btn-danger:hover{background:#fcd4d4;}
+.btn-green{background:#e8f8f0;color:var(--green);border:1px solid rgba(46,158,110,.2);}
+.btn-green:hover{background:#d0f0e0;}
+.btn-sm{padding:5px 11px;font-size:11px;border-radius:7px;}
+.btn-xs{padding:3px 8px;font-size:10px;border-radius:6px;}
+
+/* ── FORMS ── */
+.form-group{margin-bottom:13px;}
+.form-label{display:block;font-size:10px;font-weight:700;color:var(--text);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase;}
+.form-label .admin-only-label{font-size:9px;color:var(--orange);font-weight:600;text-transform:none;letter-spacing:0;margin-left:5px;}
+.form-input{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:'Nunito',sans-serif;font-size:12px;color:var(--text-dark);background:#fafcff;transition:border-color .18s;}
+.form-input:focus{outline:none;border-color:var(--text);background:#fff;}
+.form-select{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:9px;font-family:'Nunito',sans-serif;font-size:12px;color:var(--text-dark);background:#fafcff;cursor:pointer;}
+.form-select:focus{outline:none;border-color:var(--text);}
+
+/* ── CARDS ── */
+.card{background:var(--card);border-radius:13px;border:1px solid var(--border);box-shadow:var(--shadow);}
+.card-header{padding:15px 18px 0;display:flex;align-items:center;justify-content:space-between;}
+.card-title{font-family:'Playfair Display',serif;font-size:14px;color:var(--text-dark);}
+.card-sub{font-size:10px;color:var(--text-light);margin-top:2px;}
+.card-body{padding:14px 18px;}
+
+/* ── STAT CARDS ── */
+.stat-row{display:grid;gap:12px;margin-bottom:18px;}
+.stat-card{background:var(--card);border-radius:13px;border:1px solid var(--border);padding:16px 18px;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s;}
+.stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
+.stat-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.stat-value{font-family:'Playfair Display',serif;font-size:24px;color:var(--text-dark);}
+.stat-sub{font-size:10px;color:var(--text-light);margin-top:2px;}
+
+/* ── STATUS CHIPS ── */
+.chip{display:inline-flex;align-items:center;gap:3px;padding:2px 9px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+.chip-active{background:#e8f8f0;color:var(--green);}
+.chip-inactive{background:#f3f3f3;color:#888;}
+.chip-paused{background:#fff8e8;color:var(--orange);}
+.chip-lead{background:#f0f6ff;color:var(--text);}
+.chip-completed{background:rgba(45,107,182,.1);color:var(--text);}
+.chip-not-started{background:#f3f3f3;color:#999;}
+.chip-in-progress{background:rgba(45,107,182,.1);color:var(--text);}
+.chip-review{background:#fff8e8;color:var(--orange);}
+.chip-on-hold{background:#fde8e8;color:var(--red);}
+.chip-monthly{background:rgba(147,51,234,.1);color:#9333ea;}
+.chip-yearly{background:rgba(8,145,178,.1);color:#0891b2;}
+.chip-one-time{background:rgba(250,194,49,.15);color:var(--gold-dark);}
+.chip-high{background:#fde8e8;color:var(--red);}
+.chip-medium{background:#fff8e8;color:var(--orange);}
+.chip-low{background:#e8f8f0;color:var(--green);}
+.chip-urgent{background:#1a3f6f;color:#fff;}
+.priority-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;text-transform:uppercase;}
+.pb-low{background:#e8f8f0;color:var(--green);}
+.pb-medium{background:#fff8e8;color:var(--orange);}
+.pb-high{background:#fde8e8;color:var(--red);}
+.pb-urgent{background:#1a3f6f;color:#fff;}
+
+/* ── TOOLBAR ── */
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+.toolbar-left{flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.search-wrap{position:relative;}
+.search-wrap input{padding-left:30px;}
+.search-wrap .si{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--text-light);pointer-events:none;}
+
+/* ── CLIENT GRID ── */
+.client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;}
+.client-card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;transition:box-shadow .18s,transform .15s;position:relative;}
+.client-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.10);transform:translateY(-2px);}
+.client-card.inactive-card{opacity:.62;}
+.client-stripe{height:4px;}
+.client-card-head{padding:14px 14px 9px;display:flex;align-items:flex-start;gap:11px;}
+.client-avatar{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;}
+.client-avatar img{width:100%;height:100%;object-fit:cover;border-radius:12px;}
+.client-code{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-light);background:var(--bg2);padding:1px 6px;border-radius:4px;margin-left:5px;}
+.client-card-body{padding:0 14px 13px;}
+.progress-bar-wrap{background:var(--bg2);border-radius:20px;height:6px;margin:7px 0 3px;}
+.progress-bar-fill{height:6px;border-radius:20px;transition:width .5s;}
+.service-tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:11px;font-size:9px;font-weight:600;margin:2px;border:1px solid;}
+.service-tag-monthly{background:rgba(147,51,234,.07);color:#9333ea;border-color:rgba(147,51,234,.2);}
+.service-tag-yearly{background:rgba(8,145,178,.07);color:#0891b2;border-color:rgba(8,145,178,.2);}
+.service-tag-one-time{background:rgba(250,194,49,.10);color:#b07900;border-color:rgba(250,194,49,.25);}
+
+/* ── CLIENT DETAIL PANEL ── */
+#client-detail-panel{display:none;margin-top:20px;}
+.detail-header{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
+.detail-avatar{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;}
+.detail-avatar img{width:100%;height:100%;object-fit:cover;border-radius:14px;}
+.detail-name{font-family:'Playfair Display',serif;font-size:21px;color:var(--text-dark);}
+.detail-info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px;margin-top:9px;}
+.detail-info-item{background:var(--bg);border-radius:8px;padding:7px 11px;}
+.detail-info-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:1px;}
+.detail-info-value{font-size:11px;font-weight:700;color:var(--text-dark);}
+.detail-tabs{display:flex;gap:2px;background:var(--bg2);border-radius:9px;padding:3px;overflow-x:auto;}
+.detail-tab{padding:6px 14px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;color:var(--text-mid);transition:all .15s;white-space:nowrap;}
+.detail-tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 5px rgba(45,107,182,.1);}
+.detail-body{padding:18px 22px;}
+
+/* ── PROJECTS ── */
+.project-block{border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:13px;}
+.project-head{padding:12px 15px;display:flex;align-items:center;gap:9px;cursor:pointer;transition:background .15s;}
+.project-head:hover{background:var(--bg);}
+.project-head-expand{font-size:10px;color:var(--text-light);transition:transform .2s;flex-shrink:0;}
+.project-head-expand.open{transform:rotate(90deg);}
+.project-body{padding:13px 15px;border-top:1px solid var(--border);background:var(--bg);display:none;}
+.project-body.open{display:block;}
+
+/* ── SUB-PROJECTS ── */
+.subproject-item{display:flex;align-items:center;gap:7px;padding:6px 9px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin:3px 0;font-size:11px;flex-wrap:wrap;}
+.task-check{width:15px;height:15px;border-radius:4px;border:2px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;flex-shrink:0;transition:all .15s;}
+.task-check.done{background:var(--green);border-color:var(--green);color:#fff;}
+
+/* ── TASKS ── */
+.task-item{display:flex;align-items:center;gap:7px;padding:6px 9px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin:3px 0;font-size:11px;transition:background .12s;}
+.task-item:hover{background:#f8faff;}
+.task-item.done-task{opacity:.58;}
+.task-item.done-task .task-name{text-decoration:line-through;color:var(--text-light);}
+.task-cb{width:14px;height:14px;cursor:pointer;accent-color:var(--green);flex-shrink:0;}
+.task-name{flex:1;color:var(--text-dark);font-weight:600;}
+.task-assignee{font-size:9px;color:var(--text-light);background:var(--bg2);padding:2px 6px;border-radius:9px;}
+
+/* ── MILESTONES ── */
+.milestone-list{position:relative;padding-left:16px;}
+.milestone-list::before{content:'';position:absolute;left:5px;top:0;bottom:0;width:2px;background:var(--border);}
+.milestone-item{position:relative;margin-bottom:11px;padding-left:13px;}
+.milestone-dot{width:11px;height:11px;border-radius:50%;background:var(--border);border:2px solid var(--card);position:absolute;left:-17px;top:3px;box-shadow:0 0 0 2px var(--border);}
+.milestone-dot.reached{background:var(--green);}
+.milestone-dot.upcoming{background:var(--gold);}
+.milestone-dot.missed{background:var(--red);}
+.milestone-title{font-size:11px;font-weight:700;color:var(--text-dark);}
+.milestone-date{font-size:9px;color:var(--text-light);}
+
+/* ── PROGRESS LOG ── */
+.log-item{padding:9px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;margin-bottom:7px;}
+.log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;}
+.log-pct{font-size:14px;font-weight:800;color:var(--text-dark);}
+.log-date{font-size:9px;color:var(--text-light);}
+.log-user{font-size:10px;color:var(--text-mid);font-weight:600;}
+.log-note{font-size:11px;color:var(--text-mid);margin-top:3px;}
+
+/* ── SERVICES TABLE ── */
+.service-table{width:100%;border-collapse:collapse;}
+.service-table th{text-align:left;font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;padding:7px 11px;border-bottom:2px solid var(--border);}
+.service-table td{padding:9px 11px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dark);vertical-align:middle;}
+.service-table tr:last-child td{border-bottom:none;}
+.service-table tr:hover td{background:var(--bg);}
+.next-due{font-size:10px;font-weight:700;}
+.next-due.overdue{color:var(--red);}
+.next-due.soon{color:var(--orange);}
+.next-due.ok{color:var(--green);}
+.user-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:20px;font-size:10px;font-weight:600;color:var(--text-dark);margin:2px;}
+.uc-av{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:7px;font-weight:800;color:#fff;flex-shrink:0;}
+
+/* ── NOTES / BRAND ── */
+.notes-block{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin-bottom:10px;font-size:12px;color:var(--text-dark);white-space:pre-wrap;line-height:1.6;}
+.brand-swatch{width:26px;height:26px;border-radius:6px;flex-shrink:0;border:1px solid var(--border);}
+
+/* ── MODALS ── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,30,60,.45);z-index:1000;align-items:flex-start;justify-content:center;padding:22px 14px;overflow-y:auto;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--card);border-radius:17px;width:100%;max-width:660px;box-shadow:0 20px 60px rgba(0,0,0,.18);margin:auto;}
+.modal-sm{max-width:460px;}
+.modal-lg{max-width:820px;}
+.modal-header{padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-title{font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);}
+.modal-sub{font-size:10px;color:var(--text-light);margin-top:2px;}
+.modal-close{width:27px;height:27px;border-radius:50%;background:var(--bg2);border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;color:var(--text-mid);}
+.modal-close:hover{background:var(--border-hover);color:var(--text);}
+.modal-body{padding:18px 22px;max-height:72vh;overflow-y:auto;}
+.modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.form-grid .full{grid-column:1/-1;}
+.section-divider{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.1em;margin:16px 0 9px;padding-top:13px;border-top:1px solid var(--border);}
+
+/* ── NOTIFICATIONS PANEL ── */
+.notif-wrap{position:relative;}
+.notif-panel{position:absolute;top:50px;right:0;width:350px;background:var(--card);border:1px solid var(--border);border-radius:13px;box-shadow:var(--shadow-md);z-index:200;display:none;}
+.notif-panel.open{display:block;}
+.notif-panel-head{padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.notif-panel-title{font-size:13px;font-weight:700;color:var(--text-dark);}
+.notif-item{display:flex;align-items:flex-start;gap:11px;padding:10px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s;}
+.notif-item:hover{background:var(--bg);}
+.notif-item.unread{background:#f0f6ff;}
+.notif-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;}
+.notif-body{flex:1;}
+.notif-title{font-size:11px;font-weight:700;color:var(--text-dark);}
+.notif-desc{font-size:10px;color:var(--text-mid);margin-top:2px;}
+.notif-time{font-size:9px;color:var(--text-light);margin-top:2px;}
+.notif-empty{padding:22px;text-align:center;font-size:12px;color:var(--text-light);}
+
+/* ── ALERTS ── */
+.alert-item{display:flex;align-items:center;gap:11px;padding:11px 14px;border-radius:10px;border:1px solid;margin-bottom:7px;}
+.alert-overdue{background:#fff8f8;border-color:rgba(224,85,85,.25);}
+.alert-soon{background:#fffbf0;border-color:rgba(217,119,6,.25);}
+.alert-ok{background:#f0fff8;border-color:rgba(46,158,110,.2);}
+.alert-icon{font-size:17px;flex-shrink:0;}
+.alert-body{flex:1;}
+.alert-title{font-size:11px;font-weight:700;color:var(--text-dark);}
+.alert-meta{font-size:10px;color:var(--text-mid);margin-top:2px;}
+
+/* ── COLOR SWATCHES ── */
+.cl-swatch{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .15s;}
+.cl-swatch.sel{border-color:var(--text-dark);transform:scale(1.18);}
+
+/* ── FUNNEL BOARD ── */
+.funnel-col{background:var(--bg);border-radius:11px;padding:10px;}
+.funnel-col-head{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;display:flex;align-items:center;gap:5px;}
+.funnel-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px;margin-bottom:7px;cursor:pointer;transition:box-shadow .15s;}
+.funnel-card:hover{box-shadow:0 3px 14px rgba(0,0,0,.09);}
+
+/* ── EMPTY STATE ── */
+.empty-state{text-align:center;padding:44px 22px;color:var(--text-light);}
+.empty-state-icon{font-size:38px;margin-bottom:11px;}
+.empty-state-title{font-size:14px;font-weight:700;color:var(--text-mid);}
+.empty-state-sub{font-size:11px;margin-top:3px;}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:#1a3f6f;color:#fff;padding:10px 21px;border-radius:12px;font-size:12px;font-weight:600;z-index:9999;opacity:0;transition:all .25s;pointer-events:none;white-space:nowrap;max-width:92vw;text-align:center;}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--accent);border-radius:10px;}
+
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  .sidebar{width:200px;}
+  .main{margin-left:200px;}
+  .client-grid{grid-template-columns:1fr;}
+  .form-grid{grid-template-columns:1fr;}
+  .form-grid .full{grid-column:1;}
+  .funnel-board-grid{grid-template-columns:1fr 1fr!important;}
+}
+@media(max-width:550px){
+  .sidebar{display:none;}
+  .main{margin-left:0;}
+}
+
+/* ── ACCESS DENIED ── */
+#access-denied{display:none;position:fixed;inset:0;background:rgba(15,30,60,.8);z-index:9000;align-items:center;justify-content:center;}
+#access-denied.show{display:flex;}
+.access-denied-box{background:var(--card);border-radius:18px;padding:40px 32px;text-align:center;max-width:400px;}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════
+     SIDEBAR
+════════════════════════════════════════════ -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-icon">W</div>
+    <div>
+      <div class="sidebar-logo-name">WebLight Media</div>
+      <div class="sidebar-logo-sub">Production Tracker</div>
+    </div>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="nav-group-label">Production</div>
+    <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)"><span class="ni">🏢</span>All Clients</div>
+    <div class="nav-item" id="nav-services-schedule" onclick="showPage('services-schedule',this)"><span class="ni">📅</span>Service Schedule<span class="nav-badge" id="schedule-badge" style="display:none;">0</span></div>
+    <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)"><span class="ni">✅</span>My Work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
+
+    <div class="nav-group-label">Management</div>
+    <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)"><span class="ni">🔁</span>Service Catalog</div>
+    <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)"><span class="ni">🎯</span>Sales Funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
+    <div class="nav-item" id="nav-notifications" onclick="showPage('notifications',this)"><span class="ni">🔔</span>Notifications<span class="nav-badge" id="notif-nav-badge" style="display:none;">0</span></div>
+  </div>
+
+  <div class="sidebar-bottom">
+    <div class="sb-user">
+      <div class="sb-avatar" id="sb-avatar">?</div>
+      <div>
+        <div class="sb-name" id="sb-name">Loading…</div>
+        <div class="sb-role" id="sb-role">—</div>
+      </div>
+    </div>
+    <div class="sb-links">
+      <a class="sb-link" href="index.html">⚙️ Admin</a>
+      <a class="sb-link" href="user.html">👤 Portal</a>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     MAIN
+════════════════════════════════════════════ -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-title" id="page-title">Client & Production Tracker</div>
+      <div class="topbar-sub" id="page-sub">All clients, projects, services and progress</div>
+    </div>
+    <div class="topbar-right">
+      <div class="notif-wrap">
+        <div class="notif-btn" onclick="toggleNotifPanel()" title="Notifications">🔔<div class="notif-dot" id="notif-dot" style="display:none;"></div></div>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-panel-head">
+            <span class="notif-panel-title">Notifications</span>
+            <button class="btn btn-xs btn-outline" onclick="markAllNotifsRead()">Mark all read</button>
+          </div>
+          <div id="notif-list"><div class="notif-empty">No notifications</div></div>
+        </div>
+      </div>
+      <div id="view-mode-badge" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);">—</div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ═══ PAGE: ALL CLIENTS ═══ -->
+    <div id="page-clients" class="page-section active">
+      <div class="stat-row" style="grid-template-columns:repeat(5,1fr);">
+        <div class="stat-card"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
+        <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
+        <div class="stat-card"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
+        <div class="stat-card"><div class="stat-label">Ongoing Projects</div><div class="stat-value" id="st-ongoing">0</div></div>
+        <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="search-wrap">
+            <span class="si">🔍</span>
+            <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:220px;font-size:11px;padding:7px 11px 7px 28px;">
+          </div>
+          <select class="form-select" id="filter-status" onchange="filterClients()" style="width:130px;font-size:11px;padding:7px 10px;">
+            <option value="">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="paused">Paused</option>
+          </select>
+          <select class="form-select" id="filter-service" onchange="filterClients()" style="width:160px;font-size:11px;padding:7px 10px;">
+            <option value="">All Services</option>
+          </select>
+          <select class="form-select" id="filter-manager" onchange="filterClients()" style="width:150px;font-size:11px;padding:7px 10px;">
+            <option value="">All Account Managers</option>
+          </select>
+          <select class="form-select" id="filter-sort" onchange="filterClients()" style="width:140px;font-size:11px;padding:7px 10px;">
+            <option value="name">Sort: Name</option>
+            <option value="start">Sort: Start Date</option>
+            <option value="progress">Sort: Progress</option>
+            <option value="status">Sort: Status</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:7px;" id="admin-only-btns">
+          <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
+        </div>
+      </div>
+
+      <div class="client-grid" id="client-grid"></div>
+
+      <div id="client-detail-panel">
+        <div class="card" style="margin:0;">
+          <div id="client-detail-content"></div>
+        </div>
+      </div>
+    </div><!-- /page-clients -->
+
+
+    <!-- ═══ PAGE: SERVICE SCHEDULE ═══ -->
+    <div id="page-services-schedule" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">📅 Service Schedule</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">All recurring services, due dates and assigned team members</div>
+        </div>
+        <div style="display:flex;gap:7px;">
+          <select class="form-select" id="schedule-filter" onchange="renderSchedule()" style="width:130px;font-size:11px;padding:7px 10px;">
+            <option value="">All</option>
+            <option value="overdue">Overdue</option>
+            <option value="soon">Due Soon (7d)</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+          <select class="form-select" id="schedule-client-filter" onchange="renderSchedule()" style="width:170px;font-size:11px;padding:7px 10px;">
+            <option value="">All Clients</option>
+          </select>
+        </div>
+      </div>
+      <div id="schedule-list"></div>
+    </div>
+
+
+    <!-- ═══ PAGE: MY WORK ═══ -->
+    <div id="page-my-work" class="page-section">
+      <div style="margin-bottom:18px;">
+        <div style="font-size:17px;font-weight:800;color:var(--text-dark);">✅ My Work</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Tasks, sub-projects and services assigned to you</div>
+      </div>
+      <div id="my-work-list"></div>
+    </div>
+
+
+    <!-- ═══ PAGE: SERVICE CATALOG ═══ -->
+    <div id="page-recurring-catalog" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🔁 Service Catalog</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">All services offered — recurring and one-time</div>
+        </div>
+        <button class="btn btn-primary btn-sm admin-only" id="catalog-add-btn" onclick="openServiceCatalogModal()">+ Add Service</button>
+      </div>
+      <div id="catalog-list"></div>
+    </div>
+
+
+    <!-- ═══ PAGE: SALES FUNNEL ═══ -->
+    <div id="page-sales-funnel" class="page-section admin-only">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🎯 Sales Funnel</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">New client intake — convert prospects to active clients</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openFunnelModal()">+ Add Prospect</button>
+      </div>
+      <div id="funnel-board" class="funnel-board-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;"></div>
+    </div>
+
+
+    <!-- ═══ PAGE: NOTIFICATIONS ═══ -->
+    <div id="page-notifications" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🔔 Notifications</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Client assignments, project updates and service reminders</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="markAllNotifsRead();renderNotifPage();">Mark all read</button>
+      </div>
+      <div id="notif-page-list"></div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<div id="toast"></div>
+
+<!-- ════════════════════════════════════════════
+     ACCESS DENIED OVERLAY
+════════════════════════════════════════════ -->
+<div id="access-denied">
+  <div class="access-denied-box">
+    <div style="font-size:44px;margin-bottom:12px;">🔒</div>
+    <div style="font-family:'Playfair Display',serif;font-size:20px;color:var(--text-dark);margin-bottom:8px;">Access Restricted</div>
+    <div style="font-size:13px;color:var(--text-mid);margin-bottom:20px;">This area is for authorized personnel only.<br>Please log in to continue.</div>
+    <a href="index.html" class="btn btn-blue" style="margin-right:8px;">⚙️ Admin Login</a>
+    <a href="user.html" class="btn btn-outline">👤 User Login</a>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════ -->
+
+<!-- ADD / EDIT CLIENT -->
+<div id="clientModal" class="modal-overlay">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div><div class="modal-title" id="clientModalTitle">New Client</div><div class="modal-sub">Fill in all client details</div></div>
+      <button class="modal-close" onclick="closeModal('clientModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="cf-id">
+      <div class="section-divider" style="margin-top:0;padding-top:0;border-top:none;">Company &amp; Account</div>
+      <div class="form-grid">
+        <div class="form-group full"><label class="form-label">Business / Company Name *</label><input class="form-input" id="cf-name" placeholder="e.g. Sunrise Realty Group"></div>
+        <div class="form-group"><label class="form-label">Client Code *</label><input class="form-input" id="cf-code" placeholder="e.g. SRG" style="font-family:'JetBrains Mono',monospace;text-transform:uppercase;" maxlength="8"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-select" id="cf-status">
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="paused">Paused</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Account Manager</label>
+          <select class="form-select" id="cf-manager"><option value="">— Select —</option></select></div>
+        <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="cf-start"></div>
+        <div class="form-group"><label class="form-label">Website</label><input class="form-input" id="cf-website" placeholder="https://"></div>
+        <div class="form-group"><label class="form-label">Referred By</label><input class="form-input" id="cf-referred" placeholder="Name or source"></div>
+        <div class="form-group"><label class="form-label">Initial Project</label><input class="form-input" id="cf-initial-project" placeholder="e.g. Website Redesign"></div>
+        <div class="form-group full"><label class="form-label">Recurring Services (comma-separated tags)</label><input class="form-input" id="cf-recurring-tags" placeholder="e.g. SEO, Social Media, Email Marketing"></div>
+      </div>
+
+      <div class="section-divider">Owner / Contact <span style="font-size:10px;color:var(--orange);font-weight:600;">(Admin Only)</span></div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Owner's Name</label><input class="form-input" id="cf-owner" placeholder="Full name"></div>
+        <div class="form-group"><label class="form-label">Owner's Email <span class="admin-only-label">🔒 Private</span></label><input class="form-input" id="cf-email" type="email" placeholder="email@domain.com"></div>
+        <div class="form-group"><label class="form-label">Owner's Phone</label><input class="form-input" id="cf-phone" placeholder="+1 (000) 000-0000"></div>
+        <div class="form-group"><label class="form-label">Industry</label><input class="form-input" id="cf-industry" placeholder="e.g. Real Estate"></div>
+      </div>
+
+      <div class="section-divider">Brand &amp; Visual</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Brand Color</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;" id="cf-color-swatches">
+            <div class="cl-swatch sel" data-color="#2D6BB6" style="background:#2D6BB6;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#9333ea" style="background:#9333ea;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#e05555" style="background:#e05555;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#2e9e6e" style="background:#2e9e6e;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#d97706" style="background:#d97706;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#0891b2" style="background:#0891b2;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#be185d" style="background:#be185d;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#4f46e5" style="background:#4f46e5;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#475569" style="background:#475569;" onclick="selectClientColor(this)"></div>
+            <div class="cl-swatch" data-color="#b45309" style="background:#b45309;" onclick="selectClientColor(this)"></div>
+          </div>
+          <input type="hidden" id="cf-color" value="#2D6BB6">
+        </div>
+        <div class="form-group"><label class="form-label">Logo URL (optional)</label><input class="form-input" id="cf-logo" placeholder="https://…/logo.png"></div>
+        <div class="form-group full"><label class="form-label">Brand Details / Style Guide</label><textarea class="form-input" id="cf-brand" rows="2" placeholder="Fonts, colors, tone of voice, brand guidelines…" style="resize:vertical;"></textarea></div>
+        <div class="form-group full"><label class="form-label">Internal Notes</label><textarea class="form-input" id="cf-notes" rows="2" placeholder="Internal notes about this client…" style="resize:vertical;"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('clientModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClient()">💾 Save Client</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ADD / EDIT PROJECT -->
+<div id="projectModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title" id="projectModalTitle">New Project</div><div class="modal-sub" id="projectModalSub"></div></div>
+      <button class="modal-close" onclick="closeModal('projectModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="pf-client-id">
+      <input type="hidden" id="pf-proj-id">
+      <div class="form-grid">
+        <div class="form-group full"><label class="form-label">Project Name *</label><input class="form-input" id="pf-name" placeholder="e.g. Website Redesign"></div>
+        <div class="form-group"><label class="form-label">Type / Service</label>
+          <select class="form-select" id="pf-type">
+            <option>Web Design</option><option>Web Development</option><option>SEO</option>
+            <option>Social Media Management</option><option>Paid Ads</option><option>Branding</option>
+            <option>Content Creation</option><option>Email Marketing</option><option>Video Production</option>
+            <option>Graphic Design</option><option>Copywriting</option><option>Other</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Billing / Frequency</label>
+          <select class="form-select" id="pf-billing">
+            <option value="one-time">One-Time</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-select" id="pf-status">
+            <option value="not-started">Not Started</option>
+            <option value="in-progress">In Progress</option>
+            <option value="review">In Review</option>
+            <option value="completed">Completed</option>
+            <option value="on-hold">On Hold</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Priority</label>
+          <select class="form-select" id="pf-priority">
+            <option value="low">Low</option><option value="medium" selected>Medium</option>
+            <option value="high">High</option><option value="urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="pf-start"></div>
+        <div class="form-group"><label class="form-label">Due / Renewal Date</label><input class="form-input" type="date" id="pf-due"></div>
+        <div class="form-group full">
+          <label class="form-label">Assigned Team Members</label>
+          <div id="pf-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;"></div>
+        </div>
+        <div class="form-group full"><label class="form-label">Description</label><textarea class="form-input" id="pf-desc" rows="2" placeholder="What does this project involve?" style="resize:vertical;"></textarea></div>
+        <div class="form-group"><label class="form-label">Color Tag</label>
+          <input type="color" id="pf-color" value="#2D6BB6" style="width:100%;height:34px;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:2px;">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('projectModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProject()">💾 Save Project</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ADD SUB-PROJECT -->
+<div id="subprojectModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">Sub-Project</div><div class="modal-sub" id="sp-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('subprojectModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="sp-client-id"><input type="hidden" id="sp-proj-id"><input type="hidden" id="sp-id">
+      <div class="form-group"><label class="form-label">Sub-Project Name *</label><input class="form-input" id="sp-name" placeholder="e.g. Homepage, Services Page, Blog"></div>
+      <div class="form-group"><label class="form-label">Billing / Frequency</label>
+        <select class="form-select" id="sp-billing">
+          <option value="one-time">One-Time</option>
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-select" id="sp-status">
+          <option value="not-started">Not Started</option>
+          <option value="in-progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="on-hold">On Hold</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Assigned Members</label>
+        <div id="sp-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('subprojectModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSubproject()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ADD TASK -->
+<div id="taskModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title" id="task-modal-title">Add Task</div><div class="modal-sub" id="task-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('taskModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tf-client-id"><input type="hidden" id="tf-proj-id">
+      <input type="hidden" id="tf-sp-id"><input type="hidden" id="tf-task-id">
+      <div class="form-group"><label class="form-label">Task Name *</label><input class="form-input" id="tf-name" placeholder="e.g. Write hero copy"></div>
+      <div class="form-group"><label class="form-label">Assigned To</label>
+        <select class="form-select" id="tf-assignee"><option value="">— Unassigned —</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="tf-due"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('taskModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTask()">💾 Save Task</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ADD MILESTONE -->
+<div id="milestoneModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">🏆 Milestone</div><div class="modal-sub" id="ms-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('milestoneModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ms-client-id"><input type="hidden" id="ms-proj-id"><input type="hidden" id="ms-id">
+      <div class="form-group"><label class="form-label">Milestone Title *</label><input class="form-input" id="ms-title" placeholder="e.g. Launch Day"></div>
+      <div class="form-group"><label class="form-label">Target Date</label><input class="form-input" type="date" id="ms-date"></div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="ms-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('milestoneModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMilestone()">Add Milestone</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- LOG PROGRESS -->
+<div id="progressModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">📈 Log Progress</div><div class="modal-sub" id="prog-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('progressModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="prog-client-id"><input type="hidden" id="prog-proj-id">
+      <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:13px;">
+        <div style="font-size:10px;color:var(--text-light);margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;">Auto-Calculated from Tasks</div>
+        <div style="font-size:26px;font-weight:800;color:var(--text-dark);" id="prog-auto-pct">0%</div>
+        <div style="font-size:10px;color:var(--text-light);" id="prog-auto-breakdown">0 of 0 tasks complete</div>
+      </div>
+      <div class="form-group"><label class="form-label">Update Note *</label>
+        <textarea class="form-input" id="prog-note" rows="3" placeholder="What was completed? What's next?" style="resize:vertical;"></textarea>
+      </div>
+      <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="prog-date"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('progressModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProgress()">💾 Save Update</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ADD RECURRING SERVICE TO CLIENT -->
+<div id="addServiceModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title" id="svc-modal-title">Recurring Service</div><div class="modal-sub" id="svc-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('addServiceModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="svc-client-id"><input type="hidden" id="svc-entry-id">
+      <div class="form-group"><label class="form-label">Service *</label>
+        <select class="form-select" id="svc-name" onchange="prefillServiceDefaults()"><option value="">— Select —</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Frequency</label>
+        <select class="form-select" id="svc-freq">
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+          <option value="one-time">One-Time</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Next Due Date</label><input class="form-input" type="date" id="svc-due"></div>
+      <div class="form-group"><label class="form-label">Assigned Member</label>
+        <select class="form-select" id="svc-assignee"><option value="">— Unassigned —</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('addServiceModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClientService()">💾 Save Service</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- SERVICE CATALOG MODAL -->
+<div id="serviceCatalogModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title" id="sc-modal-title">Add Service</div></div>
+      <button class="modal-close" onclick="closeModal('serviceCatalogModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="sc-id">
+      <div class="form-group"><label class="form-label">Service Name *</label><input class="form-input" id="sc-name" placeholder="e.g. Social Media Management"></div>
+      <div class="form-group"><label class="form-label">Default Frequency</label>
+        <select class="form-select" id="sc-freq">
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+          <option value="one-time">One-Time</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Default Assigned Member</label>
+        <select class="form-select" id="sc-default-assignee"><option value="">— None —</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Description</label><textarea class="form-input" id="sc-desc" rows="2" placeholder="Brief description…" style="resize:vertical;"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('serviceCatalogModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveServiceCatalog()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- NOTES / BRAND EDIT -->
+<div id="notesModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title" id="notes-modal-title">Notes &amp; Brand Details</div><div class="modal-sub" id="notes-modal-sub"></div></div>
+      <button class="modal-close" onclick="closeModal('notesModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="nm-client-id">
+      <div class="form-grid">
+        <div class="form-group full"><label class="form-label">Internal Notes</label><textarea class="form-input" id="nm-notes" rows="4" placeholder="Internal notes about this client…" style="resize:vertical;"></textarea></div>
+        <div class="form-group full"><label class="form-label">Brand Details / Style Guide</label><textarea class="form-input" id="nm-brand" rows="4" placeholder="Fonts, colors, tone of voice, brand guidelines…" style="resize:vertical;"></textarea></div>
+        <div class="form-group"><label class="form-label">Logo URL</label><input class="form-input" id="nm-logo" placeholder="https://…/logo.png"></div>
+        <div class="form-group"><label class="form-label">Brand Colors (comma-separated hex)</label><input class="form-input" id="nm-brand-colors" placeholder="e.g. #2D6BB6, #FAC231"></div>
+        <div class="form-group"><label class="form-label">Primary Font</label><input class="form-input" id="nm-font" placeholder="e.g. Playfair Display, Nunito"></div>
+        <div class="form-group"><label class="form-label">Secondary Font</label><input class="form-input" id="nm-font2" placeholder="e.g. Nunito Sans"></div>
+        <div class="form-group full"><label class="form-label">Tone of Voice</label><input class="form-input" id="nm-tone" placeholder="e.g. Professional, friendly, informative"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('notesModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNotes()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- SALES FUNNEL PROSPECT -->
+<div id="funnelModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title" id="funnel-modal-title">Add Prospect</div></div>
+      <button class="modal-close" onclick="closeModal('funnelModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="fm-id">
+      <div class="form-grid">
+        <div class="form-group full"><label class="form-label">Business Name *</label><input class="form-input" id="fm-name" placeholder="Company name"></div>
+        <div class="form-group"><label class="form-label">Contact Name</label><input class="form-input" id="fm-contact" placeholder="Owner's name"></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="fm-email" type="email" placeholder="email@domain.com"></div>
+        <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="fm-phone" placeholder="+1 (000) 000-0000"></div>
+        <div class="form-group"><label class="form-label">Stage</label>
+          <select class="form-select" id="fm-stage">
+            <option value="lead">Lead</option>
+            <option value="contacted">Contacted</option>
+            <option value="proposal">Proposal Sent</option>
+            <option value="negotiation">Negotiation</option>
+            <option value="closed">Closed Won</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Interested Services</label><input class="form-input" id="fm-services" placeholder="e.g. Web Design, SEO"></div>
+        <div class="form-group"><label class="form-label">Referred By</label><input class="form-input" id="fm-referred" placeholder="Name / source"></div>
+        <div class="form-group"><label class="form-label">Assigned Sales Person</label>
+          <select class="form-select" id="fm-assignee"><option value="">— Select —</option></select>
+        </div>
+        <div class="form-group full"><label class="form-label">Notes</label><textarea class="form-input" id="fm-notes" rows="2" style="resize:vertical;" placeholder="Any relevant notes…"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('funnelModal')">Cancel</button>
+      <button class="btn btn-green" id="funnel-convert-btn" style="display:none;" onclick="convertProspectToClient()">✅ Convert to Client</button>
+      <button class="btn btn-primary" onclick="saveFunnelProspect()">💾 Save Prospect</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     JAVASCRIPT
+════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════
+//  STORAGE — mirrors index.html / user.html pattern
+// ═══════════════════════════════════════════════════════
+const CL_KEYS = {
+  clients:        'wl_clients_db',
+  serviceCatalog: 'wl_service_catalog',
+  notifications:  'wl_client_notifications',
+  funnel:         'wl_sales_funnel',
+  users:          'wl_users_db',
+  admins:         'wl_admins_db',
+  liveFeed:       'wl_live_feed',       // shared with index.html admin feed
+  userNotifs:     'wl_user_assignments', // picked up by user.html
+};
+function db(k){ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch(e){ return null; } }
+function dbSave(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+function dbPush(k,item){ const a=db(k)||[]; a.unshift(item); dbSave(k,a.slice(0,1000)); }
+
+// ═══════════════════════════════════════════════════════
+//  SESSION DETECTION
+// ═══════════════════════════════════════════════════════
+let SESSION = { role:'user', name:'Team Member', id:null, isAdmin:false, isCEO:false, isSuperAdmin:false };
+
+function detectSession(){
+  try{
+    const as = db('wl_admin_session');
+    if(as && as.role){
+      SESSION.isAdmin = true;
+      SESSION.role    = as.role;
+      SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
+      SESSION.isSuperAdmin = (as.role==='super-admin'||as.role==='superadmin'||as.isSuperAdmin);
+      SESSION.id   = as.id||as.name||as.email;
+      SESSION.name = as.name||'Admin';
+    }
+    const us = db('wl_user_session');
+    if(us && us.name){
+      SESSION.name = us.name;
+      SESSION.id   = us.id||us.name;
+    }
+    // Enrich from user DB
+    const users = db(CL_KEYS.users)||[];
+    const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
+    if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
+    // Enrich from admins DB
+    const admins = db(CL_KEYS.admins)||[];
+    const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+    if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+  }catch(e){}
+
+  // Update sidebar card
+  const init = (SESSION.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  _el('sb-avatar').textContent  = init;
+  _el('sb-name').textContent    = SESSION.name;
+  _el('sb-role').textContent    = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin': SESSION.isCEO?'👔 CEO':'⚙️ Admin') : '👤 Team Member';
+  _el('view-mode-badge').textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin View':SESSION.isCEO?'👔 CEO View':'⚙️ Admin View') : '👤 User View';
+
+  // Hide admin-only UI for non-admins
+  document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
+}
+
+// ═══════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════
+function _el(id){ return document.getElementById(id); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function today(){ return new Date().toISOString().slice(0,10); }
+function timeAgo(ts){
+  const d=Date.now()-ts;
+  if(d<60000) return 'Just now';
+  if(d<3600000) return Math.floor(d/60000)+'m ago';
+  if(d<86400000) return Math.floor(d/3600000)+'h ago';
+  return Math.floor(d/86400000)+'d ago';
+}
+function calcNextDue(freq, from){
+  const d = new Date(from||new Date());
+  if(freq==='monthly') d.setMonth(d.getMonth()+1);
+  else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
+  return d.toISOString().slice(0,10);
+}
+function daysUntil(dateStr){
+  if(!dateStr) return null;
+  return Math.ceil((new Date(dateStr)-new Date(today()))/(86400000));
+}
+
+// ═══════════════════════════════════════════════════════
+//  TEAM ROSTER
+// ═══════════════════════════════════════════════════════
+const ROSTER_COLS=['#2D6BB6','#9333ea','#e05555','#16a34a','#d97706','#0891b2','#7c3aed','#be185d','#475569','#b45309'];
+function getRoster(){
+  const users = db(CL_KEYS.users)||[];
+  return users.filter(u=>u.status==='active'||!u.status).map((u,i)=>({
+    id:   u.id||u.name,
+    name: u.name||'Unknown',
+    initials: (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(),
+    color: ROSTER_COLS[i%ROSTER_COLS.length],
+    role: u.role||u.title||''
+  }));
+}
+function getUser(id){ return getRoster().find(u=>u.id===id||u.name===id); }
+function userChip(id){
+  const u=getUser(id);
+  if(!u) return `<span class="user-chip">${id}</span>`;
+  return `<span class="user-chip"><span class="uc-av" style="background:${u.color};">${u.initials}</span>${u.name}</span>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  SERVICE CATALOG
+// ═══════════════════════════════════════════════════════
+const DEFAULT_CATALOG=[
+  {id:'svc1',name:'Social Media Management',freq:'monthly',desc:'Monthly social content, scheduling and engagement.',defaultAssignee:''},
+  {id:'svc2',name:'SEO – On-Page Optimization',freq:'monthly',desc:'Monthly on-page SEO audit and optimizations.',defaultAssignee:''},
+  {id:'svc3',name:'SEO – Backlink Building',freq:'monthly',desc:'Monthly link-building campaign.',defaultAssignee:''},
+  {id:'svc4',name:'Google Ads Management',freq:'monthly',desc:'Monthly paid search campaign management.',defaultAssignee:''},
+  {id:'svc5',name:'Meta Ads Management',freq:'monthly',desc:'Monthly Facebook & Instagram ad campaigns.',defaultAssignee:''},
+  {id:'svc6',name:'Email Marketing',freq:'monthly',desc:'Monthly email newsletter design and send.',defaultAssignee:''},
+  {id:'svc7',name:'Blog / Content Writing',freq:'monthly',desc:'Monthly blog posts and copywriting.',defaultAssignee:''},
+  {id:'svc8',name:'Website Maintenance',freq:'monthly',desc:'Monthly updates, security and backups.',defaultAssignee:''},
+  {id:'svc9',name:'Analytics Reporting',freq:'monthly',desc:'Monthly performance report.',defaultAssignee:''},
+  {id:'svc10',name:'Annual Website Redesign',freq:'yearly',desc:'Full site redesign and refresh.',defaultAssignee:''},
+  {id:'svc11',name:'Domain & Hosting Renewal',freq:'yearly',desc:'Annual domain and hosting renewal.',defaultAssignee:''},
+  {id:'svc12',name:'Annual Brand Audit',freq:'yearly',desc:'Full brand review and update.',defaultAssignee:''},
+  {id:'svc13',name:'Website Build (New)',freq:'one-time',desc:'Brand new website design and development.',defaultAssignee:''},
+  {id:'svc14',name:'Logo Design',freq:'one-time',desc:'Brand identity and logo creation.',defaultAssignee:''},
+  {id:'svc15',name:'Video Production',freq:'one-time',desc:'Video shoot, edit and delivery.',defaultAssignee:''},
+  {id:'svc16',name:'Brand Strategy',freq:'one-time',desc:'Brand positioning, messaging and visual identity.',defaultAssignee:''},
+  {id:'svc17',name:'Graphic Design',freq:'one-time',desc:'Custom graphics, flyers, banners and print materials.',defaultAssignee:''},
+  {id:'svc18',name:'Photography',freq:'one-time',desc:'Professional photo shoot and editing.',defaultAssignee:''},
+];
+function ensureCatalog(){ if(!db(CL_KEYS.serviceCatalog)) dbSave(CL_KEYS.serviceCatalog,DEFAULT_CATALOG); }
+function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
+
+// ═══════════════════════════════════════════════════════
+//  CLIENT DB
+// ═══════════════════════════════════════════════════════
+function getClients(){ return db(CL_KEYS.clients)||[]; }
+function saveClients(arr){ dbSave(CL_KEYS.clients,arr); }
+function getClient(id){ return getClients().find(c=>c.id===id); }
+function updateClient(updated){
+  const arr=getClients();
+  const idx=arr.findIndex(c=>c.id===updated.id);
+  if(idx>=0) arr[idx]=updated; else arr.push(updated);
+  saveClients(arr);
+}
+
+// ═══════════════════════════════════════════════════════
+//  PROGRESS AUTO-CALCULATION FROM TASKS
+// ═══════════════════════════════════════════════════════
+function calcProjectProgress(proj){
+  let total=0, done=0;
+  // Count top-level tasks
+  (proj.tasks||[]).forEach(t=>{ total++; if(t.done) done++; });
+  // Count sub-projects AND their tasks
+  (proj.subprojects||[]).forEach(sp=>{
+    total++; if(sp.status==='completed') done++;
+    (sp.tasks||[]).forEach(t=>{ total++; if(t.done) done++; });
+  });
+  if(total===0) return typeof proj.progress==='number'?proj.progress:0;
+  return Math.round((done/total)*100);
+}
+function recalcProgress(clients, clientId, projId){
+  const c=clients.find(x=>x.id===clientId); if(!c) return 0;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return 0;
+  const pct=calcProjectProgress(p);
+  p.progress=pct;
+  if(pct===100 && p.status!=='completed') p.status='completed';
+  return pct;
+}
+
+// ═══════════════════════════════════════════════════════
+//  NOTIFICATIONS (cross-module)
+// ═══════════════════════════════════════════════════════
+function getNotifs(){ return db(CL_KEYS.notifications)||[]; }
+
+function pushNotif(notif){
+  const entry = { id:'n'+uid(), ts:Date.now(), read:false, ...notif };
+  dbPush(CL_KEYS.notifications, entry);
+
+  // Write to shared live feed so index.html admin panel sees it
+  dbPush(CL_KEYS.liveFeed, {
+    id: 'lf'+uid(), type:'client',
+    user: notif.fromUser||SESSION.name||'System',
+    desc: notif.title,
+    detail: notif.body||'',
+    ts: Date.now()
+  });
+
+  // Write to user assignments key so user.html can pick up personal alerts
+  if(notif.forUser && notif.forUser!=='admin'){
+    const userAlerts = db(CL_KEYS.userNotifs)||[];
+    userAlerts.unshift({ ...entry, userId: notif.forUser });
+    dbSave(CL_KEYS.userNotifs, userAlerts.slice(0,500));
+  }
+
+  refreshNotifBadge();
+}
+
+function refreshNotifBadge(){
+  const unread = getNotifs().filter(n=>!n.read).length;
+  const dot = _el('notif-dot');
+  if(dot) dot.style.display = unread>0?'block':'none';
+  const nb = _el('notif-nav-badge');
+  if(nb){ nb.textContent=unread; nb.style.display=unread>0?'flex':'none'; }
+}
+function markAllNotifsRead(){
+  const notifs=getNotifs().map(n=>({...n,read:true}));
+  dbSave(CL_KEYS.notifications,notifs);
+  refreshNotifBadge();
+  renderNotifPanel();
+}
+function toggleNotifPanel(){
+  const p=_el('notif-panel');
+  p.classList.toggle('open');
+  if(p.classList.contains('open')) renderNotifPanel();
+}
+function renderNotifPanel(){
+  const notifs=getNotifs().slice(0,15);
+  const el=_el('notif-list'); if(!el) return;
+  if(!notifs.length){ el.innerHTML='<div class="notif-empty">No notifications</div>'; return; }
+  el.innerHTML=notifs.map(n=>`
+    <div class="notif-item ${n.read?'':'unread'}" onclick="readNotif('${n.id}')">
+      <div class="notif-icon" style="background:${n.color||'rgba(45,107,182,.1)'};">${n.icon||'🔔'}</div>
+      <div class="notif-body">
+        <div class="notif-title">${n.title}</div>
+        <div class="notif-desc">${n.body||''}</div>
+        <div class="notif-time">${timeAgo(n.ts)}</div>
+      </div>
+    </div>`).join('');
+}
+function renderNotifPage(){
+  const el=_el('notif-page-list'); if(!el) return;
+  const notifs=getNotifs();
+  if(!notifs.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔔</div><div class="empty-state-title">No notifications yet</div></div>'; return; }
+  el.innerHTML=notifs.map(n=>`
+    <div class="log-item" style="margin-bottom:10px;${n.read?'':'border-left:3px solid var(--text);'}">
+      <div class="log-header">
+        <span>${n.icon||'🔔'} <strong>${n.title}</strong></span>
+        <span class="log-date">${timeAgo(n.ts)}</span>
+      </div>
+      <div class="log-note">${n.body||''}</div>
+      ${!n.read?`<button class="btn btn-xs btn-outline" style="margin-top:6px;" onclick="readNotif('${n.id}')">Mark read</button>`:''}
+    </div>`).join('');
+}
+function readNotif(id){
+  const notifs=getNotifs();
+  const n=notifs.find(x=>x.id===id); if(n) n.read=true;
+  dbSave(CL_KEYS.notifications,notifs);
+  refreshNotifBadge();
+  renderNotifPanel();
+  renderNotifPage();
+}
+
+// ═══════════════════════════════════════════════════════
+//  SERVICE ALERTS
+// ═══════════════════════════════════════════════════════
+function checkServiceAlerts(){
+  const t=today();
+  const soon=calcNextDue('monthly',t).slice(0,10); // just 1 month out is too broad; use 7 days
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  let dueCount=0;
+  getClients().forEach(c=>{
+    (c.services||[]).forEach(svc=>{
+      if(!svc.due) return;
+      if(svc.due<=in7s) dueCount++;
+    });
+  });
+  const el=_el('st-due'); if(el) el.textContent=dueCount;
+  const badge=_el('schedule-badge');
+  if(badge){ badge.textContent=dueCount; badge.style.display=dueCount>0?'flex':'none'; }
+}
+
+// ═══════════════════════════════════════════════════════
+//  PAGE NAVIGATION
+// ═══════════════════════════════════════════════════════
+const PAGE_META={
+  'clients':           ['Client & Production Tracker','All clients, projects, services and progress'],
+  'services-schedule': ['Service Schedule','Recurring services, due dates and assigned team'],
+  'my-work':           ['My Work','Tasks, sub-projects and services assigned to you'],
+  'recurring-catalog': ['Service Catalog','All services offered — recurring and one-time'],
+  'sales-funnel':      ['Sales Funnel','New client intake and prospect pipeline'],
+  'notifications':     ['Notifications','Client assignments, updates and reminders'],
+};
+function showPage(name, el){
+  document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const sec=_el('page-'+name); if(sec) sec.classList.add('active');
+  if(el) el.classList.add('active');
+  const [title,sub]=PAGE_META[name]||['',''];
+  _el('page-title').textContent=title;
+  _el('page-sub').textContent=sub;
+  _el('notif-panel').classList.remove('open');
+  if(name==='clients'){ populateScheduleClientFilter(); renderClientGrid(); }
+  if(name==='services-schedule'){ populateScheduleClientFilter(); renderSchedule(); }
+  if(name==='my-work'){ renderMyWork(); }
+  if(name==='recurring-catalog'){ renderCatalog(); }
+  if(name==='sales-funnel'){
+    if(!SESSION.isAdmin){ showToast('Access restricted — admins only','warn'); showPage('clients',_el('nav-clients')); return; }
+    renderFunnelBoard();
+  }
+  if(name==='notifications'){ renderNotifPage(); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  POPULATE DROPDOWNS
+// ═══════════════════════════════════════════════════════
+function populateDropdowns(){
+  const roster=getRoster();
+  const opts=roster.map(u=>`<option value="${u.id}">${u.name}${u.role?' ('+u.role+')':''}</option>`).join('');
+  const noOpt=`<option value="">— Unassigned —</option>`;
+  ['tf-assignee','svc-assignee','sc-default-assignee','fm-assignee'].forEach(id=>{
+    const el=_el(id); if(el) el.innerHTML=noOpt+opts;
+  });
+  const mgr=_el('cf-manager');
+  if(mgr) mgr.innerHTML=`<option value="">— Select —</option>`+opts;
+  populateUserChecks('pf-user-checkboxes',roster,[]);
+  populateUserChecks('sp-user-checkboxes',roster,[]);
+  const fm=_el('filter-manager');
+  if(fm) fm.innerHTML=`<option value="">All Account Managers</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+}
+function populateUserChecks(containerId, roster, checked){
+  const wrap=_el(containerId); if(!wrap) return;
+  if(!roster.length){ wrap.innerHTML='<span style="font-size:11px;color:var(--text-light);">No team members found — add users in Admin panel first.</span>'; return; }
+  wrap.innerHTML=roster.map(u=>`
+    <label style="display:flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--border);border-radius:7px;cursor:pointer;font-size:11px;background:var(--bg);">
+      <input type="checkbox" value="${u.id}" ${checked.includes(u.id)?'checked':''}>
+      <span class="uc-av" style="width:16px;height:16px;border-radius:50%;background:${u.color};display:inline-flex;align-items:center;justify-content:center;font-size:7px;font-weight:800;color:#fff;">${u.initials}</span>
+      ${u.name}
+    </label>`).join('');
+}
+function populateServiceDropdown(){
+  const cat=getCatalog();
+  const opts=cat.map(s=>`<option value="${s.id}" data-freq="${s.freq}">${s.name}</option>`).join('');
+  const el=_el('svc-name'); if(el) el.innerHTML=`<option value="">— Select service —</option>`+opts;
+  const flt=_el('filter-service'); if(!flt) return;
+  flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+}
+function populateScheduleClientFilter(){
+  const sel=_el('schedule-client-filter'); if(!sel) return;
+  sel.innerHTML=`<option value="">All Clients</option>`+getClients().map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+}
+function prefillServiceDefaults(){
+  const sel=_el('svc-name');
+  const opt=sel.options[sel.selectedIndex];
+  if(opt && opt.dataset.freq) _el('svc-freq').value=opt.dataset.freq;
+  _el('svc-due').value=calcNextDue(_el('svc-freq').value,today());
+  const cat=getCatalog();
+  const svc=cat.find(s=>s.id===sel.value);
+  if(svc && svc.defaultAssignee){ const el=_el('svc-assignee'); if(el) el.value=svc.defaultAssignee; }
+}
+
+// ═══════════════════════════════════════════════════════
+//  COLOR PICKER
+// ═══════════════════════════════════════════════════════
+let _selColor='#2D6BB6';
+function selectClientColor(el){
+  document.querySelectorAll('#cf-color-swatches .cl-swatch').forEach(s=>s.classList.remove('sel'));
+  el.classList.add('sel');
+  _selColor=el.dataset.color;
+  _el('cf-color').value=el.dataset.color;
+}
+
+// ═══════════════════════════════════════════════════════
+//  RENDER CLIENT GRID
+// ═══════════════════════════════════════════════════════
+let _activeClientId=null;
+
+function renderClientGrid(list){
+  list=list||getClients();
+  const grid=_el('client-grid'); if(!grid) return;
+  grid.innerHTML='';
+  if(!list.length){
+    grid.innerHTML=`<div style="grid-column:1/-1;"><div class="empty-state"><div class="empty-state-icon">🏢</div><div class="empty-state-title">No clients yet</div><div class="empty-state-sub">${SESSION.isAdmin?'Click <strong>+ New Client</strong> to get started.':'No clients assigned to you yet.'}</div></div></div>`;
+    updateStats(); return;
+  }
+  list.forEach(c=>{
+    const allProj=c.projects||[];
+    const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
+    const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+    const logoHtml=c.logo
+      ?`<img src="${c.logo}" onerror="this.style.display='none';this.nextSibling.style.display='flex';" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"><span style="display:none;font-size:16px;font-weight:800;color:#fff;">${init}</span>`
+      :`<span style="font-size:16px;font-weight:800;color:#fff;">${init}</span>`;
+    const svcs=(c.services||[]);
+    const svcBadges=svcs.slice(0,3).map(s=>`<span class="service-tag service-tag-${s.freq}">${s.name}</span>`).join('');
+    const svcMore=svcs.length>3?`<span style="font-size:9px;color:var(--text-light);">+${svcs.length-3} more</span>`:'';
+    const ongoingCount=allProj.filter(p=>p.status!=='completed').length;
+
+    const div=document.createElement('div');
+    div.className=`client-card${c.status==='inactive'||c.status==='paused'?' inactive-card':''}`;
+    div.onclick=()=>openClientDetail(c.id);
+    div.innerHTML=`
+      <div class="client-stripe" style="background:${c.color||'#2D6BB6'};"></div>
+      <div class="client-card-head">
+        <div class="client-avatar" style="background:${c.color||'#2D6BB6'};">${logoHtml}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}<span class="client-code">${c.code||''}</span></div>
+          <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${c.accountManager||'No manager'} · <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span></div>
+        </div>
+        ${SESSION.isAdmin?`<div style="display:flex;gap:4px;" onclick="event.stopPropagation();">
+          <button class="btn btn-xs btn-outline" onclick="editClient('${c.id}')" title="Edit">✏️</button>
+          <button class="btn btn-xs btn-outline" onclick="toggleClientStatus('${c.id}')" title="Toggle Status">${c.status==='active'?'⏸':'▶'}</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteClient('${c.id}')" title="Delete">✕</button>
+        </div>`:''}
+      </div>
+      <div class="client-card-body">
+        <div style="font-size:9px;color:var(--text-light);margin-bottom:5px;">${allProj.length} project(s) · ${ongoingCount} ongoing · Started ${c.start||'—'}</div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${totalPct}%;background:${c.color||'#2D6BB6'};"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-light);margin-bottom:7px;">
+          <span>Overall progress</span><span style="font-weight:800;color:var(--text-dark);">${totalPct}%</span>
+        </div>
+        <div style="line-height:1.9;">${svcBadges}${svcMore}</div>
+      </div>`;
+    grid.appendChild(div);
+  });
+  updateStats();
+}
+
+function updateStats(){
+  const clients=getClients();
+  const allProj=clients.flatMap(c=>c.projects||[]);
+  const t=today();
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  let due=0;
+  clients.forEach(c=>{ (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s) due++; }); });
+  const set=(id,v,col)=>{ const e=_el(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
+  set('st-total',clients.length);
+  set('st-active',clients.filter(c=>c.status==='active').length,'var(--green)');
+  set('st-inactive',clients.filter(c=>c.status!=='active').length,'#aaa');
+  set('st-ongoing',allProj.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length);
+  set('st-due',due,due>0?'var(--orange)':'var(--green)');
+}
+
+function filterClients(){
+  const q=(_el('client-search')?.value||'').toLowerCase();
+  const st=_el('filter-status')?.value||'';
+  const sv=_el('filter-service')?.value||'';
+  const mg=_el('filter-manager')?.value||'';
+  const sort=_el('filter-sort')?.value||'name';
+  let list=getClients();
+  if(q) list=list.filter(c=>
+    c.name.toLowerCase().includes(q)||(c.code||'').toLowerCase().includes(q)||
+    (c.accountManager||'').toLowerCase().includes(q)||(c.ownerName||'').toLowerCase().includes(q)||
+    (c.industry||'').toLowerCase().includes(q)
+  );
+  if(st) list=list.filter(c=>(c.status||'active')===st);
+  if(sv) list=list.filter(c=>(c.services||[]).some(s=>s.catalogId===sv));
+  if(mg) list=list.filter(c=>c.managerId===mg);
+  // Sort
+  list.sort((a,b)=>{
+    if(sort==='name') return a.name.localeCompare(b.name);
+    if(sort==='start') return (a.start||'').localeCompare(b.start||'');
+    if(sort==='status') return (a.status||'').localeCompare(b.status||'');
+    if(sort==='progress'){
+      const pa=a.projects?.length?Math.round(a.projects.reduce((s,p)=>s+p.progress,0)/a.projects.length):0;
+      const pb=b.projects?.length?Math.round(b.projects.reduce((s,p)=>s+p.progress,0)/b.projects.length):0;
+      return pb-pa;
+    }
+    return 0;
+  });
+  if(_activeClientId && !list.find(c=>c.id===_activeClientId)){
+    _el('client-detail-panel').style.display='none'; _activeClientId=null;
+  }
+  renderClientGrid(list);
+}
+
+// ═══════════════════════════════════════════════════════
+//  CLIENT DETAIL
+// ═══════════════════════════════════════════════════════
+function openClientDetail(id){
+  _activeClientId=id;
+  const panel=_el('client-detail-panel');
+  panel.style.display='block';
+  renderClientDetail(id);
+  setTimeout(()=>panel.scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
+
+function renderClientDetail(clientId, tab){
+  const c=getClient(clientId); if(!c) return;
+  tab=tab||'overview';
+  const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  const allProj=c.projects||[];
+  const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
+  const logoHtml=c.logo
+    ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
+    :`<span style="font-size:22px;font-weight:800;color:#fff;">${init}</span>`;
+
+  const adminContact=SESSION.isAdmin?`
+    <div class="detail-info-item"><div class="detail-info-label">👤 Owner</div><div class="detail-info-value">${c.ownerName||'—'}</div></div>
+    <div class="detail-info-item"><div class="detail-info-label">📧 Email 🔒</div><div class="detail-info-value" style="font-size:10px;word-break:break-all;">${c.ownerEmail||'—'}</div></div>
+    <div class="detail-info-item"><div class="detail-info-label">📞 Phone</div><div class="detail-info-value">${c.ownerPhone||'—'}</div></div>
+    <div class="detail-info-item"><div class="detail-info-label">🏭 Industry</div><div class="detail-info-value">${c.industry||'—'}</div></div>`:
+  '';
+
+  const tabs=['overview','projects','services','brand-notes'].map(t=>`
+    <div class="detail-tab${tab===t?' active':''}" onclick="renderClientDetail('${c.id}','${t}')">${
+      {overview:'📋 Overview',projects:'📁 Projects',services:'🔁 Services','brand-notes':'🎨 Brand & Notes'}[t]
+    }</div>`).join('');
+
+  let body='';
+  if(tab==='overview') body=renderOverview(c);
+  else if(tab==='projects') body=renderProjects(c);
+  else if(tab==='services') body=renderServices(c);
+  else if(tab==='brand-notes') body=renderBrand(c);
+
+  _el('client-detail-content').innerHTML=`
+    <div class="detail-header">
+      <div class="detail-avatar" style="background:${c.color||'#2D6BB6'};">${logoHtml}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="detail-name">${c.name} <span class="client-code" style="font-size:12px;">${c.code||''}</span></div>
+        <div style="margin-top:4px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+          <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span>
+          ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${c.industry}</span>`:''}
+          ${c.website?`<a href="${c.website}" target="_blank" style="font-size:10px;color:var(--text);">🌐 ${c.website}</a>`:''}
+        </div>
+        <div class="detail-info-grid">
+          <div class="detail-info-item"><div class="detail-info-label">Account Manager</div><div class="detail-info-value">${c.accountManager||'—'}</div></div>
+          <div class="detail-info-item"><div class="detail-info-label">Start Date</div><div class="detail-info-value">${c.start||'—'}</div></div>
+          <div class="detail-info-item"><div class="detail-info-label">Referred By</div><div class="detail-info-value">${c.referredBy||'—'}</div></div>
+          <div class="detail-info-item"><div class="detail-info-label">Initial Project</div><div class="detail-info-value">${c.initialProject||'—'}</div></div>
+          ${adminContact}
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-size:28px;font-weight:800;color:${c.color||'#2D6BB6'};">${totalPct}%</div>
+        <div style="font-size:9px;color:var(--text-light);">Overall progress</div>
+        <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
+          ${SESSION.isAdmin?`
+            <button class="btn btn-xs btn-outline" onclick="editClient('${c.id}')">✏️ Edit</button>
+            <button class="btn btn-xs btn-outline" onclick="toggleClientStatus('${c.id}')">${c.status==='active'?'⛔ Deactivate':'✅ Activate'}</button>
+          `:''}
+          <button class="btn btn-xs btn-outline" onclick="_el('client-detail-panel').style.display='none';_activeClientId=null;">✕ Close</button>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 22px 0;overflow-x:auto;">
+      <div class="detail-tabs">${tabs}</div>
+    </div>
+    <div class="detail-body">${body}</div>`;
+}
+
+// ── Overview Tab ──
+function renderOverview(c){
+  const allProj=c.projects||[];
+  const projSummary=allProj.map(p=>`
+    <div style="display:flex;align-items:center;gap:9px;padding:7px 11px;background:var(--bg);border-radius:9px;margin-bottom:5px;cursor:pointer;" onclick="renderClientDetail('${c.id}','projects')">
+      <div style="width:9px;height:9px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
+      <div style="flex:1;font-size:11px;font-weight:700;color:var(--text-dark);">${p.name}</div>
+      <div style="width:70px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
+      <span style="font-size:10px;font-weight:800;color:${p.color||c.color};width:30px;text-align:right;">${p.progress||0}%</span>
+      <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
+    </div>`).join('');
+
+  const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const svcAlerts=(c.services||[]).map(svc=>{
+    const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+    const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+    return `<div class="alert-item alert-${cls}"><div class="alert-icon">${icon}</div><div class="alert-body"><div class="alert-title">${svc.name}</div><div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div></div></div>`;
+  }).join('');
+
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Projects (${allProj.length})</div>
+        ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No projects yet.</div>'}
+        ${c.recurringTags?`<div style="margin-top:12px;font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Recurring Services</div>
+        <div>${c.recurringTags.split(',').filter(Boolean).map(t=>`<span class="service-tag service-tag-monthly">${t.trim()}</span>`).join('')}</div>`:''}
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Service Alerts</div>
+        ${svcAlerts||'<div style="font-size:11px;color:var(--text-light);">No services scheduled.</div>'}
+      </div>
+    </div>`;
+}
+
+// ── Projects Tab ──
+function renderProjects(c){
+  const canEdit=SESSION.isAdmin;
+  const projs=(c.projects||[]).map(p=>{
+    const roster=getRoster();
+    const assignedChips=(p.users||[]).map(uid=>userChip(uid)).join('');
+    const subHtml=(p.subprojects||[]).map(sp=>renderSubprojectRow(c.id,p.id,sp,canEdit)).join('');
+    const taskHtml=(p.tasks||[]).map(t=>renderTaskRow(c.id,p.id,null,t,canEdit)).join('');
+    const msHtml=(p.milestones||[]).length?`
+      <div style="margin-top:11px;">
+        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Milestones</div>
+        <div class="milestone-list">${(p.milestones||[]).map(ms=>{
+          const days=daysUntil(ms.date);
+          const cls=days!==null&&days<0?'missed':days!==null&&days<=7?'upcoming':'reached';
+          return `<div class="milestone-item"><div class="milestone-dot ${cls}"></div><div><div class="milestone-title">🏆 ${ms.title}</div><div class="milestone-date">${ms.date}${ms.notes?' · '+ms.notes:''}</div></div></div>`;
+        }).join('')}</div>
+      </div>`:'';
+    const logHtml=(p.progressLog||[]).slice().reverse().slice(0,5).map(l=>`
+      <div class="log-item">
+        <div class="log-header"><span class="log-pct">${l.pct}%</span><span class="log-date">${l.date}</span></div>
+        ${l.user?`<div class="log-user">by ${l.user}</div>`:''}
+        ${l.note?`<div class="log-note">${l.note}</div>`:''}
+      </div>`).join('');
+
+    return `
+      <div class="project-block">
+        <div class="project-head" onclick="toggleProjectBlock(this)">
+          <div class="project-head-expand">▶</div>
+          <div style="width:10px;height:10px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <div style="font-size:12px;font-weight:800;color:var(--text-dark);">${p.name}</div>
+            <div style="font-size:9px;color:var(--text-light);">${p.type||'Project'} · <span class="chip chip-${p.billing||'one-time'}">${p.billing||'one-time'}</span> · Due ${p.due||'TBD'}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+            <div style="width:60px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
+            <span style="font-size:11px;font-weight:800;color:${p.color||c.color};">${p.progress||0}%</span>
+            <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
+            <span class="priority-badge pb-${p.priority}" style="font-size:8px;">${p.priority}</span>
+            <div onclick="event.stopPropagation();">
+              <button class="btn btn-xs btn-outline" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log</button>
+              ${canEdit?`
+              <button class="btn btn-xs btn-outline" onclick="openMilestoneModal('${c.id}','${p.id}')">🏆</button>
+              <button class="btn btn-xs btn-outline" onclick="openSubprojectModal('${c.id}','${p.id}')">+ Sub</button>
+              <button class="btn btn-xs btn-outline" onclick="openTaskModal('${c.id}','${p.id}',null)">+ Task</button>
+              <button class="btn btn-xs btn-outline" onclick="editProject('${c.id}','${p.id}')">✏️</button>
+              <button class="btn btn-xs btn-danger" onclick="deleteProject('${c.id}','${p.id}')">✕</button>`:''}
+            </div>
+          </div>
+        </div>
+        <div class="project-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div>
+              <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Assigned Team</div>
+              <div style="margin-bottom:10px;">${assignedChips||'<span style="font-size:10px;color:var(--text-light);">No members assigned</span>'}</div>
+              ${(p.subprojects||[]).length?`
+                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Sub-Projects</div>
+                <div>${subHtml}</div>`:''}
+              ${(p.tasks||[]).length?`
+                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">Project Tasks</div>
+                <div>${taskHtml}</div>`:''}
+              ${p.desc?`<div style="font-size:10px;color:var(--text-light);font-style:italic;margin-top:9px;">${p.desc}</div>`:''}
+            </div>
+            <div>
+              ${msHtml}
+              <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-top:10px;margin-bottom:5px;">Progress Log</div>
+              ${logHtml||'<div style="font-size:10px;color:var(--text-light);">No updates logged yet.</div>'}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
+      ${canEdit?`<button class="btn btn-primary btn-sm" onclick="openProjectModal('${c.id}')">+ Add Project</button>`:''}
+    </div>
+    ${projs||'<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No projects yet</div></div>'}`;
+}
+
+function renderSubprojectRow(clientId, projId, sp, canEdit){
+  const done=sp.status==='completed';
+  const taskHtml=(sp.tasks||[]).map(t=>renderTaskRow(clientId,projId,sp.id,t,canEdit)).join('');
+  return `
+    <div class="subproject-item" style="flex-direction:column;align-items:flex-start;gap:3px;">
+      <div style="display:flex;align-items:center;gap:7px;width:100%;">
+        <div class="task-check${done?' done':''}" onclick="toggleSubprojectDone('${clientId}','${projId}','${sp.id}')">${done?'✓':''}</div>
+        <span style="flex:1;font-size:11px;font-weight:700;color:var(--text-dark);${done?'text-decoration:line-through;opacity:.6':''}">${sp.name}</span>
+        <span class="chip chip-${sp.billing||'one-time'}" style="font-size:8px;">${sp.billing||'one-time'}</span>
+        <span class="chip chip-${sp.status}" style="font-size:8px;">${sp.status.replace('-',' ')}</span>
+        ${(sp.users||[]).map(uid=>userChip(uid)).join('')}
+        ${canEdit?`<button class="btn btn-xs btn-outline" onclick="openTaskModal('${clientId}','${projId}','${sp.id}')">+ Task</button>
+          <button class="btn btn-xs btn-outline" onclick="openSubprojectModal('${clientId}','${projId}','${sp.id}')">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteSubproject('${clientId}','${projId}','${sp.id}')">✕</button>`:''}
+      </div>
+      ${(sp.tasks||[]).length?`<div style="width:100%;padding-left:22px;">${taskHtml}</div>`:''}
+    </div>`;
+}
+
+function renderTaskRow(clientId, projId, spId, t, canEdit){
+  return `
+    <div class="task-item${t.done?' done-task':''}">
+      <input type="checkbox" class="task-cb" ${t.done?'checked':''} onchange="toggleTaskDone('${clientId}','${projId}','${spId||''}','${t.id}',this.checked)">
+      <span class="task-name">${t.name}</span>
+      ${t.assigneeId?`<span class="task-assignee">${getUser(t.assigneeId)?.name||t.assigneeId}</span>`:''}
+      ${t.due?`<span style="font-size:9px;color:var(--text-light);">${t.due}</span>`:''}
+      ${canEdit?`<button class="btn btn-xs btn-danger" onclick="deleteTask('${clientId}','${projId}','${spId||''}','${t.id}')">✕</button>`:''}
+    </div>`;
+}
+
+// ── Services Tab ──
+function renderServices(c){
+  const svcs=c.services||[];
+  const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const rows=svcs.map(svc=>{
+    const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+    const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+    const days=daysUntil(svc.due);
+    const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
+    return `
+      <tr>
+        <td><span style="font-size:13px;">${icon}</span></td>
+        <td><div style="font-weight:700;font-size:11px;">${svc.name}</div>${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${svc.notes}</div>`:''}</td>
+        <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
+        <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
+        <td>${svc.assigneeName?`<span class="user-chip">${svc.assigneeName}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
+        ${SESSION.isAdmin?`<td>
+          <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}')">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}')">✕</button>
+        </td>`:'<td></td>'}
+      </tr>`;
+  }).join('');
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
+      ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
+    </div>
+    ${svcs.length?`<div style="overflow-x:auto;">
+      <table class="service-table">
+        <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th>${SESSION.isAdmin?'<th>Actions</th>':'<th></th>'}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`:'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>'}`;
+}
+
+// ── Brand & Notes Tab ──
+function renderBrand(c){
+  const swatches=(c.brandColors||'').split(',').filter(Boolean).map(col=>`
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+      <div class="brand-swatch" style="background:${col.trim()};"></div>
+      <span style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text-dark);">${col.trim()}</span>
+    </div>`).join('');
+  return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
+      ${SESSION.isAdmin?`<button class="btn btn-outline btn-sm" onclick="openNotesModal('${c.id}')">✏️ Edit Notes &amp; Brand</button>`:''}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+      <div>
+        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Internal Notes</div>
+        ${c.notes?`<div class="notes-block">${c.notes}</div>`:'<div style="font-size:11px;color:var(--text-light);">No notes added yet.</div>'}
+        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:13px 0 7px;">Brand Details / Style Guide</div>
+        ${c.brandDetails?`<div class="notes-block">${c.brandDetails}</div>`:'<div style="font-size:11px;color:var(--text-light);">No brand details added yet.</div>'}
+        ${c.toneOfVoice?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:10px 0 5px;">Tone of Voice</div><div class="notes-block" style="font-size:11px;">${c.toneOfVoice}</div>`:''}
+      </div>
+      <div>
+        ${c.logo?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Logo</div>
+          <div style="margin-bottom:13px;"><img src="${c.logo}" style="max-height:70px;max-width:180px;border-radius:8px;border:1px solid var(--border);" onerror="this.style.display='none'"></div>`:''}
+        ${c.brandColors?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Brand Colors</div>
+          <div style="margin-bottom:13px;">${swatches}</div>`:''}
+        ${c.primaryFont?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Primary Font</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">${c.primaryFont}</div>`:''}
+        ${c.secondaryFont?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Secondary Font</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">${c.secondaryFont}</div>`:''}
+      </div>
+    </div>`;
+}
+
+function toggleProjectBlock(header){
+  const exp=header.querySelector('.project-head-expand');
+  const body=header.nextElementSibling;
+  if(body){ body.classList.toggle('open'); exp.classList.toggle('open'); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  CLIENT CRUD
+// ═══════════════════════════════════════════════════════
+function openClientModal(){
+  _el('clientModalTitle').textContent='New Client';
+  _el('cf-id').value='';
+  ['cf-name','cf-code','cf-website','cf-referred','cf-initial-project','cf-recurring-tags',
+   'cf-owner','cf-email','cf-phone','cf-industry','cf-logo','cf-brand','cf-notes'].forEach(id=>{
+    const e=_el(id); if(e) e.value='';
+  });
+  _el('cf-status').value='active';
+  _el('cf-start').value=today();
+  _selColor='#2D6BB6'; _el('cf-color').value='#2D6BB6';
+  document.querySelectorAll('#cf-color-swatches .cl-swatch').forEach(s=>s.classList.toggle('sel',s.dataset.color==='#2D6BB6'));
+  const roster=getRoster();
+  const mgr=_el('cf-manager');
+  if(mgr) mgr.innerHTML=`<option value="">— Select —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  openModal('clientModal');
+}
+
+function editClient(id){
+  const c=getClient(id); if(!c) return;
+  _el('clientModalTitle').textContent='Edit Client';
+  _el('cf-id').value=id;
+  _el('cf-name').value=c.name||'';
+  _el('cf-code').value=c.code||'';
+  _el('cf-status').value=c.status||'active';
+  _el('cf-start').value=c.start||'';
+  _el('cf-website').value=c.website||'';
+  _el('cf-referred').value=c.referredBy||'';
+  _el('cf-initial-project').value=c.initialProject||'';
+  _el('cf-recurring-tags').value=c.recurringTags||'';
+  _el('cf-owner').value=c.ownerName||'';
+  _el('cf-email').value=c.ownerEmail||'';
+  _el('cf-phone').value=c.ownerPhone||'';
+  _el('cf-industry').value=c.industry||'';
+  _el('cf-logo').value=c.logo||'';
+  _el('cf-brand').value=c.brandDetails||'';
+  _el('cf-notes').value=c.notes||'';
+  _selColor=c.color||'#2D6BB6'; _el('cf-color').value=_selColor;
+  document.querySelectorAll('#cf-color-swatches .cl-swatch').forEach(s=>s.classList.toggle('sel',s.dataset.color===c.color));
+  const roster=getRoster();
+  const mgr=_el('cf-manager');
+  if(mgr){ mgr.innerHTML=`<option value="">— Select —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join(''); mgr.value=c.managerId||''; }
+  openModal('clientModal');
+}
+
+function saveClient(){
+  const name=_el('cf-name').value.trim();
+  if(!name){ showToast('Client name is required','warn'); return; }
+  const code=_el('cf-code').value.trim().toUpperCase();
+  if(!code){ showToast('Client code is required','warn'); return; }
+  const editId=_el('cf-id').value;
+  const roster=getRoster();
+  const managerId=_el('cf-manager').value;
+  const managerName=roster.find(u=>u.id===managerId)?.name||'';
+  const data={
+    name, code, status:_el('cf-status').value, start:_el('cf-start').value,
+    website:_el('cf-website').value, referredBy:_el('cf-referred').value,
+    initialProject:_el('cf-initial-project').value, recurringTags:_el('cf-recurring-tags').value,
+    ownerName:_el('cf-owner').value, ownerEmail:_el('cf-email').value, ownerPhone:_el('cf-phone').value,
+    industry:_el('cf-industry').value, logo:_el('cf-logo').value, brandDetails:_el('cf-brand').value,
+    notes:_el('cf-notes').value, managerId, accountManager:managerName, color:_selColor,
+  };
+  const clients=getClients();
+  if(editId){
+    const idx=clients.findIndex(c=>c.id===editId);
+    if(idx>=0) Object.assign(clients[idx],data);
+    saveClients(clients);
+  } else {
+    const newC={id:'c'+uid(), projects:[], services:[], ...data};
+    clients.unshift(newC);
+    saveClients(clients);
+    // Notify the assigned account manager
+    if(managerId){
+      pushNotif({ icon:'🏢', color:'rgba(45,107,182,.1)',
+        title:`New client assigned: ${name}`,
+        body:`You are the account manager for ${name}. Started: ${data.start||'today'}.`,
+        forUser:managerId, fromUser:SESSION.name });
+    }
+  }
+  closeModal('clientModal');
+  populateScheduleClientFilter();
+  renderClientGrid();
+  if(_activeClientId===editId&&editId) renderClientDetail(editId);
+  showToast(editId?'Client updated ✓':'Client added ✓');
+}
+
+function deleteClient(id){
+  if(!confirm('Delete this client and all their data? This cannot be undone.')) return;
+  const clients=getClients().filter(c=>c.id!==id);
+  saveClients(clients);
+  if(_activeClientId===id){ _el('client-detail-panel').style.display='none'; _activeClientId=null; }
+  populateScheduleClientFilter();
+  renderClientGrid();
+  showToast('Client deleted');
+}
+
+function toggleClientStatus(id){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===id); if(!c) return;
+  c.status=c.status==='active'?'inactive':'active';
+  saveClients(clients);
+  renderClientDetail(id);
+  renderClientGrid();
+  showToast(`Client marked ${c.status}`);
+}
+
+// ═══════════════════════════════════════════════════════
+//  PROJECT CRUD
+// ═══════════════════════════════════════════════════════
+function openProjectModal(clientId, projId){
+  const c=getClient(clientId); if(!c) return;
+  const roster=getRoster();
+  _el('projectModalTitle').textContent=projId?'Edit Project':'New Project';
+  _el('projectModalSub').textContent=c.name;
+  _el('pf-client-id').value=clientId;
+  _el('pf-proj-id').value=projId||'';
+  const existingUsers=projId?(c.projects.find(p=>p.id===projId)?.users||[]):[];
+  populateUserChecks('pf-user-checkboxes',roster,existingUsers);
+  if(projId){
+    const p=c.projects.find(x=>x.id===projId); if(!p) return;
+    _el('pf-name').value=p.name; _el('pf-type').value=p.type||'Web Design';
+    _el('pf-billing').value=p.billing||'one-time'; _el('pf-status').value=p.status;
+    _el('pf-priority').value=p.priority||'medium'; _el('pf-start').value=p.start||'';
+    _el('pf-due').value=p.due||''; _el('pf-desc').value=p.desc||''; _el('pf-color').value=p.color||c.color||'#2D6BB6';
+  } else {
+    ['pf-name','pf-start','pf-due','pf-desc'].forEach(id=>_el(id).value='');
+    _el('pf-status').value='not-started'; _el('pf-priority').value='medium';
+    _el('pf-billing').value='one-time'; _el('pf-color').value=c.color||'#2D6BB6';
+  }
+  openModal('projectModal');
+}
+
+function editProject(clientId,projId){ openProjectModal(clientId,projId); }
+
+function saveProject(){
+  const clientId=_el('pf-client-id').value;
+  const projId=_el('pf-proj-id').value;
+  const name=_el('pf-name').value.trim();
+  if(!name){ showToast('Project name is required','warn'); return; }
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
+  const data={
+    name, type:_el('pf-type').value, billing:_el('pf-billing').value, status:_el('pf-status').value,
+    priority:_el('pf-priority').value, start:_el('pf-start').value, due:_el('pf-due').value,
+    desc:_el('pf-desc').value, color:_el('pf-color').value, users
+  };
+  if(projId){
+    const p=c.projects.find(x=>x.id===projId);
+    if(p) Object.assign(p,data);
+  } else {
+    const newP={id:'p'+uid(),...data,progress:0,progressLog:[],milestones:[],subprojects:[],tasks:[]};
+    c.projects.push(newP);
+    // Notify all assigned users
+    users.forEach(uid=>{
+      pushNotif({ icon:'📁', color:'rgba(45,107,182,.1)',
+        title:`New project assigned: ${name}`,
+        body:`You've been added to "${name}" for ${c.name}. Due: ${data.due||'TBD'}.`,
+        forUser:uid, fromUser:SESSION.name });
+    });
+  }
+  saveClients(clients);
+  closeModal('projectModal');
+  renderClientDetail(clientId,'projects');
+  renderClientGrid();
+  showToast(projId?'Project updated ✓':'Project added ✓');
+}
+
+function deleteProject(clientId,projId){
+  if(!confirm('Delete this project and all its tasks?')) return;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  c.projects=c.projects.filter(p=>p.id!==projId);
+  saveClients(clients);
+  renderClientDetail(clientId,'projects');
+  renderClientGrid();
+  showToast('Project deleted');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SUBPROJECT CRUD
+// ═══════════════════════════════════════════════════════
+function openSubprojectModal(clientId,projId,spId){
+  const c=getClient(clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const sp=spId?p.subprojects.find(x=>x.id===spId):null;
+  _el('sp-client-id').value=clientId; _el('sp-proj-id').value=projId; _el('sp-id').value=spId||'';
+  _el('sp-modal-sub').textContent=p.name;
+  const roster=getRoster();
+  populateUserChecks('sp-user-checkboxes',roster,sp?.users||[]);
+  _el('sp-name').value=sp?.name||'';
+  _el('sp-billing').value=sp?.billing||'one-time';
+  _el('sp-status').value=sp?.status||'not-started';
+  openModal('subprojectModal');
+}
+
+function saveSubproject(){
+  const name=_el('sp-name').value.trim();
+  if(!name){ showToast('Sub-project name required','warn'); return; }
+  const clientId=_el('sp-client-id').value, projId=_el('sp-proj-id').value, spId=_el('sp-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const users=[...document.querySelectorAll('#sp-user-checkboxes input:checked')].map(cb=>cb.value);
+  const data={name,billing:_el('sp-billing').value,status:_el('sp-status').value,users,tasks:[]};
+  if(spId){
+    const sp=p.subprojects.find(x=>x.id===spId);
+    if(sp) Object.assign(sp,{name,billing:data.billing,status:data.status,users});
+  } else {
+    p.subprojects.push({id:'sp'+uid(),...data});
+    users.forEach(uid=>{
+      pushNotif({ icon:'📋', color:'rgba(45,107,182,.1)',
+        title:`Sub-project assigned: ${name}`,
+        body:`You've been assigned to "${name}" under ${p.name} · ${c.name}.`,
+        forUser:uid, fromUser:SESSION.name });
+    });
+  }
+  recalcProgress(clients,clientId,projId);
+  saveClients(clients);
+  closeModal('subprojectModal');
+  renderClientDetail(clientId,'projects');
+  showToast('Sub-project saved ✓');
+}
+
+function deleteSubproject(clientId,projId,spId){
+  if(!confirm('Delete sub-project?')) return;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  p.subprojects=p.subprojects.filter(s=>s.id!==spId);
+  recalcProgress(clients,clientId,projId);
+  saveClients(clients);
+  renderClientDetail(clientId,'projects');
+  showToast('Sub-project deleted');
+}
+
+function toggleSubprojectDone(clientId,projId,spId){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const sp=p.subprojects.find(x=>x.id===spId); if(!sp) return;
+  sp.status=sp.status==='completed'?'in-progress':'completed';
+  const pct=recalcProgress(clients,clientId,projId);
+  saveClients(clients);
+  if(sp.status==='completed'){
+    pushNotif({ icon:'✅', color:'rgba(46,158,110,.1)',
+      title:`Sub-project complete: ${sp.name}`,
+      body:`${SESSION.name} completed "${sp.name}" on ${p.name} · ${c.name}. Progress: ${pct}%`,
+      forUser:'admin', fromUser:SESSION.name });
+  }
+  renderClientDetail(clientId,'projects');
+  showToast(sp.status==='completed'?'Marked complete ✓':'Marked in-progress');
+}
+
+// ═══════════════════════════════════════════════════════
+//  TASK CRUD
+// ═══════════════════════════════════════════════════════
+function openTaskModal(clientId,projId,spId,taskId){
+  const c=getClient(clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const container=spId?p.subprojects.find(x=>x.id===spId):p;
+  const task=taskId?container?.tasks?.find(t=>t.id===taskId):null;
+  _el('tf-client-id').value=clientId; _el('tf-proj-id').value=projId;
+  _el('tf-sp-id').value=spId||''; _el('tf-task-id').value=taskId||'';
+  _el('task-modal-title').textContent=taskId?'Edit Task':'Add Task';
+  _el('task-modal-sub').textContent=(spId?p.subprojects.find(x=>x.id===spId)?.name:p.name)||p.name;
+  _el('tf-name').value=task?.name||''; _el('tf-due').value=task?.due||'';
+  const roster=getRoster();
+  const aEl=_el('tf-assignee');
+  aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  if(task?.assigneeId) aEl.value=task.assigneeId;
+  openModal('taskModal');
+}
+
+function saveTask(){
+  const name=_el('tf-name').value.trim();
+  if(!name){ showToast('Task name required','warn'); return; }
+  const clientId=_el('tf-client-id').value, projId=_el('tf-proj-id').value;
+  const spId=_el('tf-sp-id').value, taskId=_el('tf-task-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const container=spId?(p.subprojects.find(x=>x.id===spId)):p;
+  if(!container) return;
+  if(!container.tasks) container.tasks=[];
+  const assigneeId=_el('tf-assignee').value;
+  const assigneeName=getRoster().find(u=>u.id===assigneeId)?.name||'';
+  const data={name,assigneeId,assigneeName,due:_el('tf-due').value,done:false};
+  if(taskId){
+    const t=container.tasks.find(x=>x.id===taskId);
+    if(t) Object.assign(t,{name,assigneeId,assigneeName,due:data.due});
+  } else {
+    container.tasks.push({id:'t'+uid(),...data});
+    if(assigneeId){
+      pushNotif({ icon:'✅', color:'rgba(45,107,182,.1)',
+        title:`Task assigned: ${name}`,
+        body:`New task on "${p.name}" · ${c.name}${data.due?' — due '+data.due:''}`,
+        forUser:assigneeId, fromUser:SESSION.name });
+    }
+  }
+  recalcProgress(clients,clientId,projId);
+  saveClients(clients);
+  closeModal('taskModal');
+  renderClientDetail(clientId,'projects');
+  showToast(taskId?'Task updated ✓':'Task added ✓');
+}
+
+function deleteTask(clientId,projId,spId,taskId){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const container=spId?p.subprojects.find(x=>x.id===spId):p;
+  if(!container) return;
+  container.tasks=(container.tasks||[]).filter(t=>t.id!==taskId);
+  recalcProgress(clients,clientId,projId);
+  saveClients(clients);
+  renderClientDetail(clientId,'projects');
+  showToast('Task deleted');
+}
+
+function toggleTaskDone(clientId,projId,spId,taskId,checked){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  const container=spId?p.subprojects.find(x=>x.id===spId):p;
+  if(!container) return;
+  const task=(container.tasks||[]).find(t=>t.id===taskId); if(!task) return;
+  task.done=checked;
+  task.completedBy=checked?SESSION.name:null;
+  task.completedAt=checked?new Date().toISOString():null;
+  const pct=recalcProgress(clients,clientId,projId);
+  if(pct===100){
+    pushNotif({ icon:'🎉', color:'rgba(46,158,110,.1)',
+      title:`Project complete: ${p.name}`,
+      body:`${SESSION.name} finished all tasks on "${p.name}" for ${c.name}. 100% complete!`,
+      forUser:'admin', fromUser:SESSION.name });
+  } else if(checked){
+    pushNotif({ icon:'✅', color:'rgba(46,158,110,.1)',
+      title:`Task done: ${task.name}`,
+      body:`${SESSION.name} completed a task on "${p.name}" · ${c.name}. Progress: ${pct}%`,
+      forUser:'admin', fromUser:SESSION.name });
+  }
+  saveClients(clients);
+  renderClientDetail(clientId,'projects');
+  showToast(checked?`✓ Task done — project at ${pct}%`:'Task unmarked');
+}
+
+// ═══════════════════════════════════════════════════════
+//  MILESTONES
+// ═══════════════════════════════════════════════════════
+function openMilestoneModal(clientId,projId,msId){
+  const p=getClient(clientId)?.projects.find(x=>x.id===projId); if(!p) return;
+  _el('ms-client-id').value=clientId; _el('ms-proj-id').value=projId; _el('ms-id').value=msId||'';
+  _el('ms-modal-sub').textContent=p.name;
+  const ms=msId?p.milestones?.find(m=>m.id===msId):null;
+  _el('ms-title').value=ms?.title||''; _el('ms-notes').value=ms?.notes||''; _el('ms-date').value=ms?.date||today();
+  openModal('milestoneModal');
+}
+function saveMilestone(){
+  const title=_el('ms-title').value.trim();
+  if(!title){ showToast('Milestone title required','warn'); return; }
+  const clientId=_el('ms-client-id').value, projId=_el('ms-proj-id').value, msId=_el('ms-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  if(!p.milestones) p.milestones=[];
+  const data={title,date:_el('ms-date').value,notes:_el('ms-notes').value};
+  if(msId){ const m=p.milestones.find(x=>x.id===msId); if(m) Object.assign(m,data); }
+  else p.milestones.push({id:'ms'+uid(),...data});
+  saveClients(clients);
+  closeModal('milestoneModal');
+  renderClientDetail(clientId,'projects');
+  showToast('Milestone saved 🏆');
+}
+
+// ═══════════════════════════════════════════════════════
+//  PROGRESS LOG
+// ═══════════════════════════════════════════════════════
+function openProgressModal(clientId,projId){
+  const c=getClient(clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  _el('prog-client-id').value=clientId; _el('prog-proj-id').value=projId;
+  _el('prog-modal-sub').textContent=`${p.name} (${c.name})`;
+  _el('prog-note').value=''; _el('prog-date').value=today();
+  const pct=calcProjectProgress(p);
+  const allTasks=[...(p.tasks||[]),...(p.subprojects||[]).flatMap(sp=>sp.tasks||[])];
+  const spUnits=p.subprojects||[];
+  const total=allTasks.length+spUnits.length;
+  const done=allTasks.filter(t=>t.done).length+spUnits.filter(s=>s.status==='completed').length;
+  _el('prog-auto-pct').textContent=pct+'%';
+  _el('prog-auto-breakdown').textContent=`${done} of ${total} tasks/sub-projects complete`;
+  openModal('progressModal');
+}
+function saveProgress(){
+  const note=_el('prog-note').value.trim();
+  if(!note){ showToast('Please add an update note','warn'); return; }
+  const clientId=_el('prog-client-id').value, projId=_el('prog-proj-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const p=c.projects.find(x=>x.id===projId); if(!p) return;
+  if(!p.progressLog) p.progressLog=[];
+  const pct=calcProjectProgress(p);
+  p.progressLog.push({date:_el('prog-date').value,pct,note,user:SESSION.name});
+  p.progress=pct; if(pct===100) p.status='completed';
+  saveClients(clients);
+  pushNotif({ icon:'📈', color:'rgba(45,107,182,.1)',
+    title:`Progress update: ${p.name}`,
+    body:`${SESSION.name} logged an update on "${p.name}" · ${c.name}. Now at ${pct}%.`,
+    forUser:'admin', fromUser:SESSION.name });
+  closeModal('progressModal');
+  renderClientDetail(clientId,'projects');
+  renderClientGrid();
+  showToast('Progress logged ✓');
+}
+
+// ═══════════════════════════════════════════════════════
+//  CLIENT SERVICES (recurring)
+// ═══════════════════════════════════════════════════════
+function openAddServiceModal(clientId,entryId){
+  const c=getClient(clientId); if(!c) return;
+  _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||'';
+  _el('svc-modal-title').textContent=entryId?'Edit Service':'Add Recurring Service';
+  _el('svc-modal-sub').textContent=c.name;
+  populateServiceDropdown();
+  const roster=getRoster();
+  const aEl=_el('svc-assignee');
+  aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  if(entryId){
+    const svc=(c.services||[]).find(s=>s.id===entryId);
+    if(svc){
+      _el('svc-name').value=svc.catalogId||'';
+      _el('svc-freq').value=svc.freq;
+      _el('svc-due').value=svc.due;
+      _el('svc-assignee').value=svc.assigneeId||'';
+      _el('svc-notes').value=svc.notes||'';
+    }
+  } else {
+    _el('svc-name').value='';
+    _el('svc-freq').value='monthly';
+    _el('svc-due').value=calcNextDue('monthly',today());
+    _el('svc-notes').value='';
+  }
+  openModal('addServiceModal');
+}
+function editClientService(clientId,entryId){ openAddServiceModal(clientId,entryId); }
+function saveClientService(){
+  const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value;
+  const catalogId=_el('svc-name').value;
+  if(!catalogId){ showToast('Select a service','warn'); return; }
+  const cat=getCatalog();
+  const catEntry=cat.find(s=>s.id===catalogId);
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  if(!c.services) c.services=[];
+  const roster=getRoster();
+  const assigneeId=_el('svc-assignee').value;
+  const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
+  const freq=_el('svc-freq').value;
+  const due=_el('svc-due').value;
+  const data={name:catEntry?.name||catalogId,catalogId,freq,due,assigneeId,assigneeName,notes:_el('svc-notes').value};
+  if(entryId){
+    const idx=c.services.findIndex(s=>s.id===entryId);
+    if(idx>=0) Object.assign(c.services[idx],data);
+  } else {
+    c.services.push({id:'sv'+uid(),...data});
+    if(assigneeId){
+      pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
+        title:`Service assigned: ${data.name}`,
+        body:`You're handling "${data.name}" (${freq}) for ${c.name}. Next due: ${due}.`,
+        forUser:assigneeId, fromUser:SESSION.name });
+    }
+    // Also notify the manager
+    if(c.managerId && c.managerId!==assigneeId){
+      pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
+        title:`New service added for ${c.name}`,
+        body:`"${data.name}" (${freq}) assigned to ${assigneeName||'someone'}. Next due: ${due}.`,
+        forUser:c.managerId, fromUser:SESSION.name });
+    }
+  }
+  saveClients(clients);
+  closeModal('addServiceModal');
+  renderClientDetail(clientId,'services');
+  checkServiceAlerts();
+  showToast('Service saved ✓');
+}
+function removeClientService(clientId,entryId){
+  if(!confirm('Remove this service?')) return;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  c.services=(c.services||[]).filter(s=>s.id!==entryId);
+  saveClients(clients);
+  renderClientDetail(clientId,'services');
+  showToast('Service removed');
+}
+
+// ═══════════════════════════════════════════════════════
+//  NOTES / BRAND
+// ═══════════════════════════════════════════════════════
+function openNotesModal(clientId){
+  const c=getClient(clientId); if(!c) return;
+  _el('nm-client-id').value=clientId;
+  _el('notes-modal-title').textContent='Notes & Brand — '+c.name;
+  _el('nm-notes').value=c.notes||'';
+  _el('nm-brand').value=c.brandDetails||'';
+  _el('nm-logo').value=c.logo||'';
+  _el('nm-brand-colors').value=c.brandColors||'';
+  _el('nm-font').value=c.primaryFont||'';
+  _el('nm-font2').value=c.secondaryFont||'';
+  _el('nm-tone').value=c.toneOfVoice||'';
+  openModal('notesModal');
+}
+function saveNotes(){
+  const clientId=_el('nm-client-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  c.notes=_el('nm-notes').value;
+  c.brandDetails=_el('nm-brand').value;
+  c.logo=_el('nm-logo').value;
+  c.brandColors=_el('nm-brand-colors').value;
+  c.primaryFont=_el('nm-font').value;
+  c.secondaryFont=_el('nm-font2').value;
+  c.toneOfVoice=_el('nm-tone').value;
+  saveClients(clients);
+  closeModal('notesModal');
+  renderClientDetail(clientId,'brand-notes');
+  showToast('Notes & brand saved ✓');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SERVICE CATALOG
+// ═══════════════════════════════════════════════════════
+function renderCatalog(){
+  const el=_el('catalog-list'); if(!el) return;
+  const cat=getCatalog();
+  const groups={monthly:[],yearly:[],'one-time':[]};
+  cat.forEach(s=>(groups[s.freq]||groups['one-time']).push(s));
+  const labels={monthly:'🔁 Monthly Services',yearly:'📆 Yearly Services','one-time':'⚡ One-Time Services'};
+  let html='';
+  ['monthly','yearly','one-time'].forEach(freq=>{
+    if(!groups[freq].length) return;
+    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">${labels[freq]}</div>`;
+    html+=groups[freq].map(s=>`
+      <div style="display:flex;align-items:center;gap:11px;padding:9px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;margin-bottom:6px;">
+        <span class="chip chip-${s.freq}">${s.freq}</span>
+        <div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>${s.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:1px;">${s.desc}</div>`:''}</div>
+        ${s.defaultAssignee?`<span class="user-chip">${getUser(s.defaultAssignee)?.name||s.defaultAssignee}</span>`:''}
+        ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="editServiceCatalog('${s.id}')">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteServiceCatalog('${s.id}')">✕</button>`:''}
+      </div>`).join('');
+    html+='</div>';
+  });
+  el.innerHTML=html||'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No services in catalog</div></div>';
+}
+function openServiceCatalogModal(id){
+  _el('sc-modal-title').textContent=id?'Edit Service':'Add Service';
+  _el('sc-id').value=id||'';
+  const roster=getRoster();
+  const daEl=_el('sc-default-assignee');
+  daEl.innerHTML=`<option value="">— None —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  if(id){
+    const s=getCatalog().find(x=>x.id===id); if(!s) return;
+    _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||'';
+  } else {
+    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value='';
+  }
+  openModal('serviceCatalogModal');
+}
+function editServiceCatalog(id){ openServiceCatalogModal(id); }
+function saveServiceCatalog(){
+  const name=_el('sc-name').value.trim();
+  if(!name){ showToast('Service name required','warn'); return; }
+  const id=_el('sc-id').value;
+  const cat=getCatalog();
+  const data={name,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
+  if(id){ const s=cat.find(x=>x.id===id); if(s) Object.assign(s,data); }
+  else cat.push({id:'svc'+uid(),...data});
+  dbSave(CL_KEYS.serviceCatalog,cat);
+  closeModal('serviceCatalogModal');
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Catalog updated ✓');
+}
+function deleteServiceCatalog(id){
+  if(!confirm('Remove this service from the catalog?')) return;
+  dbSave(CL_KEYS.serviceCatalog,getCatalog().filter(s=>s.id!==id));
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Service removed from catalog');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SERVICE SCHEDULE PAGE
+// ═══════════════════════════════════════════════════════
+function renderSchedule(){
+  const el=_el('schedule-list'); if(!el) return;
+  const filter=_el('schedule-filter')?.value||'';
+  const clientFilter=_el('schedule-client-filter')?.value||'';
+  const t=today();
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  let rows=[];
+  getClients().forEach(c=>{
+    if(clientFilter && c.id!==clientFilter) return;
+    (c.services||[]).forEach(svc=>{
+      const isOverdue=svc.due&&svc.due<t;
+      const isSoon=svc.due&&!isOverdue&&svc.due<=in7s;
+      const cls=isOverdue?'overdue':isSoon?'soon':'ok';
+      if(filter==='overdue'&&!isOverdue) return;
+      if(filter==='soon'&&!isSoon) return;
+      if(filter==='monthly'&&svc.freq!=='monthly') return;
+      if(filter==='yearly'&&svc.freq!=='yearly') return;
+      rows.push({c,svc,cls});
+    });
+  });
+  rows.sort((a,b)=>(a.svc.due||'9999')>(b.svc.due||'9999')?1:-1);
+  if(!rows.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No services match this filter</div></div>'; return; }
+  el.innerHTML=rows.map(({c,svc,cls})=>{
+    const days=daysUntil(svc.due);
+    const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days===1?'Due tomorrow':days+'d remaining');
+    return `
+      <div class="alert-item alert-${cls}">
+        <div class="alert-icon">${cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢'}</div>
+        <div class="alert-body">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+            <span class="alert-title">${svc.name}</span>
+            <span class="chip chip-${svc.freq}" style="font-size:8px;">${svc.freq}</span>
+            <span style="font-size:10px;color:var(--text-light);">→ ${c.name} <span class="client-code">${c.code||''}</span></span>
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:10px;color:var(--text-mid);">
+            <span>📅 <strong>${svc.due||'No date'}</strong> ${daysLabel?`(${daysLabel})`:''}</span>
+            <span>👤 ${svc.assigneeName||'Unassigned'}</span>
+            ${svc.notes?`<span>📝 ${svc.notes}</span>`:''}
+          </div>
+        </div>
+        ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}')">✏️</button>`:''}
+      </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+//  MY WORK PAGE
+// ═══════════════════════════════════════════════════════
+function renderMyWork(){
+  const el=_el('my-work-list'); if(!el) return;
+  const myId=SESSION.id||SESSION.name;
+  let html=''; let found=false;
+  const t=today();
+  getClients().forEach(c=>{
+    (c.projects||[]).forEach(p=>{
+      const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
+      const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name).map(t=>({...t,_spName:sp.name,_spId:sp.id})));
+      const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).includes(myId));
+      const mySvcs=(c.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===SESSION.name);
+      const onProject=(p.users||[]).includes(myId);
+      if(!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length&&!onProject) return;
+      found=true;
+      html+=`
+        <div class="card" style="margin-bottom:14px;">
+          <div class="card-header" style="padding-bottom:12px;">
+            <div>
+              <div class="card-title">${c.name} · ${p.name}</div>
+              <div class="card-sub"><span class="chip chip-${p.status}">${p.status.replace('-',' ')}</span> · ${p.progress||0}% complete</div>
+            </div>
+            <button class="btn btn-xs btn-outline" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log Progress</button>
+          </div>
+          <div class="card-body">`;
+      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
+        html+=`<div style="font-size:11px;color:var(--text-mid);padding:6px 0;">You're assigned to this project.</div>`;
+      }
+      if(myTasks.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">My Tasks</div>`;
+        html+=myTasks.map(t=>renderTaskRow(c.id,p.id,null,t,false)).join('');
+      }
+      if(mySubTasks.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Project Tasks</div>`;
+        html+=mySubTasks.map(t=>renderTaskRow(c.id,p.id,t._spId,t,false)).join('');
+      }
+      if(mySubs.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Projects</div>`;
+        html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,false)).join('');
+      }
+      if(mySvcs.length){
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Recurring Services</div>`;
+        html+=mySvcs.map(svc=>{
+          const cls=svc.due&&svc.due<t?'overdue':'ok';
+          const days=daysUntil(svc.due);
+          const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
+          return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;">
+            <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
+            <div class="alert-body"><div class="alert-title">${svc.name}</div>
+            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+          </div>`;
+        }).join('');
+      }
+      html+=`</div></div>`;
+    });
+  });
+  if(!found){
+    el.innerHTML='<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No work assigned to you yet</div><div class="empty-state-sub">Your tasks and services will appear here once an admin assigns them.</div></div>';
+    return;
+  }
+  el.innerHTML=html;
+}
+
+// ═══════════════════════════════════════════════════════
+//  SALES FUNNEL
+// ═══════════════════════════════════════════════════════
+const FUNNEL_STAGES={
+  lead:        {label:'Lead',icon:'👀',color:'#7AAAD4'},
+  contacted:   {label:'Contacted',icon:'📞',color:'#2D6BB6'},
+  proposal:    {label:'Proposal Sent',icon:'📄',color:'#9333ea'},
+  negotiation: {label:'Negotiation',icon:'🤝',color:'#d97706'},
+  closed:      {label:'Closed Won',icon:'🎉',color:'#2e9e6e'},
+};
+function renderFunnelBoard(){
+  const el=_el('funnel-board'); if(!el) return;
+  const prospects=db(CL_KEYS.funnel)||[];
+  el.innerHTML=Object.entries(FUNNEL_STAGES).map(([key,stage])=>{
+    const items=prospects.filter(p=>p.stage===key);
+    const cards=items.map(p=>`
+      <div class="funnel-card" onclick="openFunnelModal('${p.id}')">
+        <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${p.name}</div>
+        <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${p.contact||''}</div>
+        ${p.services?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">${p.services}</div>`:''}
+        ${p.referredBy?`<div style="font-size:9px;color:var(--text-light);margin-top:2px;">Ref: ${p.referredBy}</div>`:''}
+        <div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
+          ${key!=='closed'?`<button class="btn btn-xs btn-green" onclick="event.stopPropagation();moveFunnelStage('${p.id}','next')">→ Advance</button>`:''}
+          ${key==='closed'?`<button class="btn btn-xs btn-primary" onclick="event.stopPropagation();convertProspect('${p.id}')">✅ Convert</button>`:''}
+          <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();deleteFunnelProspect('${p.id}')">✕</button>
+        </div>
+      </div>`).join('');
+    return `
+      <div class="funnel-col">
+        <div class="funnel-col-head" style="color:${stage.color};">
+          ${stage.icon} ${stage.label}
+          <span style="background:${stage.color}22;color:${stage.color};padding:1px 7px;border-radius:9px;font-size:9px;">${items.length}</span>
+        </div>
+        ${cards||`<div style="font-size:10px;color:var(--text-light);text-align:center;padding:10px;">Empty</div>`}
+      </div>`;
+  }).join('');
+  // Update funnel badge
+  const total=(db(CL_KEYS.funnel)||[]).length;
+  const badge=_el('funnel-badge');
+  if(badge){ badge.textContent=total; badge.style.display=total>0?'flex':'none'; }
+}
+function openFunnelModal(id){
+  const roster=getRoster();
+  const aEl=_el('fm-assignee');
+  aEl.innerHTML=`<option value="">— Select —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  _el('funnel-modal-title').textContent=id?'Edit Prospect':'Add Prospect';
+  _el('fm-id').value=id||'';
+  _el('funnel-convert-btn').style.display='none';
+  if(id){
+    const p=(db(CL_KEYS.funnel)||[]).find(x=>x.id===id); if(!p) return;
+    _el('fm-name').value=p.name||''; _el('fm-contact').value=p.contact||''; _el('fm-email').value=p.email||'';
+    _el('fm-phone').value=p.phone||''; _el('fm-stage').value=p.stage||'lead';
+    _el('fm-services').value=p.services||''; _el('fm-referred').value=p.referredBy||'';
+    aEl.value=p.assigneeId||''; _el('fm-notes').value=p.notes||'';
+    if(p.stage==='closed') _el('funnel-convert-btn').style.display='';
+  } else {
+    ['fm-name','fm-contact','fm-email','fm-phone','fm-services','fm-referred','fm-notes'].forEach(id=>_el(id).value='');
+    _el('fm-stage').value='lead';
+  }
+  openModal('funnelModal');
+}
+function saveFunnelProspect(){
+  const name=_el('fm-name').value.trim();
+  if(!name){ showToast('Business name required','warn'); return; }
+  const id=_el('fm-id').value;
+  const roster=getRoster();
+  const assigneeId=_el('fm-assignee').value;
+  const data={
+    name, contact:_el('fm-contact').value, email:_el('fm-email').value, phone:_el('fm-phone').value,
+    stage:_el('fm-stage').value, services:_el('fm-services').value, referredBy:_el('fm-referred').value,
+    assigneeId, assigneeName:roster.find(u=>u.id===assigneeId)?.name||'', notes:_el('fm-notes').value,
+  };
+  const arr=db(CL_KEYS.funnel)||[];
+  if(id){ const idx=arr.findIndex(x=>x.id===id); if(idx>=0) Object.assign(arr[idx],data); }
+  else arr.unshift({id:'f'+uid(),...data});
+  dbSave(CL_KEYS.funnel,arr);
+  closeModal('funnelModal');
+  renderFunnelBoard();
+  showToast(id?'Prospect updated ✓':'Prospect added ✓');
+}
+function moveFunnelStage(id){
+  const stages=Object.keys(FUNNEL_STAGES);
+  const arr=db(CL_KEYS.funnel)||[];
+  const p=arr.find(x=>x.id===id); if(!p) return;
+  const idx=stages.indexOf(p.stage);
+  if(idx<stages.length-1){ p.stage=stages[idx+1]; }
+  dbSave(CL_KEYS.funnel,arr);
+  renderFunnelBoard();
+  if(p.stage==='closed') showToast('🎉 Prospect closed! Click Convert to add as client.');
+}
+function convertProspect(id){
+  const arr=db(CL_KEYS.funnel)||[];
+  const p=arr.find(x=>x.id===id); if(!p) return;
+  closeModal('funnelModal');
+  openClientModal();
+  _el('cf-name').value=p.name||'';
+  _el('cf-owner').value=p.contact||'';
+  _el('cf-email').value=p.email||'';
+  _el('cf-phone').value=p.phone||'';
+  _el('cf-initial-project').value=p.services||'';
+  _el('cf-referred').value=p.referredBy||'';
+  showToast('Prospect loaded — complete the client form to save');
+}
+function convertProspectToClient(){ convertProspect(_el('fm-id').value); }
+function deleteFunnelProspect(id){
+  if(!confirm('Remove this prospect?')) return;
+  dbSave(CL_KEYS.funnel,(db(CL_KEYS.funnel)||[]).filter(x=>x.id!==id));
+  renderFunnelBoard();
+  showToast('Prospect removed');
+}
+
+// ═══════════════════════════════════════════════════════
+//  MODAL HELPERS
+// ═══════════════════════════════════════════════════════
+function openModal(id){ const el=_el(id); if(el){ el.classList.add('open'); el.scrollTop=0; } }
+function closeModal(id){ _el(id)?.classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(ov=>{
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
+});
+document.addEventListener('click',e=>{
+  const p=_el('notif-panel');
+  if(p&&p.classList.contains('open')&&!p.contains(e.target)&&!e.target.closest('.notif-btn')) p.classList.remove('open');
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open')); });
+
+// ═══════════════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════════════
+function showToast(msg,type=''){
+  const t=_el('toast');
+  t.textContent=msg;
+  t.style.background=type==='warn'?'var(--orange)':type==='success'?'var(--green)':'#1a3f6f';
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCHEDULED ALERT CHECKER
+//  Fires once on load — creates notifications for any
+//  services due within 7 days that haven't been alerted today
+// ═══════════════════════════════════════════════════════
+function runScheduledAlerts(){
+  const t=today();
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const alerted=JSON.parse(localStorage.getItem('wl_svc_alerted_'+t)||'[]');
+  const newAlerted=[...alerted];
+  getClients().forEach(c=>{
+    (c.services||[]).forEach(svc=>{
+      if(!svc.due||svc.due>in7s) return;
+      const key=c.id+'_'+svc.id;
+      if(alerted.includes(key)) return; // already notified today
+      newAlerted.push(key);
+      const days=daysUntil(svc.due);
+      const urgency=days!==null&&days<0?'OVERDUE':days===0?'Due TODAY':days<=3?'Due in '+days+'d':'Upcoming';
+      // Notify the assigned user
+      if(svc.assigneeId){
+        pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
+          title:`[${urgency}] ${svc.name}`,
+          body:`Service for ${c.name} is due ${svc.due}. Please action this.`,
+          forUser:svc.assigneeId, fromUser:'System' });
+      }
+      // Notify the account manager if different
+      if(c.managerId && c.managerId!==svc.assigneeId){
+        pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
+          title:`Service alert for ${c.name}: ${svc.name}`,
+          body:`${urgency} — due ${svc.due}. Assigned to ${svc.assigneeName||'no one'}.`,
+          forUser:c.managerId, fromUser:'System' });
+      }
+    });
+  });
+  localStorage.setItem('wl_svc_alerted_'+t, JSON.stringify(newAlerted));
+}
+
+// ═══════════════════════════════════════════════════════
+//  MY WORK BADGE
+// ═══════════════════════════════════════════════════════
+function updateMyWorkBadge(){
+  const myId=SESSION.id||SESSION.name;
+  let count=0;
+  getClients().forEach(c=>{
+    (c.projects||[]).forEach(p=>{
+      (p.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===SESSION.name)&&!t.done) count++; });
+      (p.subprojects||[]).forEach(sp=>{
+        if((sp.users||[]).includes(myId)) count++;
+        (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===SESSION.name)&&!t.done) count++; });
+      });
+    });
+    (c.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; });
+  });
+  const badge=_el('my-work-badge');
+  if(badge){ badge.textContent=count; badge.style.display=count>0?'flex':'none'; }
+}
+
+// ═══════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════
+function init(){
+  ensureCatalog();
+  detectSession();
+  populateDropdowns();
+  populateServiceDropdown();
+  populateScheduleClientFilter();
+  renderClientGrid();
+  checkServiceAlerts();
+  refreshNotifBadge();
+  updateMyWorkBadge();
+  runScheduledAlerts();
+  // Poll every 60s for new alerts / badge refresh
+  setInterval(()=>{
+    refreshNotifBadge();
+    renderNotifPanel();
+    checkServiceAlerts();
+    updateMyWorkBadge();
+  }, 60000);
+}
+
+init();
+</script>
+</body>
+</html>
