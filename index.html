@@ -1508,12 +1508,16 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <datalist id="svc-catalog-list"></datalist>
           </div>
           <div class="form-group" style="margin:0;"><label class="form-label">Frequency</label>
-            <select class="form-select" id="svc-freq">
+            <select class="form-select" id="svc-freq" onchange="_updateSvcNextDue()">
               <option value="monthly">Monthly</option>
               <option value="yearly">Yearly</option>
               <option value="weekly">Weekly</option>
               <option value="one-time">One-Time</option>
             </select>
+          </div>
+          <div class="form-group" style="margin:0;"><label class="form-label">Service Start Date</label>
+            <input type="date" class="form-input" id="svc-start" onchange="_updateSvcNextDue()">
+            <div id="svc-next-due-preview" style="font-size:11px;color:var(--text-light);margin-top:4px;"></div>
           </div>
           <div class="form-group" style="margin:0;"><label class="form-label">Assign Team Members</label>
             <div id="svc-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;"></div>
@@ -4868,16 +4872,28 @@ function _renderServicesSection(c){
   const svcs = c.recurringServices||[];
   if(!svcs.length) return '';
   const roster = buildTeamRoster();
+  const today = new Date(); today.setHours(0,0,0,0);
   const rows = svcs.map(s=>{
     const assignees = (s.assignedUserIds||[]).map(uid=>{
       const u=roster.find(x=>x.id===uid);
       return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
     }).join('');
+    let dueChip='';
+    if(s.nextDueDate && s.frequency!=='one-time'){
+      const due=new Date(s.nextDueDate); due.setHours(0,0,0,0);
+      const diff=Math.round((due-today)/(1000*60*60*24));
+      const dueStr=new Date(s.nextDueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      let dueColor=diff<0?'var(--red)':diff<=7?'var(--orange)':'var(--green)';
+      let dueLabel=diff<0?`Overdue ${Math.abs(diff)}d`:diff===0?'Due today':diff<=7?`Due in ${diff}d`:`Due ${dueStr}`;
+      dueChip=`<span style="font-size:10px;font-weight:700;color:${dueColor};background:${dueColor}18;padding:2px 8px;border-radius:6px;">⏰ ${dueLabel}</span>`;
+    }
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
       <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
       <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.frequency||'monthly'}</span>
+      ${dueChip}
       <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">No one assigned</span>'}</div>
-      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Assign</button>
+      <button class="btn btn-sm btn-outline" onclick="markSvcDone('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark service completed and reschedule">✓ Done</button>
+      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Edit</button>
     </div>`;
   }).join('');
   return `<div style="margin-bottom:20px;">
@@ -4894,9 +4910,11 @@ function openSvcModal(clientId, svcId){
   document.getElementById('svc-edit-id').value=svcId||'';
   document.getElementById('svc-name').value=svc?svc.name:'';
   document.getElementById('svc-freq').value=svc?svc.frequency||'monthly':'monthly';
+  document.getElementById('svc-start').value=svc?svc.startDate||new Date().toISOString().slice(0,10):new Date().toISOString().slice(0,10);
   // Populate datalist from catalog
   try{const cat=JSON.parse(localStorage.getItem('wl_service_catalog')||'[]');document.getElementById('svc-catalog-list').innerHTML=cat.map(s=>`<option value="${s.name}">`).join('');}catch(e){}
   document.getElementById('svc-notes').value=svc?svc.notes||'':'';
+  _updateSvcNextDue();
   const cbWrap=document.getElementById('svc-user-checkboxes');
   cbWrap.innerHTML=roster.map(u=>`
     <label style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;">
@@ -4913,6 +4931,8 @@ function saveSvc(){
   const name=document.getElementById('svc-name').value.trim();
   if(!name){showToast('Service name is required');return;}
   const freq=document.getElementById('svc-freq').value;
+  const startDate=document.getElementById('svc-start').value||new Date().toISOString().slice(0,10);
+  const nextDueDate=_calcNextDue(freq,startDate);
   const notes=document.getElementById('svc-notes').value;
   const newUsers=[...document.querySelectorAll('#svc-user-checkboxes input:checked')].map(cb=>cb.value);
   const live=_getClientDB();
@@ -4921,9 +4941,9 @@ function saveSvc(){
   let prevUsers=[];
   if(svcId){
     const s=c.recurringServices.find(x=>x.id===svcId);
-    if(s){ prevUsers=s.assignedUserIds||[]; Object.assign(s,{name,frequency:freq,notes,assignedUserIds:newUsers}); }
+    if(s){ prevUsers=s.assignedUserIds||[]; Object.assign(s,{name,frequency:freq,startDate,nextDueDate,notes,assignedUserIds:newUsers}); }
   } else {
-    c.recurringServices.push({id:'svc'+Date.now(),name,frequency:freq,notes,active:true,assignedUserIds:newUsers,startDate:'',nextDueDate:'',lastCompletedDate:''});
+    c.recurringServices.push({id:'svc'+Date.now(),name,frequency:freq,startDate,nextDueDate,notes,active:true,assignedUserIds:newUsers,lastCompletedDate:''});
   }
   _saveClientDB(live);
   // Notify newly assigned users
@@ -4946,6 +4966,77 @@ function _pushUserAssignment(userId, title, body, icon){
     const arr = JSON.parse(localStorage.getItem(key)||'[]');
     arr.unshift({id:'ua'+Date.now()+Math.random().toString(36).slice(2), userId, title, body, icon:'🔔', ts:Date.now(), read:false});
     localStorage.setItem(key, JSON.stringify(arr.slice(0,300)));
+  }catch(e){}
+}
+
+// ── Service scheduling helpers ──
+function _calcNextDue(freq, fromDate){
+  if(freq==='one-time') return '';
+  const d = fromDate ? new Date(fromDate) : new Date();
+  if(freq==='weekly')  d.setDate(d.getDate()+7);
+  else if(freq==='monthly') d.setMonth(d.getMonth()+1);
+  else if(freq==='yearly')  d.setFullYear(d.getFullYear()+1);
+  return d.toISOString().slice(0,10);
+}
+
+function _updateSvcNextDue(){
+  const freq = document.getElementById('svc-freq')?.value;
+  const start = document.getElementById('svc-start')?.value;
+  const preview = document.getElementById('svc-next-due-preview');
+  if(!preview) return;
+  if(!freq || freq==='one-time'){ preview.textContent=''; return; }
+  const next = _calcNextDue(freq, start||new Date().toISOString().slice(0,10));
+  if(next) preview.textContent = '→ Next due: '+new Date(next).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
+function markSvcDone(clientId, svcId){
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===clientId); if(!c)return;
+  const s=(c.recurringServices||[]).find(x=>x.id===svcId); if(!s)return;
+  const today=new Date().toISOString().slice(0,10);
+  s.lastCompletedDate=today;
+  s.nextDueDate=_calcNextDue(s.frequency, today);
+  // Clear alerted flag so next cycle gets a fresh alert
+  try{ const al=JSON.parse(localStorage.getItem('wl_svc_alerted')||'{}'); delete al[svcId]; localStorage.setItem('wl_svc_alerted',JSON.stringify(al)); }catch(e){}
+  _saveClientDB(live);
+  renderClientDetail(c);
+  showToast('Service marked done · Next: '+(s.nextDueDate?new Date(s.nextDueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—'));
+}
+
+function _checkServiceAlerts(){
+  try{
+    const today=new Date(); today.setHours(0,0,0,0);
+    const alerted=JSON.parse(localStorage.getItem('wl_svc_alerted')||'{}');
+    const allUsers=dbGet(DB_KEYS.users)||[];
+    let changed=false;
+    _getClientDB().forEach(c=>{
+      (c.recurringServices||[]).forEach(s=>{
+        if(!s.nextDueDate||s.frequency==='one-time') return;
+        const due=new Date(s.nextDueDate); due.setHours(0,0,0,0);
+        const diff=Math.round((due-today)/(1000*60*60*24));
+        if(diff>7) return; // not due yet
+        if(alerted[s.id]===s.nextDueDate) return; // already alerted this cycle
+        const dueLabel=diff<0?`was due ${Math.abs(diff)} day(s) ago`:diff===0?'is due today':`is due in ${diff} day(s)`;
+        const notifTitle=`Service due: ${s.name}`;
+        const notifBody=`Client: ${c.name} · ${dueLabel}`;
+        const notifIcon=diff<0?'🔴':'⏰';
+        // Notify assigned users
+        (s.assignedUserIds||[]).forEach(uid=>{
+          _pushUserAssignment(uid, notifTitle, notifBody, notifIcon);
+          // Notify their manager too
+          const u=allUsers.find(x=>x.id===uid);
+          if(u&&u.managerId&&u.managerId!==uid){
+            _pushUserAssignment(u.managerId,
+              `[Manager] ${notifTitle}`,
+              `${notifBody} · Assigned to: ${u.name||u.email}`,
+              notifIcon);
+          }
+        });
+        alerted[s.id]=s.nextDueDate;
+        changed=true;
+      });
+    });
+    if(changed) localStorage.setItem('wl_svc_alerted',JSON.stringify(alerted));
   }catch(e){}
 }
 
@@ -5012,7 +5103,7 @@ function saveProgress(){
 const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
-  if(tab==='clients'){ _seedDefaultData(); populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); }
+  if(tab==='clients'){ _seedDefaultData(); populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); _checkServiceAlerts(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
 };
