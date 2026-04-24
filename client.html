@@ -66,6 +66,12 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .btn-outline:hover{background:var(--bg);border-color:var(--text);}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
+/* ── View-only mode: hide all write actions for non-admin users ── */
+body.view-only .btn-primary,
+body.view-only .btn-danger,
+body.view-only .write-action{display:none!important;}
+body.view-only .view-only-badge{display:flex!important;}
+.view-only-banner{display:none;align-items:center;gap:8px;background:#fff8e1;border:1px solid #FAC231;border-radius:9px;padding:8px 14px;font-size:11px;font-weight:700;color:#7a5c00;margin-bottom:14px;}
 .btn-green{background:#e8f8f0;color:var(--green);border:1px solid rgba(46,158,110,.2);}
 .btn-green:hover{background:#d0f0e0;}
 .btn-sm{padding:5px 11px;font-size:11px;border-radius:7px;}
@@ -373,6 +379,12 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
   <div class="content">
 
+    <!-- View-only banner shown to non-admin users -->
+    <div class="view-only-banner">
+      <span style="font-size:16px;">👁</span>
+      <span>View Only — You can browse the production tracker but cannot make changes. Contact your admin to update anything.</span>
+    </div>
+
     <!-- ═══ PAGE: ALL CLIENTS ═══ -->
     <div id="page-clients" class="page-section active">
       <div class="stat-row" style="grid-template-columns:repeat(5,1fr);">
@@ -391,7 +403,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:100%;font-size:11px;padding:7px 11px 7px 28px;">
           </div>
           <div style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
-            <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
+            <button class="btn btn-outline btn-sm write-action admin-only" onclick="openClientModal()">+ New Client</button>
           </div>
         </div>
         <!-- Row 2: filters -->
@@ -976,6 +988,12 @@ function detectSession(){
 
   // Hide admin-only UI for non-admins
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
+
+  // Enforce view-only mode for regular users
+  if(!SESSION.isAdmin){
+    document.body.classList.add('view-only');
+    document.querySelectorAll('.view-only-banner').forEach(el=>el.style.display='flex');
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2401,7 +2419,7 @@ function renderMyWork(){
               <div class="card-title">${c.name} · ${p.name}</div>
               <div class="card-sub"><span class="chip chip-${p.status}">${p.status.replace('-',' ')}</span> · ${p.progress||0}% complete</div>
             </div>
-            <button class="btn btn-xs btn-outline" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log Progress</button>
+            ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline write-action" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log Progress</button>`:''}
           </div>
           <div class="card-body">`;
       if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
