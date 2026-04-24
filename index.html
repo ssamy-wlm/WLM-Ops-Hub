@@ -1493,6 +1493,42 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
     </div>
 
+    <!-- ════ ADD / EDIT SERVICE MODAL ════ -->
+    <div id="svcModal" class="modal-overlay">
+      <div class="modal" style="max-width:480px;">
+        <div class="modal-header">
+          <div><div class="modal-title">Service</div><div class="modal-sub">Add or assign a recurring service</div></div>
+          <button class="modal-close" onclick="closeModal('svcModal')">✕</button>
+        </div>
+        <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+          <input type="hidden" id="svc-client-id">
+          <input type="hidden" id="svc-edit-id">
+          <div class="form-group" style="margin:0;"><label class="form-label">Service Name *</label>
+            <input class="form-input" id="svc-name" placeholder="e.g. Social Media" list="svc-catalog-list">
+            <datalist id="svc-catalog-list"></datalist>
+          </div>
+          <div class="form-group" style="margin:0;"><label class="form-label">Frequency</label>
+            <select class="form-select" id="svc-freq">
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+              <option value="weekly">Weekly</option>
+              <option value="one-time">One-Time</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;"><label class="form-label">Assign Team Members</label>
+            <div id="svc-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;"></div>
+          </div>
+          <div class="form-group" style="margin:0;"><label class="form-label">Notes</label>
+            <textarea class="form-input" id="svc-notes" rows="2" style="resize:vertical;"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeModal('svcModal')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveSvc()">Save Service</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ════ ADD MILESTONE MODAL ════ -->
     <div id="milestoneModal" class="modal-overlay">
       <div class="modal" style="max-width:480px;">
@@ -4408,7 +4444,7 @@ function renderClientGrid(list){
         </div>
         <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-outline" onclick="editClient('${c.id}')" style="font-size:11px;">✏️</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteClient('${c.id}')" style="font-size:11px;">✕</button>
+          <button class="btn btn-sm btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:11px;color:${statusLabel==='active'?'var(--green)':'var(--text-light)'};" title="${statusLabel==='active'?'Set Inactive':'Set Active'}">${statusLabel==='active'?'✓ Active':'○ Inactive'}</button>
         </div>
       </div>
       <div class="client-card-body">
@@ -4597,7 +4633,6 @@ function renderClientDetail(c){
         <button class="btn btn-sm btn-outline" onclick="openProgressModal('${c.id}','${p.id}')" style="font-size:11px;">📈 Log</button>
         <button class="btn btn-sm btn-outline" onclick="openMilestoneModal('${c.id}','${p.id}')" style="font-size:11px;">🏆 Milestone</button>
         <button class="btn btn-sm btn-outline" onclick="editProject('${c.id}','${p.id}')" style="font-size:11px;">✏️</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteProject('${c.id}','${p.id}')" style="font-size:11px;">✕</button>
       </div>
       <div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <!-- Left: progress + users + sub-projects -->
@@ -4637,10 +4672,13 @@ function renderClientDetail(c){
         <div style="font-size:11px;color:var(--text-light);">Overall progress</div>
       </div>
       <button class="btn btn-primary" onclick="openProjectModal('${c.id}')">+ Add Project</button>
+      <button class="btn btn-outline" onclick="openSvcModal('${c.id}')" style="font-size:13px;">+ Service</button>
+      <button class="btn btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:13px;color:${c.status==='active'?'var(--green)':'var(--text-light)'};">${c.status==='active'?'✓ Active':'○ Inactive'}</button>
       <button class="btn btn-outline" onclick="document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
     </div>
     <div style="padding:20px 24px;">
       ${c.notes ? `<div style="padding:12px 16px;background:var(--bg);border-radius:10px;font-size:13px;color:var(--text-mid);margin-bottom:18px;">📝 ${c.notes}</div>` : ''}
+      ${_renderServicesSection(c)}
       ${projectsHTML || '<div style="text-align:center;padding:40px;color:var(--text-light);">No projects yet — click <strong>+ Add Project</strong> to get started.</div>'}
     </div>`;
 }
@@ -4707,14 +4745,17 @@ function saveClient(){
   if(activeClientId===editId && editId){ const uc=live.find(x=>x.id===editId); if(uc) renderClientDetail(uc); }
   showToast(editId?'Client updated ✓':'Client added ✓');
 }
-function deleteClient(id){
-  if(!confirm('Delete this client and all their projects?')) return;
-  const live=_getClientDB().filter(c=>c.id!==id);
+function deleteClient(id){ toggleClientStatus(id); } // kept for compatibility — no hard deletes
+function toggleClientStatus(id){
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===id); if(!c) return;
+  c.status = c.status==='active' ? 'inactive' : 'active';
+  c.updatedAt = new Date().toISOString();
   _saveClientDB(live);
-  if(activeClientId===id){ document.getElementById('client-detail-panel').style.display='none'; activeClientId=null; }
   renderClientGrid();
   updateClientStats();
-  showToast('Client deleted');
+  if(activeClientId===id) renderClientDetail(c);
+  showToast('Client marked '+c.status);
 }
 function selectClientColor(el){
   document.querySelectorAll('.cl-swatch').forEach(s=>s.classList.remove('sel'));
@@ -4781,28 +4822,123 @@ function saveProject(){
     desc:document.getElementById('pf-desc').value,
     progress:progressVal, users
   };
+  let prevUsers = [];
   if(editId){
     const p=(c.projects||[]).find(x=>x.id===editId);
-    if(p) Object.assign(p,data);
+    if(p){ prevUsers=p.users||[]; Object.assign(p,data); }
   } else {
     if(!c.projects) c.projects=[];
     c.projects.push({id:'p'+Date.now(),...data,progressLog:[],milestones:[],subprojects:[],tasks:[]});
   }
   _saveClientDB(live);
+  // Notify newly assigned users
+  users.filter(uid=>!prevUsers.includes(uid)).forEach(uid=>{
+    _pushUserAssignment(uid,
+      'Assigned to project: '+name,
+      'Client: '+c.name+(data.due?' · Due: '+data.due:''),
+      '📋');
+  });
   closeModal('projectModal');
   renderClientGrid();
   renderClientDetail(c);
   showToast(editId?'Project updated ✓':'Project added ✓');
 }
-function deleteProject(clientId,projId){
-  if(!confirm('Delete this project?'))return;
+function deleteProject(clientId,projId){ archiveProject(clientId,projId); } // no hard deletes
+function archiveProject(clientId,projId){
   const live=_getClientDB();
   const c=live.find(x=>x.id===clientId);if(!c)return;
-  c.projects=(c.projects||[]).filter(p=>p.id!==projId);
+  const p=(c.projects||[]).find(x=>x.id===projId);if(!p)return;
+  p.status = p.status==='archived' ? 'on-hold' : 'archived';
   _saveClientDB(live);
   renderClientGrid();
   renderClientDetail(c);
-  showToast('Project deleted');
+  showToast('Project '+p.status);
+}
+
+// ── Recurring Services ──
+function _renderServicesSection(c){
+  const svcs = c.recurringServices||[];
+  if(!svcs.length) return '';
+  const roster = buildTeamRoster();
+  const rows = svcs.map(s=>{
+    const assignees = (s.assignedUserIds||[]).map(uid=>{
+      const u=roster.find(x=>x.id===uid);
+      return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
+    }).join('');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
+      <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+      <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.frequency||'monthly'}</span>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">No one assigned</span>'}</div>
+      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Assign</button>
+    </div>`;
+  }).join('');
+  return `<div style="margin-bottom:20px;">
+    <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Recurring Services</div>
+    ${rows}
+  </div>`;
+}
+
+function openSvcModal(clientId, svcId){
+  const c=_getClientDB().find(x=>x.id===clientId); if(!c) return;
+  const roster=buildTeamRoster();
+  const svc = svcId ? (c.recurringServices||[]).find(s=>s.id===svcId) : null;
+  document.getElementById('svc-client-id').value=clientId;
+  document.getElementById('svc-edit-id').value=svcId||'';
+  document.getElementById('svc-name').value=svc?svc.name:'';
+  document.getElementById('svc-freq').value=svc?svc.frequency||'monthly':'monthly';
+  // Populate datalist from catalog
+  try{const cat=JSON.parse(localStorage.getItem('wl_service_catalog')||'[]');document.getElementById('svc-catalog-list').innerHTML=cat.map(s=>`<option value="${s.name}">`).join('');}catch(e){}
+  document.getElementById('svc-notes').value=svc?svc.notes||'':'';
+  const cbWrap=document.getElementById('svc-user-checkboxes');
+  cbWrap.innerHTML=roster.map(u=>`
+    <label style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;">
+      <input type="checkbox" value="${u.id}" id="svc-u-${u.id}" ${svc&&(svc.assignedUserIds||[]).includes(u.id)?'checked':''}>
+      <span style="width:20px;height:20px;border-radius:50%;background:${u.color};display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff;">${u.initials}</span>
+      ${u.name}
+    </label>`).join('');
+  openModal('svcModal');
+}
+
+function saveSvc(){
+  const clientId=document.getElementById('svc-client-id').value;
+  const svcId=document.getElementById('svc-edit-id').value;
+  const name=document.getElementById('svc-name').value.trim();
+  if(!name){showToast('Service name is required');return;}
+  const freq=document.getElementById('svc-freq').value;
+  const notes=document.getElementById('svc-notes').value;
+  const newUsers=[...document.querySelectorAll('#svc-user-checkboxes input:checked')].map(cb=>cb.value);
+  const live=_getClientDB();
+  const c=live.find(x=>x.id===clientId); if(!c) return;
+  if(!c.recurringServices) c.recurringServices=[];
+  let prevUsers=[];
+  if(svcId){
+    const s=c.recurringServices.find(x=>x.id===svcId);
+    if(s){ prevUsers=s.assignedUserIds||[]; Object.assign(s,{name,frequency:freq,notes,assignedUserIds:newUsers}); }
+  } else {
+    c.recurringServices.push({id:'svc'+Date.now(),name,frequency:freq,notes,active:true,assignedUserIds:newUsers,startDate:'',nextDueDate:'',lastCompletedDate:''});
+  }
+  _saveClientDB(live);
+  // Notify newly assigned users
+  newUsers.filter(uid=>!prevUsers.includes(uid)).forEach(uid=>{
+    _pushUserAssignment(uid,
+      'Assigned to service: '+name,
+      'Client: '+c.name+' · '+freq,
+      '🔁');
+  });
+  closeModal('svcModal');
+  renderClientDetail(c);
+  showToast(svcId?'Service updated ✓':'Service added ✓');
+}
+
+// ── Push assignment notification to a user ──
+function _pushUserAssignment(userId, title, body, icon){
+  if(!userId) return;
+  try{
+    const key = 'wl_user_assignments';
+    const arr = JSON.parse(localStorage.getItem(key)||'[]');
+    arr.unshift({id:'ua'+Date.now()+Math.random().toString(36).slice(2), userId, title, body, icon:'🔔', ts:Date.now(), read:false});
+    localStorage.setItem(key, JSON.stringify(arr.slice(0,300)));
+  }catch(e){}
 }
 
 // ── Milestones ──
