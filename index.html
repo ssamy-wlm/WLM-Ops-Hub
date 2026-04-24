@@ -274,6 +274,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 .form-select{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Nunito',sans-serif;font-size:14px;color:var(--text-dark);background:#fafcff;appearance:none;cursor:pointer;}
 .form-select:focus{outline:none;border-color:var(--text);}
+.filter-row .form-select,.filter-row .form-input{width:auto;min-width:0;}
 .form-textarea{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Nunito',sans-serif;font-size:13px;color:var(--text-dark);background:#fafcff;resize:vertical;min-height:80px;}
 .form-textarea:focus{outline:none;border-color:var(--text);}
 .form-hint{font-size:11px;color:var(--text-light);margin-top:4px;}
@@ -1322,29 +1323,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
         <!-- Row 2: filters -->
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <input class="form-input" id="client-search" placeholder="🔍 Search clients…" oninput="filterClients()" style="flex:1;min-width:160px;max-width:220px;font-size:13px;padding:8px 12px;">
-          <select class="form-select" id="client-filter-status" onchange="filterClients()" style="font-size:13px;min-width:130px;">
+        <div class="filter-row" style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;overflow-x:auto;">
+          <input class="form-input" id="client-search" placeholder="🔍 Search clients…" oninput="filterClients()" style="width:180px;flex-shrink:0;font-size:13px;padding:8px 12px;">
+          <select class="form-select" id="client-filter-status" onchange="filterClients()" style="font-size:13px;width:130px;flex-shrink:0;">
             <option value="">All Statuses</option>
             <option value="active">✅ Active</option>
             <option value="inactive">⏸ Inactive</option>
             <option value="paused">⏸ Paused</option>
             <option value="completed">✔ Completed</option>
           </select>
-          <select class="form-select" id="client-filter-service" onchange="filterClients()" style="font-size:13px;min-width:160px;">
+          <select class="form-select" id="client-filter-service" onchange="filterClients()" style="font-size:13px;width:140px;flex-shrink:0;">
             <option value="">All Services</option>
           </select>
-          <select class="form-select" id="client-filter-proj-type" onchange="filterClients()" style="font-size:13px;min-width:150px;">
+          <select class="form-select" id="client-filter-proj-type" onchange="filterClients()" style="font-size:13px;width:150px;flex-shrink:0;">
             <option value="">All Project Types</option>
           </select>
-          <select class="form-select" id="client-filter-proj-status" onchange="filterClients()" style="font-size:13px;min-width:155px;">
+          <select class="form-select" id="client-filter-proj-status" onchange="filterClients()" style="font-size:13px;width:160px;flex-shrink:0;">
             <option value="">All Project Statuses</option>
             <option value="not-started">Not Started</option>
             <option value="in-progress">In Progress</option>
             <option value="completed">Completed</option>
             <option value="on-hold">On Hold</option>
           </select>
-          <button class="btn btn-outline" onclick="clearClientFilters()" style="font-size:12px;padding:8px 12px;white-space:nowrap;" title="Clear all filters">✕ Clear</button>
+          <button class="btn btn-outline" onclick="clearClientFilters()" style="font-size:12px;padding:8px 12px;white-space:nowrap;flex-shrink:0;" title="Clear all filters">✕ Clear</button>
         </div>
         <!-- Active filter chips -->
         <div id="client-filter-chips" style="display:none;margin-top:8px;gap:6px;flex-wrap:wrap;"></div>
