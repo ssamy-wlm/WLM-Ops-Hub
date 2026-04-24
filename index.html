@@ -4264,7 +4264,6 @@ const WL_CLIENT_SEED = [
   {name:"Injured CT",code:"Injured",bundle:false,clientName:"Nate Baber",clientEmail:"nate@aetonlaw.com"},
   {name:"Jeff Desrosiers Irrigation",code:"Jeff",bundle:false,clientName:"Jeffrey Desrosiers",clientEmail:"jeff@jeffdirrigation.com"},
   {name:"JLN Contracting",code:"JLN",bundle:false,clientName:"Jay Stuart",clientEmail:"jay@jlncontracting.com"},
-  {name:"Joe the Plumber",code:"Joe",bundle:false,clientName:"",clientEmail:"jeff@joeyperras.com"},
   {name:"John Hodgkins",code:"John",bundle:false,clientName:"John Hodgkins",clientEmail:"john.hodgkins@fairwaymc.com"},
   {name:"JoVal Machine Co. Inc.",code:"JoVal",bundle:false,clientName:"Jeff Chase",clientEmail:"jeff@jovalmachine.com"},
   {name:"Kane Hartley & Kane PC",code:"Kane",bundle:false,clientName:"Thomas B Kane",clientEmail:"tbkane@glastonburylaw.com"},
@@ -4348,9 +4347,17 @@ const WL_CLIENT_SEED = [
 const _SEED_COLORS=['#2D6BB6','#9333ea','#16a34a','#d97706','#0891b2','#e05555','#7c3aed','#0d9488','#b45309','#4f46e5'];
 
 function _seedDefaultData(){
-  const SEED_VERSION = '4';
+  const SEED_VERSION = '5';
   // Always refresh service catalog
   try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
+
+  // Always purge hard-deleted clients by code
+  const PURGED_CODES = ['Joe'];
+  (()=>{
+    const live = _getClientDB();
+    const cleaned = live.filter(c => !PURGED_CODES.includes(c.code));
+    if(cleaned.length !== live.length) _saveClientDB(cleaned);
+  })();
 
   if(localStorage.getItem('wl_seed_version') === SEED_VERSION) return;
 
@@ -4387,6 +4394,7 @@ function _seedDefaultData(){
   _saveClientDB(merged);
   try{ localStorage.setItem('wl_seed_version', SEED_VERSION); }catch(e){}
 }
+
 
 // Proxy accessor so legacy code using `clientDB` still works
 let _clientDBCache = null;
