@@ -374,11 +374,11 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
     <div class="sidebar-nav">
       <div class="nav-group-label">Execution</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni">🏠</span>Operations</div>
+      <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni">📋</span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="showSection('myreports',this)"><span class="ni">📊</span>My Reports</div>
       <div class="nav-item" onclick="showSection('blockers',this)"><span class="ni">🚧</span>Blockers</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni">📋</span>Downtime Tasks</div>
       <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni">🎨</span>Brand Rights</div>
-      <div class="nav-item" onclick="showSection('myassignments',this)" id="nav-myassignments"><span class="ni">🏢</span>My Assignments<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
       <div class="nav-group-label">Control</div>
       <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni">🛡️</span>Decision Rights</div>
       <div class="nav-item" onclick="showSection('goals',this)"><span class="ni">🎯</span>Goals</div>
@@ -762,15 +762,15 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
       </div>
 
-      <!-- ── MY ASSIGNMENTS (from client.html / wl_clients_db) ── -->
-      <div id="sec-myassignments" class="page-section">
+      <!-- ── MY WORK (from wl_clients_db production tracker) ── -->
+      <div id="sec-mywork" class="page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">🏢 My Assignments</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Projects, tasks, services and notifications assigned to you</div>
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">📋 My Work</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Projects, tasks and recurring services assigned to you from the production tracker</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <a href="client.html" target="_blank" class="btn btn-outline btn-sm">📋 Open Tracker ↗</a>
+            <a href="client.html" target="_blank" class="btn btn-outline btn-sm">Open Tracker ↗</a>
             <button class="btn btn-primary btn-sm" onclick="loadMyAssignments()">↺ Refresh</button>
           </div>
         </div>
@@ -1318,6 +1318,16 @@ function initApp(){
   loadGoals();
   // Check for client assignments from wl_clients_db / wl_client_notifications
   updateAssignmentsBadge();
+  // Pre-load My Work section so it's ready when user navigates to it
+  loadMyAssignments();
+  // Toast if user has unread assignment notifications
+  setTimeout(()=>{
+    try{
+      const myId=currentUser?.id||'';
+      const unread=_getAssignNotifs().filter(n=>!n.read);
+      if(unread.length>0) showToast(`🔔 ${unread.length} new notification${unread.length>1?'s':''} — check My Work`);
+    }catch(e){}
+  },800);
   // Render 30-60-90 roadmap
   renderRoadmap();
   // Load theme
@@ -1625,7 +1635,7 @@ function _getAssignNotifs(){
 
 function updateAssignmentsBadge(){
   try{
-    const myId   = currentUser?.id||currentUser?.name||'';
+    const myId   = currentUser?.id||'';
     const myName = currentUser?.name||'';
     const clients= _getAssignClients();
     const todayStr = new Date().toISOString().slice(0,10);
@@ -1633,32 +1643,37 @@ function updateAssignmentsBadge(){
     let taskCount=0, projCount=0, svcCount=0, dueCount=0;
     clients.forEach(c=>{
       (c.projects||[]).forEach(p=>{
-        if((p.users||[]).some(u=>u===myId||u===myName)) projCount++;
+        if((p.users||[]).some(u=>u===myId||u===myName)){
+          projCount++;
+          // count active tasks on projects user is assigned to
+          (p.tasks||[]).forEach(t=>{ if(!t.done) taskCount++; });
+        }
         (p.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===myName)&&!t.done) taskCount++; });
         (p.subprojects||[]).forEach(sp=>{
           if((sp.users||[]).some(u=>u===myId||u===myName)) projCount++;
           (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===myName)&&!t.done) taskCount++; });
         });
       });
-      (c.services||[]).forEach(s=>{
-        if(s.assigneeId===myId||s.assigneeName===myName){
+      // recurring services (stored as recurringServices)
+      (c.recurringServices||[]).forEach(s=>{
+        if((s.assignedUserIds||[]).includes(myId)){
           svcCount++;
-          if(s.due&&s.due<=in7s) dueCount++;
+          if(s.nextDueDate&&s.nextDueDate<=in7s) dueCount++;
         }
       });
     });
-    const total = taskCount+dueCount;
+    const total = projCount + taskCount + dueCount;
     const badge = document.getElementById('assignments-badge');
     if(badge){ badge.textContent=total; badge.style.display=total>0?'inline-flex':'none'; }
-    // Also show notification dot on topbar if unread client notifs exist
+    // Also show notification dot on topbar if unread notifs exist
     const unread = _getAssignNotifs().filter(n=>!n.read).length;
     const dot = document.getElementById('notifDot');
-    if(dot && unread>0) dot.style.display='block';
+    if(dot) dot.style.display=(unread>0||total>0)?'block':'none';
   }catch(e){}
 }
 
 function loadMyAssignments(){
-  const myId   = currentUser?.id||currentUser?.name||'';
+  const myId   = currentUser?.id||'';
   const myName = currentUser?.name||'';
   const clients= _getAssignClients();
   const todayStr = new Date().toISOString().slice(0,10);
@@ -1691,6 +1706,9 @@ function loadMyAssignments(){
   let html=''; let found=false;
 
   clients.forEach(c=>{
+    // Recurring services assigned to me (stored in c.recurringServices)
+    const myClientSvcs=(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).includes(myId));
+
     (c.projects||[]).forEach(p=>{
       const onProject=(p.users||[]).some(u=>u===myId||u===myName);
       const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
@@ -1699,12 +1717,10 @@ function loadMyAssignments(){
                       .map(t=>({...t,_spName:sp.name}))
       );
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).some(u=>u===myId||u===myName));
-      const mySvcs=(c.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===myName);
-      if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length) return;
+      if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
       found=true;
       if(onProject) projCount++;
       taskCount+=myTasks.length+mySubTasks.length;
-      mySvcs.forEach(s=>{ svcCount++; if(s.due&&s.due<=in7s) dueCount++; });
 
       html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;overflow:hidden;box-shadow:0 2px 12px rgba(37,99,168,.07);">
         <div style="padding:14px 18px;background:linear-gradient(135deg,${c.color||'#2D6BB6'}18,transparent);border-bottom:1px solid rgba(45,107,182,.1);display:flex;align-items:center;gap:11px;">
@@ -1747,26 +1763,33 @@ function loadMyAssignments(){
           </div>`;
         });
       }
-      if(mySvcs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">My Recurring Services</div>`;
-        mySvcs.forEach(s=>{
-          const isOver=s.due&&s.due<todayStr; const isSoon=s.due&&!isOver&&s.due<=in7s;
-          const icon=isOver?'🔴':isSoon?'🟡':'🟢';
-          const days=s.due?Math.ceil((new Date(s.due)-new Date(todayStr))/86400000):null;
-          const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
-          html+=`<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'var(--bg)'};border-radius:8px;margin-bottom:4px;">
-            <span style="font-size:14px;">${icon}</span>
-            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${s.name}</span>
-            <span style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;background:rgba(45,107,182,.08);color:#2D6BB6;">${s.freq}</span>
-            ${s.due?`<span style="font-size:9px;color:${isOver?'var(--red)':isSoon?'var(--orange)':'var(--text-light)'};">📅 ${s.due}${daysLabel?' ('+daysLabel+')':''}</span>`:''}
-          </div>`;
-        });
-      }
-      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length && !mySvcs.length){
+      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
         html+=`<div style="font-size:11px;color:var(--text-mid);padding:5px 0;">You're a team member on this project.</div>`;
       }
       html+=`</div></div>`;
     });
+
+    // Show recurring services for this client (separate from projects)
+    if(myClientSvcs.length){
+      found=true;
+      myClientSvcs.forEach(s=>{
+        const due=s.nextDueDate||''; const isOver=due&&due<todayStr; const isSoon=due&&!isOver&&due<=in7s;
+        const icon=isOver?'🔴':isSoon?'🟡':'🟢';
+        const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
+        const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
+        svcCount++;
+        if(isOver||isSoon) dueCount++;
+        html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(37,99,168,.05);">
+          <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
+            <span style="font-size:18px;">${icon}</span>
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
+              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
+            </div>
+          </div>
+        </div>`;
+      });
+    }
   });
 
   // Update stats
@@ -1777,9 +1800,9 @@ function loadMyAssignments(){
   const list=document.getElementById('my-assignments-list');
   if(list){
     list.innerHTML=found?html:`<div style="text-align:center;padding:60px;color:var(--text-light);">
-      <div style="font-size:40px;margin-bottom:12px;">✅</div>
-      <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No assignments yet</div>
-      <div style="font-size:12px;">Your tasks, projects and services from the <a href="client.html" target="_blank" style="color:var(--text);">Client Tracker</a> will appear here.</div>
+      <div style="font-size:40px;margin-bottom:12px;">📋</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No work assigned yet</div>
+      <div style="font-size:12px;">When an admin assigns projects or services to you from the production tracker, they'll appear here automatically.</div>
     </div>`;
   }
   updateAssignmentsBadge();
@@ -1803,7 +1826,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',myassignments:'My Assignments'};
+  const titles = {operations:'Operations',myreports:'My Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Work',myassignments:'My Work'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -1812,7 +1835,7 @@ function showSection(id, el){
   if(id==='goals') loadGoals();
   if(id==='blockers') loadOpsStats();
   if(id==='bizSetup') loadCoC();
-  if(id==='myassignments') loadMyAssignments();
+  if(id==='mywork'||id==='myassignments') loadMyAssignments();
   if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
 }
 
