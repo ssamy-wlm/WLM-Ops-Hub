@@ -770,7 +770,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Projects, tasks and recurring services assigned to you from the production tracker</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <a href="client.html" target="_blank" class="btn btn-outline btn-sm">Open Tracker ↗</a>
+            <a href="client.html?usermode=1" target="_blank" class="btn btn-outline btn-sm">Open Tracker ↗</a>
             <button class="btn btn-primary btn-sm" onclick="loadMyAssignments()">↺ Refresh</button>
           </div>
         </div>
@@ -1174,8 +1174,7 @@ async function doLogin(){
     errEl.style.display='none';
     currentUser = found;
     // ── Persist session across refreshes ──
-    try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
-    logActivity('login', found.name||email, 'User signed in', found.title||'');
+    try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,id:found.id,name:found.name,ts:Date.now()})); }catch(e){}
     if(found.mustChangePassword){
       showForcedPasswordChange();
     } else {
@@ -1245,7 +1244,7 @@ async function submitForcedPasswordChange(){
   }
   logActivity('login', currentUser.name, 'User set new password (first login)', '');
   // Save session so refresh keeps user logged in
-  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,id:currentUser.id,name:currentUser.name,ts:Date.now()})); }catch(e){}
   document.getElementById('changePasswordScreen').style.display='none';
   showApp();
 }
@@ -1729,7 +1728,7 @@ function loadMyAssignments(){
             <div style="font-size:13px;font-weight:800;color:var(--text-dark);">${c.name} <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code||''}</span></div>
             <div style="font-size:10px;color:var(--text-light);">${p.name} · <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2D6BB6;">${p.status.replace('-',' ')}</span> · ${p.progress||0}% complete</div>
           </div>
-          <a href="client.html" target="_blank" style="font-size:10px;color:var(--text-mid);text-decoration:none;padding:4px 9px;border:1px solid rgba(45,107,182,.2);border-radius:7px;">Open ↗</a>
+          <a href="client.html?usermode=1" target="_blank" style="font-size:10px;color:var(--text-mid);text-decoration:none;padding:4px 9px;border:1px solid rgba(45,107,182,.2);border-radius:7px;">Open ↗</a>
         </div>
         <div style="padding:13px 18px;">`;
 
@@ -2112,7 +2111,7 @@ async function changeUserPassword(){
     }catch(e){}
   }
   // Refresh session timestamp
-  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,id:currentUser.id,name:currentUser.name,ts:Date.now()})); }catch(e){}
 }
 
 // ── MODALS ──
@@ -2553,7 +2552,7 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
     if(found){
       currentUser = found;
       // Refresh session timestamp
-      try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,ts:Date.now()})); }catch(e){}
+      try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,id:found.id,name:found.name,ts:Date.now()})); }catch(e){}
       document.addEventListener('DOMContentLoaded',()=>{
         // If forced password change is still needed, show that screen
         if(found.mustChangePassword){ showForcedPasswordChange(); }

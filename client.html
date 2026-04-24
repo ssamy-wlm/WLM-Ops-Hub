@@ -957,29 +957,44 @@ function dbPush(k,item){ const a=db(k)||[]; a.unshift(item); dbSave(k,a.slice(0,
 let SESSION = { role:'user', name:'Team Member', id:null, isAdmin:false, isCEO:false, isSuperAdmin:false };
 
 function detectSession(){
+  // ?usermode=1 forces user-only view regardless of any admin session in localStorage
+  const userMode = new URLSearchParams(location.search).get('usermode') === '1';
   try{
-    const as = db('wl_admin_session');
-    if(as && as.role){
-      SESSION.isAdmin = true;
-      SESSION.role    = as.role;
-      SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
-      SESSION.isSuperAdmin = (as.role==='super-admin'||as.role==='superadmin'||as.isSuperAdmin);
-      SESSION.id   = as.id||as.name||as.email;
-      SESSION.name = as.name||'Admin';
+    if(!userMode){
+      const as = db('wl_admin_session');
+      if(as && as.role){
+        SESSION.isAdmin = true;
+        SESSION.role    = as.role;
+        SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
+        SESSION.isSuperAdmin = (as.role==='super-admin'||as.role==='superadmin'||as.isSuperAdmin);
+        SESSION.id   = as.id||as.name||as.email;
+        SESSION.name = as.name||'Admin';
+      }
     }
     const us = db('wl_user_session');
-    if(us && us.name){
-      SESSION.name = us.name;
-      SESSION.id   = us.id||us.name;
+    if(us && (us.name||us.email)){
+      // Always apply user session name/id; in userMode also clear any admin flag
+      if(us.name) SESSION.name = us.name;
+      if(us.id)   SESSION.id   = us.id;
+      if(userMode){ SESSION.isAdmin=false; SESSION.role='user'; }
     }
-    // Enrich from user DB
+    // Enrich from users DB — match by id, name, or email
     const users = db(CL_KEYS.users)||[];
-    const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
-    if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
-    // Enrich from admins DB
-    const admins = db(CL_KEYS.admins)||[];
-    const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
-    if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    const me = users.find(u=>
+      (u.id  && u.id===SESSION.id)   ||
+      (u.name && u.name===SESSION.name) ||
+      (us?.email && u.email===us.email));
+    if(me){
+      SESSION.name=me.name;
+      SESSION.id=me.id||me.name;
+      if(userMode) SESSION.isAdmin=false;
+    }
+    // Enrich from admins DB only in non-user mode
+    if(!userMode){
+      const admins = db(CL_KEYS.admins)||[];
+      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+      if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    }
   }catch(e){}
 
   // Update sidebar card
