@@ -4145,6 +4145,181 @@ window.switchAdminTab = function(el, tab){
 const _CL_DB_KEY = 'wl_clients_db';
 function _getClientDB(){ try{ return JSON.parse(localStorage.getItem(_CL_DB_KEY)||'null')||[]; }catch(e){ return []; } }
 function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify(arr)); }catch(e){} }
+
+// ── Service Catalog ──────────────────────────────────────────────
+const WL_SERVICE_CATALOG = [
+  {id:'ad',name:'Admin',acronym:'ad',category:'Admin',exception:false},
+  {id:'eq',name:'Equipment',acronym:'eq',category:'Admin',exception:false},
+  {id:'mt',name:'Meetings',acronym:'mt',category:'Admin',exception:true},
+  {id:'bl',name:'Business Listings',acronym:'bl',category:'Production',exception:true},
+  {id:'br',name:'Branding',acronym:'br',category:'Production',exception:false},
+  {id:'co',name:'Consulting',acronym:'co',category:'Production',exception:false},
+  {id:'gb',name:'Google Business Profile',acronym:'gb',category:'Production',exception:true},
+  {id:'ho',name:'Hosting',acronym:'ho',category:'Production',exception:true},
+  {id:'mb',name:'Marketing Bundle',acronym:'mb',category:'Production',exception:false},
+  {id:'nl',name:'Newsletter',acronym:'nl',category:'Production',exception:false},
+  {id:'pm',name:'Project Management',acronym:'pm',category:'Production',exception:false},
+  {id:'pc',name:'PPC Management',acronym:'pc',category:'Production',exception:true},
+  {id:'pv',name:'Photo/Video Production',acronym:'pv',category:'Production',exception:false},
+  {id:'rm',name:'Review Management',acronym:'rm',category:'Production',exception:true},
+  {id:'an',name:'Analytics',acronym:'an',category:'Production',exception:false},
+  {id:'sm',name:'Social Media',acronym:'sm',category:'Production',exception:false},
+  {id:'sp',name:'SEO Project',acronym:'sp',category:'Production',exception:false},
+  {id:'tm',name:'Training Module',acronym:'tm',category:'Production',exception:false},
+  {id:'tr',name:'Training',acronym:'tr',category:'Production',exception:false},
+  {id:'wc',name:'Web Copy',acronym:'wc',category:'Production',exception:true},
+  {id:'wd',name:'Website Development',acronym:'wd',category:'Production',exception:false},
+  {id:'wm',name:'Website Maintenance',acronym:'wm',category:'Production',exception:false},
+  {id:'cm',name:'Company Marketing',acronym:'cm',category:'Marketing',exception:false},
+  {id:'lg',name:'Lead Generation',acronym:'lg',category:'Sales',exception:false},
+  {id:'n1',name:'Networking One-to-One',acronym:'n1',category:'Sales',exception:false},
+  {id:'nm',name:'Networking Meeting',acronym:'nm',category:'Sales',exception:false},
+  {id:'rd',name:'Research and Development',acronym:'rd',category:'Sales',exception:false},
+  {id:'se',name:'Sales Estimate',acronym:'se',category:'Sales',exception:false},
+  {id:'sa',name:'Sales Meeting',acronym:'sa',category:'Sales',exception:false},
+];
+
+// ── Client seed list ─────────────────────────────────────────────
+const WL_CLIENT_SEED = [
+  {name:"A&A Pest Control Inc.",code:"A&A",bundle:false},
+  {name:"Absolute Air Services",code:"Absolute",bundle:false},
+  {name:"Accounting Connections",code:"Accounting",bundle:false},
+  {name:"Ace Auto Body",code:"Ace",bundle:false},
+  {name:"Aileen Casey",code:"Aileen",bundle:false},
+  {name:"AirLine Cycles",code:"AirLine",bundle:false},
+  {name:"Allstars Electrical",code:"Allstars",bundle:false},
+  {name:"Alyson Portelance-Ayer",code:"Alyson",bundle:false},
+  {name:"AMPM",code:"AMPM",bundle:false},
+  {name:"Anchor-One LLC",code:"Anchor",bundle:false},
+  {name:"Andrew Vogl",code:"Andrew",bundle:false},
+  {name:"Ariel Mayer",code:"Ariel",bundle:false},
+  {name:"Baber Law",code:"Baber",bundle:false},
+  {name:"Bender Inspection Services",code:"Bender",bundle:false},
+  {name:"Black Sheep Post and Beam LLC",code:"Black",bundle:false},
+  {name:"Blue Castle IT",code:"Blue",bundle:false},
+  {name:"BNI Minnechaug",code:"BNI",bundle:false},
+  {name:"Bonin",code:"Bonin",bundle:false},
+  {name:"Burgess",code:"Burgess",bundle:false},
+  {name:"CAFAF",code:"CAFAF",bundle:false},
+  {name:"CAHI",code:"CAHI",bundle:false},
+  {name:"Capital Studio Architects",code:"Capital",bundle:false},
+  {name:"Chozick Realty",code:"Chozick",bundle:false},
+  {name:"Cleod Glassworks",code:"Cleod",bundle:false},
+  {name:"Coastline Painters",code:"Coastline",bundle:false},
+  {name:"CRN - Connecticut Retail Network",code:"CRN",bundle:false},
+  {name:"Constant Homemakers Companions",code:"Constant",bundle:false},
+  {name:"Continental Scrap",code:"Continental",bundle:false},
+  {name:"CorVera",code:"CorVera",bundle:false},
+  {name:"Coverli",code:"Coverli",bundle:false},
+  {name:"CSI Contractors Inc.",code:"CSI",bundle:false},
+  {name:"CT Property Watch",code:"CTProperty",bundle:false},
+  {name:"CT River Book Auction",code:"CTRiver",bundle:false},
+  {name:"Dr. Steven Jacob",code:"DrSteven",bundle:false},
+  {name:"EcoSmart Home Services",code:"EcoSmart",bundle:false},
+  {name:"evoEngage",code:"evoEngage",bundle:false},
+  {name:"EZ Online Marketing",code:"EZ",bundle:false},
+  {name:"Fairways to Heaven Golf",code:"Fairways",bundle:false},
+  {name:"Fern Wood Flooring",code:"Fern",bundle:false},
+  {name:"Flower Power Farms",code:"Flower",bundle:false},
+  {name:"Food is Fuel",code:"Food",bundle:false},
+  {name:"Glasco Heating & Air Conditioning Inc.",code:"Glasco",bundle:false},
+  {name:"Goode Bookkeeping & Consulting",code:"Goode",bundle:false},
+  {name:"Grundmann Landscaping",code:"Grundmann",bundle:false},
+  {name:"Hebron Veterinary Hospital",code:"Hebron",bundle:false},
+  {name:"High School Counselor Marketing",code:"High",bundle:false},
+  {name:"Hydro-Pure",code:"Hydro-Pure",bundle:false},
+  {name:"Injured CT",code:"Injured",bundle:false},
+  {name:"Jeff Desrosiers Irrigation",code:"Jeff",bundle:false},
+  {name:"JLN Contracting",code:"JLN",bundle:false},
+  {name:"John Hodgkins",code:"John",bundle:false},
+  {name:"JoVal Machine Co. Inc.",code:"JoVal",bundle:false},
+  {name:"Kane Hartley & Kane PC",code:"Kane",bundle:false},
+  {name:"Katherine Ryan",code:"Katherine",bundle:false},
+  {name:"KCIV Properties - Next Level Home Buyers",code:"KCIV",bundle:false},
+  {name:"Kim Lachapelle",code:"KimL",bundle:false},
+  {name:"Kim Reed",code:"KimR",bundle:false},
+  {name:"Kyele King'oo",code:"Kyele",bundle:false},
+  {name:"Leese Flooring Supplies Inc.",code:"Leese",bundle:false},
+  {name:"Love Light Portraits",code:"Love",bundle:false},
+  {name:"Mario Cerame",code:"Mario",bundle:false},
+  {name:"Mason County Concert Association",code:"Mason",bundle:false},
+  {name:"McLaughlin Associates Insurance",code:"McLaughlin",bundle:false},
+  {name:"Media Direct Productions",code:"Media",bundle:false},
+  {name:"Mike Fournier",code:"Mike",bundle:false},
+  {name:"MMNT",code:"MMNT",bundle:false},
+  {name:"Mrs. Shippie",code:"MrsShippie",bundle:false},
+  {name:"Natural Home Solutions",code:"Natural",bundle:false},
+  {name:"NESA Velodrome Foundation",code:"NESA",bundle:false},
+  {name:"Nitsuj",code:"Nitsuj",bundle:false},
+  {name:"Oasis Christian Church",code:"Oasis",bundle:false},
+  {name:"Optimal IP Strategies Website",code:"Optimal",bundle:false},
+  {name:"Payroll Connections",code:"Payroll",bundle:false},
+  {name:"PC Development Group - Windsor",code:"PC",bundle:false},
+  {name:"Rhino Garage Doors",code:"Rhino",bundle:false},
+  {name:"Rick Mayer",code:"Rick",bundle:false},
+  {name:"Roggi's Auto",code:"Roggi's",bundle:false},
+  {name:"Roots to Rise LLC",code:"Roots",bundle:false},
+  {name:"Russ Hudson Consulting LLC",code:"Russ",bundle:true},
+  {name:"Servpro of Yonkers",code:"Servpro",bundle:true},
+  {name:"Shapiro Auctions",code:"Shapiro",bundle:true},
+  {name:"Shari Schreiber",code:"Shari",bundle:false},
+  {name:"SNEAB",code:"SNEAB",bundle:false},
+  {name:"South Windsor Republican Town Committee",code:"SouthRep",bundle:false},
+  {name:"South Windsor Strawberry Festival & Craft Fair",code:"SouthStraw",bundle:false},
+  {name:"Sovereign Home Healthcare LLC",code:"Sovereign",bundle:false},
+  {name:"Stepule Builders",code:"Stepule",bundle:false},
+  {name:"Strain Measurement Devices",code:"Strain",bundle:false},
+  {name:"TaxAbility",code:"TaxAbility",bundle:false},
+  {name:"The Belwether Group",code:"Belwether",bundle:false},
+  {name:"The Health Consultants Group",code:"Health",bundle:false},
+  {name:"The Knowles Company",code:"Knowles",bundle:false},
+  {name:"The Science of Empowerment",code:"Science",bundle:false},
+  {name:"The Windsor Learning Center Inc",code:"Windsor",bundle:false},
+  {name:"Veda MedSpa",code:"Veda",bundle:false},
+  {name:"Ward Consulting Group LLC.",code:"Ward",bundle:false},
+  {name:"Wisdom and Youth LLC",code:"Wisdom",bundle:false},
+  {name:"WORK_SPACE",code:"Work",bundle:false},
+  {name:"Built-RITE Closets",code:"Built",bundle:false},
+];
+
+const _SEED_COLORS=['#2D6BB6','#9333ea','#16a34a','#d97706','#0891b2','#e05555','#7c3aed','#0d9488','#b45309','#4f46e5'];
+
+function _seedDefaultData(){
+  // Seed service catalog if empty
+  if(!localStorage.getItem('wl_service_catalog')){
+    try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
+  }
+  // Seed clients if empty
+  if(!localStorage.getItem(_CL_DB_KEY)){
+    const now = new Date().toISOString();
+    const clients = WL_CLIENT_SEED.map((c,i)=>({
+      id: 'c'+(Date.now()+i),
+      name: c.name,
+      code: c.code,
+      bundle: c.bundle,
+      status: 'active',
+      color: _SEED_COLORS[i % _SEED_COLORS.length],
+      accountManager: '',
+      clientName: '',
+      clientEmail: '',
+      clientPhone: '',
+      website: '',
+      startDate: '',
+      referredBy: '',
+      notes: '',
+      logo: '',
+      brandColors: [],
+      brandDetails: '',
+      services: [],
+      recurringServices: [],
+      projects: [],
+      createdAt: now,
+      updatedAt: now,
+    }));
+    _saveClientDB(clients);
+  }
+}
+
 // Proxy accessor so legacy code using `clientDB` still works
 let _clientDBCache = null;
 const clientDBHandler = { get(t,p){ return _getClientDB()[p]; }, set(t,p,v){ return true; } };
@@ -4661,7 +4836,7 @@ function saveProgress(){
 const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
-  if(tab==='clients'){ populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); }
+  if(tab==='clients'){ _seedDefaultData(); populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
 };
@@ -7229,6 +7404,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
     _populateAdminLevelSelect();
   }, 200);
 });
+
+document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
 
 // ── Probation data migration — run once on load ──
 (function _migrateProbation(){
