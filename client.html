@@ -487,9 +487,12 @@ body.view-only .view-only-badge{display:flex!important;}
 
     <!-- ═══ PAGE: MY WORK ═══ -->
     <div id="page-my-work" class="page-section">
-      <div style="margin-bottom:18px;">
-        <div style="font-size:17px;font-weight:800;color:var(--text-dark);">✅ My Work</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Tasks, sub-projects and services assigned to you</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">📋 My Work</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Projects and recurring services assigned to you, organized by status</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderMyWork()">↺ Refresh</button>
       </div>
       <div id="my-work-list"></div>
     </div>
@@ -2401,63 +2404,131 @@ function renderSchedule(){
 function renderMyWork(){
   const el=_el('my-work-list'); if(!el) return;
   const myId=SESSION.id||SESSION.name;
-  let html=''; let found=false;
-  const t=today();
+  const todayStr=today();
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+
+  // Collect projects assigned to this user, keyed by status bucket
+  const buckets={notStarted:[],inProgress:[],finished:[]};
+  function bucket(status){
+    if(!status||status==='not-started') return 'notStarted';
+    if(['completed','done','finished','archived'].includes(status)) return 'finished';
+    return 'inProgress';
+  }
+
   getClients().forEach(c=>{
     (c.projects||[]).forEach(p=>{
-      const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
-      const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name).map(t=>({...t,_spName:sp.name,_spId:sp.id})));
-      const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).includes(myId));
-      const mySvcs=(c.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===SESSION.name);
       const onProject=(p.users||[]).includes(myId);
-      if(!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length&&!onProject) return;
-      found=true;
-      html+=`
-        <div class="card" style="margin-bottom:14px;">
-          <div class="card-header" style="padding-bottom:12px;">
-            <div>
-              <div class="card-title">${c.name} · ${p.name}</div>
-              <div class="card-sub"><span class="chip chip-${p.status}">${p.status.replace('-',' ')}</span> · ${p.progress||0}% complete</div>
+      const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
+      const mySubTasks=(p.subprojects||[]).flatMap(sp=>
+        (sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name)
+                      .map(t=>({...t,_spName:sp.name,_spId:sp.id})));
+      const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).includes(myId));
+      if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
+
+      const pendingTasks=[...myTasks,...mySubTasks].filter(t=>!t.done);
+      const doneTasks=[...myTasks,...mySubTasks].filter(t=>t.done);
+
+      let cardHtml=`<div class="card" style="margin-bottom:10px;border-left:3px solid ${p.color||'var(--text)'};border-radius:11px;">
+        <div class="card-header" style="padding:12px 16px 8px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:800;color:var(--text-dark);">${p.name}</div>
+            <div style="font-size:10px;color:var(--text-light);margin-top:1px;">
+              ${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${(p.type||'').replace('-',' ')}</span>
+              ${p.due?`<span style="margin-left:6px;">📅 Due ${p.due}</span>`:''}
             </div>
-            ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline write-action" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log Progress</button>`:''}
           </div>
-          <div class="card-body">`;
-      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
-        html+=`<div style="font-size:11px;color:var(--text-mid);padding:6px 0;">You're assigned to this project.</div>`;
-      }
-      if(myTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">My Tasks</div>`;
-        html+=myTasks.map(t=>renderTaskRow(c.id,p.id,null,t,false)).join('');
-      }
-      if(mySubTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Project Tasks</div>`;
-        html+=mySubTasks.map(t=>renderTaskRow(c.id,p.id,t._spId,t,false)).join('');
-      }
-      if(mySubs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Projects</div>`;
-        html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,false)).join('');
-      }
-      if(mySvcs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Recurring Services</div>`;
-        html+=mySvcs.map(svc=>{
-          const cls=svc.due&&svc.due<t?'overdue':'ok';
-          const days=daysUntil(svc.due);
-          const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
-          return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;">
-            <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
-            <div class="alert-body"><div class="alert-title">${svc.name}</div>
-            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:16px;font-weight:800;color:${p.color||'var(--text-dark)'};">${p.progress||0}%</div>
+            <div style="font-size:9px;color:var(--text-light);">complete</div>
+          </div>
+        </div>
+        <div style="padding:0 16px 4px;"><div class="progress-bar-wrap" style="height:4px;"><div class="progress-bar-fill" style="width:${p.progress||0}%;background:${p.color||'var(--text)'};"></div></div></div>
+        <div style="padding:8px 16px 12px;">`;
+
+      if(pendingTasks.length){
+        cardHtml+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;letter-spacing:.07em;">Pending Tasks (${pendingTasks.length})</div>`;
+        cardHtml+=pendingTasks.map(t=>{
+          const overdue=t.due&&t.due<todayStr;
+          return `<div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:${overdue?'#fef8f8':'var(--bg)'};border-radius:7px;margin-bottom:3px;">
+            <span style="font-size:12px;">⬜</span>
+            <span style="flex:1;font-size:11px;color:var(--text-dark);font-weight:600;">${t.name||t.title||'Task'}</span>
+            ${t.due?`<span style="font-size:9px;color:${overdue?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
           </div>`;
         }).join('');
       }
-      html+=`</div></div>`;
+      if(doneTasks.length){
+        cardHtml+=`<div style="font-size:9px;font-weight:700;color:var(--green);text-transform:uppercase;margin:6px 0 4px;letter-spacing:.07em;">✓ Done (${doneTasks.length})</div>`;
+        cardHtml+=doneTasks.map(t=>`<div style="display:flex;align-items:center;gap:7px;padding:3px 8px;border-radius:7px;margin-bottom:2px;opacity:.6;">
+            <span style="font-size:12px;">✅</span>
+            <span style="flex:1;font-size:10px;color:var(--text-mid);text-decoration:line-through;">${t.name||t.title||'Task'}</span>
+          </div>`).join('');
+      }
+      if(mySubs.length){
+        cardHtml+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:6px 0 4px;">Sub-Projects</div>`;
+        cardHtml+=mySubs.map(sp=>`<div style="display:flex;align-items:center;gap:7px;padding:4px 8px;background:var(--bg);border-radius:7px;margin-bottom:3px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${p.color||'var(--text)'};flex-shrink:0;"></span>
+            <span style="flex:1;font-size:11px;color:var(--text-dark);font-weight:600;">${sp.name}</span>
+            <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:6px;background:rgba(45,107,182,.08);color:#2D6BB6;">${(sp.status||'').replace('-',' ')}</span>
+          </div>`).join('');
+      }
+      if(onProject&&!pendingTasks.length&&!doneTasks.length&&!mySubs.length){
+        cardHtml+=`<div style="font-size:11px;color:var(--text-mid);padding:4px 0;">You're a team member on this project.</div>`;
+      }
+      cardHtml+=`</div></div>`;
+      buckets[bucket(p.status)].push(cardHtml);
     });
   });
-  if(!found){
-    el.innerHTML='<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No work assigned to you yet</div><div class="empty-state-sub">Your tasks and services will appear here once an admin assigns them.</div></div>';
+
+  // Collect recurring services assigned to this user
+  const myRecurring=[];
+  getClients().forEach(c=>{
+    (c.recurringServices||[]).forEach(s=>{
+      if(!(s.assignedUserIds||[]).includes(myId)) return;
+      const due=s.nextDueDate||'';
+      const isOver=due&&due<todayStr; const isSoon=due&&!isOver&&due<=in7s;
+      const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
+      const dLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today':days+'d left');
+      const icon=isOver?'🔴':isSoon?'🟡':'🟢';
+      myRecurring.push(`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'var(--bg)'};border-radius:9px;margin-bottom:6px;">
+        <span style="font-size:18px;">${icon}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
+          <div style="font-size:10px;color:var(--text-light);">${c.name} · <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:5px;font-weight:700;">${s.frequency||'monthly'}</span>${due?` · 📅 ${due}${dLabel?' ('+dLabel+')':''}`:''}</div>
+        </div>
+      </div>`);
+    });
+  });
+
+  const totalWork=buckets.notStarted.length+buckets.inProgress.length+buckets.finished.length;
+  if(!totalWork&&!myRecurring.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No work assigned yet</div><div class="empty-state-sub">Projects and services assigned to you will appear here.</div></div>';
     return;
   }
-  el.innerHTML=html;
+
+  function section(title,color,icon,cards){
+    if(!cards.length) return '';
+    return `<div style="margin-bottom:22px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:15px;">${icon}</span>
+        <span style="font-size:11px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:.08em;">${title}</span>
+        <span style="background:${color}22;color:${color};font-size:10px;font-weight:700;padding:1px 8px;border-radius:10px;">${cards.length}</span>
+      </div>
+      ${cards.join('')}
+    </div>`;
+  }
+
+  el.innerHTML=
+    section('In Progress','var(--text)','🔄',buckets.inProgress)+
+    section('Not Started','var(--orange)','⏳',buckets.notStarted)+
+    section('Finished','var(--green)','✅',buckets.finished)+
+    (myRecurring.length?`<div style="margin-top:6px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:15px;">🔁</span>
+        <span style="font-size:11px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:.08em;">Recurring Services</span>
+        <span style="background:rgba(45,107,182,.1);color:#2D6BB6;font-size:10px;font-weight:700;padding:1px 8px;border-radius:10px;">${myRecurring.length}</span>
+      </div>
+      ${myRecurring.join('')}
+    </div>`:'');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2641,13 +2712,15 @@ function updateMyWorkBadge(){
   let count=0;
   getClients().forEach(c=>{
     (c.projects||[]).forEach(p=>{
+      if((p.users||[]).includes(myId)) count++;
       (p.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===SESSION.name)&&!t.done) count++; });
       (p.subprojects||[]).forEach(sp=>{
         if((sp.users||[]).includes(myId)) count++;
         (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===SESSION.name)&&!t.done) count++; });
       });
     });
-    (c.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; });
+    // recurring services (stored as recurringServices, not services)
+    (c.recurringServices||[]).forEach(s=>{ if((s.assignedUserIds||[]).includes(myId)) count++; });
   });
   const badge=_el('my-work-badge');
   if(badge){ badge.textContent=count; badge.style.display=count>0?'flex':'none'; }
@@ -2662,7 +2735,12 @@ function init(){
   populateDropdowns();
   populateServiceDropdown();
   populateScheduleClientFilter();
-  renderClientGrid();
+  // Non-admin users land on My Work, not All Clients
+  if(!SESSION.isAdmin){
+    showPage('my-work', _el('nav-my-work'));
+  } else {
+    renderClientGrid();
+  }
   checkServiceAlerts();
   refreshNotifBadge();
   updateMyWorkBadge();
