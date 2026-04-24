@@ -134,11 +134,20 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .coc-name{font-size:13px;font-weight:700;color:var(--text-dark);}
 .urgent-coc{background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.2);}
 .roadmap-section{background:var(--cream);border:1px solid var(--cream-dark);border-radius:14px;padding:20px;}
-.roadmap-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:14px;}
+.roadmap-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:4px;}
+.roadmap-subtitle{font-size:11px;color:var(--text-light);margin-bottom:14px;}
 .roadmap-phase{margin-bottom:14px;}
 .roadmap-phase-title{font-size:12px;font-weight:700;color:var(--btn);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em;}
-.roadmap-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:4px;}
+.roadmap-phase.active-phase{background:rgba(45,107,182,.06);border-radius:10px;padding:10px;}
+.roadmap-phase.done-phase .roadmap-phase-title{color:var(--text-light);}
+.roadmap-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:6px;cursor:pointer;user-select:none;}
+.roadmap-item:hover{color:var(--text-dark);}
+.roadmap-item.checked{color:var(--text-light);text-decoration:line-through;}
+.roadmap-check{width:14px;height:14px;border:2px solid var(--border);border-radius:4px;flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;transition:all .15s;}
+.roadmap-item.checked .roadmap-check{background:var(--green);border-color:var(--green);color:#fff;}
 .roadmap-dot{width:6px;height:6px;background:var(--text);border-radius:50%;margin-top:5px;flex-shrink:0;}
+.roadmap-progress-bar{height:4px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:8px;}
+.roadmap-progress-fill{height:100%;background:var(--green);border-radius:4px;transition:width .3s;}
 .report-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:10px;padding:4px;margin-bottom:20px;width:fit-content;}
 .report-tab{padding:7px 18px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-mid);transition:all .15s;}
 .report-tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 6px rgba(45,107,182,.1);}
@@ -489,31 +498,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             </div>
           </div>
         </div>
-        <div class="roadmap-section">
-          <div class="roadmap-title">📍 30–60–90 Day Roadmap</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
-            <div class="roadmap-phase">
-              <div class="roadmap-phase-title">First 14 Days</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Account access completed</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Design system reviewed</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Core training completed</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>First mockups ready</div>
-            </div>
-            <div class="roadmap-phase">
-              <div class="roadmap-phase-title">Days 15–30</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Client pages live</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Ad creatives delivered</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>First revision cycle done</div>
-            </div>
-            <div class="roadmap-phase">
-              <div class="roadmap-phase-title">Days 31–90</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Optimization routines</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Scaling workflows</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Reduced hand-holding</div>
-              <div class="roadmap-item"><div class="roadmap-dot"></div>Owner leverage gained</div>
-            </div>
-          </div>
-        </div>
+        <div class="roadmap-section" id="roadmap-section"></div>
       </div>
 
       <!-- ── MY REPORTS ── -->
@@ -1333,9 +1318,101 @@ function initApp(){
   loadGoals();
   // Check for client assignments from wl_clients_db / wl_client_notifications
   updateAssignmentsBadge();
+  // Render 30-60-90 roadmap
+  renderRoadmap();
   // Load theme
   const saved = localStorage.getItem('wl_theme');
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
+}
+
+// ── 30-60-90 Day Roadmap ──
+const ROADMAP_PHASES = [
+  {
+    key:'p1', label:'FIRST 14 DAYS', range:[0,14],
+    items:[
+      'Account access completed',
+      'Client onboarding calls reviewed',
+      'Service deliverables mapped',
+      'Core training completed',
+      'First check-in with assigned clients',
+      'First mockups / deliverables started',
+    ]
+  },
+  {
+    key:'p2', label:'DAYS 15–30', range:[15,30],
+    items:[
+      'First deliverables sent to clients',
+      'Client feedback received',
+      'Revisions completed',
+      'Ad creatives / content delivered',
+      'First revision cycle done',
+      'Progress report sent to manager',
+    ]
+  },
+  {
+    key:'p3', label:'DAYS 31–90', range:[31,90],
+    items:[
+      'Optimization routines active',
+      'Monthly reporting cycle started',
+      'Upsell opportunities identified',
+      'Account health reviewed',
+      'Scaling workflows documented',
+      'Reduced hand-holding achieved',
+    ]
+  }
+];
+
+function renderRoadmap(){
+  const el = document.getElementById('roadmap-section');
+  if(!el || !currentUser) return;
+  const storageKey = 'wl_roadmap_'+currentUser.id;
+  const checked = JSON.parse(localStorage.getItem(storageKey)||'{}');
+  const startDate = currentUser.createdAt ? new Date(currentUser.createdAt) : new Date();
+  const today = new Date(); today.setHours(0,0,0,0); startDate.setHours(0,0,0,0);
+  const dayOn = Math.floor((today - startDate)/(1000*60*60*24))+1;
+  const dayLabel = dayOn>0 ? `Day ${Math.min(dayOn,90)} of 90` : 'Starting today';
+
+  const phaseCols = ROADMAP_PHASES.map(ph=>{
+    const [lo,hi] = ph.range;
+    const isActive = dayOn>=lo && dayOn<=hi;
+    const isDone   = dayOn>hi;
+    const total = ph.items.length;
+    const doneCount = ph.items.filter((_,i)=>checked[ph.key+'_'+i]).length;
+    const pct = Math.round(doneCount/total*100);
+
+    const itemsHtml = ph.items.map((txt,i)=>{
+      const id=`rm_${ph.key}_${i}`;
+      const isCk = !!checked[ph.key+'_'+i];
+      return `<div class="roadmap-item${isCk?' checked':''}" onclick="toggleRoadmapItem('${ph.key}',${i})">
+        <div class="roadmap-check">${isCk?'✓':''}</div>
+        <span>${txt}</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="roadmap-phase${isActive?' active-phase':isDone?' done-phase':''}">
+      <div class="roadmap-phase-title">${isActive?'▶ ':''}${ph.label}${isDone?' ✓':''}</div>
+      ${itemsHtml}
+      <div class="roadmap-progress-bar"><div class="roadmap-progress-fill" style="width:${pct}%"></div></div>
+      <div style="font-size:10px;color:var(--text-light);margin-top:4px;">${doneCount}/${total} completed</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="roadmap-title">📍 30–60–90 Day Roadmap</div>
+    <div class="roadmap-subtitle">${dayLabel} — click items to check off progress</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+      ${phaseCols}
+    </div>`;
+}
+
+function toggleRoadmapItem(phaseKey, idx){
+  if(!currentUser) return;
+  const storageKey = 'wl_roadmap_'+currentUser.id;
+  const checked = JSON.parse(localStorage.getItem(storageKey)||'{}');
+  const k = phaseKey+'_'+idx;
+  checked[k] = !checked[k];
+  localStorage.setItem(storageKey, JSON.stringify(checked));
+  renderRoadmap();
 }
 
 // Quick Links — only shown when admin has set a URL + passcode for this user
