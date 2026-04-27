@@ -1510,6 +1510,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="form-group" style="margin:0;"><label class="form-label">Frequency</label>
             <select class="form-select" id="svc-freq" onchange="_updateSvcNextDue()">
               <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
               <option value="yearly">Yearly</option>
               <option value="weekly">Weekly</option>
               <option value="one-time">One-Time</option>
@@ -4346,12 +4347,51 @@ const WL_CLIENT_SEED = [
   {name:"Wisdom and Youth LLC",code:"Wisdom",bundle:false,clientName:"Brittany Eaton",clientEmail:"wisdomandyouthllc@gmail.com"},
   {name:"WORK_SPACE",code:"Work",bundle:false,clientName:"Stacey Zackin",clientEmail:"szackin@manchesterct.gov"},
   {name:"Built-RITE Closets",code:"Built",bundle:false,clientName:"Denis Beauchemin",clientEmail:"built.rite@me.com"},
+  {
+    name:"The Learning Center",code:"TLC",bundle:true,
+    clientName:"Nicole",clientEmail:"",
+    pinned:true,
+    notes:"3 locations: Manchester, South Windsor, Building Blocks of Windsor.\nUses BrightWheel as client portal.\nEvery quarter: Nicole exports customer list for review requests (one Excel file per location) → lands in updates folder → upload each to Grade_Us.",
+    recurringServices:[
+      {id:'svc-tlc-bw',name:'BrightWheel Review Request Export',frequency:'quarterly',
+       startDate:'2026-01-01',nextDueDate:'2026-07-01',
+       notes:'Ask Nicole to export review requests from BrightWheel portal for all 3 locations: Manchester, South Windsor, Building Blocks of Windsor. She sends separate Excel files. Files land in the updates folder. Upload each file to Grade_Us.',
+       active:true,assignedUserIds:[],lastCompletedDate:'2026-04-01'}
+    ],
+    projects:[
+      {id:'p-tlc-q2-2026',name:'Q2 2026 · BrightWheel Review Requests',type:'recurring',
+       status:'not-started',priority:'high',color:'#9333ea',
+       start:'2026-04-01',due:'2026-06-30',desc:'Quarterly export of review request lists from BrightWheel for all 3 Learning Center locations, uploaded to Grade_Us.',
+       progress:0,users:[],progressLog:[],milestones:[],
+       subprojects:[
+         {id:'sp-tlc-manchester',name:'Manchester',status:'not-started',users:[],
+          tasks:[
+            {id:'t-tlc-m1',name:'Ask Nicole to export Manchester list from BrightWheel',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-m2',name:'Receive Manchester Excel file in updates folder',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-m3',name:'Upload Manchester list to Grade_Us',done:false,due:'',assigneeId:'',assigneeName:''}
+          ]},
+         {id:'sp-tlc-sw',name:'South Windsor',status:'not-started',users:[],
+          tasks:[
+            {id:'t-tlc-sw1',name:'Ask Nicole to export South Windsor list from BrightWheel',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-sw2',name:'Receive South Windsor Excel file in updates folder',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-sw3',name:'Upload South Windsor list to Grade_Us',done:false,due:'',assigneeId:'',assigneeName:''}
+          ]},
+         {id:'sp-tlc-bb',name:'Building Blocks of Windsor',status:'not-started',users:[],
+          tasks:[
+            {id:'t-tlc-bb1',name:'Ask Nicole to export Building Blocks of Windsor list from BrightWheel',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-bb2',name:'Receive Building Blocks Excel file in updates folder',done:false,due:'',assigneeId:'',assigneeName:''},
+            {id:'t-tlc-bb3',name:'Upload Building Blocks list to Grade_Us',done:false,due:'',assigneeId:'',assigneeName:''}
+          ]}
+       ],
+       tasks:[]}
+    ]
+  },
 ];
 
 const _SEED_COLORS=['#2D6BB6','#9333ea','#16a34a','#d97706','#0891b2','#e05555','#7c3aed','#0d9488','#b45309','#4f46e5'];
 
 function _seedDefaultData(){
-  const SEED_VERSION = '5';
+  const SEED_VERSION = '6';
   // Always refresh service catalog
   try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
 
@@ -4378,19 +4418,30 @@ function _seedDefaultData(){
         ...ex,
         clientName:  ex.clientName  || seed.clientName  || '',
         clientEmail: ex.clientEmail || seed.clientEmail || '',
+        notes:       ex.notes       || seed.notes       || '',
         bundle: seed.bundle,
+        pinned: seed.pinned || ex.pinned || false,
         recurringServices: (ex.recurringServices && ex.recurringServices.length) ? ex.recurringServices : (seed.recurringServices||[]),
+        // Merge seed projects in by id — don't overwrite user-added ones
+        projects: (()=>{
+          const existingProjs = ex.projects||[];
+          const seedProjs = seed.projects||[];
+          const existingIds = new Set(existingProjs.map(p=>p.id));
+          const newFromSeed = seedProjs.filter(p=>!existingIds.has(p.id));
+          return [...newFromSeed, ...existingProjs];
+        })(),
       };
     }
     return {
       id: 'c'+(Date.now()+i),
       name: seed.name, code: seed.code, bundle: seed.bundle,
+      pinned: seed.pinned||false,
       status: 'active',
       color: _SEED_COLORS[i % _SEED_COLORS.length],
       accountManager:'', clientName: seed.clientName||'', clientEmail: seed.clientEmail||'',
-      clientPhone:'', website:'', startDate:'', referredBy:'', notes:'',
+      clientPhone:'', website:'', startDate:'', referredBy:'', notes: seed.notes||'',
       logo:'', brandColors:[], brandDetails:'',
-      services:[], recurringServices: seed.recurringServices||[], projects:[],
+      services:[], recurringServices: seed.recurringServices||[], projects: seed.projects||[],
       createdAt: now, updatedAt: now,
     };
   });
@@ -4425,11 +4476,13 @@ let TEAM_ROSTER=[]; // populated lazily in openProjectModal once DB_KEYS is defi
 // ── Render client grid (always reads live data from localStorage) ──
 function renderClientGrid(list){
   list = list || _getClientDB();
+  // Pinned clients always float to the top
+  list = [...list].sort((a,b)=>{ if(a.pinned&&!b.pinned) return -1; if(!a.pinned&&b.pinned) return 1; return 0; });
   const grid = document.getElementById('client-grid');
   if(!grid) return;
   grid.innerHTML = '';
   if(!list.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="client.html" target="_blank" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="client.html?usermode=1" target="_blank" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
     updateClientStats();
     return;
   }
@@ -4451,7 +4504,7 @@ function renderClientGrid(list){
       <div class="client-card-header">
         <div class="client-avatar" style="background:${c.color||'#2D6BB6'};">${initials}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
+          <div style="font-size:14px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${c.accountManager||c.industry||'—'} ${statusChip}</div>
         </div>
         <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
@@ -4973,8 +5026,9 @@ function _pushUserAssignment(userId, title, body, icon){
 function _calcNextDue(freq, fromDate){
   if(freq==='one-time') return '';
   const d = fromDate ? new Date(fromDate) : new Date();
-  if(freq==='weekly')  d.setDate(d.getDate()+7);
+  if(freq==='weekly')       d.setDate(d.getDate()+7);
   else if(freq==='monthly') d.setMonth(d.getMonth()+1);
+  else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
   else if(freq==='yearly')  d.setFullYear(d.getFullYear()+1);
   return d.toISOString().slice(0,10);
 }
