@@ -1396,7 +1396,7 @@ function renderClientGrid(list){
     updateStats(); return;
   }
   list.forEach(c=>{
-    const allProj=c.projects||[];
+    const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
     const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
     const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     const logoHtml=c.logo
@@ -1439,7 +1439,7 @@ function renderClientGrid(list){
 
 function updateStats(){
   const clients=getClients();
-  const allProj=clients.flatMap(c=>c.projects||[]);
+  const allProj=clients.flatMap(c=>(c.projects||[]).filter(p=>!p.isRecurringService));
   const t=today();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   let due=0;
@@ -1554,7 +1554,7 @@ function renderClientDetail(clientId, tab){
   const c=getClient(clientId); if(!c) return;
   tab=tab||'overview';
   const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  const allProj=c.projects||[];
+  const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
   const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
   const logoHtml=c.logo
     ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
@@ -1616,7 +1616,7 @@ function renderClientDetail(clientId, tab){
 
 // ── Overview Tab ──
 function renderOverview(c){
-  const allProj=c.projects||[];
+  const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
   const projSummary=allProj.map(p=>`
     <div style="display:flex;align-items:center;gap:9px;padding:7px 11px;background:var(--bg);border-radius:9px;margin-bottom:5px;cursor:pointer;" onclick="renderClientDetail('${c.id}','projects')">
       <div style="width:9px;height:9px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
