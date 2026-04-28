@@ -1061,6 +1061,20 @@ const DEFAULT_CATALOG=[
 ];
 function ensureCatalog(){ if(!db(CL_KEYS.serviceCatalog)) dbSave(CL_KEYS.serviceCatalog,DEFAULT_CATALOG); }
 
+// ── Seed team members into wl_users_db if empty ──────────────────────
+function seedTeamMembers(){
+  if((db(CL_KEYS.users)||[]).length) return;
+  const team=[
+    {id:'emily',  name:'Emily Rovillo', title:'Creative Manager',         role:'member', status:'active'},
+    {id:'jacob',  name:'Jacob Joslin',  title:'Finance / Startups PM',    role:'partner',status:'active'},
+    {id:'jamil',  name:'Jamil Ahmed',   title:'Video Producer',           role:'member', status:'active'},
+    {id:'becky',  name:'Becky',         title:'Blog Writer',              role:'member', status:'active'},
+    {id:'david',  name:'David Joslin',  title:'CEO & Founder',            role:'admin',  status:'active'},
+  ];
+  dbSave(CL_KEYS.users, team);
+  console.log('[WLM] Team members seeded');
+}
+
 // ── Permanently purge Joe the Plumber from all localStorage ──────────
 function purgeJoePlumber(){
   const clients=(db(CL_KEYS.clients)||[]).filter(c=>!c.name.toLowerCase().includes('joe the plumber'));
@@ -2853,6 +2867,7 @@ function updateMyWorkBadge(){
 // ═══════════════════════════════════════════════════════
 function init(){
   ensureCatalog();
+  seedTeamMembers();         // populate wl_users_db with agents if empty
   purgeJoePlumber();         // permanently remove Joe the Plumber on every load
   seedWLMClients();          // import Excel data on first load
   migrateClientNames();      // fix name mismatches in existing localStorage data
