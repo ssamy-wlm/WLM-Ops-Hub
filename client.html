@@ -1114,16 +1114,50 @@ function syncServicesToProjects(clientId){
 // Called on every page load — updates any service whose due date has
 // already passed by rolling it forward by the correct interval.
 // Also keeps the mirrored project entry due date in sync.
+function ensureServiceMirrors(){
+  // For any client with services but no mirrored project entries, build them now.
+  // Runs on every page load so users who had old data don't need to re-seed.
+  const clients=getClients();
+  let dirty=false;
+  clients.forEach(c=>{
+    const services=c.services||[];
+    if(!services.length) return;
+    const hasMirrors=(c.projects||[]).some(p=>p.isRecurringService);
+    if(hasMirrors) return;
+    const manual=(c.projects||[]).filter(p=>!p.isRecurringService);
+    const mirrors=services.map(svc=>({
+      id:'proj_'+svc.id, name:svc.name, type:'Recurring Service', billing:'recurring',
+      status:svc.status==='on-hold'?'on-hold':svc.status==='not-started'?'not-started':'in-progress',
+      priority:svc.due&&svc.due<today()?'high':'medium',
+      due:svc.due||'', progress:0, color:c.color||'#2D6BB6',
+      users:svc.assigneeId?[svc.assigneeId]:[],
+      desc:[svc.platforms?'Platforms: '+svc.platforms:'',svc.notes||'',svc.freqLabel?'Frequency: '+svc.freqLabel:''].filter(Boolean).join(' · '),
+      serviceId:svc.id, freq:svc.freq||'', freqLabel:svc.freqLabel||'',
+      lastDone:svc.lastDone||'', subprojects:[],tasks:[],milestones:[],progressLog:[],
+      isRecurringService:true
+    }));
+    c.projects=[...manual,...mirrors];
+    dirty=true;
+  });
+  if(dirty) saveClients(clients);
+}
+
 function refreshRecurringDueDates(){
   const clients=getClients();
   let dirty=false;
   const todayStr=today();
   clients.forEach(c=>{
     (c.services||[]).forEach(s=>{
-      if(!s.due || s.status==='on-hold' || s.status==='not-started') return;
-      if(s.due < todayStr && s.lastDone){
-        // Due date passed — roll forward from lastDone until future
-        const newDue=calcNextDue(s.freq, s.lastDone);
+      if(s.status==='on-hold' || s.status==='not-started') return;
+      // Assign a due date if missing
+      if(!s.due){
+        s.due=calcNextDue(s.freq, s.lastDone||todayStr);
+        dirty=true;
+        return;
+      }
+      // Roll forward any passed due dates
+      if(s.due < todayStr){
+        const newDue=calcNextDue(s.freq, s.lastDone||todayStr);
         if(newDue!==s.due){ s.due=newDue; dirty=true; }
       }
       // Keep assigneeName in sync (ensure field always present)
@@ -2794,7 +2828,8 @@ function updateMyWorkBadge(){
 function init(){
   ensureCatalog();
   seedWLMClients();          // import Excel data on first load
-  refreshRecurringDueDates(); // roll forward any passed due dates
+  ensureServiceMirrors();    // build project mirrors for any client missing them
+  refreshRecurringDueDates(); // assign/roll forward due dates
   detectSession();
   populateDropdowns();
   populateServiceDropdown();
