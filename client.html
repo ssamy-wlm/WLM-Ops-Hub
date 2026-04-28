@@ -1063,21 +1063,74 @@ function ensureCatalog(){ if(!db(CL_KEYS.serviceCatalog)) dbSave(CL_KEYS.service
 
 // ── Seed WLM client data on first load ───────────────────────────────
 function seedWLMClients(){
-  const SEED_KEY='wl_clients_seed_v4'; // v4: services now mirrored as projects + assigneeName fixed
-  if(localStorage.getItem(SEED_KEY)) return; // already seeded
+  const SEED_KEY='wl_clients_seed_v5'; // v5: forced migration — always syncs services→projects
   try{
     const existing=db(CL_KEYS.clients)||[];
-    // v4 upgrade: if existing data has clients but projects[] are empty, re-seed
-    const needsUpgrade=existing.length>0 && existing.every(c=>!(c.projects||[]).length);
-    if(existing.length>0 && !needsUpgrade){
+    if(existing.length===0){
+      // No data at all — fresh install, load full seed
+      dbSave(CL_KEYS.clients, WLM_SEED_DATA);
+      // Clear old seed guard keys so migration runs clean
+      ['wl_clients_seed_v3','wl_clients_seed_v4'].forEach(k=>localStorage.removeItem(k));
       localStorage.setItem(SEED_KEY,'done');
-      return; // fresh data already has projects — skip
+      console.log('[WLM] Fresh seed: loaded',WLM_SEED_DATA.length,'clients from Excel import');
+    } else {
+      // Data exists — run migration regardless of seed key
+      // This fixes stale localStorage from v3/v4 seeds that had empty projects[]
+      migrateServicesToProjects();
     }
-    const seed=WLM_SEED_DATA;
-    dbSave(CL_KEYS.clients, seed);
-    localStorage.setItem(SEED_KEY,'done');
-    console.log('[WLM] Seeded',seed.length,'clients from Excel import (v4: services → projects)');
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
+}
+
+// ── One-time migration: rebuild service-mirrored projects for ALL clients ──
+// Runs on every load to fix stale localStorage data (v3/v4 seeds had empty projects[]).
+// Safe to run repeatedly — only adds/updates mirrors, never touches manual projects.
+function migrateServicesToProjects(){
+  const clients=getClients();
+  if(!clients.length) return;
+  let migrated=0;
+  clients.forEach(c=>{
+    const services=c.services||[];
+    if(!services.length) return;
+    // Find services that don't yet have a mirrored project entry
+    const existingMirrorIds=new Set((c.projects||[]).filter(p=>p.isRecurringService).map(p=>p.serviceId));
+    const needsMirror=services.filter(s=>!existingMirrorIds.has(s.id));
+    if(needsMirror.length===0){
+      // All mirrors exist — but still patch assigneeName if missing
+      let patched=false;
+      services.forEach(s=>{ if(!s.assigneeName&&s.assignee){s.assigneeName=s.assignee;patched=true;} });
+      if(patched){ const arr=getClients(); const i=arr.findIndex(x=>x.id===c.id); if(i>=0){arr[i]=c;} }
+      return;
+    }
+    // Fix assigneeName on all services first
+    services.forEach(s=>{ if(!s.assigneeName&&s.assignee) s.assigneeName=s.assignee; });
+    const t=today();
+    const newMirrors=needsMirror.map(svc=>({
+      id:'proj_'+svc.id,
+      name:svc.name,
+      type:'Recurring Service',
+      billing:'recurring',
+      status:svc.status==='on-hold'?'on-hold':svc.status==='not-started'?'not-started':'in-progress',
+      priority:svc.due&&svc.due<t?'high':'medium',
+      due:svc.due||'',
+      progress:0,
+      color:c.color||'#2D6BB6',
+      users:svc.assigneeId?[svc.assigneeId]:(svc.assignee?[svc.assignee.toLowerCase()]:[]),
+      desc:[svc.platforms?'Platforms: '+svc.platforms:'',svc.notes||'',svc.freqLabel?'Frequency: '+svc.freqLabel:''].filter(Boolean).join(' · '),
+      serviceId:svc.id,
+      freq:svc.freq||'',
+      freqLabel:svc.freqLabel||svc.freq||'',
+      lastDone:svc.lastDone||'',
+      subprojects:[],tasks:[],milestones:[],progressLog:[],
+      isRecurringService:true
+    }));
+    if(!c.projects) c.projects=[];
+    c.projects=[...c.projects,...newMirrors];
+    migrated+=newMirrors.length;
+  });
+  if(migrated>0){
+    saveClients(clients);
+    console.log('[WLM] Migration: created',migrated,'service→project mirrors across all clients');
+  }
 }
 
 // ── Sync services → projects (keeps Projects tab in sync with Services tab) ──
