@@ -991,9 +991,13 @@ function dbPush(k,item){ const a=db(k)||[]; a.unshift(item); dbSave(k,a.slice(0,
 let SESSION = { role:'user', name:'Team Member', id:null, isAdmin:false, isCEO:false, isSuperAdmin:false };
 
 function detectSession(){
+  // ── Check URL param: ?usermode=1 forces non-admin view ──
+  const _urlParams = new URLSearchParams(window.location.search);
+  const _forceUserMode = _urlParams.get('usermode') === '1';
+
   try{
     const as = db('wl_admin_session');
-    if(as && as.role){
+    if(as && as.role && !_forceUserMode){
       SESSION.isAdmin = true;
       SESSION.role    = as.role;
       SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
@@ -1010,18 +1014,30 @@ function detectSession(){
     const users = db(CL_KEYS.users)||[];
     const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
     if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
-    // Enrich from admins DB
-    const admins = db(CL_KEYS.admins)||[];
-    const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
-    if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    // Enrich from admins DB (skip if forced user mode)
+    if(!_forceUserMode){
+      const admins = db(CL_KEYS.admins)||[];
+      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+      if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    }
   }catch(e){}
+
+  // If ?usermode=1, override isAdmin to false regardless
+  if(_forceUserMode){
+    SESSION.isAdmin = false;
+    SESSION.isCEO = false;
+    SESSION.isSuperAdmin = false;
+    SESSION.role = 'user';
+  }
 
   // Update sidebar card
   const init = (SESSION.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  _el('sb-avatar').textContent  = init;
-  _el('sb-name').textContent    = SESSION.name;
-  _el('sb-role').textContent    = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin': SESSION.isCEO?'👔 CEO':'⚙️ Admin') : '👤 Team Member';
-  _el('view-mode-badge').textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin View':SESSION.isCEO?'👔 CEO View':'⚙️ Admin View') : '👤 User View';
+  const sbAvatar = _el('sb-avatar'); if(sbAvatar) sbAvatar.textContent = init;
+  const sbName   = _el('sb-name');   if(sbName)   sbName.textContent   = SESSION.name;
+  const sbRole   = _el('sb-role');
+  if(sbRole) sbRole.textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin': SESSION.isCEO?'👔 CEO':'⚙️ Admin') : '👤 Team Member';
+  const vmBadge  = _el('view-mode-badge');
+  if(vmBadge) vmBadge.textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin View':SESSION.isCEO?'👔 CEO View':'⚙️ Admin View') : '👤 User View';
 
   // Hide admin-only UI for non-admins
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
