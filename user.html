@@ -499,6 +499,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           </div>
         </div>
         <div class="roadmap-section" id="roadmap-section"></div>
+        <div id="user-cal-wrap" style="margin-top:18px;"></div>
       </div>
 
       <!-- ── MY REPORTS ── -->
@@ -1329,6 +1330,8 @@ function initApp(){
   },800);
   // Render 30-60-90 roadmap
   renderRoadmap();
+  // Render personal calendar
+  renderUserCalendar();
   // Load theme
   const saved = localStorage.getItem('wl_theme');
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
@@ -1422,6 +1425,118 @@ function toggleRoadmapItem(phaseKey, idx){
   checked[k] = !checked[k];
   localStorage.setItem(storageKey, JSON.stringify(checked));
   renderRoadmap();
+}
+
+// ── Personal Calendar (My Due Dates) ──
+function renderUserCalendar(){
+  const wrap = document.getElementById('user-cal-wrap');
+  if(!wrap || !currentUser) return;
+
+  const myId   = currentUser.id || currentUser.name || '';
+  const myName = currentUser.name || '';
+  const todayStr = new Date().toISOString().slice(0,10);
+  const now = new Date();
+  const year  = now.getFullYear();
+  const month = now.getMonth();
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DAY_HDRS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Build event map keyed by 'YYYY-MM-DD'
+  const evMap = {};
+  function addEv(dateStr, ev){ if(!dateStr) return; if(!evMap[dateStr]) evMap[dateStr]=[]; evMap[dateStr].push(ev); }
+
+  const in7 = new Date(); in7.setDate(in7.getDate()+7);
+  const in7s = in7.toISOString().slice(0,10);
+
+  try{
+    const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[];
+    clients.forEach(c=>{
+      // c.services (client.html format) — assigneeId
+      (c.services||[]).forEach(s=>{
+        if(!s.due) return;
+        if(s.assigneeId!==myId && !(s.assignedUserIds||[]).includes(myId)) return;
+        const isDone = s.status==='completed'||s.status==='done';
+        addEv(s.due,{ label:s.name, client:c.name, color:c.color||'#2D6BB6', type:'service', status:s.status||'', due:s.due, done:isDone });
+      });
+      // c.recurringServices (legacy)
+      (c.recurringServices||[]).forEach(s=>{
+        if(!(s.assignedUserIds||[]).includes(myId)) return;
+        const due = s.nextDueDate||'';
+        if(!due) return;
+        const isDone = s.status==='completed'||s.status==='done';
+        addEv(due,{ label:s.name, client:c.name, color:c.color||'#2D6BB6', type:'service', status:s.status||'', due, done:isDone });
+      });
+      // c.projects (non-recurring)
+      (c.projects||[]).filter(p=>!p.isRecurringService).forEach(p=>{
+        if(!p.due) return;
+        const onProj = (p.users||[]).some(u=>u===myId||u===myName);
+        if(!onProj) return;
+        const isDone = p.status==='completed'||p.status==='done';
+        addEv(p.due,{ label:p.name, client:c.name, color:c.color||'#2D6BB6', type:'project', status:p.status||'', due:p.due, done:isDone });
+      });
+    });
+  }catch(e){}
+
+  // Build grid
+  const firstDay = new Date(year,month,1).getDay();
+  const daysInMonth = new Date(year,month+1,0).getDate();
+  const prevDays = new Date(year,month,0).getDate();
+  const totalCells = Math.ceil((firstDay+daysInMonth)/7)*7;
+
+  let grid = '<table style="width:100%;border-collapse:collapse;">';
+  grid += '<tr>'+DAY_HDRS.map(d=>`<th style="padding:7px 0;font-size:10px;font-weight:700;color:var(--text-light);text-align:center;border-bottom:1px solid var(--border);">${d}</th>`).join('')+'</tr>';
+
+  let day=1, nextDay=1;
+  for(let i=0;i<totalCells;i+=7){
+    grid+='<tr>';
+    for(let col=0;col<7;col++){
+      const cellIdx=i+col;
+      let cellDay, isCur=true;
+      if(cellIdx<firstDay){ cellDay=prevDays-(firstDay-1-cellIdx); isCur=false; }
+      else if(day>daysInMonth){ cellDay=nextDay++; isCur=false; }
+      else { cellDay=day++; isCur=true; }
+      const mm=String(month+1).padStart(2,'0');
+      const dd=String(cellDay).padStart(2,'0');
+      const dateStr=isCur?`${year}-${mm}-${dd}`:'';
+      const isToday=dateStr===todayStr;
+      const evs=dateStr?evMap[dateStr]||[]:[];
+      const bgStyle=isToday?'background:rgba(45,107,182,0.08);':'';
+      const dayColor=isCur?'color:var(--text-dark)':'color:var(--text-light);opacity:0.35';
+      const todayDot=isToday?`<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#2D6BB6;margin-left:3px;vertical-align:middle;"></span>`:'';
+      const MAX_PILLS=3;
+      let pills='';
+      evs.slice(0,MAX_PILLS).forEach(ev=>{
+        const isOver=!ev.done&&ev.due<todayStr;
+        const isSoon=!ev.done&&!isOver&&ev.due<=in7s;
+        const bg=ev.done?'var(--text-light)':isOver?'var(--red)':isSoon?'var(--orange)':'var(--green)';
+        const icon=ev.type==='service'?'↻':'▣';
+        pills+=`<div style="background:${bg};color:#fff;border-radius:4px;font-size:9px;padding:1px 4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;" title="${ev.client}: ${ev.label}">${icon} ${ev.label.length>14?ev.label.slice(0,13)+'…':ev.label}</div>`;
+      });
+      if(evs.length>MAX_PILLS) pills+=`<div style="font-size:9px;color:var(--text-light);padding:0 2px;">+${evs.length-MAX_PILLS} more</div>`;
+      grid+=`<td valign="top" style="border:1px solid var(--border);padding:6px 5px;min-height:76px;vertical-align:top;${bgStyle}">
+        <div style="font-size:11px;font-weight:700;${dayColor};margin-bottom:4px;">${cellDay}${todayDot}</div>
+        ${pills}
+      </td>`;
+    }
+    grid+='</tr>';
+  }
+  grid+='</table>';
+
+  wrap.innerHTML=`
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-top:2px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div>
+          <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);">📅 My Calendar — ${MONTHS[month]} ${year}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Your assigned service due dates and project deadlines</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-light);">
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--red);display:inline-block;"></span>Overdue</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--orange);display:inline-block;"></span>Due soon</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--green);display:inline-block;"></span>Upcoming</span>
+        </div>
+      </div>
+      ${grid}
+    </div>`;
 }
 
 // Quick Links — only shown when admin has set a URL + passcode for this user
@@ -1705,8 +1820,11 @@ function loadMyAssignments(){
   let html=''; let found=false;
 
   clients.forEach(c=>{
-    // Recurring services assigned to me (stored in c.recurringServices)
-    const myClientSvcs=(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).includes(myId));
+    // Services assigned to me — check both c.services (client.html format) and c.recurringServices (legacy)
+    const myClientSvcs=[
+      ...(c.services||[]).filter(s=>s.assigneeId===myId||(s.assignedUserIds||[]).includes(myId)),
+      ...(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).includes(myId))
+    ];
 
     (c.projects||[]).forEach(p=>{
       const onProject=(p.users||[]).some(u=>u===myId||u===myName);
@@ -1772,7 +1890,7 @@ function loadMyAssignments(){
     if(myClientSvcs.length){
       found=true;
       myClientSvcs.forEach(s=>{
-        const due=s.nextDueDate||''; const isOver=due&&due<todayStr; const isSoon=due&&!isOver&&due<=in7s;
+        const due=s.due||s.nextDueDate||''; const isOver=due&&due<todayStr; const isSoon=due&&!isOver&&due<=in7s;
         const icon=isOver?'🔴':isSoon?'🟡':'🟢';
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
         const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
@@ -1783,7 +1901,7 @@ function loadMyAssignments(){
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
-              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
+              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
             </div>
           </div>
         </div>`;

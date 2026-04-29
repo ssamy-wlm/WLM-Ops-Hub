@@ -390,7 +390,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             <span class="si">🔍</span>
             <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:100%;font-size:11px;padding:7px 11px 7px 28px;">
           </div>
-          <div style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
+          <div class="admin-only" style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
             <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
           </div>
         </div>
@@ -1028,6 +1028,10 @@ function detectSession(){
 
   // Hide admin-only UI for non-admins
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
+  if(!SESSION.isAdmin){
+    const nc=_el('nav-clients'); if(nc) nc.style.display='none';
+    setTimeout(()=>{ if(typeof showPage==='function') showPage('my-work',_el('nav-my-work')); },0);
+  }
 }
 
 // ═══════════════════════════════════════════════════════
