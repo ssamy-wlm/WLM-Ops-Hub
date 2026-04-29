@@ -4664,7 +4664,7 @@ function renderClientDetail(c){
   const initials = c.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const totalPct = c.projects.length ? Math.round(c.projects.reduce((s,p)=>s+p.progress,0)/c.projects.length) : 0;
 
-  let projectsHTML = c.projects.map(p => {
+  let projectsHTML = (c.projects||[]).filter(p=>!p.isRecurringService).map(p => {
     const users = p.users.map(uid=>{
       const u=TEAM_ROSTER.find(x=>x.id===uid);
       return u ? `<span class="user-chip"><span class="uc-avatar" style="background:${u.color}">${u.initials}</span>${u.name} <span class="hours-badge">${u.hours}h/wk</span></span>` : '';
@@ -4923,33 +4923,52 @@ function archiveProject(clientId,projId){
 
 // ── Recurring Services ──
 function _renderServicesSection(c){
-  const svcs = c.recurringServices||[];
-  if(!svcs.length) return '';
   const roster = buildTeamRoster();
-  const today = new Date(); today.setHours(0,0,0,0);
-  const rows = svcs.map(s=>{
-    const assignees = (s.assignedUserIds||[]).map(uid=>{
+  const todayStr = new Date().toISOString().slice(0,10);
+  const todayD = new Date(); todayD.setHours(0,0,0,0);
+
+  function dueChipHtml(dueDate){
+    if(!dueDate) return '';
+    const due=new Date(dueDate); due.setHours(0,0,0,0);
+    const diff=Math.round((due-todayD)/(1000*60*60*24));
+    const dueStr=due.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    const dueColor=diff<0?'var(--red)':diff<=7?'var(--orange)':'var(--green)';
+    const dueLabel=diff<0?`Overdue ${Math.abs(diff)}d`:diff===0?'Due today':diff<=7?`Due in ${diff}d`:`Due ${dueStr}`;
+    return `<span style="font-size:10px;font-weight:700;color:${dueColor};background:${dueColor}18;padding:2px 8px;border-radius:6px;">⏰ ${dueLabel}</span>`;
+  }
+
+  // c.services — client.html format (assigneeId, freq, due)
+  const newSvcs = (c.services||[]).map(s=>{
+    const u=roster.find(x=>x.id===s.assigneeId);
+    const assigneeHtml=u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`
+      :(s.assigneeName?`<span style="font-size:11px;color:var(--text-light);">${s.assigneeName}</span>`
+      :'<span style="font-size:11px;color:var(--text-light);">Unassigned</span>');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
+      <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+      <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.freqLabel||s.freq||'—'}</span>
+      ${dueChipHtml(s.due)}
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">${assigneeHtml}</div>
+    </div>`;
+  }).join('');
+
+  // c.recurringServices — legacy index.html format (assignedUserIds, frequency, nextDueDate)
+  const legacySvcs = (c.recurringServices||[]).map(s=>{
+    const assignees=(s.assignedUserIds||[]).map(uid=>{
       const u=roster.find(x=>x.id===uid);
       return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
     }).join('');
-    let dueChip='';
-    if(s.nextDueDate && s.frequency!=='one-time'){
-      const due=new Date(s.nextDueDate); due.setHours(0,0,0,0);
-      const diff=Math.round((due-today)/(1000*60*60*24));
-      const dueStr=new Date(s.nextDueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-      let dueColor=diff<0?'var(--red)':diff<=7?'var(--orange)':'var(--green)';
-      let dueLabel=diff<0?`Overdue ${Math.abs(diff)}d`:diff===0?'Due today':diff<=7?`Due in ${diff}d`:`Due ${dueStr}`;
-      dueChip=`<span style="font-size:10px;font-weight:700;color:${dueColor};background:${dueColor}18;padding:2px 8px;border-radius:6px;">⏰ ${dueLabel}</span>`;
-    }
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
       <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
       <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.frequency||'monthly'}</span>
-      ${dueChip}
-      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">No one assigned</span>'}</div>
-      <button class="btn btn-sm btn-outline" onclick="markSvcDone('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark service completed and reschedule">✓ Done</button>
-      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Edit</button>
+      ${dueChipHtml(s.nextDueDate)}
+      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">Unassigned</span>'}</div>
+      <button class="btn btn-sm btn-outline" onclick="markSvcDone('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);">✓ Done</button>
+      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️</button>
     </div>`;
   }).join('');
+
+  const rows = newSvcs + legacySvcs;
+  if(!rows) return '';
   return `<div style="margin-bottom:20px;">
     <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Recurring Services</div>
     ${rows}

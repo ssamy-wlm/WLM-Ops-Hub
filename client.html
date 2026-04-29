@@ -1122,18 +1122,20 @@ function ensureCatalog(){
   }
 }
 
-// ── Seed team members into wl_users_db if empty ──────────────────────
+// ── Seed team members into wl_users_db — also adds login credentials for user.html ──
 function seedTeamMembers(){
-  if((db(CL_KEYS.users)||[]).length) return;
+  const existing=db(CL_KEYS.users)||[];
+  // Check if credentials are already present on any user
+  if(existing.length && existing.some(u=>u.email)) return;
   const team=[
-    {id:'emily',  name:'Emily Rovillo', title:'Creative Manager',         role:'member', status:'active'},
-    {id:'jacob',  name:'Jacob Joslin',  title:'Finance / Startups PM',    role:'partner',status:'active'},
-    {id:'jamil',  name:'Jamil Ahmed',   title:'Video Producer',           role:'member', status:'active'},
-    {id:'becky',  name:'Becky',         title:'Blog Writer',              role:'member', status:'active'},
-    {id:'david',  name:'David Joslin',  title:'CEO & Founder',            role:'admin',  status:'active'},
+    {id:'emily', name:'Emily Rovillo', email:'emily@weblightmedia.com', password:'WLM2024!', title:'Creative Manager',      role:'member', status:'active', mustChangePassword:true},
+    {id:'jacob', name:'Jacob Joslin',  email:'jacob@weblightmedia.com', password:'WLM2024!', title:'Finance / Startups PM', role:'partner',status:'active', mustChangePassword:true},
+    {id:'jamil', name:'Jamil Ahmed',   email:'jamil@weblightmedia.com', password:'WLM2024!', title:'Video Producer',        role:'member', status:'active', mustChangePassword:true},
+    {id:'becky', name:'Becky',         email:'becky@weblightmedia.com', password:'WLM2024!', title:'Blog Writer',           role:'member', status:'active', mustChangePassword:true},
+    {id:'david', name:'David Joslin',  email:'david@weblightmedia.com', password:'WLM2024!', title:'CEO & Founder',         role:'admin',  status:'active', mustChangePassword:false},
   ];
   dbSave(CL_KEYS.users, team);
-  console.log('[WLM] Team members seeded');
+  console.log('[WLM] Team members seeded with login credentials');
 }
 
 // ── Permanently purge Joe the Plumber from all localStorage ──────────
