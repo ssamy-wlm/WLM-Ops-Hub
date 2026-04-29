@@ -3779,7 +3779,9 @@ function saveQuickLinks(){
 
 // Bump this string whenever the default layout changes — every device
 // will reset to the new defaults exactly once on next load.
-const ORG_LAYOUT_VERSION = 'v4_20260416';
+const ORG_LAYOUT_VERSION = 'v5_20260429';
+// Names permanently removed from the org chart — never re-added regardless of users DB or defaults
+const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','yehia elaify','yehia elafify','rania morsy','sarah ibrahim'];
 
 const orgColors = {
   ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
@@ -3799,7 +3801,6 @@ const ORG_NODES_DEFAULT = [
   {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
   // Row 3 — Left group (under Abby)
   {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
-  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:160, y:390},
   // Row 3 — Right group (under Sarah/Jacob)
   {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
   {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:520, y:390},
@@ -3807,9 +3808,7 @@ const ORG_NODES_DEFAULT = [
   {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:720, y:390},
   {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:820, y:390},
   // Row 4 — Bottom members
-  {id:'yehia',   name:'Yehia Elaify',     title:'Sales & Marketing Specialist',                     photo:null, level:'member',   x:60,  y:565},
   {id:'mostafa', name:'Mostafa Jamal',    title:'Ads and SEO Specialist',                           photo:null, level:'member',   x:210, y:565},
-  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:360, y:565},
   {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:500, y:565},
 ];
 const ORG_LINKS_DEFAULT = [
@@ -3845,7 +3844,11 @@ function orgLoad(){
       orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
       // Merge in any new default nodes added after the last save
       let mergeChanged = false;
+      const _savedExcluded = _orgGetExcluded();
       ORG_NODES_DEFAULT.forEach(def=>{
+        const nm = (def.name||'').toLowerCase();
+        if(ORG_PERMANENTLY_EXCLUDED.some(x=>nm.includes(x))) return;
+        if(_savedExcluded.includes(nm)) return;
         if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
       });
       if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
@@ -3882,8 +3885,10 @@ function _syncUsersToOrgChart(){
   users.forEach(u=>{
     const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
     if(!fullName) return;
-    // Skip names that were manually removed from the chart
-    if(excluded.includes(fullName.toLowerCase())) return;
+    // Skip permanently removed names and manually excluded ones
+    const fullNameLower = fullName.toLowerCase();
+    if(ORG_PERMANENTLY_EXCLUDED.some(x=>fullNameLower.includes(x))) return;
+    if(excluded.includes(fullNameLower)) return;
     // If already in chart, just make sure the name/title matches the canonical default
     const existing = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
     const defNode  = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
