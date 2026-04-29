@@ -1427,7 +1427,7 @@ function populateServiceDropdown(){
   const flt=_el('filter-service');
   if(flt){
     const cur=flt.value;
-    flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.id}"${cur===s.id?' selected':''}>${s.name}</option>`).join('');
+    flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
   }
   // Populate project-type dropdown dynamically from live client data
   const ptSel=_el('filter-proj-type');
@@ -1554,7 +1554,7 @@ function filterClients(){
   if(st) list=list.filter(c=>(c.status||'active')===st);
 
   // service type — match catalogId or service name
-  if(sv) list=list.filter(c=>(c.services||[]).some(s=>s.catalogId===sv||(s.name||'').toLowerCase()===sv.toLowerCase()));
+  if(sv){ const svl=sv.toLowerCase(); list=list.filter(c=>(c.services||[]).some(s=>(s.name||'').toLowerCase()===svl||(s.name||'').toLowerCase().includes(svl)||svl.includes((s.name||'').toLowerCase()))); }
 
   // project type — match any project whose type equals selected
   if(pjType) list=list.filter(c=>(c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjType.toLowerCase()));
