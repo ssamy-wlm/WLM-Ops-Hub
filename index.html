@@ -4332,7 +4332,6 @@ const WL_CLIENT_SEED = [
   {name:"South Windsor Republican Town Committee",code:"SouthRep",bundle:false,clientName:"Kathy Daugherty",clientEmail:"k.daugherty@cox.net"},
   {name:"South Windsor Strawberry Festival & Craft Fair",code:"SouthStraw",bundle:false,clientName:"Kathy Daugherty",clientEmail:"kdaugherty1634@gmail.com"},
   {name:"Sovereign Home Healthcare LLC",code:"Sovereign",bundle:false,clientName:"Felix Effa",clientEmail:"info@sovereignhomehealthcare.com"},
-  {name:"Stepule Builders",code:"Stepule",bundle:false,clientName:"Brian Stepule",clientEmail:"brianstepule@gmail.com"},
   {name:"Strain Measurement Devices",code:"Strain",bundle:false,clientName:"Marc Savoie",clientEmail:"msavoie@smdsensors.com"},
   {name:"TaxAbility",code:"TaxAbility",bundle:false,clientName:"Jolie Swanson",clientEmail:"jolie@accounting-connections.com"},
   {name:"The Belwether Group",code:"Belwether",bundle:false,clientName:"Chelsea Gorczyca",clientEmail:"chelsea@thebelwethergroup.org"},
@@ -4396,7 +4395,7 @@ function _seedDefaultData(){
   try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
 
   // Always purge hard-deleted clients by code
-  const PURGED_CODES = ['Joe'];
+  const PURGED_CODES = ['Joe', 'Stepule'];
   (()=>{
     const live = _getClientDB();
     const cleaned = live.filter(c => !PURGED_CODES.includes(c.code));
