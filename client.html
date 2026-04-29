@@ -324,7 +324,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
     <div class="nav-group-label">Production</div>
     <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)"><span class="ni">🏢</span>All Clients</div>
     <div class="nav-item" id="nav-services-schedule" onclick="showPage('services-schedule',this)"><span class="ni">📅</span>Service Schedule<span class="nav-badge" id="schedule-badge" style="display:none;">0</span></div>
-    <div class="nav-item" id="nav-calendar" onclick="showPage('calendar',this)"><span class="ni">🗓️</span>Calendar</div>
     <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)"><span class="ni">✅</span>My Work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
 
     <div class="nav-group-label">Management</div>
@@ -457,20 +456,70 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           <div style="font-size:17px;font-weight:800;color:var(--text-dark);">📅 Service Schedule</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">All recurring services, due dates and assigned team members</div>
         </div>
-        <div style="display:flex;gap:7px;">
-          <select class="form-select" id="schedule-filter" onchange="renderSchedule()" style="width:130px;font-size:11px;padding:7px 10px;">
-            <option value="">All</option>
-            <option value="overdue">Overdue</option>
-            <option value="soon">Due Soon (7d)</option>
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-          </select>
-          <select class="form-select" id="schedule-client-filter" onchange="renderSchedule()" style="width:170px;font-size:11px;padding:7px 10px;">
-            <option value="">All Clients</option>
-          </select>
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
+          <!-- View toggle -->
+          <div style="display:flex;background:var(--bg2);border-radius:8px;padding:3px;gap:2px;">
+            <button id="sched-view-list" onclick="setScheduleView('list')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(45,107,182,.1);">☰ List</button>
+            <button id="sched-view-cal" onclick="setScheduleView('calendar')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);">🗓️ Calendar</button>
+          </div>
+          <!-- List filters (hidden in calendar view) -->
+          <div id="sched-list-filters" style="display:flex;gap:7px;">
+            <select class="form-select" id="schedule-filter" onchange="renderSchedule()" style="width:130px;font-size:11px;padding:7px 10px;">
+              <option value="">All</option>
+              <option value="overdue">Overdue</option>
+              <option value="soon">Due Soon (7d)</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            <select class="form-select" id="schedule-client-filter" onchange="renderSchedule()" style="width:170px;font-size:11px;padding:7px 10px;">
+              <option value="">All Clients</option>
+            </select>
+          </div>
+          <!-- Calendar controls (hidden in list view) -->
+          <div id="sched-cal-controls" style="display:none;gap:7px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-outline btn-sm" onclick="calNav(-1)">‹ Prev</button>
+            <span id="cal-month-label" style="font-size:13px;font-weight:800;color:var(--text-dark);min-width:140px;text-align:center;"></span>
+            <button class="btn btn-outline btn-sm" onclick="calNav(1)">Next ›</button>
+            <button class="btn btn-outline btn-sm" onclick="calGoToday()">Today</button>
+            <select class="form-select" id="cal-filter-agent" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:110px;">
+              <option value="">All Agents</option>
+              <option value="emily">Emily</option>
+              <option value="jacob">Jacob</option>
+              <option value="jamil">Jamil</option>
+              <option value="becky">Becky</option>
+              <option value="david">David</option>
+            </select>
+            <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:130px;">
+              <option value="">All Types</option>
+              <option value="service">Recurring Services</option>
+              <option value="project">Projects</option>
+            </select>
+          </div>
         </div>
       </div>
-      <div id="schedule-list"></div>
+
+      <!-- List view -->
+      <div id="schedule-list-wrap">
+        <div id="schedule-list"></div>
+      </div>
+
+      <!-- Calendar view -->
+      <div id="schedule-cal-wrap" style="display:none;">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;font-size:10px;color:var(--text-light);">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--red);margin-right:4px;vertical-align:middle;"></span>Overdue</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--orange);margin-right:4px;vertical-align:middle;"></span>Due soon</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--green);margin-right:4px;vertical-align:middle;"></span>Upcoming</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--text-light);margin-right:4px;vertical-align:middle;"></span>Completed</span>
+        </div>
+        <div id="cal-grid-wrap" style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;"></div>
+        <div id="cal-day-panel" style="display:none;margin-top:16px;background:var(--card);border-radius:14px;border:1px solid var(--border);padding:18px 22px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div id="cal-day-title" style="font-size:14px;font-weight:800;color:var(--text-dark);"></div>
+            <button class="btn btn-xs btn-outline" onclick="_el('cal-day-panel').style.display='none'">✕ Close</button>
+          </div>
+          <div id="cal-day-events"></div>
+        </div>
+      </div>
     </div>
 
 
@@ -483,52 +532,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <div id="my-work-list"></div>
     </div>
 
-
-    <!-- ═══ PAGE: CALENDAR ═══ -->
-    <div id="page-calendar" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🗓️ Calendar</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">All project deadlines, recurring services and completions</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button class="btn btn-outline btn-sm" onclick="calNav(-1)">‹ Prev</button>
-          <span id="cal-month-label" style="font-size:13px;font-weight:800;color:var(--text-dark);min-width:140px;text-align:center;"></span>
-          <button class="btn btn-outline btn-sm" onclick="calNav(1)">Next ›</button>
-          <button class="btn btn-outline btn-sm" onclick="calGoToday()">Today</button>
-          <select class="form-select" id="cal-filter-agent" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:110px;">
-            <option value="">All Agents</option>
-            <option value="emily">Emily</option>
-            <option value="jacob">Jacob</option>
-            <option value="jamil">Jamil</option>
-            <option value="becky">Becky</option>
-            <option value="david">David</option>
-          </select>
-          <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:130px;">
-            <option value="">All Types</option>
-            <option value="service">Recurring Services</option>
-            <option value="project">Projects</option>
-          </select>
-        </div>
-      </div>
-      <!-- Legend -->
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;font-size:10px;color:var(--text-light);">
-        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--red);margin-right:4px;vertical-align:middle;"></span>Overdue</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--orange);margin-right:4px;vertical-align:middle;"></span>Due soon</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--green);margin-right:4px;vertical-align:middle;"></span>Upcoming / Done</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--text-light);margin-right:4px;vertical-align:middle;"></span>Completed</span>
-      </div>
-      <!-- Calendar grid -->
-      <div id="cal-grid-wrap" style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;"></div>
-      <!-- Day detail panel -->
-      <div id="cal-day-panel" style="display:none;margin-top:16px;background:var(--card);border-radius:14px;border:1px solid var(--border);padding:18px 22px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <div id="cal-day-title" style="font-size:14px;font-weight:800;color:var(--text-dark);"></div>
-          <button class="btn btn-xs btn-outline" onclick="_el('cal-day-panel').style.display='none'">✕ Close</button>
-        </div>
-        <div id="cal-day-events"></div>
-      </div>
-    </div>
 
     <!-- ═══ PAGE: SERVICE CATALOG ═══ -->
     <div id="page-recurring-catalog" class="page-section">
@@ -1157,20 +1160,32 @@ function migrateClientNames(){
 
 // ── Seed WLM client data on first load ───────────────────────────────
 function seedWLMClients(){
-  const SEED_KEY='wl_clients_seed_v4'; // v4: services now mirrored as projects + assigneeName fixed
-  if(localStorage.getItem(SEED_KEY)) return; // already seeded
+  const SEED_KEY='wl_clients_seed_v5'; // v5: full services data (GBP, SM, Blog, Listings, Ads, Reviews, Hosting)
+  if(localStorage.getItem(SEED_KEY)) return;
   try{
     const existing=db(CL_KEYS.clients)||[];
-    // v4 upgrade: if existing data has clients but projects[] are empty, re-seed
-    const needsUpgrade=existing.length>0 && existing.every(c=>!(c.projects||[]).length);
-    if(existing.length>0 && !needsUpgrade){
+    // If clients exist but none have services populated, merge services from seed by id/name match.
+    // This preserves any manually-added projects, notes, or custom data.
+    const hasServices=existing.some(c=>(c.services||[]).length>0);
+    if(existing.length>0 && hasServices){
       localStorage.setItem(SEED_KEY,'done');
-      return; // fresh data already has projects — skip
+      return; // services already present — skip
     }
-    const seed=WLM_SEED_DATA;
-    dbSave(CL_KEYS.clients, seed);
+    if(existing.length>0 && !hasServices){
+      // Merge: copy services (and hosting) from seed into existing clients by id or name match
+      const seedMap={};
+      WLM_SEED_DATA.forEach(s=>{ seedMap[s.id]=s; seedMap[(s.name||'').toLowerCase()]=s; });
+      let merged=false;
+      existing.forEach(c=>{
+        const src=seedMap[c.id]||seedMap[(c.name||'').toLowerCase()];
+        if(src && (src.services||[]).length){ c.services=src.services; merged=true; }
+      });
+      if(merged){ dbSave(CL_KEYS.clients,existing); localStorage.setItem(SEED_KEY,'done'); console.log('[WLM] v5 upgrade: merged services into existing clients'); return; }
+    }
+    // Fresh install — seed everything
+    dbSave(CL_KEYS.clients, WLM_SEED_DATA);
     localStorage.setItem(SEED_KEY,'done');
-    console.log('[WLM] Seeded',seed.length,'clients from Excel import (v4: services → projects)');
+    console.log('[WLM] Seeded',WLM_SEED_DATA.length,'clients (v5: full services data)');
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
 }
 
@@ -1415,7 +1430,6 @@ function checkServiceAlerts(){
 const PAGE_META={
   'clients':           ['Client & Production Tracker','All clients, projects, services and progress'],
   'services-schedule': ['Service Schedule','Recurring services, due dates and assigned team'],
-  'calendar':          ['Calendar','All project deadlines, recurring services and completions'],
   'my-work':           ['My Work','Tasks, sub-projects and services assigned to you'],
   'recurring-catalog': ['Service Catalog','All services offered — recurring and one-time'],
   'sales-funnel':      ['Sales Funnel','New client intake and prospect pipeline'],
@@ -1431,8 +1445,7 @@ function showPage(name, el){
   _el('page-sub').textContent=sub;
   _el('notif-panel').classList.remove('open');
   if(name==='clients'){ populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
-  if(name==='services-schedule'){ populateScheduleClientFilter(); renderSchedule(); }
-  if(name==='calendar'){ renderCalendar(); }
+  if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
@@ -2946,6 +2959,28 @@ function init(){
     checkServiceAlerts();
     updateMyWorkBadge();
   }, 60000);
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCHEDULE VIEW TOGGLE
+// ═══════════════════════════════════════════════════════
+let _scheduleView='list';
+function setScheduleView(v){
+  _scheduleView=v;
+  const isCal=v==='calendar';
+  // Toggle containers
+  const lw=_el('schedule-list-wrap'), cw=_el('schedule-cal-wrap');
+  if(lw) lw.style.display=isCal?'none':'block';
+  if(cw) cw.style.display=isCal?'block':'none';
+  // Toggle controls
+  const lf=_el('sched-list-filters'), cf=_el('sched-cal-controls');
+  if(lf) lf.style.display=isCal?'none':'flex';
+  if(cf) cf.style.display=isCal?'flex':'none';
+  // Toggle button active style
+  const lb=_el('sched-view-list'), cb=_el('sched-view-cal');
+  if(lb){ lb.style.background=isCal?'transparent':'var(--card)'; lb.style.color=isCal?'var(--text-light)':'var(--text)'; lb.style.boxShadow=isCal?'none':'0 1px 4px rgba(45,107,182,.1)'; }
+  if(cb){ cb.style.background=isCal?'var(--card)':'transparent'; cb.style.color=isCal?'var(--text)':'var(--text-light)'; cb.style.boxShadow=isCal?'0 1px 4px rgba(45,107,182,.1)':'none'; }
+  if(isCal) renderCalendar(); else renderSchedule();
 }
 
 // ═══════════════════════════════════════════════════════
