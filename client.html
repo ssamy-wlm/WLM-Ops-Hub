@@ -1160,36 +1160,33 @@ function migrateClientNames(){
 
 // ── Seed WLM client data on first load ───────────────────────────────
 function seedWLMClients(){
-  const SEED_KEY='wl_clients_seed_v6'; // v6: safe name-match merge, never overwrites existing clients
-  if(localStorage.getItem(SEED_KEY)) return;
+  // Fresh-install only — seed full WLM_SEED_DATA when localStorage is empty.
+  if((db(CL_KEYS.clients)||[]).length) return;
   try{
-    const existing=db(CL_KEYS.clients)||[];
-    if(!existing.length){
-      // Fresh install — seed everything from WLM_SEED_DATA
-      dbSave(CL_KEYS.clients, WLM_SEED_DATA);
-      localStorage.setItem(SEED_KEY,'done');
-      console.log('[WLM] Seeded',WLM_SEED_DATA.length,'clients (v5)');
-      return;
-    }
-    // Clients already exist. If any have services, nothing to do.
-    const hasServices=existing.some(c=>(c.services||[]).length>0);
-    if(hasServices){ localStorage.setItem(SEED_KEY,'done'); return; }
-    // No services anywhere — merge from WLM_SEED_DATA by name match.
-    // NEVER overwrite existing clients wholesale; preserve all 100+ records.
-    const seedMap={};
-    WLM_SEED_DATA.forEach(s=>{
-      if(s.name) seedMap[s.name.toLowerCase().replace(/[^a-z0-9]/g,'')]=s;
-    });
-    let hits=0;
-    existing.forEach(c=>{
-      const key=(c.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      const src=seedMap[key];
-      if(src && (src.services||[]).length){ c.services=src.services; hits++; }
-    });
-    dbSave(CL_KEYS.clients, existing);
-    localStorage.setItem(SEED_KEY,'done');
-    console.log('[WLM] v5 service merge: '+hits+' clients updated out of '+existing.length);
+    dbSave(CL_KEYS.clients, WLM_SEED_DATA);
+    localStorage.setItem('wl_clients_seed_v6','done');
+    console.log('[WLM] Fresh install: seeded',WLM_SEED_DATA.length,'clients');
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
+}
+
+// Runs on every init — fills services into any client that currently has none.
+// Idempotent: skips clients that already have services.
+// Matches WLM_SEED_DATA by normalized name (strips spaces/punctuation).
+function backfillMissingServices(){
+  const clients=getClients();
+  if(!clients.length) return;
+  const seedMap={};
+  WLM_SEED_DATA.forEach(s=>{
+    if(s.name) seedMap[s.name.toLowerCase().replace(/[^a-z0-9]/g,'')]=s.services||[];
+  });
+  let hits=0;
+  clients.forEach(c=>{
+    if((c.services||[]).length) return; // already has services
+    const key=(c.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const svcs=seedMap[key];
+    if(svcs&&svcs.length){ c.services=svcs; hits++; }
+  });
+  if(hits){ saveClients(clients); console.log('[WLM] backfill: services added to '+hits+' clients'); }
 }
 
 // ── Sync services → projects (keeps Projects tab in sync with Services tab) ──
@@ -2940,12 +2937,13 @@ function updateMyWorkBadge(){
 // ═══════════════════════════════════════════════════════
 function init(){
   ensureCatalog();
-  seedTeamMembers();         // populate wl_users_db with agents if empty
-  purgeJoePlumber();         // permanently remove Joe the Plumber on every load
-  seedWLMClients();          // import Excel data on first load
-  migrateClientNames();      // fix name mismatches in existing localStorage data
-  ensureServiceMirrors();    // build project mirrors for any client missing them
-  refreshRecurringDueDates(); // assign/roll forward due dates
+  seedTeamMembers();           // populate wl_users_db with agents if empty
+  purgeJoePlumber();           // permanently remove Joe the Plumber on every load
+  seedWLMClients();            // import Excel data on first load (fresh install only)
+  backfillMissingServices();   // fill services into any client that has none (always runs)
+  migrateClientNames();        // fix name mismatches in existing localStorage data
+  ensureServiceMirrors();      // build project mirrors for any client missing them
+  refreshRecurringDueDates();  // assign/roll forward due dates
   detectSession();
   populateDropdowns();
   populateServiceDropdown();
