@@ -1160,7 +1160,7 @@ function migrateClientNames(){
 
 // ── Seed WLM client data on first load ───────────────────────────────
 function seedWLMClients(){
-  const SEED_KEY='wl_clients_seed_v5'; // v5: full services data (GBP, SM, Blog, Listings, Ads, Reviews, Hosting)
+  const SEED_KEY='wl_clients_seed_v6'; // v6: safe name-match merge, never overwrites existing clients
   if(localStorage.getItem(SEED_KEY)) return;
   try{
     const existing=db(CL_KEYS.clients)||[];
