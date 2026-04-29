@@ -6166,9 +6166,19 @@ async function cloudPushAll(silent=false){
       else mergedAdmins.push(la);       // new local admin added to cloud
     });
 
+    // Merge client DBs: local wins by id, cloud fills in any clients only it has
+    const localClients = _getClientDB();
+    const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
+    const clientById = {};
+    cloudClients.forEach(c=>{ if(c.id) clientById[c.id]=c; });
+    localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
+    const mergedClients = Object.values(clientById);
+
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       mergedAdmins,
+      clients:      mergedClients,
+      orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
       eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
       blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -6242,6 +6252,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       dbSet(DB_KEYS.users, filtered);
     }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
+    // Restore client data from cloud (local edits already merged on push side)
+    if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
+    // Restore org chart exclusion list so deleted nodes stay deleted on any device
+    if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     // EODs: merge, but always filter out deleted report IDs
     if(r.eods){
       const filtered = r.eods.filter(e=>!mergedDelEods.includes(e.id));

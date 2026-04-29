@@ -1297,10 +1297,43 @@ function refreshRecurringDueDates(){
 function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 
 // ═══════════════════════════════════════════════════════
+//  CLOUD SYNC (piggybacks on the same JSONBin config as index.html)
+// ═══════════════════════════════════════════════════════
+function _cloudCfg(){ try{ return JSON.parse(localStorage.getItem('wl_cloud_config')||'null'); }catch(e){ return null; } }
+let _cloudPushTimer=null;
+function _scheduleCloudPush(){
+  const cfg=_cloudCfg(); if(!cfg?.apiKey||!cfg?.binId) return;
+  clearTimeout(_cloudPushTimer);
+  _cloudPushTimer=setTimeout(async ()=>{
+    try{
+      const r0=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+      const cur=r0.ok?((await r0.json())?.record||{}):{};
+      cur.clients=getClients();
+      cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
+      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+        method:'PUT',
+        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        body:JSON.stringify(cur)
+      });
+    }catch(e){}
+  },1500);
+}
+async function _pullClientsFromCloud(){
+  const cfg=_cloudCfg(); if(!cfg?.apiKey||!cfg?.binId) return;
+  try{
+    const r=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+    if(!r.ok) return;
+    const rec=(await r.json())?.record||{};
+    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length) dbSave(CL_KEYS.clients,rec.clients);
+    if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
+  }catch(e){}
+}
+
+// ═══════════════════════════════════════════════════════
 //  CLIENT DB
 // ═══════════════════════════════════════════════════════
 function getClients(){ return db(CL_KEYS.clients)||[]; }
-function saveClients(arr){ dbSave(CL_KEYS.clients,arr); }
+function saveClients(arr){ dbSave(CL_KEYS.clients,arr); _scheduleCloudPush(); }
 function getClient(id){ return getClients().find(c=>c.id===id); }
 function updateClient(updated){
   const arr=getClients();
@@ -2947,6 +2980,11 @@ function updateMyWorkBadge(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
+  // Pull latest client data from cloud first (async — UI will render after)
+  _pullClientsFromCloud().then(()=>{
+    renderClientGrid();
+    populateScheduleClientFilter();
+  }).catch(()=>{});
   ensureCatalog();
   seedTeamMembers();           // populate wl_users_db with agents if empty
   purgeJoePlumber();           // permanently remove Joe the Plumber on every load
