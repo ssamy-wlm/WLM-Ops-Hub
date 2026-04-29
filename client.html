@@ -1299,10 +1299,20 @@ function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 // ═══════════════════════════════════════════════════════
 //  CLOUD SYNC (piggybacks on the same JSONBin config as index.html)
 // ═══════════════════════════════════════════════════════
-function _cloudCfg(){ try{ return JSON.parse(localStorage.getItem('wl_cloud_config')||'null'); }catch(e){ return null; } }
+function _cloudCfg(){
+  try{
+    const saved=JSON.parse(localStorage.getItem('wl_cloud_config')||'null')||{};
+    return {
+      apiKey: saved.apiKey||'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
+      binId:  saved.binId ||'69f267fa36566621a8086c5d'
+    };
+  }catch(e){
+    return {apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',binId:'69f267fa36566621a8086c5d'};
+  }
+}
 let _cloudPushTimer=null;
 function _scheduleCloudPush(){
-  const cfg=_cloudCfg(); if(!cfg?.apiKey||!cfg?.binId) return;
+  const cfg=_cloudCfg();
   clearTimeout(_cloudPushTimer);
   _cloudPushTimer=setTimeout(async ()=>{
     try{
@@ -1319,7 +1329,7 @@ function _scheduleCloudPush(){
   },1500);
 }
 async function _pullClientsFromCloud(){
-  const cfg=_cloudCfg(); if(!cfg?.apiKey||!cfg?.binId) return;
+  const cfg=_cloudCfg();
   try{
     const r=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
     if(!r.ok) return;

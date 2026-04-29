@@ -6038,9 +6038,12 @@ window.switchAdminTab = function(el, tab){
 // ☁️  CLOUD SYNC ENGINE  —  JSONBin.io
 // ═══════════════════════════════════════════════════════════
 const CLOUD_CFG_KEY = 'wl_cloud_config';
+const _DEFAULT_BIN    = '69f267fa36566621a8086c5d';
+const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 
 function getCloudConfig(){
-  return dbGet(CLOUD_CFG_KEY) || {apiKey:'', binId:''};
+  const saved = dbGet(CLOUD_CFG_KEY) || {};
+  return { apiKey: saved.apiKey || _DEFAULT_API_KEY, binId: saved.binId || _DEFAULT_BIN };
 }
 function cloudIsConfigured(){
   const c = getCloudConfig();
