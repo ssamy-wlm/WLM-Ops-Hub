@@ -4532,14 +4532,35 @@ function updateClientStats(){
   if(!t) return;
   const todayStr = new Date().toISOString().slice(0,10);
   const liveClients = _getClientDB();
+
+  // Collect all projects (includes isRecurringService mirrors seeded by client.html)
   const allProjects = liveClients.reduce((arr,c)=>arr.concat(c.projects||[]),[]);
+
+  // Also collect raw c.services[] entries (client.html schema) that have NO mirrored project yet
+  // This handles any services that weren't migrated yet
+  const allServices = liveClients.reduce((arr,c)=>{
+    const mirroredIds = new Set((c.projects||[]).filter(p=>p.isRecurringService).map(p=>p.serviceId));
+    (c.services||[]).forEach(s=>{ if(!mirroredIds.has(s.id)) arr.push(s); });
+    return arr;
+  },[]);
+
   t.textContent = liveClients.length;
   a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
+
+  // Completed = projects only (services don't have a "completed" status the same way)
   if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
-  const ongoing = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold');
-  if(op) op.textContent = ongoing.length;
-  const overdue = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr);
-  if(od){ od.textContent = overdue.length; od.style.color = overdue.length>0?'var(--red)':'var(--text-light)'; }
+
+  // Ongoing = active projects + active unmirrored services
+  const ongoingProj = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
+  const ongoingSvc  = allServices.filter(s=>s.status!=='on-hold'&&s.status!=='completed').length;
+  if(op) op.textContent = ongoingProj + ongoingSvc;
+
+  // Overdue = projects past due + unmirrored services past due
+  const overdueProj = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr).length;
+  const overdueSvc  = allServices.filter(s=>s.due&&s.due<todayStr&&s.status!=='completed').length;
+  const overdue = overdueProj + overdueSvc;
+  if(od){ od.textContent = overdue; od.style.color = overdue>0?'var(--red)':'var(--text-light)'; }
+
   // ── Client notification badge in nav ──
   try{
     const clientNotifs = JSON.parse(localStorage.getItem('wl_client_notifications')||'[]');
@@ -4661,25 +4682,68 @@ function openClientDetail(clientId){
 
 function renderClientDetail(c){
   const initials = c.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  const totalPct = c.projects.length ? Math.round(c.projects.reduce((s,p)=>s+p.progress,0)/c.projects.length) : 0;
+  const allProjs = c.projects||[];
+  const totalPct = allProjs.length ? Math.round(allProjs.reduce((s,p)=>s+(p.progress||0),0)/allProjs.length) : 0;
+  const todayStr = new Date().toISOString().slice(0,10);
 
-  let projectsHTML = c.projects.map(p => {
-    const users = p.users.map(uid=>{
+  let projectsHTML = allProjs.map(p => {
+    const pColor = p.color||c.color||'#2D6BB6';
+    const pUsers = p.users||[];
+    const pSubprojects = p.subprojects||[];
+    const pMilestones = p.milestones||[];
+    const pProgressLog = p.progressLog||[];
+    const pProgress = p.progress||0;
+    const pStatus = p.status||'not-started';
+    const pPriority = p.priority||'medium';
+
+    // ── Recurring Service card (seeded from client.html) ──────────────
+    if(p.isRecurringService){
+      const due = p.due||'';
+      const isOver = due && due < todayStr;
+      const isSoon = due && !isOver && due <= (()=>{const d=new Date();d.setDate(d.getDate()+7);return d.toISOString().slice(0,10);})();
+      const icon = isOver?'🔴':isSoon?'🟡':'🟢';
+      const dueColor = isOver?'var(--red)':isSoon?'var(--orange)':'var(--green)';
+      const days = due ? Math.ceil((new Date(due)-new Date(todayStr))/86400000) : null;
+      const daysLabel = days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d away');
+      const assignees = pUsers.map(uid=>{
+        const u=TEAM_ROSTER.find(x=>x.id===uid);
+        return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
+      }).join('');
+      return `
+      <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:12px;background:${isOver?'#fff8f8':isSoon?'#fffef0':'#fff'};">
+        <div style="padding:12px 16px;background:linear-gradient(135deg,${pColor}18,transparent);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:18px;flex-shrink:0;">${icon}</span>
+          <div style="flex:1;min-width:120px;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${p.name}</div>
+            <div style="font-size:10px;color:var(--text-light);">🔁 Recurring Service · <strong>${p.freqLabel||p.freq||''}</strong>${due?` · Next due: <span style="color:${dueColor};font-weight:700;">${due}</span>${daysLabel?' ('+daysLabel+')':''}`:''}</div>
+          </div>
+          <span class="proj-status-bar pstat-${pStatus}" style="font-size:10px;">${pStatus.replace('-',' ')}</span>
+          <button class="btn btn-sm btn-green" onclick="markSvcDoneFromProject('${c.id}','${p.serviceId}')" style="font-size:11px;">✅ Mark Done</button>
+        </div>
+        <div style="padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="flex:1;font-size:11px;color:var(--text-light);">${p.desc||'No description'}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">${assignees||'<span style="font-size:11px;color:var(--text-light);">Unassigned</span>'}</div>
+        </div>
+      </div>`;
+    }
+
+    // ── Regular project card ──────────────────────────────────────────
+    const users = pUsers.map(uid=>{
       const u=TEAM_ROSTER.find(x=>x.id===uid);
       return u ? `<span class="user-chip"><span class="uc-avatar" style="background:${u.color}">${u.initials}</span>${u.name} <span class="hours-badge">${u.hours}h/wk</span></span>` : '';
     }).join('');
-    const sub = p.subprojects.map(sp=>`
+    const sub = pSubprojects.map(sp=>`
       <div style="display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--bg);border-radius:8px;margin:4px 0;font-size:12px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:${p.color};flex-shrink:0;"></span>
+        <span style="width:8px;height:8px;border-radius:50%;background:${pColor};flex-shrink:0;"></span>
         <span style="flex:1;color:var(--text-dark);font-weight:600;">${sp.name}</span>
-        <span class="proj-status-bar pstat-${sp.status}">${sp.status.replace('-',' ')}</span>
+        <span class="proj-status-bar pstat-${sp.status||'not-started'}">${(sp.status||'not-started').replace('-',' ')}</span>
       </div>`).join('');
-    const ms = p.milestones.map(ms=>`
+    const ms = pMilestones.map(milestone=>`
       <div class="milestone-item">
-        <div class="timeline-dot" style="background:${ms.date<=new Date().toISOString().slice(0,10)?p.color:'var(--border)'}"></div>
-        <div><div style="font-size:12px;font-weight:700;color:var(--text-dark);">🏆 ${ms.title}</div><div style="font-size:11px;color:var(--text-light);">${ms.date} ${ms.notes?'· '+ms.notes:''}</div></div>
+        <div class="timeline-dot" style="background:${milestone.date<=todayStr?pColor:'var(--border)'}"></div>
+        <div><div style="font-size:12px;font-weight:700;color:var(--text-dark);">🏆 ${milestone.title}</div><div style="font-size:11px;color:var(--text-light);">${milestone.date} ${milestone.notes?'· '+milestone.notes:''}</div></div>
       </div>`).join('');
-    const logs = p.progressLog.slice().reverse().map(l=>`
+    const logs = pProgressLog.slice().reverse().map(l=>`
       <div class="progress-log-item">
         <div style="display:flex;justify-content:space-between;"><span style="font-weight:700;color:var(--text-dark);">${l.pct}% complete</span><span style="color:var(--text-light);">${l.date}</span></div>
         ${l.note?`<div style="margin-top:4px;color:var(--text-mid);">${l.note}</div>`:''}
@@ -4687,36 +4751,32 @@ function renderClientDetail(c){
 
     return `
     <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px;">
-      <div style="padding:14px 18px;background:linear-gradient(135deg,${p.color}15,${p.color}05);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;">
-        <div style="width:12px;height:12px;border-radius:3px;background:${p.color};flex-shrink:0;"></div>
-        <div style="flex:1;">
+      <div style="padding:14px 18px;background:linear-gradient(135deg,${pColor}15,${pColor}05);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="width:12px;height:12px;border-radius:3px;background:${pColor};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:120px;">
           <div style="font-size:15px;font-weight:800;color:var(--text-dark);">${p.name}</div>
-          <div style="font-size:11px;color:var(--text-light);">${p.type} · Due ${p.due||'TBD'}</div>
+          <div style="font-size:11px;color:var(--text-light);">${p.type||'Project'} · Due ${p.due||'TBD'}</div>
         </div>
-        <span class="proj-status-bar pstat-${p.status}">${p.status.replace('-',' ')}</span>
-        <span class="priority-badge pb-${p.priority}">${p.priority}</span>
+        <span class="proj-status-bar pstat-${pStatus}">${pStatus.replace('-',' ')}</span>
+        <span class="priority-badge pb-${pPriority}">${pPriority}</span>
         <button class="btn btn-sm btn-outline" onclick="openProgressModal('${c.id}','${p.id}')" style="font-size:11px;">📈 Log</button>
         <button class="btn btn-sm btn-outline" onclick="openMilestoneModal('${c.id}','${p.id}')" style="font-size:11px;">🏆 Milestone</button>
         <button class="btn btn-sm btn-outline" onclick="editProject('${c.id}','${p.id}')" style="font-size:11px;">✏️</button>
       </div>
       <div style="padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <!-- Left: progress + users + sub-projects -->
         <div>
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Progress</div>
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-            <div style="flex:1;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${p.progress}%;background:${p.color};border-radius:5px;transition:width .5s;"></div></div>
-            <span style="font-size:16px;font-weight:800;color:${p.color};">${p.progress}%</span>
+            <div style="flex:1;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;"><div style="height:100%;width:${pProgress}%;background:${pColor};border-radius:5px;transition:width .5s;"></div></div>
+            <span style="font-size:16px;font-weight:800;color:${pColor};">${pProgress}%</span>
           </div>
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Assigned Team</div>
           <div style="margin-bottom:12px;">${users||'<span style="font-size:12px;color:var(--text-light);">No users assigned</span>'}</div>
-          ${p.subprojects.length ? `<div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Sub-Projects</div>${sub}` : ''}
+          ${pSubprojects.length ? `<div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Sub-Projects</div>${sub}` : ''}
           ${p.desc ? `<div style="font-size:12px;color:var(--text-light);margin-top:10px;font-style:italic;">${p.desc}</div>` : ''}
         </div>
-        <!-- Right: milestones + progress log -->
         <div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Milestones</div>
-          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Milestones</div>
           ${ms || '<div style="font-size:12px;color:var(--text-light);">No milestones yet</div>'}
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin:14px 0 8px;">Progress Log</div>
           ${logs || '<div style="font-size:12px;color:var(--text-light);">No updates yet</div>'}
@@ -4922,37 +4982,92 @@ function archiveProject(clientId,projId){
 
 // ── Recurring Services ──
 function _renderServicesSection(c){
-  const svcs = c.recurringServices||[];
-  if(!svcs.length) return '';
+  const todayStr = new Date().toISOString().slice(0,10);
+  const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s = in7.toISOString().slice(0,10);
   const roster = buildTeamRoster();
-  const today = new Date(); today.setHours(0,0,0,0);
-  const rows = svcs.map(s=>{
-    const assignees = (s.assignedUserIds||[]).map(uid=>{
-      const u=roster.find(x=>x.id===uid);
-      return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
+
+  // ── Helper: build a due-date chip from a date string ──
+  function _dueChip(dueDate, freq){
+    if(!dueDate || freq==='one-time') return '';
+    const diff = Math.ceil((new Date(dueDate)-new Date(todayStr))/86400000);
+    const dueColor = diff<0?'var(--red)':diff<=7?'var(--orange)':'var(--green)';
+    const dueLabel = diff<0?`Overdue ${Math.abs(diff)}d`:diff===0?'Due today':diff<=7?`Due in ${diff}d`:`Due ${new Date(dueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+    return `<span style="font-size:10px;font-weight:700;color:${dueColor};background:${dueColor}18;padding:2px 8px;border-radius:6px;">⏰ ${dueLabel}</span>`;
+  }
+
+  // ── Section 1: c.services[] — written by client.html tracker ──
+  const trackerSvcs = c.services||[];
+  let trackerRows = '';
+  if(trackerSvcs.length){
+    trackerRows = trackerSvcs.map(s=>{
+      const assigneeName = s.assigneeName||s.assignee||'';
+      const dueDate = s.due||'';
+      const chip = _dueChip(dueDate, s.freq||'monthly');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
+        <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+        <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.freqLabel||s.freq||'monthly'}</span>
+        ${chip}
+        <span style="font-size:11px;color:var(--text-mid);">${assigneeName||'Unassigned'}</span>
+        <button class="btn btn-sm btn-outline" onclick="markSvcDoneFromProject('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark done">✓ Done</button>
+      </div>`;
     }).join('');
-    let dueChip='';
-    if(s.nextDueDate && s.frequency!=='one-time'){
-      const due=new Date(s.nextDueDate); due.setHours(0,0,0,0);
-      const diff=Math.round((due-today)/(1000*60*60*24));
-      const dueStr=new Date(s.nextDueDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-      let dueColor=diff<0?'var(--red)':diff<=7?'var(--orange)':'var(--green)';
-      let dueLabel=diff<0?`Overdue ${Math.abs(diff)}d`:diff===0?'Due today':diff<=7?`Due in ${diff}d`:`Due ${dueStr}`;
-      dueChip=`<span style="font-size:10px;font-weight:700;color:${dueColor};background:${dueColor}18;padding:2px 8px;border-radius:6px;">⏰ ${dueLabel}</span>`;
-    }
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
-      <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
-      <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.frequency||'monthly'}</span>
-      ${dueChip}
-      <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">No one assigned</span>'}</div>
-      <button class="btn btn-sm btn-outline" onclick="markSvcDone('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark service completed and reschedule">✓ Done</button>
-      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Edit</button>
-    </div>`;
-  }).join('');
+  }
+
+  // ── Section 2: c.recurringServices[] — written by index.html ──
+  const idxSvcs = c.recurringServices||[];
+  let idxRows = '';
+  if(idxSvcs.length){
+    idxRows = idxSvcs.map(s=>{
+      const assignees = (s.assignedUserIds||[]).map(uid=>{
+        const u=roster.find(x=>x.id===uid);
+        return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
+      }).join('');
+      const chip = _dueChip(s.nextDueDate, s.frequency);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:6px;flex-wrap:wrap;">
+        <span style="flex:1;min-width:160px;font-size:13px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+        <span style="font-size:11px;color:var(--text-light);background:#fff;border:1px solid var(--border);border-radius:6px;padding:2px 8px;">${s.frequency||'monthly'}</span>
+        ${chip}
+        <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1;">${assignees||'<span style="font-size:11px;color:var(--text-light);">Unassigned</span>'}</div>
+        <button class="btn btn-sm btn-outline" onclick="markSvcDone('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark done">✓ Done</button>
+        <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}','${s.id}')" style="font-size:11px;">✏️ Edit</button>
+      </div>`;
+    }).join('');
+  }
+
+  if(!trackerRows && !idxRows) return '';
   return `<div style="margin-bottom:20px;">
-    <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Recurring Services</div>
-    ${rows}
+    <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">🔁 Recurring Services (${trackerSvcs.length+idxSvcs.length})</div>
+    ${trackerRows}${idxRows}
+    <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}')" style="font-size:11px;margin-top:4px;">+ Add Service</button>
   </div>`;
+}
+
+// ── Bridge: mark a service done from the projects list (client.html schema) ──
+function markSvcDoneFromProject(clientId, serviceId){
+  // Delegates to the shared wl_clients_db — works for c.services[] entries
+  const live = _getClientDB();
+  const c = live.find(x=>x.id===clientId); if(!c) return;
+  const svc = (c.services||[]).find(s=>s.id===serviceId);
+  if(svc){
+    const todayStr = new Date().toISOString().slice(0,10);
+    svc.lastDone = todayStr;
+    // Roll due date forward using client.html calcNextDue logic
+    const freq = svc.freq||'monthly';
+    const d = new Date(todayStr);
+    if(freq==='monthly') d.setMonth(d.getMonth()+1);
+    else if(freq==='weekly') d.setDate(d.getDate()+7);
+    else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
+    else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
+    svc.due = d.toISOString().slice(0,10);
+    // Sync the mirrored project
+    const proj = (c.projects||[]).find(p=>p.serviceId===serviceId);
+    if(proj){ proj.due=svc.due; proj.lastDone=svc.lastDone; }
+    _saveClientDB(live);
+    renderClientDetail(c);
+    showToast('Service marked done · Next: '+new Date(svc.due).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}));
+  } else {
+    showToast('Service not found','warn');
+  }
 }
 
 function openSvcModal(clientId, svcId){
