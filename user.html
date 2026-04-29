@@ -498,6 +498,19 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             </div>
           </div>
         </div>
+        <!-- ── MY SERVICE SCHEDULE (user's assigned recurring services) ── -->
+        <div style="margin-top:18px;" id="my-svc-schedule-wrap">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div>
+              <div style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text-dark);">📅 My Service Schedule</div>
+              <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Recurring services assigned to you — sorted by next due date</div>
+            </div>
+            <a href="client.html?usermode=1" target="_blank" class="btn btn-outline btn-sm" style="font-size:11px;">Open Full Tracker ↗</a>
+          </div>
+          <div id="my-svc-schedule-list">
+            <div style="font-size:13px;color:var(--text-light);padding:20px;text-align:center;">Loading your schedule…</div>
+          </div>
+        </div>
         <div class="roadmap-section" id="roadmap-section"></div>
       </div>
 
@@ -1329,6 +1342,8 @@ function initApp(){
   },800);
   // Render 30-60-90 roadmap
   renderRoadmap();
+  // Render My Service Schedule on Operations page
+  renderMyServiceSchedule();
   // Load theme
   const saved = localStorage.getItem('wl_theme');
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
@@ -1422,6 +1437,101 @@ function toggleRoadmapItem(phaseKey, idx){
   checked[k] = !checked[k];
   localStorage.setItem(storageKey, JSON.stringify(checked));
   renderRoadmap();
+}
+
+// ── My Service Schedule (shown on Operations page) ──────────────────────────
+// Reads c.services[] (tracker) and c.recurringServices[] (index.html) from the
+// shared wl_clients_db and shows only items assigned to the current user.
+function renderMyServiceSchedule(){
+  const wrap = document.getElementById('my-svc-schedule-list');
+  if(!wrap || !currentUser) return;
+
+  const myId   = currentUser?.id||'';
+  const myName = currentUser?.name||'';
+  const todayStr = new Date().toISOString().slice(0,10);
+  const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s = in7.toISOString().slice(0,10);
+  const in30 = new Date(); in30.setDate(in30.getDate()+30); const in30s = in30.toISOString().slice(0,10);
+
+  // Collect ALL assigned services (both schemas)
+  let items = [];
+  try{
+    const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
+    clients.forEach(c=>{
+      // c.services[] — tracker schema (assigneeId / assigneeName / assignee)
+      (c.services||[]).forEach(s=>{
+        const isMe = s.assigneeId===myId || s.assigneeId===myName ||
+                     s.assigneeName===myName || s.assignee===myName || s.assignee===myId;
+        if(isMe) items.push({
+          clientName: c.name, clientColor: c.color||'#2D6BB6',
+          name: s.name, freq: s.freqLabel||s.freq||'monthly',
+          due: s.due||'', lastDone: s.lastDone||'',
+          status: s.status||'active', _schema: 'tracker'
+        });
+      });
+      // c.recurringServices[] — index.html schema (assignedUserIds)
+      (c.recurringServices||[]).forEach(s=>{
+        const isMe = (s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName);
+        if(isMe) items.push({
+          clientName: c.name, clientColor: c.color||'#2D6BB6',
+          name: s.name, freq: s.frequency||'monthly',
+          due: s.nextDueDate||'', lastDone: s.lastCompletedDate||'',
+          status: s.active===false?'inactive':'active', _schema: 'index'
+        });
+      });
+    });
+  }catch(e){}
+
+  if(!items.length){
+    wrap.innerHTML = `<div style="text-align:center;padding:32px;color:var(--text-light);">
+      <div style="font-size:32px;margin-bottom:10px;">📋</div>
+      <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No services assigned yet</div>
+      <div style="font-size:11px;">When an admin assigns recurring services to you, they'll appear here sorted by due date.</div>
+    </div>`;
+    return;
+  }
+
+  // Sort: overdue first, then by due date ascending, then no-due-date at end
+  items.sort((a,b)=>{
+    const ad = a.due||'9999-12-31', bd = b.due||'9999-12-31';
+    return ad < bd ? -1 : ad > bd ? 1 : 0;
+  });
+
+  // Group by time horizon
+  const overdue  = items.filter(s=>s.due && s.due < todayStr);
+  const dueWeek  = items.filter(s=>s.due && s.due >= todayStr && s.due <= in7s);
+  const dueMonth = items.filter(s=>s.due && s.due > in7s && s.due <= in30s);
+  const later    = items.filter(s=>!s.due || s.due > in30s);
+
+  function renderGroup(label, color, icon, group){
+    if(!group.length) return '';
+    const rows = group.map(s=>{
+      const dueStr = s.due ? new Date(s.due+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+      const days = s.due ? Math.ceil((new Date(s.due) - new Date(todayStr))/86400000) : null;
+      const daysLabel = days===null ? '' : days < 0 ? `${Math.abs(days)}d overdue` : days===0 ? 'Due today' : `in ${days}d`;
+      const lastStr = s.lastDone ? 'Last: '+new Date(s.lastDone+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap;">
+        <div style="width:8px;height:8px;border-radius:50%;background:${s.clientColor||'#2D6BB6'};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:140px;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
+          <div style="font-size:10px;color:var(--text-light);">${s.clientName} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:5px;font-weight:700;">${s.freq}</span>${lastStr?' · '+lastStr:''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:11px;font-weight:700;color:${color};">📅 ${dueStr}</div>
+          ${daysLabel?`<div style="font-size:10px;color:${color};">${daysLabel}</div>`:''}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:14px;">
+      <div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:6px;">${icon} ${label} (${group.length})</div>
+      ${rows}
+    </div>`;
+  }
+
+  wrap.innerHTML =
+    renderGroup('Overdue', 'var(--red)', '🔴', overdue) +
+    renderGroup('Due This Week', 'var(--orange)', '🟡', dueWeek) +
+    renderGroup('Due This Month', '#2D6BB6', '🔵', dueMonth) +
+    renderGroup('Upcoming / No Due Date', 'var(--text-light)', '⚪', later);
 }
 
 // Quick Links — only shown when admin has set a URL + passcode for this user
@@ -1876,6 +1986,7 @@ function showSection(id, el){
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
 
+  if(id==='operations') renderMyServiceSchedule();
   if(id==='myreports') loadMyReports();
   if(id==='goals') loadGoals();
   if(id==='blockers') loadOpsStats();

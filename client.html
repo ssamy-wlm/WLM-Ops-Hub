@@ -1173,19 +1173,48 @@ function migrateClientNames(){
 
 // ── Seed WLM client data on first load ───────────────────────────────
 function seedWLMClients(){
-  const SEED_KEY='wl_clients_seed_v5'; // v5: forced migration — always syncs services→projects
+  const SEED_KEY='wl_clients_seed_v6'; // v6: re-seed with Hosting Management services + full mirrors
   try{
     const existing=db(CL_KEYS.clients)||[];
     if(existing.length===0){
       // No data at all — fresh install, load full seed
       dbSave(CL_KEYS.clients, WLM_SEED_DATA);
       // Clear old seed guard keys so migration runs clean
-      ['wl_clients_seed_v3','wl_clients_seed_v4'].forEach(k=>localStorage.removeItem(k));
+      ['wl_clients_seed_v3','wl_clients_seed_v4','wl_clients_seed_v5'].forEach(k=>localStorage.removeItem(k));
       localStorage.setItem(SEED_KEY,'done');
       console.log('[WLM] Fresh seed: loaded',WLM_SEED_DATA.length,'clients from Excel import');
+    } else if(localStorage.getItem(SEED_KEY)!=='done'){
+      // v6 upgrade: merge seed data (services+projects) into existing records
+      // preserving any manual changes (notes, status, user-added projects)
+      const byId={};
+      existing.forEach(c=>{ if(c.id) byId[c.id]=c; });
+      const merged = WLM_SEED_DATA.map(seed=>{
+        const ex = byId[seed.id];
+        if(!ex) return seed; // new client
+        const manualProjs = (ex.projects||[]).filter(p=>!p.isRecurringService);
+        const seedMirrorIds = new Set((seed.projects||[]).filter(p=>p.isRecurringService).map(p=>p.id));
+        return {
+          ...ex,
+          services: seed.services||ex.services||[],
+          projects: [...(seed.projects||[]), ...manualProjs.filter(p=>!seedMirrorIds.has(p.id))],
+          color: seed.color||ex.color,
+          accountManager: seed.accountManager||ex.accountManager||'',
+          managerId: seed.managerId||ex.managerId||'',
+          website: seed.website||ex.website||'',
+          industry: seed.industry||ex.industry||'',
+          internalNotes: seed.internalNotes||ex.internalNotes||'',
+        };
+      });
+      // Preserve any manually-added clients not in seed
+      const seedIds = new Set(WLM_SEED_DATA.map(s=>s.id));
+      const extraClients = existing.filter(c=>!seedIds.has(c.id));
+      dbSave(CL_KEYS.clients, [...merged, ...extraClients]);
+      // Clear old guard keys
+      ['wl_clients_seed_v3','wl_clients_seed_v4','wl_clients_seed_v5'].forEach(k=>localStorage.removeItem(k));
+      localStorage.setItem(SEED_KEY,'done');
+      console.log('[WLM] v6 upgrade: merged seed data for',merged.length,'clients');
     } else {
-      // Data exists — run migration regardless of seed key
-      // This fixes stale localStorage from v3/v4 seeds that had empty projects[]
+      // Data exists and seed is current — run migration to fix any gaps
       migrateServicesToProjects();
     }
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
