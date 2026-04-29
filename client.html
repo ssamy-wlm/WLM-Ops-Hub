@@ -1164,28 +1164,31 @@ function seedWLMClients(){
   if(localStorage.getItem(SEED_KEY)) return;
   try{
     const existing=db(CL_KEYS.clients)||[];
-    // If clients exist but none have services populated, merge services from seed by id/name match.
-    // This preserves any manually-added projects, notes, or custom data.
-    const hasServices=existing.some(c=>(c.services||[]).length>0);
-    if(existing.length>0 && hasServices){
+    if(!existing.length){
+      // Fresh install — seed everything from WLM_SEED_DATA
+      dbSave(CL_KEYS.clients, WLM_SEED_DATA);
       localStorage.setItem(SEED_KEY,'done');
-      return; // services already present — skip
+      console.log('[WLM] Seeded',WLM_SEED_DATA.length,'clients (v5)');
+      return;
     }
-    if(existing.length>0 && !hasServices){
-      // Merge: copy services (and hosting) from seed into existing clients by id or name match
-      const seedMap={};
-      WLM_SEED_DATA.forEach(s=>{ seedMap[s.id]=s; seedMap[(s.name||'').toLowerCase()]=s; });
-      let merged=false;
-      existing.forEach(c=>{
-        const src=seedMap[c.id]||seedMap[(c.name||'').toLowerCase()];
-        if(src && (src.services||[]).length){ c.services=src.services; merged=true; }
-      });
-      if(merged){ dbSave(CL_KEYS.clients,existing); localStorage.setItem(SEED_KEY,'done'); console.log('[WLM] v5 upgrade: merged services into existing clients'); return; }
-    }
-    // Fresh install — seed everything
-    dbSave(CL_KEYS.clients, WLM_SEED_DATA);
+    // Clients already exist. If any have services, nothing to do.
+    const hasServices=existing.some(c=>(c.services||[]).length>0);
+    if(hasServices){ localStorage.setItem(SEED_KEY,'done'); return; }
+    // No services anywhere — merge from WLM_SEED_DATA by name match.
+    // NEVER overwrite existing clients wholesale; preserve all 100+ records.
+    const seedMap={};
+    WLM_SEED_DATA.forEach(s=>{
+      if(s.name) seedMap[s.name.toLowerCase().replace(/[^a-z0-9]/g,'')]=s;
+    });
+    let hits=0;
+    existing.forEach(c=>{
+      const key=(c.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      const src=seedMap[key];
+      if(src && (src.services||[]).length){ c.services=src.services; hits++; }
+    });
+    dbSave(CL_KEYS.clients, existing);
     localStorage.setItem(SEED_KEY,'done');
-    console.log('[WLM] Seeded',WLM_SEED_DATA.length,'clients (v5: full services data)');
+    console.log('[WLM] v5 service merge: '+hits+' clients updated out of '+existing.length);
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
 }
 

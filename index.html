@@ -4422,6 +4422,7 @@ function _seedDefaultData(){
         bundle: seed.bundle,
         pinned: seed.pinned || ex.pinned || false,
         recurringServices: (ex.recurringServices && ex.recurringServices.length) ? ex.recurringServices : (seed.recurringServices||[]),
+        services: (ex.services && ex.services.length) ? ex.services : (seed.services||[]),
         // Merge seed projects in by id — don't overwrite user-added ones
         projects: (()=>{
           const existingProjs = ex.projects||[];
@@ -4532,7 +4533,7 @@ function updateClientStats(){
   if(!t) return;
   const todayStr = new Date().toISOString().slice(0,10);
   const liveClients = _getClientDB();
-  const allProjects = liveClients.reduce((arr,c)=>arr.concat(c.projects||[]),[]);
+  const allProjects = liveClients.reduce((arr,c)=>arr.concat((c.projects||[]).filter(p=>!p.isRecurringService)),[]);
   t.textContent = liveClients.length;
   a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
   if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
