@@ -2233,7 +2233,16 @@ function saveProject(){
   };
   if(projId){
     const p=c.projects.find(x=>x.id===projId);
-    if(p) Object.assign(p,data);
+    if(p){
+      const oldStatus=p.status;
+      Object.assign(p,data);
+      if(oldStatus!==data.status){
+        pushNotif({ icon:'🔄', color:'rgba(45,107,182,.1)',
+          title:`Project status changed: ${name}`,
+          body:`${SESSION.name} updated "${name}" (${c.name}) from "${oldStatus.replace('-',' ')}" → "${data.status.replace('-',' ')}".`,
+          forUser:'admin', fromUser:SESSION.name });
+      }
+    }
   } else {
     const newP={id:'p'+uid(),...data,progress:0,progressLog:[],milestones:[],subprojects:[],tasks:[]};
     c.projects.push(newP);
@@ -2590,6 +2599,10 @@ function markServiceDone(clientId, serviceId){
   svc.due=calcNextDue(svc.freq, doneDate);
   updateClient(c);
   syncServicesToProjects(clientId);
+  pushNotif({ icon:'✅', color:'rgba(46,158,110,.1)',
+    title:`Service done: ${svc.name}`,
+    body:`${SESSION.name} marked "${svc.name}" complete for ${c.name}. Next due: ${svc.due||'TBD'}.`,
+    forUser:'admin', fromUser:SESSION.name });
   renderClientDetail(clientId,'projects');
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
 }

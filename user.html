@@ -1729,8 +1729,55 @@ function checkAnnouncements(){
 const _ASSIGN_CL_KEY     = 'wl_clients_db';
 const _ASSIGN_NOTIF_KEY  = 'wl_client_notifications';
 const _ASSIGN_USER_KEY   = 'wl_user_assignments';
+const _TRACKER_NOTIF_KEY = 'wl_notifications_db'; // client.html notification store
 
 function _getAssignClients(){ try{ return JSON.parse(localStorage.getItem(_ASSIGN_CL_KEY)||'[]')||[]; }catch(e){ return []; } }
+
+// Mark a task done from the team portal and fire a notification into the tracker
+function userMarkTaskDone(clientId, projId, spId, taskId){
+  try{
+    const clients = _getAssignClients();
+    const c = clients.find(x=>x.id===clientId); if(!c) return;
+    const p = (c.projects||[]).find(x=>x.id===projId); if(!p) return;
+    const container = spId ? (p.subprojects||[]).find(x=>x.id===spId) : p;
+    if(!container) return;
+    const task = (container.tasks||[]).find(t=>t.id===taskId); if(!task) return;
+    if(task.done){ showToast('Task already completed'); return; }
+    task.done = true;
+    task.completedBy = currentUser?.name||'Team member';
+    task.completedAt = new Date().toISOString();
+    // Recalc progress
+    let total=0, done=0;
+    (p.tasks||[]).forEach(t=>{total++;if(t.done)done++;});
+    (p.subprojects||[]).forEach(sp=>(sp.tasks||[]).forEach(t=>{total++;if(t.done)done++;}));
+    const pct = total>0 ? Math.round(done/total*100) : p.progress||0;
+    p.progress = pct;
+    // Save back to shared DB
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    // Push notification to tracker (wl_notifications_db)
+    const notif = {
+      id:'n'+Date.now(),
+      ts: Date.now(), read: false,
+      icon:'✅', color:'rgba(46,158,110,.1)',
+      title:`Task done: ${task.name}`,
+      body:`${task.completedBy} completed "${task.name}" on "${p.name}" · ${c.name}. Progress: ${pct}%.`,
+      forUser:'admin', fromUser: currentUser?.name||''
+    };
+    const existing = JSON.parse(localStorage.getItem(_TRACKER_NOTIF_KEY)||'[]');
+    existing.unshift(notif);
+    localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(existing.slice(0,500)));
+    // Also push to live feed for admin
+    const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
+    lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
+    localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
+    // Trigger cloud push if available
+    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    // Refresh the my-work panel
+    loadMyAssignments();
+    showToast(`✅ Task marked done · ${pct}% complete`);
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';
@@ -1831,7 +1878,7 @@ function loadMyAssignments(){
       const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>
         (sp.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done)
-                      .map(t=>({...t,_spName:sp.name}))
+                      .map(t=>({...t,_spName:sp.name,_spId:sp.id}))
       );
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).some(u=>u===myId||u===myName));
       if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
@@ -1854,7 +1901,7 @@ function loadMyAssignments(){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;letter-spacing:.07em;">My Tasks (${myTasks.length})</div>`;
         myTasks.forEach(t=>{
           html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-            <span style="font-size:14px;">⬜</span>
+            <span style="font-size:14px;cursor:pointer;" title="Mark done" onclick="userMarkTaskDone('${c.id}','${p.id}','','${t.id}')">⬜</span>
             <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${t.name}</span>
             ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
           </div>`;
@@ -1864,7 +1911,7 @@ function loadMyAssignments(){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">Sub-Project Tasks (${mySubTasks.length})</div>`;
         mySubTasks.forEach(t=>{
           html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-            <span style="font-size:14px;">⬜</span>
+            <span style="font-size:14px;cursor:pointer;" title="Mark done" onclick="userMarkTaskDone('${c.id}','${p.id}','${t._spId||''}','${t.id}')">⬜</span>
             <span style="flex:1;font-size:11px;color:var(--text-dark);">${t.name} <span style="color:var(--text-light);font-size:9px;">· ${t._spName||''}</span></span>
             ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
           </div>`;
