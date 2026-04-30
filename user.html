@@ -512,6 +512,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           </div>
         </div>
         <div class="roadmap-section" id="roadmap-section"></div>
+        <div id="user-cal-wrap" style="margin-top:18px;"></div>
       </div>
 
       <!-- ── MY REPORTS ── -->
@@ -1043,7 +1044,7 @@ function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(ke
 // ── Cloud config (shared with admin panel via localStorage) ──
 const CLOUD_CFG_KEY = 'wl_cloud_config';
 const WORKSPACE_CODE_KEY = 'wl_workspace_code';
-const _DEFAULT_BIN = '69d0c6bfaaba882197c311e7'; // WLM JSONBin bin
+const _DEFAULT_BIN = '69f267fa36566621a8086c5d'; // WLM JSONBin bin
 const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 function getCloudConfig(){
   const stored = dbGet(CLOUD_CFG_KEY)||{};
@@ -1939,7 +1940,7 @@ function loadMyAssignments(){
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
-              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
+              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
             </div>
           </div>
         </div>`;

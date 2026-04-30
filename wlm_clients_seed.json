@@ -5084,62 +5084,6 @@
     ]
   },
   {
-    "id": "cl_stepulebuild_87259",
-    "name": "Stepule Builders",
-    "industry": "Construction",
-    "code": "STEPUL",
-    "accountManager": "Emily",
-    "managerId": "emily",
-    "status": "active",
-    "start": "2025-01-01",
-    "color": "#D97706",
-    "website": "fecalferry.com",
-    "internalNotes": "Domain: fecalferry.com | Hosting: russhudson.com | IP: 35.215.94.170 | SG: dj@joslin.net",
-    "services": [
-      {
-        "id": "svc_stepulebuild_85546",
-        "catalogId": "svc_gbp",
-        "name": "GBP Optimization",
-        "freq": "monthly",
-        "freqLabel": "Monthly",
-        "assignee": "Emily",
-        "lastDone": "2025-05-10",
-        "due": "2026-05-10",
-        "status": "active",
-        "platforms": "GBP",
-        "notes": "",
-        "assigneeName": "Emily",
-        "assigneeId": "emily"
-      }
-    ],
-    "projects": [
-      {
-        "id": "proj_svc_stepulebuild_85546",
-        "name": "GBP Optimization",
-        "type": "Recurring Service",
-        "billing": "recurring",
-        "status": "in-progress",
-        "priority": "medium",
-        "due": "2026-05-10",
-        "progress": 0,
-        "color": "#D97706",
-        "users": [
-          "emily"
-        ],
-        "desc": "Platforms: GBP \u00b7 Frequency: Monthly",
-        "serviceId": "svc_stepulebuild_85546",
-        "freq": "monthly",
-        "freqLabel": "Monthly",
-        "lastDone": "2025-05-10",
-        "subprojects": [],
-        "tasks": [],
-        "milestones": [],
-        "progressLog": [],
-        "isRecurringService": true
-      }
-    ]
-  },
-  {
     "id": "cl_sovereignhom_93758",
     "name": "Sovereign Home Healthcare E. Hartford",
     "industry": "Healthcare",

@@ -3779,7 +3779,9 @@ function saveQuickLinks(){
 
 // Bump this string whenever the default layout changes — every device
 // will reset to the new defaults exactly once on next load.
-const ORG_LAYOUT_VERSION = 'v4_20260416';
+const ORG_LAYOUT_VERSION = 'v5_20260429';
+// Names permanently removed from the org chart — never re-added regardless of users DB or defaults
+const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','yehia elaify','yehia elafify','rania morsy','sarah ibrahim'];
 
 const orgColors = {
   ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
@@ -3799,7 +3801,6 @@ const ORG_NODES_DEFAULT = [
   {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
   // Row 3 — Left group (under Abby)
   {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
-  {id:'rania',   name:'Rania Morsy',      title:'Lead Generation Manager & Business Administrator', photo:null, level:'member',   x:160, y:390},
   // Row 3 — Right group (under Sarah/Jacob)
   {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
   {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:520, y:390},
@@ -3807,9 +3808,7 @@ const ORG_NODES_DEFAULT = [
   {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:720, y:390},
   {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:820, y:390},
   // Row 4 — Bottom members
-  {id:'yehia',   name:'Yehia Elaify',     title:'Sales & Marketing Specialist',                     photo:null, level:'member',   x:60,  y:565},
   {id:'mostafa', name:'Mostafa Jamal',    title:'Ads and SEO Specialist',                           photo:null, level:'member',   x:210, y:565},
-  {id:'social',  name:'Social Butterfly', title:'Social Media Manager',                             photo:null, level:'member',   x:360, y:565},
   {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:500, y:565},
 ];
 const ORG_LINKS_DEFAULT = [
@@ -3845,7 +3844,11 @@ function orgLoad(){
       orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
       // Merge in any new default nodes added after the last save
       let mergeChanged = false;
+      const _savedExcluded = _orgGetExcluded();
       ORG_NODES_DEFAULT.forEach(def=>{
+        const nm = (def.name||'').toLowerCase();
+        if(ORG_PERMANENTLY_EXCLUDED.some(x=>nm.includes(x))) return;
+        if(_savedExcluded.includes(nm)) return;
         if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
       });
       if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
@@ -3882,8 +3885,10 @@ function _syncUsersToOrgChart(){
   users.forEach(u=>{
     const fullName = (u.name || [u.firstName||'', u.lastName||''].filter(Boolean).join(' ')).trim();
     if(!fullName) return;
-    // Skip names that were manually removed from the chart
-    if(excluded.includes(fullName.toLowerCase())) return;
+    // Skip permanently removed names and manually excluded ones
+    const fullNameLower = fullName.toLowerCase();
+    if(ORG_PERMANENTLY_EXCLUDED.some(x=>fullNameLower.includes(x))) return;
+    if(excluded.includes(fullNameLower)) return;
     // If already in chart, just make sure the name/title matches the canonical default
     const existing = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
     const defNode  = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
@@ -4228,7 +4233,7 @@ function _seedDefaultData(){
   try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
 
   // Always purge hard-deleted clients by code
-  const PURGED_CODES = ['Joe'];
+  const PURGED_CODES = ['Joe', 'Stepule'];
   (()=>{
     const live = _getClientDB();
     const cleaned = live.filter(c => !PURGED_CODES.includes(c.code));
@@ -6081,9 +6086,12 @@ window.switchAdminTab = function(el, tab){
 // ☁️  CLOUD SYNC ENGINE  —  JSONBin.io
 // ═══════════════════════════════════════════════════════════
 const CLOUD_CFG_KEY = 'wl_cloud_config';
+const _DEFAULT_BIN    = '69f267fa36566621a8086c5d';
+const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 
 function getCloudConfig(){
-  return dbGet(CLOUD_CFG_KEY) || {apiKey:'', binId:''};
+  const saved = dbGet(CLOUD_CFG_KEY) || {};
+  return { apiKey: saved.apiKey || _DEFAULT_API_KEY, binId: saved.binId || _DEFAULT_BIN };
 }
 function cloudIsConfigured(){
   const c = getCloudConfig();
@@ -6209,9 +6217,19 @@ async function cloudPushAll(silent=false){
       else mergedAdmins.push(la);       // new local admin added to cloud
     });
 
+    // Merge client DBs: local wins by id, cloud fills in any clients only it has
+    const localClients = _getClientDB();
+    const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
+    const clientById = {};
+    cloudClients.forEach(c=>{ if(c.id) clientById[c.id]=c; });
+    localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
+    const mergedClients = Object.values(clientById);
+
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       mergedAdmins,
+      clients:      mergedClients,
+      orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
       eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
       blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -6285,6 +6303,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       dbSet(DB_KEYS.users, filtered);
     }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
+    // Restore client data from cloud (local edits already merged on push side)
+    if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
+    // Restore org chart exclusion list so deleted nodes stay deleted on any device
+    if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     // EODs: merge, but always filter out deleted report IDs
     if(r.eods){
       const filtered = r.eods.filter(e=>!mergedDelEods.includes(e.id));
