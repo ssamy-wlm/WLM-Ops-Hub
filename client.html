@@ -468,8 +468,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
               <option value="">All</option>
               <option value="overdue">Overdue</option>
               <option value="soon">Due Soon (7d)</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
             </select>
             <select class="form-select" id="schedule-client-filter" onchange="renderSchedule()" style="width:170px;font-size:11px;padding:7px 10px;">
               <option value="">All Clients</option>
@@ -2700,43 +2698,78 @@ function renderSchedule(){
   const clientFilter=_el('schedule-client-filter')?.value||'';
   const t=today();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
-  let rows=[];
+
+  // Bucket into monthly, yearly, other — each sorted by due date
+  const monthly=[], yearly=[], other=[];
   getClients().forEach(c=>{
     if(clientFilter && c.id!==clientFilter) return;
     (c.services||[]).forEach(svc=>{
       const isOverdue=svc.due&&svc.due<t;
       const isSoon=svc.due&&!isOverdue&&svc.due<=in7s;
-      const cls=isOverdue?'overdue':isSoon?'soon':'ok';
       if(filter==='overdue'&&!isOverdue) return;
       if(filter==='soon'&&!isSoon) return;
-      if(filter==='monthly'&&svc.freq!=='monthly') return;
-      if(filter==='yearly'&&svc.freq!=='yearly') return;
-      rows.push({c,svc,cls});
+      const cls=isOverdue?'overdue':isSoon?'soon':'ok';
+      const row={c,svc,cls};
+      const f=(svc.freq||'').toLowerCase();
+      if(f==='monthly'||f==='3x/week'||f==='weekly'||f==='bi-weekly'||f==='biweekly'||f==='quarterly') monthly.push(row);
+      else if(f==='yearly'||f==='annual'||f==='annually') yearly.push(row);
+      else other.push(row);
     });
   });
-  rows.sort((a,b)=>(a.svc.due||'9999')>(b.svc.due||'9999')?1:-1);
-  if(!rows.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No services match this filter</div></div>'; return; }
-  el.innerHTML=rows.map(({c,svc,cls})=>{
+  const byDue=(a,b)=>(a.svc.due||'9999')>(b.svc.due||'9999')?1:-1;
+  monthly.sort(byDue); yearly.sort(byDue); other.sort(byDue);
+
+  if(!monthly.length&&!yearly.length&&!other.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No services match this filter</div></div>';
+    return;
+  }
+
+  function renderRow({c,svc,cls}){
     const days=daysUntil(svc.due);
-    const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days===1?'Due tomorrow':days+'d remaining');
-    return `
-      <div class="alert-item alert-${cls}">
-        <div class="alert-icon">${cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢'}</div>
-        <div class="alert-body">
-          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-            <span class="alert-title">${svc.name}</span>
-            <span class="chip chip-${svc.freq}" style="font-size:8px;">${svc.freq}</span>
-            <span style="font-size:10px;color:var(--text-light);">→ ${c.name} <span class="client-code">${c.code||''}</span></span>
-          </div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:10px;color:var(--text-mid);">
-            <span>📅 <strong>${svc.due||'No date'}</strong> ${daysLabel?`(${daysLabel})`:''}</span>
-            <span>👤 ${svc.assigneeName||'Unassigned'}</span>
-            ${svc.notes?`<span>📝 ${svc.notes}</span>`:''}
-          </div>
+    const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days===1?'Due tomorrow':days+'d');
+    const borderColor=cls==='overdue'?'var(--red)':cls==='soon'?'var(--orange)':'#2e9e6e';
+    return `<div style="display:flex;align-items:stretch;gap:0;border-radius:10px;border:1px solid var(--border);margin-bottom:8px;overflow:hidden;background:var(--bg);">
+      <div style="width:4px;background:${borderColor};flex-shrink:0;"></div>
+      <div style="flex:1;padding:10px 12px;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
+          <span style="font-size:12px;font-weight:700;color:var(--text-dark);">${svc.name}</span>
+          <span style="font-size:10px;color:var(--text-light);">→ ${c.name}${c.code?` <span style="font-size:9px;background:var(--bg2);padding:1px 5px;border-radius:4px;">${c.code}</span>`:''}
+          </span>
         </div>
-        ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}')">✏️</button>`:''}
-      </div>`;
-  }).join('');
+        <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--text-mid);">
+          <span>📅 <strong>${svc.due||'No date'}</strong>${daysLabel?' ('+daysLabel+')':''}</span>
+          <span>👤 ${svc.assigneeName||'Unassigned'}</span>
+          ${svc.freqLabel&&svc.freqLabel!==svc.freq?`<span>🔁 ${svc.freqLabel}</span>`:''}
+        </div>
+      </div>
+      ${SESSION.isAdmin?`<div style="display:flex;align-items:center;padding-right:10px;"><button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}')">✏️</button></div>`:''}
+    </div>`;
+  }
+
+  function renderCol(rows, label, icon){
+    if(!rows.length) return `<div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
+        <span>${icon}</span><span>${label}</span>
+        <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">0</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-light);padding:20px 0;">No services.</div>
+    </div>`;
+    return `<div style="flex:1;min-width:280px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
+        <span>${icon}</span><span>${label}</span>
+        <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">${rows.length}</span>
+      </div>
+      ${rows.map(renderRow).join('')}
+    </div>`;
+  }
+
+  const cols=[
+    renderCol(monthly,'Monthly Services','🔁'),
+    renderCol(yearly,'Yearly Services','📆'),
+    ...(other.length?[renderCol(other,'Other','📋')]:[])
+  ];
+
+  el.innerHTML=`<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">${cols.join('')}</div>`;
 }
 
 // ═══════════════════════════════════════════════════════
