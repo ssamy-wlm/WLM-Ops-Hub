@@ -459,8 +459,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
           <!-- View toggle -->
           <div style="display:flex;background:var(--bg2);border-radius:8px;padding:3px;gap:2px;">
-            <button id="sched-view-list" onclick="setScheduleView('list')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(45,107,182,.1);">☰ List</button>
-            <button id="sched-view-cal" onclick="setScheduleView('calendar')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);">🗓️ Calendar</button>
+            <button id="sched-view-list" onclick="setScheduleView('list')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);">☰ List</button>
+            <button id="sched-view-cal" onclick="setScheduleView('calendar')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(45,107,182,.1);">🗓️ Calendar</button>
           </div>
           <!-- List filters (hidden in calendar view) -->
           <div id="sched-list-filters" style="display:flex;gap:7px;">
@@ -475,26 +475,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
               <option value="">All Clients</option>
             </select>
           </div>
-          <!-- Calendar controls (hidden in list view) -->
-          <div id="sched-cal-controls" style="display:none;gap:7px;align-items:center;flex-wrap:wrap;">
-            <button class="btn btn-outline btn-sm" onclick="calNav(-1)">‹ Prev</button>
-            <span id="cal-month-label" style="font-size:13px;font-weight:800;color:var(--text-dark);min-width:140px;text-align:center;"></span>
-            <button class="btn btn-outline btn-sm" onclick="calNav(1)">Next ›</button>
-            <button class="btn btn-outline btn-sm" onclick="calGoToday()">Today</button>
-            <select class="form-select" id="cal-filter-agent" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:110px;">
-              <option value="">All Agents</option>
-              <option value="emily">Emily</option>
-              <option value="jacob">Jacob</option>
-              <option value="jamil">Jamil</option>
-              <option value="becky">Becky</option>
-              <option value="david">David</option>
-            </select>
-            <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:6px 10px;min-width:130px;">
-              <option value="">All Types</option>
-              <option value="service">Recurring Services</option>
-              <option value="project">Projects</option>
-            </select>
-          </div>
+          <!-- Calendar controls: navigation lives inside the calendar card itself -->
+          <div id="sched-cal-controls" style="display:none;"></div>
         </div>
       </div>
 
@@ -505,19 +487,48 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
       <!-- Calendar view -->
       <div id="schedule-cal-wrap" style="display:none;">
-        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;font-size:10px;color:var(--text-light);">
-          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--red);margin-right:4px;vertical-align:middle;"></span>Overdue</span>
-          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--orange);margin-right:4px;vertical-align:middle;"></span>Due soon</span>
-          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--green);margin-right:4px;vertical-align:middle;"></span>Upcoming</span>
-          <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--text-light);margin-right:4px;vertical-align:middle;"></span>Completed</span>
-        </div>
-        <div id="cal-grid-wrap" style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;"></div>
-        <div id="cal-day-panel" style="display:none;margin-top:16px;background:var(--card);border-radius:14px;border:1px solid var(--border);padding:18px 22px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <div id="cal-day-title" style="font-size:14px;font-weight:800;color:var(--text-dark);"></div>
-            <button class="btn btn-xs btn-outline" onclick="_el('cal-day-panel').style.display='none'">✕ Close</button>
+        <!-- Calendar card: header + day-of-week strip + grid all in one card -->
+        <div style="background:var(--card);border-radius:16px;border:1px solid var(--border);overflow:hidden;">
+          <!-- Nav + filters row -->
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button onclick="calNav(-1)" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">‹</button>
+              <span id="cal-month-label" style="font-size:16px;font-weight:800;color:var(--text-dark);min-width:160px;text-align:center;"></span>
+              <button onclick="calNav(1)" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">›</button>
+              <button onclick="calGoToday()" style="padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px;font-weight:700;cursor:pointer;margin-left:4px;">Today</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <div style="display:flex;gap:10px;font-size:10px;color:var(--text-light);align-items:center;">
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--red);margin-right:3px;vertical-align:middle;"></span>Overdue</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--orange);margin-right:3px;vertical-align:middle;"></span>Due soon</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2e9e6e;margin-right:3px;vertical-align:middle;"></span>Upcoming</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#aaa;margin-right:3px;vertical-align:middle;"></span>Done</span>
+              </div>
+              <select class="form-select" id="cal-filter-agent" onchange="renderCalendar()" style="font-size:11px;padding:5px 9px;min-width:110px;">
+                <option value="">All Agents</option>
+                <option value="emily">Emily</option>
+                <option value="jacob">Jacob</option>
+                <option value="jamil">Jamil</option>
+                <option value="becky">Becky</option>
+                <option value="david">David</option>
+              </select>
+              <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:5px 9px;min-width:130px;">
+                <option value="">All Types</option>
+                <option value="service">Recurring Services</option>
+                <option value="project">Projects</option>
+              </select>
+            </div>
           </div>
-          <div id="cal-day-events"></div>
+          <!-- Calendar grid (day headers + cells rendered by JS) -->
+          <div id="cal-grid-wrap"></div>
+        </div>
+        <!-- Day detail panel -->
+        <div id="cal-day-panel" style="display:none;margin-top:14px;background:var(--card);border-radius:16px;border:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--border);">
+            <div id="cal-day-title" style="font-size:15px;font-weight:800;color:var(--text-dark);"></div>
+            <button onclick="_el('cal-day-panel').style.display='none'" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border);background:var(--bg);color:var(--text-light);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+          </div>
+          <div id="cal-day-events" style="padding:14px 22px;"></div>
         </div>
       </div>
     </div>
@@ -3024,7 +3035,7 @@ function init(){
 // ═══════════════════════════════════════════════════════
 //  SCHEDULE VIEW TOGGLE
 // ═══════════════════════════════════════════════════════
-let _scheduleView='list';
+let _scheduleView='calendar';
 function setScheduleView(v){
   _scheduleView=v;
   const isCal=v==='calendar';
@@ -3071,13 +3082,9 @@ function renderCalendar(){
   const agentF=(_el('cal-filter-agent')||{}).value||'';
   const typeF=(_el('cal-filter-type')||{}).value||'';
 
-  // Build event map: key = 'YYYY-MM-DD', value = array of event objects
+  // Build event map keyed by YYYY-MM-DD
   const evMap={};
-  function addEv(dateStr, ev){
-    if(!dateStr) return;
-    if(!evMap[dateStr]) evMap[dateStr]=[];
-    evMap[dateStr].push(ev);
-  }
+  function addEv(ds,ev){ if(!ds) return; (evMap[ds]=evMap[ds]||[]).push(ev); }
 
   const clients=getClients();
   const roster=getRoster();
@@ -3086,98 +3093,94 @@ function renderCalendar(){
 
   clients.forEach(c=>{
     const color=c.color||'#2D6BB6';
-    // Recurring services
     if(typeF!=='project'){
       (c.services||[]).forEach(svc=>{
         if(!svc.due) return;
         if(agentF && svc.assigneeId!==agentF) return;
-        addEv(svc.due,{
-          type:'service', label:svc.name, client:c.name, color,
-          status:svc.status, due:svc.due,
-          agent:rosterMap[svc.assigneeId]||'', clientId:c.id, svcId:svc.id,
-          isRecurring:true
-        });
+        addEv(svc.due,{type:'service',label:svc.name,client:c.name,color,
+          status:svc.status,due:svc.due,agent:rosterMap[svc.assigneeId]||'',
+          freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id});
       });
     }
-    // Projects
     if(typeF!=='service'){
       (c.projects||[]).filter(p=>!p.isRecurringService).forEach(p=>{
         if(!p.due) return;
-        const assignee=(p.users||[])[0]||'';
-        if(agentF && assignee!==agentF) return;
-        addEv(p.due,{
-          type:'project', label:p.name, client:c.name, color,
-          status:p.status, due:p.due,
-          agent:rosterMap[assignee]||'', clientId:c.id, projId:p.id,
-          isRecurring:false
-        });
+        const asgn=(p.users||[])[0]||'';
+        if(agentF && asgn!==agentF) return;
+        addEv(p.due,{type:'project',label:p.name,client:c.name,color,
+          status:p.status,due:p.due,agent:rosterMap[asgn]||'',
+          freq:'',clientId:c.id,projId:p.id});
       });
     }
   });
 
-  // Build grid
-  const firstDay=new Date(year,month,1).getDay(); // 0=Sun
+  const firstDay=new Date(year,month,1).getDay();
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
-
-  let html='<table style="width:100%;border-collapse:collapse;">';
-  // Header row
-  html+='<tr>'+DAY_HDRS.map(d=>`<th style="padding:8px 0;font-size:10px;font-weight:700;color:var(--text-light);text-align:center;border-bottom:1px solid var(--border);">${d}</th>`).join('')+'</tr>';
-
-  let day=1, nextDay=1;
   const totalCells=Math.ceil((firstDay+daysInMonth)/7)*7;
-  for(let i=0;i<totalCells;i+=7){
-    html+='<tr>';
-    for(let col=0;col<7;col++){
-      const cellIdx=i+col;
-      let cellDay,isCurrentMonth=true;
-      if(cellIdx<firstDay){
-        cellDay=prevDays-(firstDay-1-cellIdx);
-        isCurrentMonth=false;
-      } else if(day>daysInMonth){
-        cellDay=nextDay++;
-        isCurrentMonth=false;
-      } else {
-        cellDay=day++;
-        isCurrentMonth=true;
-      }
-      const mm=String(month+1).padStart(2,'0');
-      const dd=String(cellDay).padStart(2,'0');
-      const dateStr=isCurrentMonth?`${year}-${mm}-${dd}`:'';
-      const isToday=dateStr===todayStr;
-      const evs=dateStr?evMap[dateStr]||[]:[];
 
-      const bgStyle=isToday?'background:rgba(45,107,182,0.08);':'';
-      const dayColor=isCurrentMonth?'color:var(--text-dark)':'color:var(--text-light);opacity:0.4';
-      const todayDot=isToday?`<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--primary);margin-left:3px;vertical-align:middle;"></span>`:'';
-      const clickAttr=dateStr&&evs.length?`onclick="calShowDay('${dateStr}')" style="cursor:pointer;"`:  '';
+  // Day-of-week header strip
+  let html=`<div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:2px solid var(--border);">`;
+  DAY_HDRS.forEach(d=>{
+    html+=`<div style="padding:10px 0;font-size:10px;font-weight:800;color:var(--text-light);text-align:center;letter-spacing:.06em;text-transform:uppercase;">${d}</div>`;
+  });
+  html+=`</div>`;
 
-      // Show up to 3 event pills, +N if more
-      const MAX_PILLS=3;
-      let pills='';
-      evs.slice(0,MAX_PILLS).forEach(ev=>{
-        const isDone=ev.status==='completed'||ev.status==='done';
-        const isOver=!isDone&&ev.due<todayStr;
-        const isSoon=!isDone&&!isOver&&ev.due<=addDays(todayStr,7);
-        const bg=isDone?'var(--text-light)':isOver?'var(--red)':isSoon?'var(--orange)':'var(--green)';
-        const icon=ev.type==='service'?'↻':'▣';
-        pills+=`<div style="background:${bg};color:#fff;border-radius:4px;font-size:9px;padding:1px 4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;" title="${ev.client}: ${ev.label}">${icon} ${ev.client.length>14?ev.client.slice(0,13)+'…':ev.client}</div>`;
-      });
-      if(evs.length>MAX_PILLS){
-        pills+=`<div style="font-size:9px;color:var(--text-light);padding:0 2px;">+${evs.length-MAX_PILLS} more</div>`;
-      }
+  // Grid cells
+  html+=`<div style="display:grid;grid-template-columns:repeat(7,1fr);">`;
+  let day=1,nextDay=1;
+  for(let i=0;i<totalCells;i++){
+    let cellDay,isCur=true;
+    if(i<firstDay){ cellDay=prevDays-(firstDay-1-i); isCur=false; }
+    else if(day>daysInMonth){ cellDay=nextDay++; isCur=false; }
+    else { cellDay=day++; }
 
-      html+=`<td valign="top" ${clickAttr} style="border:1px solid var(--border);padding:6px 5px;min-height:80px;vertical-align:top;${bgStyle}">
-        <div style="font-size:11px;font-weight:700;${dayColor};margin-bottom:4px;">${cellDay}${todayDot}</div>
-        ${pills}
-      </td>`;
+    const mm=String(month+1).padStart(2,'0');
+    const dd=String(cellDay).padStart(2,'0');
+    const ds=isCur?`${year}-${mm}-${dd}`:'';
+    const isToday=ds===todayStr;
+    const evs=ds?evMap[ds]||[]:[];
+    const hasEv=evs.length>0;
+
+    // Day number chip
+    const dayNumStyle=isToday
+      ?`display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#2D6BB6;color:#fff;font-weight:800;font-size:12px;`
+      :`font-size:12px;font-weight:${isCur?'700':'400'};color:${isCur?'var(--text-dark)':'var(--text-light)'};opacity:${isCur?'1':'0.4'};`;
+
+    const borderRight=((i+1)%7===0)?'':'border-right:1px solid var(--border);';
+    const borderBottom=(i<totalCells-7)?'border-bottom:1px solid var(--border);':'';
+    const todayBg=isToday?'background:rgba(45,107,182,0.05);':'';
+    const hoverAttr=hasEv&&ds?`onclick="calShowDay('${ds}')"`:  '';
+
+    // Event pills — up to 4, then "+N more"
+    const MAX=4;
+    let pills='';
+    evs.slice(0,MAX).forEach(ev=>{
+      const done=ev.status==='completed'||ev.status==='done';
+      const over=!done&&ev.due<todayStr;
+      const soon=!done&&!over&&ev.due<=addDays(todayStr,7);
+      const barColor=done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
+      const icon=ev.type==='service'?'↻':'▣';
+      const name=ev.label.length>18?ev.label.slice(0,17)+'…':ev.label;
+      pills+=`<div title="${ev.client}: ${ev.label} (${ev.agent||'Unassigned'})"
+        style="display:flex;align-items:center;gap:4px;padding:3px 6px;margin-bottom:3px;border-radius:5px;background:${barColor}18;border-left:3px solid ${barColor};cursor:pointer;overflow:hidden;">
+        <span style="font-size:9px;color:${barColor};flex-shrink:0;">${icon}</span>
+        <span style="font-size:10px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</span>
+      </div>`;
+    });
+    if(evs.length>MAX){
+      pills+=`<div style="font-size:10px;color:var(--text-light);padding:1px 6px;font-weight:600;">+${evs.length-MAX} more</div>`;
     }
-    html+='</tr>';
+
+    html+=`<div ${hoverAttr} style="min-height:110px;padding:8px 7px 6px;vertical-align:top;${borderRight}${borderBottom}${todayBg}${hasEv&&ds?'cursor:pointer;':''}" ${hasEv?`onmouseenter="this.style.background='rgba(45,107,182,0.04)'" onmouseleave="this.style.background='${isToday?'rgba(45,107,182,0.05)':'transparent'}'"`:''}}>
+      <div style="margin-bottom:5px;"><span style="${dayNumStyle}">${cellDay}</span></div>
+      ${pills}
+    </div>`;
   }
-  html+='</table>';
+  html+=`</div>`;
+
   const wrap=_el('cal-grid-wrap');
   if(wrap) wrap.innerHTML=html;
-  // Hide day panel when re-rendering
   const panel=_el('cal-day-panel');
   if(panel) panel.style.display='none';
 }
@@ -3204,15 +3207,19 @@ function calShowDay(dateStr){
       (c.services||[]).forEach(svc=>{
         if(svc.due!==dateStr) return;
         if(agentF && svc.assigneeId!==agentF) return;
-        evs.push({type:'service',label:svc.name,client:c.name,color,status:svc.status,agent:rosterMap[svc.assigneeId]||'',clientId:c.id});
+        evs.push({type:'service',label:svc.name,client:c.name,color,
+          status:svc.status,agent:rosterMap[svc.assigneeId]||'',
+          freq:svc.freqLabel||svc.freq||'',platforms:svc.platforms||'',clientId:c.id});
       });
     }
     if(typeF!=='service'){
       (c.projects||[]).filter(p=>!p.isRecurringService).forEach(p=>{
         if(p.due!==dateStr) return;
-        const assignee=(p.users||[])[0]||'';
-        if(agentF && assignee!==agentF) return;
-        evs.push({type:'project',label:p.name,client:c.name,color,status:p.status,agent:rosterMap[assignee]||'',clientId:c.id});
+        const asgn=(p.users||[])[0]||'';
+        if(agentF && asgn!==agentF) return;
+        evs.push({type:'project',label:p.name,client:c.name,color,
+          status:p.status,agent:rosterMap[asgn]||'',
+          freq:'',platforms:'',clientId:c.id});
       });
     }
   });
@@ -3220,32 +3227,48 @@ function calShowDay(dateStr){
   const d=new Date(dateStr+'T00:00:00');
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  _el('cal-day-title').textContent=DAYS[d.getDay()]+', '+MONTHS[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear();
+  const titleEl=_el('cal-day-title');
+  if(titleEl){
+    titleEl.innerHTML=`<span>${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}</span>`
+      +`<span style="margin-left:10px;font-size:12px;font-weight:600;color:var(--text-light);background:var(--bg2);padding:2px 10px;border-radius:20px;">${evs.length} item${evs.length!==1?'s':''}</span>`;
+  }
 
+  const evEl=_el('cal-day-events');
+  if(!evEl) return;
   if(!evs.length){
-    _el('cal-day-events').innerHTML='<div style="font-size:12px;color:var(--text-light);">No events this day.</div>';
+    evEl.innerHTML=`<div style="text-align:center;padding:28px;color:var(--text-light);font-size:13px;">No services or projects due this day.</div>`;
   } else {
-    _el('cal-day-events').innerHTML=evs.map(ev=>{
-      const isDone=ev.status==='completed'||ev.status==='done';
-      const isOver=!isDone&&dateStr<todayStr;
-      const isSoon=!isDone&&!isOver&&dateStr<=addDays(todayStr,7);
-      const badge=isDone?'#888':isOver?'var(--red)':isSoon?'var(--orange)':'var(--green)';
-      const icon=ev.type==='service'?'↻ Recurring':'▣ Project';
-      const statusLabel=isDone?'Completed':isOver?'Overdue':isSoon?'Due soon':'Upcoming';
-      return `<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:10px;border:1px solid var(--border);margin-bottom:8px;background:var(--bg);">
-        <div style="width:4px;min-height:42px;border-radius:3px;background:${ev.color};flex-shrink:0;"></div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${ev.label}</div>
-          <div style="font-size:11px;color:var(--text-light);">
-            ${ev.client}${ev.agent?' · '+ev.agent:''}
-            <span style="margin-left:8px;padding:1px 7px;border-radius:8px;background:${badge};color:#fff;font-size:9px;font-weight:700;">${statusLabel}</span>
-            <span style="margin-left:6px;padding:1px 7px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text-light);font-size:9px;">${icon}</span>
+    evEl.innerHTML=evs.map(ev=>{
+      const done=ev.status==='completed'||ev.status==='done';
+      const over=!done&&dateStr<todayStr;
+      const soon=!done&&!over&&dateStr<=addDays(todayStr,7);
+      const statusColor=done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
+      const statusLabel=done?'Completed':over?'Overdue':soon?'Due soon':'Upcoming';
+      const typeLabel=ev.type==='service'?'↻ Recurring Service':'▣ Project';
+      return `<div style="display:flex;align-items:stretch;gap:0;border-radius:12px;border:1px solid var(--border);margin-bottom:10px;overflow:hidden;background:var(--bg);">
+        <div style="width:5px;background:${ev.color};flex-shrink:0;"></div>
+        <div style="flex:1;padding:12px 16px;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:800;color:var(--text-dark);">${ev.label}</span>
+            <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:${statusColor};color:#fff;">${statusLabel}</span>
+            <span style="padding:2px 8px;border-radius:20px;font-size:10px;background:var(--bg2);color:var(--text-light);border:1px solid var(--border);">${typeLabel}</span>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-mid);">
+            <span>🏢 ${ev.client}</span>
+            ${ev.agent?`<span>👤 ${ev.agent}</span>`:''}
+            ${ev.freq?`<span>🔁 ${ev.freq}</span>`:''}
+            ${ev.platforms?`<span>🖥 ${ev.platforms}</span>`:''}
           </div>
         </div>
       </div>`;
     }).join('');
   }
-  _el('cal-day-panel').style.display='block';
+
+  const panel=_el('cal-day-panel');
+  if(panel){
+    panel.style.display='block';
+    panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
 }
 
 init();
