@@ -1083,7 +1083,6 @@ async function cloudFetchUsers(){
     const data = await res.json();
     const record = data?.record || {};
     const users = record.users;
-    // Only overwrite local users if cloud has a non-empty list — never wipe with empty array
     if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
     // Pull all shared data so users see latest announcement, coc, etc.
     if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
@@ -1110,6 +1109,7 @@ async function cloudPushData(){
     const cloudRecord = d?.record || {};
     const payload = {
       ...cloudRecord,
+      users:    _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
       eods:     _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
       blockers: _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:    _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -2768,8 +2768,6 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
 })();
 
 document.addEventListener('DOMContentLoaded', ()=>{
-  // Always ensure correct bin is used — overwrite any stale cached config
-  dbSet(CLOUD_CFG_KEY,{apiKey:_DEFAULT_API_KEY, binId:_DEFAULT_BIN});
   setTimeout(renderUserCredVault, 1000);
   checkWorkspaceSetup();
 });

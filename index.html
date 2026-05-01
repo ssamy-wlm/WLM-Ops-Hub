@@ -6226,7 +6226,7 @@ async function cloudPushAll(silent=false){
     const mergedClients = Object.values(clientById);
 
     const payload = {
-      users:        (dbGet(DB_KEYS.users)||[]).length ? dbGet(DB_KEYS.users) : (cloudRecord.users||[]),
+      users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
@@ -6398,8 +6398,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;
   }
-  // Pre-configure cloud credentials if not already set
-  // Always overwrite cloud config to ensure correct bin is used on every device
+  // Always force the correct bin — overwrite any stale cached config on every device
   dbSet(CLOUD_CFG_KEY,{
     apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
     binId:'69f267fa36566621a8086c5d'
