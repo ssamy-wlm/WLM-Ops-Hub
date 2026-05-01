@@ -6262,8 +6262,19 @@ async function cloudPushAll(silent=false){
     localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
     const mergedClients = Object.values(clientById);
 
+    // Merge users: union of cloud + local by email — NEVER push empty if cloud has users
+    const localUsers = dbGet(DB_KEYS.users)||[];
+    const mergedUsers = [...cloudUsersFiltered];
+    localUsers.forEach(lu=>{
+      const idx = mergedUsers.findIndex(cu=>(cu.email||'').toLowerCase()===(lu.email||'').toLowerCase());
+      if(idx>-1) mergedUsers[idx]=lu; // local wins (preserves password resets)
+      else mergedUsers.push(lu);      // new user only in local
+    });
+    // After merge, keep local in sync so subsequent pushes stay consistent
+    if(mergedUsers.length) dbSet(DB_KEYS.users, mergedUsers);
+
     const payload = {
-      users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
+      users:        mergedUsers,   // safe merge — cloud users never wiped by empty local
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
@@ -6334,10 +6345,17 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
     dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
 
-    // Users: cloud wins, but filter out locally-deleted user IDs
-    if(r.users){
-      const filtered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
-      dbSet(DB_KEYS.users, filtered);
+    // Users: merge cloud + local by email — cloud wins for updates, never wipe local if cloud is empty
+    if(Array.isArray(r.users) && r.users.length){
+      const cloudFiltered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
+      const localUsers    = dbGet(DB_KEYS.users)||[];
+      const byEmail = {};
+      cloudFiltered.forEach(u=>{ if(u.email) byEmail[u.email.toLowerCase()]=u; });
+      localUsers.forEach(u=>{
+        const key=(u.email||'').toLowerCase();
+        if(key && !byEmail[key]) byEmail[key]=u; // keep local-only users
+      });
+      dbSet(DB_KEYS.users, Object.values(byEmail).filter(u=>!mergedDelUsers.includes(u.id)));
     }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
     // Restore client data from cloud (local edits already merged on push side)
