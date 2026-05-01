@@ -6297,10 +6297,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
     dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
 
-    // Users: cloud wins, but filter out locally-deleted user IDs
-    if(r.users){
+    // Users: only update local if cloud has a non-empty list — never wipe with empty array
+    if(Array.isArray(r.users) && r.users.length){
       const filtered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
-      dbSet(DB_KEYS.users, filtered);
+      if(filtered.length) dbSet(DB_KEYS.users, filtered);
     }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
     // Restore client data from cloud (local edits already merged on push side)

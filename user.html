@@ -1083,7 +1083,8 @@ async function cloudFetchUsers(){
     const data = await res.json();
     const record = data?.record || {};
     const users = record.users;
-    if(Array.isArray(users)) dbSet(DB_KEYS.users, users);
+    // Only overwrite local users if cloud has a non-empty list — never wipe with empty array
+    if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
     // Pull all shared data so users see latest announcement, coc, etc.
     if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
     if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeCloudArr(record.blockers, dbGet(DB_KEYS.blockers)||[]));
