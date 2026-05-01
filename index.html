@@ -3779,7 +3779,7 @@ function saveQuickLinks(){
 
 // Bump this string whenever the default layout changes — every device
 // will reset to the new defaults exactly once on next load.
-const ORG_LAYOUT_VERSION = 'v5_20260429';
+const ORG_LAYOUT_VERSION = 'v5_20260501';
 // Names permanently removed from the org chart — never re-added regardless of users DB or defaults
 const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','yehia elaify','yehia elafify','rania morsy','sarah ibrahim'];
 
@@ -3791,28 +3791,37 @@ const orgColors = {
   member:   'linear-gradient(135deg,#2e9e6e,#5cd8a0)'   // green      — team
 };
 
-// ── Default org chart data ──
+// ── Default org chart data  (matches screenshot v5_20260501) ──
 const ORG_NODES_DEFAULT = [
   // Row 1 — CEO
-  {id:'david',   name:'David Joslin',     title:'CEO & Founder',                                   photo:null, level:'ceo',      x:406, y:20,  fixed:true},
+  {id:'david',    name:'David Joslin',   title:'CEO & Founder',                          photo:null, level:'ceo',      x:406, y:20,  fixed:true},
   // Row 2 — Directors
-  {id:'abby',    name:'Abby Conklin',     title:'Production Manager / Reel Motion PM',              photo:null, level:'director', x:106, y:200},
-  {id:'sarah',   name:'Sarah Samy',       title:'Integrator / Director of Systems & Operations',   photo:null, level:'manager',  x:406, y:200},
-  {id:'jacob',   name:'Jacob Joslin',     title:'Finance / Startups PM',                           photo:null, level:'partner',  x:700, y:200},
-  // Row 3 — Left group (under Abby)
-  {id:'emily',   name:'Emily Rovillo',    title:'Creative Manager',                                 photo:null, level:'member',   x:20,  y:390},
-  // Row 3 — Right group (under Sarah/Jacob)
-  {id:'carol',   name:'Carol Rucker',     title:'Writer',                                           photo:null, level:'member',   x:420, y:390},
-  {id:'aileen',  name:'Aileen Casey',     title:'Print Production',                                 photo:null, level:'member',   x:520, y:390},
-  {id:'neha',    name:'Neha',             title:'Web Developer',                                    photo:null, level:'member',   x:620, y:390},
-  {id:'brian',   name:'Brian Bynes',      title:'Programmer',                                       photo:null, level:'member',   x:720, y:390},
-  {id:'jamil',   name:'Jamil Ahmed',      title:'Video Producer',                                   photo:null, level:'member',   x:820, y:390},
-  // Row 4 — Bottom members
-  {id:'mostafa', name:'Mostafa Jamal',    title:'Ads and SEO Specialist',                           photo:null, level:'member',   x:210, y:565},
-  {id:'mark',    name:'Mark Else',        title:'Marketing Manager',                                photo:null, level:'member',   x:500, y:565},
+  {id:'abby',     name:'Abby Conklin',   title:'Director of Production',                 photo:null, level:'director', x:106, y:200},
+  {id:'sarah',    name:'Sarah Samy',     title:'HR / Director of Systems & Operations',  photo:null, level:'manager',  x:406, y:200},
+  {id:'jacob',    name:'Jacob Joslin',   title:'Director of Finance',                    photo:null, level:'partner',  x:700, y:200},
+  // Row 3 Left — under Abby
+  {id:'yehia',    name:'Yehia Elaify',   title:'Sales & Marketing Specialist',           photo:null, level:'member',   x:20,  y:390},
+  {id:'sherine',  name:'Sherine Amin',   title:'Social Media Specialist',                photo:null, level:'member',   x:160, y:390},
+  {id:'mo',       name:'Mo Money',       title:'Sales & Account Manager',                photo:null, level:'member',   x:20,  y:560},
+  {id:'sally',    name:'Sally Smooth',   title:'Operations Manager',                     photo:null, level:'member',   x:160, y:560},
+  {id:'viral',    name:'Viral Vera',     title:'Video Specialist',                        photo:null, level:'member',   x:20,  y:730},
+  {id:'artAgent', name:'Art Agent',      title:'AI Specialist',                           photo:null, level:'member',   x:160, y:730},
+  // Row 3 Center — under Sarah
+  {id:'carol',    name:'Carol Rucker',   title:'Writer',                                  photo:null, level:'member',   x:340, y:390},
+  {id:'brian',    name:'Brian Bynes',    title:'Programmer',                              photo:null, level:'member',   x:460, y:390},
+  {id:'aileen',   name:'Aileen Casey',   title:'Print Production',                        photo:null, level:'member',   x:580, y:390},
+  {id:'neha',     name:'Neha',           title:'Web Developer',                           photo:null, level:'member',   x:400, y:560},
+  {id:'jamil',    name:'Jamil Ahmed',    title:'Video Producer',                          photo:null, level:'member',   x:520, y:560},
+  // Row 3 Right — under Jacob
+  {id:'emily',    name:'Emily Rovillo',  title:'Creative Manager',                        photo:null, level:'member',   x:670, y:390},
+  {id:'mostafa',  name:'Mostafa Jamal',  title:'Ads and SEO Specialist',                  photo:null, level:'member',   x:790, y:390},
+  {id:'assmaa',   name:'Assmaa Fouad',   title:'Webmaster & Copywriter',                  photo:null, level:'member',   x:730, y:560},
 ];
 const ORG_LINKS_DEFAULT = [
-  ['david','abby'], ['david','sarah'], ['david','jacob']
+  ['david','abby'],   ['david','sarah'],   ['david','jacob'],
+  ['abby','yehia'],   ['abby','sherine'],  ['abby','mo'],    ['abby','sally'], ['abby','viral'], ['abby','artAgent'],
+  ['sarah','carol'],  ['sarah','brian'],   ['sarah','aileen'], ['sarah','neha'], ['sarah','jamil'],
+  ['jacob','emily'],  ['jacob','mostafa'], ['jacob','assmaa']
 ];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──
@@ -5402,10 +5411,38 @@ function logActivity(type, userName, description, detail=''){
   }
 }
 
+// ── Core team seed — last-resort safety net ONLY if wl_users_db is empty.
+// A blank/corrupt cloud bin can never permanently wipe all accounts this way.
+// Passwords are NOT stored here — admin must set them via the Users panel.
+function _seedCoreTeam(){
+  const existing = dbGet(DB_KEYS.users)||[];
+  if(existing.length) return;
+  const coreTeam = [
+    {id:'emily',   name:'Emily Rovillo',  email:'emily@weblightmedia.com',   title:'Creative Manager',              role:'member',  status:'active'},
+    {id:'jamil',   name:'Jamil Ahmed',    email:'jamil@weblightmedia.com',   title:'Video Producer',                role:'member',  status:'active'},
+    {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active'},
+    {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active'},
+    {id:'abby',    name:'Abby Conklin',   email:'abby@weblightmedia.com',    title:'Director of Production',        role:'admin',   status:'active'},
+    {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active'},
+    {id:'sherine', name:'Sherine Amin',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active'},
+    {id:'mostafa', name:'Mostafa Jamal',  email:'mostafa@weblightmedia.com', title:'Ads and SEO Specialist',        role:'member',  status:'active'},
+    {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active'},
+    {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active'},
+    {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active'},
+    {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active'},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaa@weblightmedia.com',  title:'Webmaster & Copywriter',        role:'member',  status:'active'},
+    {id:'mo',      name:'Mo Money',       email:'mo@weblightmedia.com',      title:'Sales & Account Manager',       role:'member',  status:'active'},
+    {id:'sally',   name:'Sally Smooth',   email:'sally@weblightmedia.com',   title:'Operations Manager',            role:'member',  status:'active'},
+    {id:'viral',   name:'Viral Vera',     email:'viral@weblightmedia.com',   title:'Video Specialist',              role:'member',  status:'active'},
+    {id:'artAgent',name:'Art Agent',      email:'art@weblightmedia.com',     title:'AI Specialist',                 role:'member',  status:'active'},
+  ];
+  dbSet(DB_KEYS.users, coreTeam);
+  console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
+}
+
 // ── Seed static users into DB on first load ──
 function seedStaticUsers(){
-  // Never seed dummy users — cloud is the source of truth
-  // (old static sample data was causing phantom accounts to appear for new admin devices)
+  _seedCoreTeam(); // only fires when DB is truly empty
 }
 
 // Override the existing doLogin to log activity and check stored users
@@ -6297,12 +6334,29 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
     dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
 
-    // Users: only update local if cloud has a non-empty list — never wipe with empty array
-    if(Array.isArray(r.users) && r.users.length){
-      const filtered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
-      if(filtered.length) dbSet(DB_KEYS.users, filtered);
+    // Users: merge cloud + local — cloud wins on conflicts but NEVER wipes local if
+    // cloud returns an empty array. Union by user ID preserves local-only accounts.
+    if(Array.isArray(r.users) && r.users.length > 0){
+      const localUsers = dbGet(DB_KEYS.users) || [];
+      const cloudById  = {};
+      r.users.forEach(u=>{ if(u.id) cloudById[u.id]=u; });
+      const mergedUsers = r.users.filter(u=>!mergedDelUsers.includes(u.id));
+      localUsers.forEach(lu=>{
+        if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
+      });
+      dbSet(DB_KEYS.users, mergedUsers);
     }
-    if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
+    // Admins: same safe-merge — never overwrite local admins with empty cloud array.
+    if(Array.isArray(r.admins) && r.admins.length > 0){
+      const localAdmins   = dbGet(DB_KEYS.admins) || [];
+      const cloudAByEmail = {};
+      r.admins.forEach(a=>{ if(a.email) cloudAByEmail[a.email.toLowerCase()]=a; });
+      const mergedAdmins = [...r.admins];
+      localAdmins.forEach(la=>{
+        if(la.email && !cloudAByEmail[la.email.toLowerCase()]) mergedAdmins.push(la);
+      });
+      dbSet(DB_KEYS.admins, mergedAdmins);
+    }
     // Restore client data from cloud (local edits already merged on push side)
     if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
@@ -6337,6 +6391,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
     if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
     if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeRoadmapArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]));
+
+    // ── Safety net: if users DB is still empty after merge, re-seed core team ──
+    // Protects against a genuinely blank/corrupt cloud bin locking everyone out.
+    if(!(dbGet(DB_KEYS.users)||[]).length && typeof _seedCoreTeam === 'function'){
+      _seedCoreTeam();
+    }
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
