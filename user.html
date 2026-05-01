@@ -1046,18 +1046,8 @@ const CLOUD_CFG_KEY = 'wl_cloud_config';
 const WORKSPACE_CODE_KEY = 'wl_workspace_code';
 const _DEFAULT_BIN = '69f267fa36566621a8086c5d'; // WLM JSONBin bin
 const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
-// Force canonical bin on every load — overwrites stale cached config from old deployments
-(function(){
-  try{
-    const s=JSON.parse(localStorage.getItem(CLOUD_CFG_KEY)||'null');
-    if(!s || s.binId!==_DEFAULT_BIN || s.apiKey!==_DEFAULT_API_KEY){
-      localStorage.setItem(CLOUD_CFG_KEY, JSON.stringify({apiKey:_DEFAULT_API_KEY, binId:_DEFAULT_BIN}));
-    }
-  }catch(e){}
-})();
 function getCloudConfig(){
-  const stored = dbGet(CLOUD_CFG_KEY)||{};
-  return { apiKey: stored.apiKey||_DEFAULT_API_KEY, binId: stored.binId||_DEFAULT_BIN };
+  return { apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN };
 }
 function getWorkspaceBinId(){
   // Use full cloud config binId if available, otherwise workspace code, otherwise default bin

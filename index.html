@@ -6127,8 +6127,7 @@ const _DEFAULT_BIN    = '69f267fa36566621a8086c5d';
 const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 
 function getCloudConfig(){
-  const saved = dbGet(CLOUD_CFG_KEY) || {};
-  return { apiKey: saved.apiKey || _DEFAULT_API_KEY, binId: saved.binId || _DEFAULT_BIN };
+  return { apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN };
 }
 function cloudIsConfigured(){
   const c = getCloudConfig();
@@ -6436,13 +6435,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;
   }
-  // Always force the canonical bin — overwrites any stale cached config from old deployments
-  (function forceCloudConfig(){
-    const stored = dbGet(CLOUD_CFG_KEY)||{};
-    if(stored.binId !== _DEFAULT_BIN || stored.apiKey !== _DEFAULT_API_KEY){
-      dbSet(CLOUD_CFG_KEY, {apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN});
-    }
-  })();
+  // Ensure localStorage always has the canonical bin (non-destructive write)
+  dbSet(CLOUD_CFG_KEY, {apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN});
   // Update cloud sync status badge
   updateCloudStatusUI();
   // Auto-pull on load if cloud is configured (get latest from cloud)
