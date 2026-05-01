@@ -6330,17 +6330,41 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     const pulledDelEods  = r.deletedEodIds||[];
     const pulledDelUsers = r.deletedUserIds||[];
     const mergedDelEods  = [...new Set([...(dbGet(DB_KEYS.deletedEodIds)||[]), ...pulledDelEods])];
-    const mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])];
+    let   mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])];
+
+    // ── CRITICAL: if the cloud explicitly lists a user as ACTIVE (present in r.users,
+    // not archived), the admin has intentionally restored them on another device.
+    // Remove their ID from the local tombstone so the restore is honoured here too.
+    if(Array.isArray(r.users) && r.users.length > 0){
+      const cloudActiveIds = new Set(
+        r.users.filter(u=>u.id && !u.archived && (u.status==='active'||!u.status)).map(u=>u.id)
+      );
+      mergedDelUsers = mergedDelUsers.filter(id => !cloudActiveIds.has(id));
+    }
+
     dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
     dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
 
     // Users: merge cloud + local — cloud wins on conflicts but NEVER wipes local if
     // cloud returns an empty array. Union by user ID preserves local-only accounts.
+    // IMPORTANT: if cloud says a user is active (no archived flag or archived=false),
+    // we honour that and clear any stale archived flag stored locally.
     if(Array.isArray(r.users) && r.users.length > 0){
       const localUsers = dbGet(DB_KEYS.users) || [];
       const cloudById  = {};
       r.users.forEach(u=>{ if(u.id) cloudById[u.id]=u; });
-      const mergedUsers = r.users.filter(u=>!mergedDelUsers.includes(u.id));
+      // Build merged list: cloud records first (cloud is authoritative), filtered by tombstone
+      const mergedUsers = r.users
+        .filter(u=>!mergedDelUsers.includes(u.id))
+        .map(u=>{
+          // If cloud record says active (no archived flag or explicitly false), un-archive
+          const cloudActive = !u.archived && (u.status === 'active' || !u.status);
+          if(cloudActive){
+            return Object.assign({}, u, { archived: false, archivedAt: null });
+          }
+          return u;
+        });
+      // Preserve any local-only accounts not in cloud and not tombstoned
       localUsers.forEach(lu=>{
         if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
       });
@@ -6628,6 +6652,7 @@ function refreshArchive(){
           </div>
           <div style="display:flex;gap:8px;">
             <button class="btn btn-sm btn-outline" onclick="viewArchivedUser('${u.id||u.email}')">View</button>
+            <button class="btn btn-sm btn-outline" style="color:#2e9e6e;border-color:#2e9e6e;" onclick="restoreArchivedUser('${u.id||u.email}')">Restore</button>
             <button class="btn btn-sm btn-danger" onclick="deleteArchivedUser('${u.id||u.email}')">Purge</button>
           </div>
         </div>`;
@@ -6668,6 +6693,44 @@ function deleteArchivedUser(uid){
   dbSet('wl_archived_users', archives.filter(x=>x.id!==uid&&x.email!==uid));
   refreshArchive();
   showToast('User permanently purged from archive');
+}
+
+function restoreArchivedUser(uid){
+  if(!confirm('Restore this user to active status? They will be able to log in again.')) return;
+  const archives = dbGet('wl_archived_users')||[];
+  const u = archives.find(x=>x.id===uid||x.email===uid);
+  if(!u){ showToast('User not found in archive'); return; }
+
+  // Clean up the archived metadata before restoring
+  const restored = {...u};
+  delete restored.archivedAt;
+  delete restored.archivedBy;
+  delete restored.eods;
+  delete restored.blockers;
+  delete restored.eodCount;
+  restored.archived   = false;
+  restored.archivedAt = null;
+  restored.status     = 'active';
+
+  // Add back to active users DB (avoid duplicate)
+  const activeUsers = dbGet(DB_KEYS.users)||[];
+  if(!activeUsers.find(x=>x.id===restored.id)){
+    activeUsers.unshift(restored);
+    dbSet(DB_KEYS.users, activeUsers);
+  }
+
+  // Remove from archived list
+  dbSet('wl_archived_users', archives.filter(x=>x.id!==uid&&x.email!==uid));
+
+  // Remove from tombstone so cloud pull won't block them again
+  const delIds = (dbGet(DB_KEYS.deletedUserIds)||[]).filter(id=>id!==restored.id);
+  dbSet(DB_KEYS.deletedUserIds, delIds);
+
+  renderUserTable();
+  refreshArchive();
+  logActivity('admin','Admin','Restored archived user: '+restored.name,'');
+  showToast(`✅ ${restored.name} restored to active users`);
+  cloudAutoSync();
 }
 
 // ═══════════════════════════════════════════════════════════
