@@ -3164,7 +3164,7 @@ function openEditUserModal(userIdOrName){
   document.getElementById('editUserModal').classList.add('open');
 }
 
-function saveEditUser(){
+async function saveEditUser(){
   const uid = document.getElementById('editUserModal').dataset.userId;
   const name  = document.getElementById('editName').value.trim();
   const email = document.getElementById('editEmail').value.trim().toLowerCase();
@@ -3173,11 +3173,21 @@ function saveEditUser(){
   const role  = document.getElementById('editRole').value;
   const pass  = document.getElementById('editPass').value;
   const pass2 = document.getElementById('editPass2').value;
+  const saveBtn = document.querySelector('#editUserModal .btn-primary');
   if(!name||!email){showToast('Name and Email are required');return;}
   if(pass && pass.length<6){showToast('New password must be at least 6 characters');return;}
   if(pass && pass!==pass2){showToast('Passwords do not match');return;}
+
+  // Pull latest from cloud first so we have the most up-to-date user list
+  try{
+    if(saveBtn){ saveBtn.textContent='Saving…'; saveBtn.disabled=true; }
+    const cfg = getCloudConfig();
+    const r = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+    if(r.ok){ const d=await r.json(); if(Array.isArray(d?.record?.users)) dbSet(DB_KEYS.users, d.record.users); }
+  }catch(e){}
+
   const allUsers = dbGet(DB_KEYS.users)||[];
-  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
+  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid||u.email===uid);
   if(idx>-1){
     allUsers[idx].name  = name;
     allUsers[idx].email = email;
@@ -3186,16 +3196,27 @@ function saveEditUser(){
     allUsers[idx].role  = role;
     if(pass){
       allUsers[idx].password=pass;
-      const forceChange = document.getElementById('editForceChange')?.checked !== false;
-      allUsers[idx].mustChangePassword = forceChange;
+      const forceChange = document.getElementById('editForceChange')?.checked;
+      allUsers[idx].mustChangePassword = !!forceChange;
     }
     dbSet(DB_KEYS.users, allUsers);
+  } else {
+    if(saveBtn){ saveBtn.textContent='Save Changes'; saveBtn.disabled=false; }
+    showToast('User not found — try refreshing the page','warn');
+    return;
   }
+
+  // Push to cloud and wait for confirmation
+  const ok = await cloudPushAll(true);
+  if(saveBtn){ saveBtn.textContent='Save Changes'; saveBtn.disabled=false; }
   renderUserTable();
   closeModal('editUserModal');
-  showToast('User updated — syncing to cloud…');
   logActivity('admin','Admin','Updated user: '+name,'');
-  cloudAutoSync();
+  if(pass){
+    showToast(`✅ Password updated for ${name} — synced to cloud`,'success');
+  } else {
+    showToast(`✅ ${name} updated`,'success');
+  }
 }
 function openBlockerModal(){document.getElementById('blockerModal').classList.add('open');}
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
