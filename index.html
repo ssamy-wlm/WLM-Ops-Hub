@@ -1163,10 +1163,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-title">☁️ Cloud Sync &amp; Cross-Device Login</div>
             <div class="card-sub">Sync users to JSONBin so team members can log in from any device</div>
           </div>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
             <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" id="cloudConfigToggleBtn" onclick="toggleCloudConfig()">⚙ Configure</button>
+            <button class="btn btn-sm" style="background:#d97706;color:#fff;border:none;" onclick="recoverUsersFromBackup()" title="Restore users from backup bin">🔄 Recover Users</button>
           </div>
         </div>
         <div class="card-body">
@@ -6401,6 +6402,51 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 // Backward-compat aliases
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
+
+// ── Recover users from backup (old) bin and merge into current bin ──
+async function recoverUsersFromBackup(){
+  const BACKUP_BIN = '69d0c6bfaaba882197c311e7';
+  const cfg = getCloudConfig();
+  setCloudStatus('Recovering from backup…','syncing');
+  try{
+    // 1. Fetch backup bin
+    const rb = await fetch(`https://api.jsonbin.io/v3/b/${BACKUP_BIN}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+    if(!rb.ok){ showToast('⚠ Could not reach backup bin — status '+rb.status,'warn'); setCloudStatus('Recovery failed','error'); return; }
+    const bd = await rb.json();
+    const backupUsers = Array.isArray(bd?.record?.users) ? bd.record.users : [];
+    if(!backupUsers.length){ showToast('⚠ No users found in backup bin','warn'); setCloudStatus('Empty backup','warn'); return; }
+
+    // 2. Fetch current bin
+    let currentUsers = dbGet(DB_KEYS.users)||[];
+    try{
+      const rc = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+      if(rc.ok){ const cd=await rc.json(); if(Array.isArray(cd?.record?.users)) currentUsers=cd.record.users; }
+    }catch(e){}
+
+    // 3. Merge: backup fills in users not present in current (by email)
+    const currentEmails = new Set(currentUsers.map(u=>(u.email||'').toLowerCase()));
+    const added = [];
+    backupUsers.forEach(u=>{
+      if(!(u.email||'').toLowerCase() || currentEmails.has((u.email||'').toLowerCase())) return;
+      currentUsers.push(u);
+      added.push(u.name||u.email);
+    });
+
+    // 4. Save merged list locally and push to current bin
+    dbSet(DB_KEYS.users, currentUsers);
+    const ok = await cloudPushAll(true);
+    renderUserTable();
+    if(ok){
+      showToast(`✅ Recovered ${added.length} user(s): ${added.join(', ')||'(all already present)'}`, 'success');
+      setCloudStatus('Recovery complete','ok');
+    } else {
+      showToast('Users restored locally but cloud push failed — try ↑ Push All Data','warn');
+    }
+  }catch(e){
+    showToast('Recovery error: '+e.message,'warn');
+    setCloudStatus('Recovery error','error');
+  }
+}
 
 // Auto-sync after every data write
 async function cloudAutoSync(){
