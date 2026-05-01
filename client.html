@@ -1381,16 +1381,13 @@ function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 // ═══════════════════════════════════════════════════════
 //  CLOUD SYNC (piggybacks on the same JSONBin config as index.html)
 // ═══════════════════════════════════════════════════════
+// Always force the canonical credentials — never trust a stale localStorage value
+const _CANONICAL_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
+const _CANONICAL_BIN_ID  = '69f267fa36566621a8086c5d';
+try{ localStorage.setItem('wl_cloud_config', JSON.stringify({apiKey:_CANONICAL_API_KEY, binId:_CANONICAL_BIN_ID})); }catch(e){}
+
 function _cloudCfg(){
-  try{
-    const saved=JSON.parse(localStorage.getItem('wl_cloud_config')||'null')||{};
-    return {
-      apiKey: saved.apiKey||'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
-      binId:  saved.binId ||'69f267fa36566621a8086c5d'
-    };
-  }catch(e){
-    return {apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',binId:'69f267fa36566621a8086c5d'};
-  }
+  return { apiKey: _CANONICAL_API_KEY, binId: _CANONICAL_BIN_ID };
 }
 let _cloudPushTimer=null;
 function _scheduleCloudPush(){
@@ -3120,6 +3117,8 @@ function updateMyWorkBadge(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
+  // Always re-stamp correct cloud credentials on every load (prevents 403 from stale localStorage)
+  try{ localStorage.setItem('wl_cloud_config', JSON.stringify({apiKey:_CANONICAL_API_KEY, binId:_CANONICAL_BIN_ID})); }catch(e){}
   // Pull latest client data from cloud first (async — UI will render after)
   _pullClientsFromCloud().then(()=>{
     renderClientGrid();
