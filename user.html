@@ -2768,6 +2768,13 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
 })();
 
 document.addEventListener('DOMContentLoaded', ()=>{
+  // Always force the correct cloud credentials — clears any stale/old API key from localStorage
+  try{
+    localStorage.setItem('wl_cloud_config', JSON.stringify({
+      apiKey: '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
+      binId:  '69f267fa36566621a8086c5d'
+    }));
+  }catch(e){}
   setTimeout(renderUserCredVault, 1000);
   checkWorkspaceSetup();
 });
