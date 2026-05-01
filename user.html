@@ -1108,7 +1108,6 @@ async function cloudPushData(){
     const cloudRecord = d?.record || {};
     const payload = {
       ...cloudRecord,
-      users:    _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
       eods:     _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
       blockers: _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:    _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
@@ -1247,16 +1246,22 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  // Push updated password to cloud so all devices see the updated password
+  // Push updated password to cloud — read-modify-write so we only patch this user's password
   if(cloudIsConfigured() && btn){
     btn.textContent='Saving…'; btn.disabled=true;
     const cfg = getCloudConfig();
-    const admins = dbGet(DB_KEYS.admins)||[];
     try{
+      const r0 = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+      const existing = r0.ok ? ((await r0.json())?.record||{}) : {};
+      // Merge: patch only the changed user by email, keep all other cloud users intact
+      const cloudUsers = Array.isArray(existing.users) ? existing.users : [];
+      const idx2 = cloudUsers.findIndex(u=>(u.email||'').toLowerCase()===(currentUser.email||'').toLowerCase());
+      if(idx2>-1){ cloudUsers[idx2]=allUsers[allUsers.findIndex(u=>u.id===currentUser.id||u.email===currentUser.email)]||cloudUsers[idx2]; }
+      else if(allUsers.length){ cloudUsers.push(...allUsers.filter(u=>!cloudUsers.some(c=>c.email===u.email))); }
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body: JSON.stringify({users: allUsers, admins})
+        body: JSON.stringify({...existing, users: cloudUsers.length ? cloudUsers : allUsers})
       });
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
@@ -2308,15 +2313,19 @@ async function changeUserPassword(){
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   showToast('Password updated ✓ — syncing…');
-  // Push to cloud (both users and admins)
+  // Push only the changed user — read-modify-write to avoid wiping other cloud data
   if(cloudIsConfigured()){
     const cfg=getCloudConfig();
-    const admins=dbGet(DB_KEYS.admins)||[];
     try{
+      const r0=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+      const existing=r0.ok?((await r0.json())?.record||{}):{};
+      const cloudUsers=Array.isArray(existing.users)?[...existing.users]:[];
+      const idx2=cloudUsers.findIndex(u=>(u.email||'').toLowerCase()===(currentUser.email||'').toLowerCase());
+      if(idx2>-1) cloudUsers[idx2]={...cloudUsers[idx2],password:nw};
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body:JSON.stringify({users:all, admins})
+        body:JSON.stringify({...existing, users:cloudUsers.length?cloudUsers:all})
       });
     }catch(e){}
   }
