@@ -998,7 +998,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-dropdown">
           <div class="admin-nav-item admin-drop-trigger" onclick="switchAdminTab(this,'users')" id="admin-drop-users">Users</div>
           <div class="admin-nav-dropdown-menu">
-            <div class="admin-nav-item" onclick="switchAdminTab(this,'timeoff')">Time Off</div>
+            <div class="admin-nav-item" id="admin-timeoff-nav" onclick="switchAdminTab(this,'timeoff')">Time Off<span id="admin-timeoff-badge" style="display:none;min-width:16px;height:16px;background:#f59e0b;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;display:inline-flex;align-items:center;justify-content:center;">0</span></div>
             <div class="admin-nav-item" onclick="switchAdminTab(this,'archive')">Archive</div>
           </div>
         </div>
@@ -1025,6 +1025,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 
   <div class="admin-content">
+
+    <!-- ── Admin alert strip ── -->
+    <div id="admin-alert-strip" style="display:none;background:rgba(255,255,255,.96);border-bottom:1px solid rgba(45,107,182,.12);padding:8px 24px;gap:10px;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:40;box-shadow:0 2px 8px rgba(37,99,168,.06);">
+      <span style="font-size:10px;font-weight:800;color:var(--text-light);letter-spacing:.08em;text-transform:uppercase;">Action needed</span>
+      <span id="alert-chip-timeoff" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(245,158,11,.12);color:#b45309;border:1px solid rgba(245,158,11,.35);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-timeoff-nav'),'timeoff')">🏖️ <span id="alert-n-timeoff">0</span> pending time off</span>
+      <span id="alert-chip-blockers" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(224,85,85,.1);color:var(--red);border:1px solid rgba(224,85,85,.25);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-drop-reports'),'livefeed')">🚧 <span id="alert-n-blockers">0</span> open blockers</span>
+      <span id="alert-chip-messages" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text);border:1px solid rgba(45,107,182,.2);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-nav-messages'),'messages')">💬 <span id="alert-n-messages">0</span> unread messages</span>
+    </div>
 
     <!-- Overview -->
     <div id="admin-overview" class="page-section active">
@@ -1227,6 +1235,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="">All Activity</option>
             <option value="eod">EOD Submissions</option>
             <option value="blocker">Blockers</option>
+            <option value="timeoff">Time Off</option>
             <option value="goal">Goals</option>
             <option value="login">Logins</option>
             <option value="nav">Navigation</option>
@@ -1235,7 +1244,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <!-- Live stats bar -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text-dark);" id="feed-stat-total">0</div>
           <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Total Events</div>
@@ -1247,6 +1256,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--orange);" id="feed-stat-blockers">0</div>
           <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Blockers Logged</div>
+        </div>
+        <div class="card" style="padding:14px 16px;margin:0;text-align:center;cursor:pointer;" onclick="switchAdminTab(document.getElementById('admin-timeoff-nav'),'timeoff')">
+          <div style="font-size:22px;font-weight:800;color:#b45309;" id="feed-stat-timeoff">0</div>
+          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Pending Time Off</div>
         </div>
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text);" id="feed-stat-logins">0</div>
@@ -1371,7 +1384,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:28px;font-weight:800;color:var(--green);margin-top:4px;" id="stat-active-clients">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Completed Projects</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Inactive / Paused</div>
           <div style="font-size:28px;font-weight:800;color:var(--text);margin-top:4px;" id="stat-completed-projects">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
@@ -1379,8 +1392,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:28px;font-weight:800;color:var(--accent);margin-top:4px;" id="stat-ongoing-projects">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Overdue</div>
-          <div style="font-size:28px;font-weight:800;color:var(--red);margin-top:4px;" id="stat-overdue-projects">0</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Services Due Soon</div>
+          <div style="font-size:28px;font-weight:800;color:var(--orange);margin-top:4px;" id="stat-overdue-projects">0</div>
         </div>
       </div>
 
@@ -2942,6 +2955,8 @@ function showAdminApp(){
   document.getElementById('userApp').classList.remove('visible');
   try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
+  setTimeout(()=>{ if(typeof updateAdminAlertBanner==='function') updateAdminAlertBanner(); }, 500);
+  setInterval(()=>{ if(typeof updateAdminAlertBanner==='function') updateAdminAlertBanner(); }, 30000);
   setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
 
@@ -4535,16 +4550,17 @@ function updateClientStats(){
   const op= document.getElementById('stat-ongoing-projects');
   const od= document.getElementById('stat-overdue-projects');
   if(!t) return;
-  const todayStr = new Date().toISOString().slice(0,10);
+  const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   const liveClients = _getClientDB();
   const allProjects = liveClients.reduce((arr,c)=>arr.concat((c.projects||[]).filter(p=>!p.isRecurringService)),[]);
   t.textContent = liveClients.length;
-  a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
-  if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
+  a.textContent = liveClients.filter(c=>c.status==='active').length;
+  if(cp) cp.textContent = liveClients.filter(c=>c.status!=='active').length;
   const ongoing = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold');
   if(op) op.textContent = ongoing.length;
-  const overdue = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr);
-  if(od){ od.textContent = overdue.length; od.style.color = overdue.length>0?'var(--red)':'var(--text-light)'; }
+  let due=0;
+  liveClients.forEach(c=>{ (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s) due++; }); });
+  if(od){ od.textContent = due; od.style.color = due>0?'var(--orange)':'var(--green)'; }
   // ── Client notification badge in nav ──
   try{
     const clientNotifs = JSON.parse(localStorage.getItem('wl_client_notifications')||'[]');
@@ -5497,6 +5513,9 @@ function updateFeedStats(events){
   document.getElementById('feed-stat-total').textContent = events.length;
   document.getElementById('feed-stat-eod').textContent = events.filter(e=>e.type==='eod' && e.date===todayStr).length;
   document.getElementById('feed-stat-blockers').textContent = events.filter(e=>e.type==='blocker').length;
+  const pendTO = (dbGet('wl_timeoff_requests')||[]).filter(r=>r.status==='pending').length;
+  const toEl = document.getElementById('feed-stat-timeoff');
+  if(toEl){ toEl.textContent=pendTO; toEl.style.color=pendTO>0?'#b45309':'var(--text-light)'; }
   document.getElementById('feed-stat-logins').textContent = events.filter(e=>e.type==='login' && e.date===todayStr).length;
   const activeUsers = [...new Set(events.filter(e=>e.date===todayStr).map(e=>e.user))].length;
   document.getElementById('feed-stat-active').textContent = activeUsers;
@@ -5527,9 +5546,9 @@ function renderFeedList(events){
     list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet.</div>';
     return;
   }
-  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢'};
-  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod',client:'feed-icon-eod'};
-  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)'};
+  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢',timeoff:'🏖️'};
+  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod',client:'feed-icon-eod',timeoff:'feed-icon-blocker'};
+  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)',timeoff:'background:rgba(245,158,11,.12);color:#b45309'};
   list.innerHTML = events.map(e=>{
     const t = new Date(e.time);
     const timeStr = t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' · ' + e.date;
@@ -6299,6 +6318,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminOverview === 'function') refreshAdminOverview();
     if(typeof refreshLiveFeed === 'function') refreshLiveFeed();
     if(typeof renderAdminTimeOff === 'function') renderAdminTimeOff();
+    if(typeof updateAdminAlertBanner === 'function') updateAdminAlertBanner();
     if(typeof renderSavedPayrolls === 'function') renderSavedPayrolls();
     if(typeof refreshArchive === 'function') refreshArchive();
     // Reload reports tab if currently visible
@@ -6622,6 +6642,7 @@ function reviewTimeOff(id, decision){
   if(note) requests[idx].adminNote = note;
   dbSet('wl_timeoff_requests', requests);
   renderAdminTimeOff();
+  updateAdminAlertBanner();
   cloudAutoSync(true);
   showToast(`Time off request ${decision} ✓`);
   logActivity('admin','Admin',`Time off ${decision} for ${requests[idx].userName}`, requests[idx].startDate+' → '+requests[idx].endDate);
@@ -8046,6 +8067,36 @@ function updateAdminMsgBadge(){
   const unread     = all.filter(m=>m.from!==adminEmail && _getAdminThreadId(m).split('::').includes(adminEmail) && !(m.readBy||[]).includes(adminEmail)).length;
   const badge      = document.getElementById('admin-msg-badge');
   if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
+}
+
+function updateAdminAlertBanner(){
+  // Pending time off
+  const pendingTO = (dbGet('wl_timeoff_requests')||[]).filter(r=>r.status==='pending').length;
+  const chipTO = document.getElementById('alert-chip-timeoff');
+  const nTO    = document.getElementById('alert-n-timeoff');
+  const toBadge= document.getElementById('admin-timeoff-badge');
+  if(chipTO){ nTO.textContent=pendingTO; chipTO.style.display=pendingTO?'':'none'; }
+  if(toBadge){ toBadge.textContent=pendingTO; toBadge.style.display=pendingTO?'inline-flex':'none'; }
+
+  // Open blockers
+  const openBl = (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.status==='open').length;
+  const chipBl = document.getElementById('alert-chip-blockers');
+  const nBl    = document.getElementById('alert-n-blockers');
+  if(chipBl){ nBl.textContent=openBl; chipBl.style.display=openBl?'':'none'; }
+
+  // Unread messages
+  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
+  const unreadMsg = (dbGet(DB_KEYS.messages)||[]).filter(m=>
+    m.from!==adminEmail &&
+    _getAdminThreadId(m).split('::').includes(adminEmail) &&
+    !(m.readBy||[]).includes(adminEmail)
+  ).length;
+  const chipMsg = document.getElementById('alert-chip-messages');
+  const nMsg    = document.getElementById('alert-n-messages');
+  if(chipMsg){ nMsg.textContent=unreadMsg; chipMsg.style.display=unreadMsg?'':'none'; }
+
+  const strip = document.getElementById('admin-alert-strip');
+  if(strip) strip.style.display = (pendingTO||openBl||unreadMsg) ? 'flex' : 'none';
 }
 
 function openAdminNewMsgPicker(){

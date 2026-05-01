@@ -2358,6 +2358,10 @@ function submitTimeOffRequest(){
   all.unshift(request);
   dbSet('wl_timeoff_requests', all);
 
+  // Notify admin via live feed
+  logActivity('timeoff', userName, `Time off request: ${start} → ${end}`, `${days} day${days===1?'':'s'} · ${type}${reason?' · '+reason:''}`);
+  cloudPushData();
+
   // Clear form
   if(document.getElementById('to-start')) document.getElementById('to-start').value='';
   if(document.getElementById('to-end'))   document.getElementById('to-end').value='';
