@@ -1381,16 +1381,19 @@ function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 // ═══════════════════════════════════════════════════════
 //  CLOUD SYNC (piggybacks on the same JSONBin config as index.html)
 // ═══════════════════════════════════════════════════════
-function _cloudCfg(){
+const _CANONICAL_BIN='69f267fa36566621a8086c5d';
+const _CANONICAL_KEY='$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
+// Force canonical bin — wipes any stale cached config from old deployments
+(function(){
   try{
-    const saved=JSON.parse(localStorage.getItem('wl_cloud_config')||'null')||{};
-    return {
-      apiKey: saved.apiKey||'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
-      binId:  saved.binId ||'69f267fa36566621a8086c5d'
-    };
-  }catch(e){
-    return {apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',binId:'69f267fa36566621a8086c5d'};
-  }
+    const s=JSON.parse(localStorage.getItem('wl_cloud_config')||'null');
+    if(!s||s.binId!==_CANONICAL_BIN||s.apiKey!==_CANONICAL_KEY){
+      localStorage.setItem('wl_cloud_config',JSON.stringify({apiKey:_CANONICAL_KEY,binId:_CANONICAL_BIN}));
+    }
+  }catch(e){}
+})();
+function _cloudCfg(){
+  return {apiKey:_CANONICAL_KEY,binId:_CANONICAL_BIN};
 }
 let _cloudPushTimer=null;
 function _scheduleCloudPush(){
