@@ -998,7 +998,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-dropdown">
           <div class="admin-nav-item admin-drop-trigger" onclick="switchAdminTab(this,'users')" id="admin-drop-users">Users</div>
           <div class="admin-nav-dropdown-menu">
-            <div class="admin-nav-item" id="admin-timeoff-nav" onclick="switchAdminTab(this,'timeoff')">Time Off<span id="admin-timeoff-badge" style="display:none;min-width:16px;height:16px;background:#f59e0b;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;display:inline-flex;align-items:center;justify-content:center;">0</span></div>
+            <div class="admin-nav-item" onclick="switchAdminTab(this,'timeoff')">Time Off</div>
             <div class="admin-nav-item" onclick="switchAdminTab(this,'archive')">Archive</div>
           </div>
         </div>
@@ -1025,14 +1025,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 
   <div class="admin-content">
-
-    <!-- ── Admin alert strip ── -->
-    <div id="admin-alert-strip" style="display:none;background:rgba(255,255,255,.96);border-bottom:1px solid rgba(45,107,182,.12);padding:8px 24px;gap:10px;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:40;box-shadow:0 2px 8px rgba(37,99,168,.06);">
-      <span style="font-size:10px;font-weight:800;color:var(--text-light);letter-spacing:.08em;text-transform:uppercase;">Action needed</span>
-      <span id="alert-chip-timeoff" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(245,158,11,.12);color:#b45309;border:1px solid rgba(245,158,11,.35);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-timeoff-nav'),'timeoff')">🏖️ <span id="alert-n-timeoff">0</span> pending time off</span>
-      <span id="alert-chip-blockers" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(224,85,85,.1);color:var(--red);border:1px solid rgba(224,85,85,.25);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-drop-reports'),'livefeed')">🚧 <span id="alert-n-blockers">0</span> open blockers</span>
-      <span id="alert-chip-messages" style="display:none;cursor:pointer;font-size:12px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text);border:1px solid rgba(45,107,182,.2);border-radius:20px;padding:3px 11px;" onclick="switchAdminTab(document.getElementById('admin-nav-messages'),'messages')">💬 <span id="alert-n-messages">0</span> unread messages</span>
-    </div>
 
     <!-- Overview -->
     <div id="admin-overview" class="page-section active">
@@ -1163,11 +1155,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-title">☁️ Cloud Sync &amp; Cross-Device Login</div>
             <div class="card-sub">Sync users to JSONBin so team members can log in from any device</div>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <div style="display:flex;gap:8px;">
             <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
             <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" id="cloudConfigToggleBtn" onclick="toggleCloudConfig()">⚙ Configure</button>
-            <button class="btn btn-sm" style="background:#d97706;color:#fff;border:none;" onclick="recoverUsersFromBackup()" title="Restore users from backup bin">🔄 Recover Users</button>
           </div>
         </div>
         <div class="card-body">
@@ -1236,7 +1227,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="">All Activity</option>
             <option value="eod">EOD Submissions</option>
             <option value="blocker">Blockers</option>
-            <option value="timeoff">Time Off</option>
             <option value="goal">Goals</option>
             <option value="login">Logins</option>
             <option value="nav">Navigation</option>
@@ -1245,7 +1235,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <!-- Live stats bar -->
-      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text-dark);" id="feed-stat-total">0</div>
           <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Total Events</div>
@@ -1257,10 +1247,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--orange);" id="feed-stat-blockers">0</div>
           <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Blockers Logged</div>
-        </div>
-        <div class="card" style="padding:14px 16px;margin:0;text-align:center;cursor:pointer;" onclick="switchAdminTab(document.getElementById('admin-timeoff-nav'),'timeoff')">
-          <div style="font-size:22px;font-weight:800;color:#b45309;" id="feed-stat-timeoff">0</div>
-          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Pending Time Off</div>
         </div>
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text);" id="feed-stat-logins">0</div>
@@ -1385,7 +1371,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:28px;font-weight:800;color:var(--green);margin-top:4px;" id="stat-active-clients">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Inactive / Paused</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Completed Projects</div>
           <div style="font-size:28px;font-weight:800;color:var(--text);margin-top:4px;" id="stat-completed-projects">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
@@ -1393,8 +1379,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:28px;font-weight:800;color:var(--accent);margin-top:4px;" id="stat-ongoing-projects">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Services Due Soon</div>
-          <div style="font-size:28px;font-weight:800;color:var(--orange);margin-top:4px;" id="stat-overdue-projects">0</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Overdue</div>
+          <div style="font-size:28px;font-weight:800;color:var(--red);margin-top:4px;" id="stat-overdue-projects">0</div>
         </div>
       </div>
 
@@ -2956,8 +2942,6 @@ function showAdminApp(){
   document.getElementById('userApp').classList.remove('visible');
   try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
-  setTimeout(()=>{ if(typeof updateAdminAlertBanner==='function') updateAdminAlertBanner(); }, 500);
-  setInterval(()=>{ if(typeof updateAdminAlertBanner==='function') updateAdminAlertBanner(); }, 30000);
   setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
 
@@ -3165,7 +3149,7 @@ function openEditUserModal(userIdOrName){
   document.getElementById('editUserModal').classList.add('open');
 }
 
-async function saveEditUser(){
+function saveEditUser(){
   const uid = document.getElementById('editUserModal').dataset.userId;
   const name  = document.getElementById('editName').value.trim();
   const email = document.getElementById('editEmail').value.trim().toLowerCase();
@@ -3174,21 +3158,11 @@ async function saveEditUser(){
   const role  = document.getElementById('editRole').value;
   const pass  = document.getElementById('editPass').value;
   const pass2 = document.getElementById('editPass2').value;
-  const saveBtn = document.querySelector('#editUserModal .btn-primary');
   if(!name||!email){showToast('Name and Email are required');return;}
   if(pass && pass.length<6){showToast('New password must be at least 6 characters');return;}
   if(pass && pass!==pass2){showToast('Passwords do not match');return;}
-
-  // Pull latest from cloud first so we have the most up-to-date user list
-  try{
-    if(saveBtn){ saveBtn.textContent='Saving…'; saveBtn.disabled=true; }
-    const cfg = getCloudConfig();
-    const r = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
-    if(r.ok){ const d=await r.json(); if(Array.isArray(d?.record?.users)) dbSet(DB_KEYS.users, d.record.users); }
-  }catch(e){}
-
   const allUsers = dbGet(DB_KEYS.users)||[];
-  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid||u.email===uid);
+  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
   if(idx>-1){
     allUsers[idx].name  = name;
     allUsers[idx].email = email;
@@ -3197,27 +3171,16 @@ async function saveEditUser(){
     allUsers[idx].role  = role;
     if(pass){
       allUsers[idx].password=pass;
-      const forceChange = document.getElementById('editForceChange')?.checked;
-      allUsers[idx].mustChangePassword = !!forceChange;
+      const forceChange = document.getElementById('editForceChange')?.checked !== false;
+      allUsers[idx].mustChangePassword = forceChange;
     }
     dbSet(DB_KEYS.users, allUsers);
-  } else {
-    if(saveBtn){ saveBtn.textContent='Save Changes'; saveBtn.disabled=false; }
-    showToast('User not found — try refreshing the page','warn');
-    return;
   }
-
-  // Push to cloud and wait for confirmation
-  const ok = await cloudPushAll(true);
-  if(saveBtn){ saveBtn.textContent='Save Changes'; saveBtn.disabled=false; }
   renderUserTable();
   closeModal('editUserModal');
+  showToast('User updated — syncing to cloud…');
   logActivity('admin','Admin','Updated user: '+name,'');
-  if(pass){
-    showToast(`✅ Password updated for ${name} — synced to cloud`,'success');
-  } else {
-    showToast(`✅ ${name} updated`,'success');
-  }
+  cloudAutoSync();
 }
 function openBlockerModal(){document.getElementById('blockerModal').classList.add('open');}
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
@@ -4443,7 +4406,7 @@ function updateClientStats(){
   const op= document.getElementById('stat-ongoing-projects');
   const od= document.getElementById('stat-overdue-projects');
   if(!t) return;
-  const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const todayStr = new Date().toISOString().slice(0,10);
   const liveClients = _getClientDB();
 
   // c.projects[] contains isRecurringService mirrors (from seed/client.html) + manual projects
@@ -4462,22 +4425,24 @@ function updateClientStats(){
   },[]);
 
   t.textContent = liveClients.length;
-  // Active: strict check matching client.html
-  a.textContent = liveClients.filter(c=>c.status==='active').length;
-  // Inactive / Paused
-  if(cp) cp.textContent = liveClients.filter(c=>c.status!=='active').length;
-  // Ongoing = non-completed/on-hold projects + index recurring svcs + unmirrored tracker svcs
-  const ongoingProj   = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
+  a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
+
+  // Completed projects (service mirrors count separately via status)
+  if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
+
+  // Ongoing = all non-completed, non-on-hold projects + index recurring svcs + unmirrored tracker svcs
+  const ongoingProj = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
   const ongoingIdxSvc = idxRecSvcs.filter(s=>s.active!==false).length;
   const ongoingUnmir  = unmirroredSvcs.filter(s=>s.status!=='on-hold'&&s.status!=='completed').length;
   if(op) op.textContent = ongoingProj + ongoingIdxSvc + ongoingUnmir;
-  // Services Due Soon: any service due within 7 days
-  let due=0;
-  liveClients.forEach(c=>{
-    (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s) due++; });
-    (c.recurringServices||[]).forEach(s=>{ if(s.nextDueDate&&s.nextDueDate<=in7s) due++; });
-  });
-  if(od){ od.textContent = due; od.style.color = due>0?'var(--orange)':'var(--green)'; }
+
+  // Overdue = projects past due + index recurring svcs past due + unmirrored svcs past due
+  const overdueProj    = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr).length;
+  const overdueIdxSvc  = idxRecSvcs.filter(s=>s.nextDueDate&&s.nextDueDate<todayStr).length;
+  const overdueUnmir   = unmirroredSvcs.filter(s=>s.due&&s.due<todayStr&&s.status!=='completed').length;
+  const overdue = overdueProj + overdueIdxSvc + overdueUnmir;
+  if(od){ od.textContent = overdue; od.style.color = overdue>0?'var(--red)':'var(--text-light)'; }
+
   // ── Client notification badge in nav ──
   try{
     const clientNotifs = JSON.parse(localStorage.getItem('wl_client_notifications')||'[]');
@@ -5580,9 +5545,6 @@ function updateFeedStats(events){
   document.getElementById('feed-stat-total').textContent = events.length;
   document.getElementById('feed-stat-eod').textContent = events.filter(e=>e.type==='eod' && e.date===todayStr).length;
   document.getElementById('feed-stat-blockers').textContent = events.filter(e=>e.type==='blocker').length;
-  const pendTO = (dbGet('wl_timeoff_requests')||[]).filter(r=>r.status==='pending').length;
-  const toEl = document.getElementById('feed-stat-timeoff');
-  if(toEl){ toEl.textContent=pendTO; toEl.style.color=pendTO>0?'#b45309':'var(--text-light)'; }
   document.getElementById('feed-stat-logins').textContent = events.filter(e=>e.type==='login' && e.date===todayStr).length;
   const activeUsers = [...new Set(events.filter(e=>e.date===todayStr).map(e=>e.user))].length;
   document.getElementById('feed-stat-active').textContent = activeUsers;
@@ -5613,9 +5575,9 @@ function renderFeedList(events){
     list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet.</div>';
     return;
   }
-  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢',timeoff:'🏖️'};
-  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod',client:'feed-icon-eod',timeoff:'feed-icon-blocker'};
-  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)',timeoff:'background:rgba(245,158,11,.12);color:#b45309'};
+  const icons = {eod:'📋',blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢'};
+  const iconClass = {eod:'feed-icon-eod',blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-eod',client:'feed-icon-eod'};
+  const badgeStyle = {eod:'background:#e8f8f0;color:var(--green)',blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)'};
   list.innerHTML = events.map(e=>{
     const t = new Date(e.time);
     const timeStr = t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' · ' + e.date;
@@ -6128,7 +6090,8 @@ const _DEFAULT_BIN    = '69f267fa36566621a8086c5d';
 const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 
 function getCloudConfig(){
-  return { apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN };
+  const saved = dbGet(CLOUD_CFG_KEY) || {};
+  return { apiKey: saved.apiKey || _DEFAULT_API_KEY, binId: saved.binId || _DEFAULT_BIN };
 }
 function cloudIsConfigured(){
   const c = getCloudConfig();
@@ -6262,19 +6225,8 @@ async function cloudPushAll(silent=false){
     localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
     const mergedClients = Object.values(clientById);
 
-    // Merge users: union of cloud + local by email — NEVER push empty if cloud has users
-    const localUsers = dbGet(DB_KEYS.users)||[];
-    const mergedUsers = [...cloudUsersFiltered];
-    localUsers.forEach(lu=>{
-      const idx = mergedUsers.findIndex(cu=>(cu.email||'').toLowerCase()===(lu.email||'').toLowerCase());
-      if(idx>-1) mergedUsers[idx]=lu; // local wins (preserves password resets)
-      else mergedUsers.push(lu);      // new user only in local
-    });
-    // After merge, keep local in sync so subsequent pushes stay consistent
-    if(mergedUsers.length) dbSet(DB_KEYS.users, mergedUsers);
-
     const payload = {
-      users:        mergedUsers,   // safe merge — cloud users never wiped by empty local
+      users:        (dbGet(DB_KEYS.users)||[]).length ? dbGet(DB_KEYS.users) : (cloudRecord.users||[]),
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
@@ -6345,17 +6297,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     dbSet(DB_KEYS.deletedEodIds,  mergedDelEods);
     dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
 
-    // Users: merge cloud + local by email — cloud wins for updates, never wipe local if cloud is empty
-    if(Array.isArray(r.users) && r.users.length){
-      const cloudFiltered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
-      const localUsers    = dbGet(DB_KEYS.users)||[];
-      const byEmail = {};
-      cloudFiltered.forEach(u=>{ if(u.email) byEmail[u.email.toLowerCase()]=u; });
-      localUsers.forEach(u=>{
-        const key=(u.email||'').toLowerCase();
-        if(key && !byEmail[key]) byEmail[key]=u; // keep local-only users
-      });
-      dbSet(DB_KEYS.users, Object.values(byEmail).filter(u=>!mergedDelUsers.includes(u.id)));
+    // Users: cloud wins, but filter out locally-deleted user IDs
+    if(r.users){
+      const filtered = r.users.filter(u=>!mergedDelUsers.includes(u.id));
+      dbSet(DB_KEYS.users, filtered);
     }
     if(r.admins)       dbSet(DB_KEYS.admins,   r.admins);
     // Restore client data from cloud (local edits already merged on push side)
@@ -6402,7 +6347,6 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminOverview === 'function') refreshAdminOverview();
     if(typeof refreshLiveFeed === 'function') refreshLiveFeed();
     if(typeof renderAdminTimeOff === 'function') renderAdminTimeOff();
-    if(typeof updateAdminAlertBanner === 'function') updateAdminAlertBanner();
     if(typeof renderSavedPayrolls === 'function') renderSavedPayrolls();
     if(typeof refreshArchive === 'function') refreshArchive();
     // Reload reports tab if currently visible
@@ -6420,51 +6364,6 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 // Backward-compat aliases
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
-
-// ── Recover users from backup (old) bin and merge into current bin ──
-async function recoverUsersFromBackup(){
-  const BACKUP_BIN = '69d0c6bfaaba882197c311e7';
-  const cfg = getCloudConfig();
-  setCloudStatus('Recovering from backup…','syncing');
-  try{
-    // 1. Fetch backup bin
-    const rb = await fetch(`https://api.jsonbin.io/v3/b/${BACKUP_BIN}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
-    if(!rb.ok){ showToast('⚠ Could not reach backup bin — status '+rb.status,'warn'); setCloudStatus('Recovery failed','error'); return; }
-    const bd = await rb.json();
-    const backupUsers = Array.isArray(bd?.record?.users) ? bd.record.users : [];
-    if(!backupUsers.length){ showToast('⚠ No users found in backup bin','warn'); setCloudStatus('Empty backup','warn'); return; }
-
-    // 2. Fetch current bin
-    let currentUsers = dbGet(DB_KEYS.users)||[];
-    try{
-      const rc = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
-      if(rc.ok){ const cd=await rc.json(); if(Array.isArray(cd?.record?.users)) currentUsers=cd.record.users; }
-    }catch(e){}
-
-    // 3. Merge: backup fills in users not present in current (by email)
-    const currentEmails = new Set(currentUsers.map(u=>(u.email||'').toLowerCase()));
-    const added = [];
-    backupUsers.forEach(u=>{
-      if(!(u.email||'').toLowerCase() || currentEmails.has((u.email||'').toLowerCase())) return;
-      currentUsers.push(u);
-      added.push(u.name||u.email);
-    });
-
-    // 4. Save merged list locally and push to current bin
-    dbSet(DB_KEYS.users, currentUsers);
-    const ok = await cloudPushAll(true);
-    renderUserTable();
-    if(ok){
-      showToast(`✅ Recovered ${added.length} user(s): ${added.join(', ')||'(all already present)'}`, 'success');
-      setCloudStatus('Recovery complete','ok');
-    } else {
-      showToast('Users restored locally but cloud push failed — try ↑ Push All Data','warn');
-    }
-  }catch(e){
-    showToast('Recovery error: '+e.message,'warn');
-    setCloudStatus('Recovery error','error');
-  }
-}
 
 // Auto-sync after every data write
 async function cloudAutoSync(){
@@ -6499,8 +6398,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   if(existing && existing.text && document.getElementById('announcementInput')){
     document.getElementById('announcementInput').value = existing.text;
   }
-  // Ensure localStorage always has the canonical bin (non-destructive write)
-  dbSet(CLOUD_CFG_KEY, {apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN});
+  // Pre-configure cloud credentials if not already set
+  // Always overwrite cloud config to ensure correct bin is used on every device
+  dbSet(CLOUD_CFG_KEY,{
+    apiKey:'$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
+    binId:'69f267fa36566621a8086c5d'
+  });
   // Update cloud sync status badge
   updateCloudStatusUI();
   // Auto-pull on load if cloud is configured (get latest from cloud)
@@ -6763,7 +6666,6 @@ function reviewTimeOff(id, decision){
   if(note) requests[idx].adminNote = note;
   dbSet('wl_timeoff_requests', requests);
   renderAdminTimeOff();
-  updateAdminAlertBanner();
   cloudAutoSync(true);
   showToast(`Time off request ${decision} ✓`);
   logActivity('admin','Admin',`Time off ${decision} for ${requests[idx].userName}`, requests[idx].startDate+' → '+requests[idx].endDate);
@@ -8188,36 +8090,6 @@ function updateAdminMsgBadge(){
   const unread     = all.filter(m=>m.from!==adminEmail && _getAdminThreadId(m).split('::').includes(adminEmail) && !(m.readBy||[]).includes(adminEmail)).length;
   const badge      = document.getElementById('admin-msg-badge');
   if(badge){ badge.textContent=unread; badge.style.display=unread?'':'none'; }
-}
-
-function updateAdminAlertBanner(){
-  // Pending time off
-  const pendingTO = (dbGet('wl_timeoff_requests')||[]).filter(r=>r.status==='pending').length;
-  const chipTO = document.getElementById('alert-chip-timeoff');
-  const nTO    = document.getElementById('alert-n-timeoff');
-  const toBadge= document.getElementById('admin-timeoff-badge');
-  if(chipTO){ nTO.textContent=pendingTO; chipTO.style.display=pendingTO?'':'none'; }
-  if(toBadge){ toBadge.textContent=pendingTO; toBadge.style.display=pendingTO?'inline-flex':'none'; }
-
-  // Open blockers
-  const openBl = (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.status==='open').length;
-  const chipBl = document.getElementById('alert-chip-blockers');
-  const nBl    = document.getElementById('alert-n-blockers');
-  if(chipBl){ nBl.textContent=openBl; chipBl.style.display=openBl?'':'none'; }
-
-  // Unread messages
-  const adminEmail = currentAdminInfo?.email||'ssamy@weblightmedia.com';
-  const unreadMsg = (dbGet(DB_KEYS.messages)||[]).filter(m=>
-    m.from!==adminEmail &&
-    _getAdminThreadId(m).split('::').includes(adminEmail) &&
-    !(m.readBy||[]).includes(adminEmail)
-  ).length;
-  const chipMsg = document.getElementById('alert-chip-messages');
-  const nMsg    = document.getElementById('alert-n-messages');
-  if(chipMsg){ nMsg.textContent=unreadMsg; chipMsg.style.display=unreadMsg?'':'none'; }
-
-  const strip = document.getElementById('admin-alert-strip');
-  if(strip) strip.style.display = (pendingTO||openBl||unreadMsg) ? 'flex' : 'none';
 }
 
 function openAdminNewMsgPicker(){

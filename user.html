@@ -1047,7 +1047,8 @@ const WORKSPACE_CODE_KEY = 'wl_workspace_code';
 const _DEFAULT_BIN = '69f267fa36566621a8086c5d'; // WLM JSONBin bin
 const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
 function getCloudConfig(){
-  return { apiKey: _DEFAULT_API_KEY, binId: _DEFAULT_BIN };
+  const stored = dbGet(CLOUD_CFG_KEY)||{};
+  return { apiKey: stored.apiKey||_DEFAULT_API_KEY, binId: stored.binId||_DEFAULT_BIN };
 }
 function getWorkspaceBinId(){
   // Use full cloud config binId if available, otherwise workspace code, otherwise default bin
@@ -1181,7 +1182,7 @@ async function doLogin(){
   // Restore button
   if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
 
-  const found = users.find(u=>(u.email||'').trim().toLowerCase()===email && u.password===pass);
+  const found = users.find(u=>u.email.toLowerCase()===email && u.password===pass);
   if(found){
     errEl.style.display='none';
     currentUser = found;
@@ -1198,13 +1199,7 @@ async function doLogin(){
   // If login failed and we had a workspace code entered, clear it so user can try again
   if(wcVal){ localStorage.removeItem(WORKSPACE_CODE_KEY); if(wcField) wcField.value=''; }
 
-  // Distinguish "email not found" vs "wrong password" for a clearer message
-  const emailExists = users.some(u=>(u.email||'').trim().toLowerCase()===email);
-  if(emailExists){
-    errEl.innerHTML = '❌ Wrong password. <span style="font-size:11px;">Ask your admin to reset it.</span>';
-  } else {
-    errEl.innerHTML = '❌ Email not found. <span style="font-size:11px;">Need access? Contact your admin.</span>';
-  }
+  errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
   errEl.style.display='block';
   checkWorkspaceSetup();
 }
@@ -1246,22 +1241,16 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  // Push updated password to cloud — read-modify-write so we only patch this user's password
+  // Push updated password to cloud so all devices see the updated password
   if(cloudIsConfigured() && btn){
     btn.textContent='Saving…'; btn.disabled=true;
     const cfg = getCloudConfig();
+    const admins = dbGet(DB_KEYS.admins)||[];
     try{
-      const r0 = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
-      const existing = r0.ok ? ((await r0.json())?.record||{}) : {};
-      // Merge: patch only the changed user by email, keep all other cloud users intact
-      const cloudUsers = Array.isArray(existing.users) ? existing.users : [];
-      const idx2 = cloudUsers.findIndex(u=>(u.email||'').toLowerCase()===(currentUser.email||'').toLowerCase());
-      if(idx2>-1){ cloudUsers[idx2]=allUsers[allUsers.findIndex(u=>u.id===currentUser.id||u.email===currentUser.email)]||cloudUsers[idx2]; }
-      else if(allUsers.length){ cloudUsers.push(...allUsers.filter(u=>!cloudUsers.some(c=>c.email===u.email))); }
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body: JSON.stringify({...existing, users: cloudUsers.length ? cloudUsers : allUsers})
+        body: JSON.stringify({users: allUsers, admins})
       });
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
@@ -2313,19 +2302,15 @@ async function changeUserPassword(){
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   showToast('Password updated ✓ — syncing…');
-  // Push only the changed user — read-modify-write to avoid wiping other cloud data
+  // Push to cloud (both users and admins)
   if(cloudIsConfigured()){
     const cfg=getCloudConfig();
+    const admins=dbGet(DB_KEYS.admins)||[];
     try{
-      const r0=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
-      const existing=r0.ok?((await r0.json())?.record||{}):{};
-      const cloudUsers=Array.isArray(existing.users)?[...existing.users]:[];
-      const idx2=cloudUsers.findIndex(u=>(u.email||'').toLowerCase()===(currentUser.email||'').toLowerCase());
-      if(idx2>-1) cloudUsers[idx2]={...cloudUsers[idx2],password:nw};
       await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
         method:'PUT',
         headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body:JSON.stringify({...existing, users:cloudUsers.length?cloudUsers:all})
+        body:JSON.stringify({users:all, admins})
       });
     }catch(e){}
   }
@@ -2411,10 +2396,6 @@ function submitTimeOffRequest(){
   const all = dbGet('wl_timeoff_requests')||[];
   all.unshift(request);
   dbSet('wl_timeoff_requests', all);
-
-  // Notify admin via live feed
-  logActivity('timeoff', userName, `Time off request: ${start} → ${end}`, `${days} day${days===1?'':'s'} · ${type}${reason?' · '+reason:''}`);
-  cloudPushData();
 
   // Clear form
   if(document.getElementById('to-start')) document.getElementById('to-start').value='';
@@ -2786,6 +2767,8 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
 })();
 
 document.addEventListener('DOMContentLoaded', ()=>{
+  // Always ensure correct bin is used — overwrite any stale cached config
+  dbSet(CLOUD_CFG_KEY,{apiKey:_DEFAULT_API_KEY, binId:_DEFAULT_BIN});
   setTimeout(renderUserCredVault, 1000);
   checkWorkspaceSetup();
 });
