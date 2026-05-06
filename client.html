@@ -855,17 +855,29 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <select class="form-select" id="svc-name" onchange="prefillServiceDefaults()"><option value="">— Select —</option></select>
       </div>
       <div class="form-group"><label class="form-label">Frequency</label>
-        <select class="form-select" id="svc-freq">
+        <select class="form-select" id="svc-freq" onchange="onSvcFreqChange()">
           <option value="monthly">Monthly</option>
           <option value="yearly">Yearly</option>
+          <option value="weekly">Weekly</option>
           <option value="one-time">One-Time</option>
         </select>
       </div>
-      <div class="form-group"><label class="form-label">Next Due Date</label><input class="form-input" type="date" id="svc-due"></div>
+      <div class="form-group">
+        <label class="form-label">Last Completed Date <span style="font-size:11px;color:var(--text-light);font-weight:400;">(sets next due automatically)</span></label>
+        <input class="form-input" type="date" id="svc-lastdone" onchange="onSvcLastDoneChange()" placeholder="Leave blank if not yet done">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Next Due Date</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input class="form-input" type="date" id="svc-due" style="flex:1;">
+          <button type="button" class="btn btn-outline btn-sm" onclick="autoCalcNextDue()" title="Recalculate from Last Done date" style="white-space:nowrap;font-size:12px;">↻ Auto</button>
+        </div>
+        <div id="svc-due-hint" style="font-size:11px;color:var(--text-light);margin-top:4px;"></div>
+      </div>
       <div class="form-group"><label class="form-label">Assigned Member</label>
         <select class="form-select" id="svc-assignee"><option value="">— Unassigned —</option></select>
       </div>
-      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
+      <div class="form-group"><label class="form-label">Platforms / Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('addServiceModal')">Cancel</button>
@@ -2581,6 +2593,37 @@ function saveProgress(){
 // ═══════════════════════════════════════════════════════
 //  CLIENT SERVICES (recurring)
 // ═══════════════════════════════════════════════════════
+
+// ── Auto-calculate helpers for service modal ──
+function _updateDueHint(dueVal){
+  const hint = _el('svc-due-hint');
+  if(!hint) return;
+  if(!dueVal){ hint.textContent=''; return; }
+  const days = Math.ceil((new Date(dueVal) - new Date(today())) / 86400000);
+  if(days < 0)  hint.textContent = `⚠️ Overdue by ${Math.abs(days)} day${Math.abs(days)!==1?'s':''}`;
+  else if(days===0) hint.textContent = '🔴 Due today';
+  else if(days<=7)  hint.textContent = `🟡 Due in ${days} day${days!==1?'s':''}`;
+  else              hint.textContent = `✅ Due in ${days} day${days!==1?'s':''}`;
+}
+function autoCalcNextDue(){
+  const lastDone = _el('svc-lastdone')?.value;
+  const freq     = _el('svc-freq')?.value;
+  if(!freq || freq==='one-time') return;
+  const base = lastDone || today();
+  const next = calcNextDue(freq, base);
+  _el('svc-due').value = next;
+  _updateDueHint(next);
+}
+function onSvcLastDoneChange(){
+  autoCalcNextDue();
+}
+function onSvcFreqChange(){
+  // Only recalc if lastDone is set; otherwise just update hint on existing due
+  const lastDone = _el('svc-lastdone')?.value;
+  if(lastDone) autoCalcNextDue();
+  else _updateDueHint(_el('svc-due')?.value);
+}
+
 function openAddServiceModal(clientId,entryId){
   const c=getClient(clientId); if(!c) return;
   _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||'';
@@ -2594,20 +2637,25 @@ function openAddServiceModal(clientId,entryId){
     const svc=(c.services||[]).find(s=>s.id===entryId);
     if(svc){
       _el('svc-name').value=svc.catalogId||'';
-      _el('svc-freq').value=svc.freq;
-      _el('svc-due').value=svc.due;
+      _el('svc-freq').value=svc.freq||'monthly';
+      _el('svc-lastdone').value=svc.lastDone||'';
+      _el('svc-due').value=svc.due||'';
       _el('svc-assignee').value=svc.assigneeId||'';
       _el('svc-notes').value=svc.notes||'';
+      _updateDueHint(svc.due||'');
     }
   } else {
     _el('svc-name').value='';
     _el('svc-freq').value='monthly';
+    _el('svc-lastdone').value='';
     _el('svc-due').value=calcNextDue('monthly',today());
     _el('svc-notes').value='';
+    _updateDueHint(_el('svc-due').value);
   }
   openModal('addServiceModal');
 }
 function editClientService(clientId,entryId){ openAddServiceModal(clientId,entryId); }
+
 function saveClientService(){
   const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value;
   const catalogId=_el('svc-name').value;
@@ -2621,24 +2669,34 @@ function saveClientService(){
   const assigneeId=_el('svc-assignee').value;
   const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
   const freq=_el('svc-freq').value;
-  const due=_el('svc-due').value;
-  const data={name:catEntry?.name||catalogId,catalogId,freq,due,assigneeId,assigneeName,notes:_el('svc-notes').value};
+  const lastDone=_el('svc-lastdone').value||'';
+  // If lastDone is set and no due date given, auto-calculate it
+  let due=_el('svc-due').value;
+  if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
+  const data={
+    name:catEntry?.name||catalogId, catalogId, freq, due, lastDone,
+    assigneeId, assigneeName, notes:_el('svc-notes').value
+  };
   if(entryId){
     const idx=c.services.findIndex(s=>s.id===entryId);
-    if(idx>=0) Object.assign(c.services[idx],data);
+    if(idx>=0){
+      Object.assign(c.services[idx], data);
+      // Keep mirrored project in sync immediately
+      const proj=(c.projects||[]).find(p=>p.serviceId===entryId);
+      if(proj){ proj.due=due||''; proj.lastDone=lastDone; }
+    }
   } else {
     c.services.push({id:'sv'+uid(),...data});
     if(assigneeId){
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`Service assigned: ${data.name}`,
-        body:`You're handling "${data.name}" (${freq}) for ${c.name}. Next due: ${due}.`,
+        body:`You're handling "${data.name}" (${freq}) for ${c.name}. Next due: ${due||'TBD'}.`,
         forUser:assigneeId, fromUser:SESSION.name });
     }
-    // Also notify the manager
     if(c.managerId && c.managerId!==assigneeId){
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`New service added for ${c.name}`,
-        body:`"${data.name}" (${freq}) assigned to ${assigneeName||'someone'}. Next due: ${due}.`,
+        body:`"${data.name}" (${freq}) assigned to ${assigneeName||'someone'}. Next due: ${due||'TBD'}.`,
         forUser:c.managerId, fromUser:SESSION.name });
     }
   }
