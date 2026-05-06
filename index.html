@@ -229,7 +229,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .color-swatch.sel{border-color:var(--text);}
 
 /* ── ADMIN PANEL ── */
-.admin-topbar{background:linear-gradient(135deg,var(--text-dark),var(--text));color:#fff;padding:16px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--gold);}
+.admin-topbar{background:#2A6FB7;color:#fff;padding:16px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid var(--gold);}.admin-topbar-brand{display:flex;align-items:center;gap:0;}.admin-logo-img{width:48px;height:48px;border-radius:8px;object-fit:cover;flex-shrink:0;display:block;}
 .admin-title{font-family:'Playfair Display',serif;font-size:20px;color:#fff;}
 .admin-sub{font-size:12px;color:rgba(255,255,255,.7);margin-top:1px;}
 .admin-nav{display:flex;gap:4px;background:rgba(255,255,255,.1);border-radius:10px;padding:4px;}
@@ -987,8 +987,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 <!-- ══════════════ ADMIN APP ══════════════ -->
 <div id="adminApp" class="app" style="flex-direction:column;">
   <div class="admin-topbar">
-    <div>
-      <div class="admin-title">WebLight Media — Operations Hub</div>
+    <div class="admin-topbar-brand">
+      <img src="https://www.genspark.ai/api/files/s/hBVG5ClI" alt="WebLight Media" class="admin-logo-img">
+      <div style="padding-left:14px;">
+        <div class="admin-title">WebLight Media — Operations Hub</div>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <div class="admin-nav">
@@ -2108,6 +2111,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <select class="form-select" id="newAdminLevel" onchange="_updateNewLevelBadge()">
           <option value="account_manager">Account Manager</option>
           <option value="production_manager">Production Manager</option>
+          <option value="creative_manager">Creative Manager — Clients &amp; Tracker only, no reports/payroll</option>
           <option value="admin" selected>Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -2190,6 +2194,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips')">
           <option value="account_manager">Account Manager</option>
           <option value="production_manager">Production Manager</option>
+          <option value="creative_manager">Creative Manager — Clients &amp; Tracker only, no reports/payroll</option>
           <option value="admin">Admin — Full access to users, settings &amp; reports</option>
           <option value="super">Super Admin — Full access including admin management</option>
           <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
@@ -2925,14 +2930,21 @@ const ADMIN_CREDENTIALS = [
 ];
 
 function doLogin(){
+  // This stub is intentionally minimal — the full async implementation is defined
+  // later as window.doLogin (which overrides this) and handles cloud admin lookup,
+  // dynamic admin accounts, and stored user accounts. DO NOT add catch-all fallbacks
+  // here or they will intercept logins before the cloud check runs.
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
   if(!email||!pass){errEl.style.display='block';return;}
-  const isAdmin = ADMIN_CREDENTIALS.some(c => c.email===email && c.password===pass);
-  if(isAdmin){errEl.style.display='none';currentRole='admin';showAdminApp();return;}
-  // Any other valid email → user view (in production this would check a DB)
-  if(email && pass){errEl.style.display='none';currentRole='user';showUserApp();return;}
+  // Only match the single hardcoded primary admin — everything else goes to window.doLogin
+  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  if(email==='ssamy@weblightmedia.com' && pass===_primaryPw){
+    errEl.style.display='none'; currentRole='admin'; showAdminApp(); return;
+  }
+  // Show error — the async window.doLogin override will handle all other cases
+  errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
   errEl.style.display='block';
 }
 
@@ -2940,7 +2952,15 @@ function showAdminApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('adminApp').classList.add('visible');
   document.getElementById('userApp').classList.remove('visible');
-  try{ localStorage.setItem('wl_admin_session',JSON.stringify({role:'admin',ts:Date.now()})); }catch(e){}
+  // IMPORTANT: do NOT overwrite wl_admin_session here — the caller (doLogin / restoreAdminSession)
+  // already wrote the correct session with level + adminId. Overwriting it here would wipe
+  // the level field and break role restrictions for creative_manager / production_manager etc.
+  // Only write a minimal fallback if there is no session stored at all.
+  try{
+    const existing = JSON.parse(localStorage.getItem('wl_admin_session')||'null');
+    if(!existing) localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', ts:Date.now()}));
+    else           localStorage.setItem('wl_admin_session', JSON.stringify({...existing, ts:Date.now()}));
+  }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
   setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
@@ -5466,9 +5486,10 @@ window.doLogin = async function(){
       if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
     }
     currentRole='admin';
-    currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy'};
+    currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy', title:'Operations Manager'};
     logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
     showAdminApp();
+    setTimeout(()=>_updateSidebarForAdmin(currentAdminInfo), 50);
     startLiveSync('owner');
     return;
   }
@@ -5480,16 +5501,30 @@ window.doLogin = async function(){
   if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
 
   // Dynamic admins (synced from cloud)
-  const storedAdmins = dbGet(DB_KEYS.admins)||[];
+  // If the pull failed or the local DB is still empty, do a direct fallback fetch
+  let storedAdmins = dbGet(DB_KEYS.admins)||[];
+  if(!storedAdmins.length && cloudIsConfigured()){
+    try{
+      const cfg = getCloudConfig();
+      const fb = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,
+        {headers:{'X-Master-Key':cfg.apiKey,'X-Bin-Meta':'false'}});
+      if(fb.ok){
+        const fd = await fb.json();
+        const cloudAdmins = fd?.admins || fd?.record?.admins || [];
+        if(cloudAdmins.length){ dbSet(DB_KEYS.admins, cloudAdmins); storedAdmins = cloudAdmins; }
+      }
+    }catch(e){}
+  }
   const dynamicAdmin = storedAdmins.find(a => a.email.toLowerCase()===email && a.password===pass);
   if(dynamicAdmin){
     errEl.style.display='none';
     currentRole='admin';
-    currentAdminInfo = {email: dynamicAdmin.email, name: dynamicAdmin.name||'Admin'};
+    currentAdminInfo = {email: dynamicAdmin.email, name: dynamicAdmin.name||'Admin', title: dynamicAdmin.title||''};
     logActivity('login',`Admin (${dynamicAdmin.name||'Admin'})`,'Admin signed in','admin panel');
     // Store level so session restore can apply restrictions
     try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:dynamicAdmin.level||'admin', adminId:dynamicAdmin.id, ts:Date.now()})); }catch(e){}
     showAdminApp();
+    setTimeout(()=>_updateSidebarForAdmin(dynamicAdmin), 50);
     setTimeout(()=>applyAdminRoleRestrictions(dynamicAdmin.level||'admin', dynamicAdmin), 100);
     startLiveSync(dynamicAdmin.level||'admin');
     return;
@@ -5509,11 +5544,48 @@ window.doLogin = async function(){
   errEl.style.display='block';
 };
 
+// ── Helper: get the real logged-in user's name (never reads the static DOM placeholder) ──
+function _getCurrentUserName(){
+  if(currentAdminInfo && currentAdminInfo.name && currentAdminInfo.name !== 'Jamie Soto') return currentAdminInfo.name;
+  if(currentUserData && currentUserData.name) return currentUserData.name;
+  // Last resort: read from session storage
+  try{
+    const as = JSON.parse(localStorage.getItem('wl_admin_session')||'null');
+    if(as && as.adminId){
+      const admins = JSON.parse(localStorage.getItem('wl_admins_db')||'[]');
+      const a = admins.find(x=>x.id===as.adminId);
+      if(a && a.name) return a.name;
+    }
+    const us = JSON.parse(localStorage.getItem('wl_user_session')||'null');
+    if(us && us.name) return us.name;
+  }catch(e){}
+  return 'Unknown';
+}
+
+// ── Helper: update sidebar name/avatar/role with real admin data ──
+function _updateSidebarForAdmin(adminObj){
+  if(!adminObj) return;
+  const nameEl   = document.getElementById('sidebarName');
+  const avatarEl = document.getElementById('sidebarAvatar');
+  const roleEl   = document.getElementById('sidebarRole');
+  const pulseNameEl = document.getElementById('pulseName');
+  const profileNameEl = document.getElementById('profileName');
+  const profileTitleEl = document.getElementById('profileTitle');
+  const parts    = (adminObj.name||'').trim().split(/\s+/);
+  const initials = parts.length>=2 ? (parts[0][0]+parts[parts.length-1][0]).toUpperCase() : (adminObj.name||'?').slice(0,2).toUpperCase();
+  if(nameEl)   nameEl.textContent   = adminObj.name || '';
+  if(avatarEl) avatarEl.textContent = initials;
+  if(roleEl)   roleEl.textContent   = adminObj.title || adminObj.level || 'Admin';
+  if(pulseNameEl)   pulseNameEl.textContent   = adminObj.name || '';
+  if(profileNameEl) profileNameEl.value        = adminObj.name || '';
+  if(profileTitleEl) profileTitleEl.value      = adminObj.title || '';
+}
+
 // Patch showSection to log navigation
 const _origShowSection = window.showSection;
 window.showSection = function(id, el){
   _origShowSection(id, el);
-  const userName = document.getElementById('sidebarName')?.textContent || 'User';
+  const userName = _getCurrentUserName();
   logActivity('nav', userName, 'Navigated to ' + id, id);
 };
 
@@ -5525,7 +5597,7 @@ window.addBlocker = function(){
   const proj  = document.getElementById('blockerProject')?.value;
   const sev   = document.getElementById('blockerSeverity')?.value;
   if(!title){ showToast('Please enter a blocker title'); return; }
-  const userName = document.getElementById('sidebarName')?.textContent || 'User';
+  const userName = _getCurrentUserName();
   const blocker = {
     id: Date.now(),
     title, desc, proj, sev,
@@ -5544,8 +5616,8 @@ const _origEodStep = window.eodStep;
 window.eodStep = function(dir){
   if(dir===1 && eodCurrentStep===3){
     // Submitting EOD — capture form data
-    const userName = document.getElementById('sidebarName')?.textContent || 'User';
-    const userTitle = document.getElementById('profileTitle')?.value || document.getElementById('pulseRoleDisplay')?.textContent || '';
+    const userName = _getCurrentUserName();
+    const userTitle = (currentAdminInfo?.title) || (currentUserData?.title) || document.getElementById('profileTitle')?.value || document.getElementById('pulseRoleDisplay')?.textContent || '';
     const tasks   = document.querySelector('#eod-step1 textarea')?.value || '';
     const projects= document.querySelector('#eod-step1 input[placeholder*="Client"]')?.value || '';
     const hours   = document.querySelector('#eod-step1 input[type="number"]')?.value || '';
@@ -6459,7 +6531,7 @@ async function cloudAutoSync(){
 let _liveSyncInterval = null;
 function startLiveSync(level){
   if(_liveSyncInterval) clearInterval(_liveSyncInterval);
-  const syncRoles = ['admin','super','owner','account_manager','production_manager'];
+  const syncRoles = ['admin','super','owner','account_manager','production_manager','creative_manager'];
   if(!syncRoles.includes(level)) return;
   _liveSyncInterval = setInterval(async ()=>{
     if(!cloudIsConfigured()) return;
@@ -7554,12 +7626,15 @@ const ADMIN_COLORS = [
 const ADMIN_LEVELS = [
   { value:'account_manager',    label:'Account Manager',    desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#0891b2' },
   { value:'production_manager', label:'Production Manager', desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#059669' },
+  { value:'creative_manager',   label:'Creative Manager',   desc:'Clients & Tracker only — can edit services/projects & dates — no reports, payroll or settings', color:'#e07b39' },
   { value:'admin',              label:'Admin',              desc:'Full access to users, settings & reports',        color:'#2D6BB6' },
   { value:'super',              label:'Super Admin',        desc:'Full access including admin management',          color:'#9333ea' },
   { value:'owner',              label:'Owner / Partner',    desc:'Unrestricted — same as primary account',         color:'#e05555' },
 ];
 
 const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
+// creative_manager is its own category — clients-only with full tracker edit rights
+const CREATIVE_MANAGER_ROLE  = 'creative_manager';
 let _adminLevel = null;
 let _adminAssignedUsers = []; // user names/ids this admin can see
 
@@ -7567,6 +7642,33 @@ function applyAdminRoleRestrictions(level, adminObj){
   _adminLevel = level;
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
   updateRoadmapNavVisibility(level, adminObj);
+
+  // ── Creative Manager: Clients tab only (+ Messages). No Overview, Users, Reports,
+  //    Live Feed, Payroll, Business Setup. Full tracker edit rights in client.html. ──
+  if(level === CREATIVE_MANAGER_ROLE){
+    // Show tabs: clients, messages. Hide everything else.
+    const showOnly = ['clients'];
+    document.querySelectorAll('.admin-nav-item').forEach(el=>{
+      const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
+      if(!m) return;
+      const tab = m[1];
+      if(!showOnly.includes(tab)) el.style.display='none';
+    });
+    // Also hide the Users dropdown wrapper and Reports dropdown wrapper
+    document.querySelectorAll('.admin-nav-dropdown').forEach(wrap=>{
+      const trigger = wrap.querySelector('.admin-drop-trigger');
+      if(!trigger) return;
+      const m2 = trigger.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
+      if(m2 && !showOnly.includes(m2[1])) wrap.style.display='none';
+    });
+    // Auto-navigate to Clients tab
+    setTimeout(()=>{
+      const clientsNavEl = document.querySelector('.admin-nav-item[onclick*="\'clients\'"]');
+      if(clientsNavEl && typeof switchAdminTab==='function') switchAdminTab(clientsNavEl,'clients');
+    }, 80);
+    return;
+  }
+
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs
   const hideTabs = ['payroll','timeoff','archive','bizSettings','livefeed'];
@@ -7676,12 +7778,15 @@ window._renderAdminTableImpl = function(){
   admins.forEach((a, i)=>{
     const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
     const info  = _getLevelInfo(a.level);
+    // Auto-compute initials from name if not stored — takes first letter of each word (max 2)
+    const initials = a.initials ||
+      (a.name||'').split(' ').filter(Boolean).map(w=>w[0]).join('').substring(0,2).toUpperCase() || '?';
     const tr = document.createElement('tr');
     tr.dataset.adminId = a.id;
     tr.innerHTML = `
       <td style="padding:14px 18px;">
         <div style="display:flex;align-items:center;gap:10px;">
-          <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(a.initials||'?')}</div>
+          <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(initials)}</div>
           <div>
             <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(a.name)}</div>
             <div class="td-sub">${escHtml(a.email)}</div>
@@ -8017,11 +8122,21 @@ window.openAddAdminModal = function(){
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
         document.getElementById('userApp').classList.remove('visible');
-        // Re-apply role restrictions for non-primary admins
+        // Re-apply role restrictions for non-primary admins + update sidebar
         if(s.level && s.adminId && typeof applyAdminRoleRestrictions==='function'){
           const admins = JSON.parse(localStorage.getItem('wl_admins_db')||'[]');
           const adminObj = admins.find(a=>a.id===s.adminId);
-          if(adminObj) setTimeout(()=>applyAdminRoleRestrictions(s.level, adminObj), 150);
+          if(adminObj){
+            // Restore currentAdminInfo so _getCurrentUserName() works
+            currentAdminInfo = {email: adminObj.email, name: adminObj.name||'Admin', title: adminObj.title||''};
+            setTimeout(()=>{ if(typeof _updateSidebarForAdmin==='function') _updateSidebarForAdmin(adminObj); }, 80);
+            setTimeout(()=>applyAdminRoleRestrictions(s.level, adminObj), 150);
+          }
+        } else if(!s.adminId){
+          // Primary admin (Sarah Samy) — no adminId stored
+          currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy', title:'Operations Manager'};
+          if(typeof _updateSidebarForAdmin==='function')
+            setTimeout(()=>_updateSidebarForAdmin({name:'Sarah Samy', title:'Operations Manager'}), 80);
         }
         // Start live sync
         if(typeof startLiveSync==='function') setTimeout(()=>startLiveSync(s.level||'owner'), 200);
