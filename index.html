@@ -6667,13 +6667,15 @@ function refreshAdminOverview(){
     if(!activeBlockers.length){
       blockerList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active blockers.</div>';
     } else {
-      blockerList.innerHTML = activeBlockers.slice(0,5).map(b=>{
-        const sev=b.sev||'medium';
-        const sevColor = sev==='critical'?'var(--red)':sev==='high'?'var(--orange)':'var(--accent)';
+      blockerList.innerHTML = activeBlockers.slice(0,10).map(b=>{
+        const sev = b.sev||'Warning (3–7 days)';
+        const isEsc = /critical|escalat/i.test(sev);
+        const isCrit = /critical/i.test(sev);
+        const sevColor = isCrit?'var(--red)':isEsc?'var(--orange)':'var(--accent)';
         return `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${b.title||'Untitled'}</div>
-            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sevColor}22;color:${sevColor};">${sev.toUpperCase()}</span>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sevColor}22;color:${sevColor};white-space:nowrap;">${sev.toUpperCase()}</span>
           </div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${b.user||'Unknown'} · ${b.date?new Date(b.date).toLocaleDateString():'—'}</div>
         </div>`;

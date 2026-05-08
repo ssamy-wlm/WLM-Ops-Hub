@@ -1109,12 +1109,12 @@ async function cloudPushData(){
     const cloudRecord = d?.record || {};
     const payload = {
       ...cloudRecord,
-      users:    _mergeCloudArr(cloudRecord.users,    dbGet(DB_KEYS.users)||[]),
-      eods:     _mergeCloudArr(cloudRecord.eods,     dbGet(DB_KEYS.eods)||[], 300),
-      blockers: _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
-      goals:    _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
-      feed:     _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
-      messages: _mergeCloudArr(cloudRecord.messages, dbGet(DB_KEYS.messages)||[], 500),
+      // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
+      eods:     _mergeCloudArr(dbGet(DB_KEYS.eods)||[],     cloudRecord.eods,     300),
+      blockers: _mergeCloudArr(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
+      goals:    _mergeCloudArr(dbGet(DB_KEYS.goals)||[],    cloudRecord.goals),
+      feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
+      messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
     };
     await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
       method:'PUT',
