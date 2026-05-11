@@ -1047,7 +1047,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="card-body" id="ov-eod-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No submissions yet this week.</div></div>
         </div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Active Blockers</div></div>
+          <div class="card-header"><div class="card-title">Blockers</div></div>
           <div class="card-body" id="ov-blocker-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active blockers.</div></div>
         </div>
       </div>
@@ -6661,13 +6661,15 @@ function refreshAdminOverview(){
     }
   }
 
-  // Blocker list
+  // Blocker list — active on top, resolved below
+  const resolvedBlockers = blockers.filter(b=>b.status==='resolved').sort((a,b)=>(b.resolvedAt||b.date||'')>(a.resolvedAt||a.date||'')?1:-1);
   const blockerList = document.getElementById('ov-blocker-list');
   if(blockerList){
+    let html = '';
     if(!activeBlockers.length){
-      blockerList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active blockers.</div>';
+      html += '<div style="font-size:13px;color:var(--text-light);padding:8px 0 4px;">No active blockers.</div>';
     } else {
-      blockerList.innerHTML = activeBlockers.slice(0,10).map(b=>{
+      html += activeBlockers.map(b=>{
         const sev = b.sev||'Warning (3–7 days)';
         const isEsc = /critical|escalat/i.test(sev);
         const isCrit = /critical/i.test(sev);
@@ -6675,13 +6677,45 @@ function refreshAdminOverview(){
         return `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${b.title||'Untitled'}</div>
-            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sevColor}22;color:${sevColor};white-space:nowrap;">${sev.toUpperCase()}</span>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${sevColor}22;color:${sevColor};white-space:nowrap;">${sev.toUpperCase()}</span>
+              <button onclick="adminResolveBlocker(${b.id})" style="font-size:10px;padding:2px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer;color:var(--text-mid);white-space:nowrap;">✓ Resolve</button>
+            </div>
           </div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${b.user||'Unknown'} · ${b.date?new Date(b.date).toLocaleDateString():'—'}</div>
         </div>`;
       }).join('');
     }
+    if(resolvedBlockers.length){
+      html += `<div style="font-size:10px;font-weight:700;color:var(--text-light);letter-spacing:.08em;text-transform:uppercase;padding:14px 0 6px;border-top:1px solid var(--border);margin-top:4px;">Resolved (${resolvedBlockers.length})</div>`;
+      html += resolvedBlockers.slice(0,10).map(b=>{
+        const resolvedDate = b.resolvedAt ? new Date(b.resolvedAt).toLocaleDateString() : '—';
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);opacity:.7;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <div style="font-size:12px;font-weight:600;color:var(--text-mid);text-decoration:line-through;">${b.title||'Untitled'}</div>
+            <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(46,158,110,.12);color:#2e9e6e;white-space:nowrap;">✓ RESOLVED</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${b.user||'Unknown'} · Resolved ${resolvedDate}${b.resolvedNote?` — ${b.resolvedNote}`:''}</div>
+        </div>`;
+      }).join('');
+    }
+    blockerList.innerHTML = html;
   }
+}
+
+// Admin can mark any blocker resolved directly from the overview panel
+function adminResolveBlocker(id){
+  const all = dbGet(DB_KEYS.blockers)||[];
+  const idx = all.findIndex(b=>b.id===id||b.id===String(id));
+  if(idx===-1) return;
+  all[idx].status = 'resolved';
+  all[idx].resolvedAt = new Date().toISOString().slice(0,10);
+  all[idx].resolvedNote = all[idx].resolvedNote || 'Marked resolved by admin';
+  dbSet(DB_KEYS.blockers, all);
+  // Push to cloud so users see it too
+  cloudPushAll(true);
+  refreshAdminOverview();
+  showToast('Blocker marked resolved ✓');
 }
 
 // Auto-refresh overview when tab opens (pull cloud first so data is fresh)
