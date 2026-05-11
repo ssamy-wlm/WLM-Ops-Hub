@@ -1897,6 +1897,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <button class="rm-filter-btn" data-filter="sarah" onclick="rmSetFilter('sarah')">Sarah</button>
                 <button class="rm-filter-btn" data-filter="david" onclick="rmSetFilter('david')">David</button>
                 <button class="rm-filter-btn" data-filter="both"  onclick="rmSetFilter('both')">Both</button>
+                <button class="rm-filter-btn" data-filter="team"  onclick="rmSetFilter('team')">Team</button>
               </div>
               <button class="btn btn-outline btn-sm" onclick="rmToggleAddForm()" style="font-size:12px;white-space:nowrap;">+ Add Task</button>
             </div>
@@ -1920,11 +1921,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 </div>
                 <div>
                   <label class="form-label" style="font-size:11px;">Owner</label>
-                  <select id="rm-add-owner" class="form-select" style="font-size:12px;">
+                  <select id="rm-add-owner" class="form-select" style="font-size:12px;" onchange="document.getElementById('rm-add-owner-custom').style.display=this.value==='_other'?'block':'none'">
                     <option value="sarah">Sarah</option>
                     <option value="david">David</option>
                     <option value="both" selected>Both</option>
+                    <option value="_other">Other team member…</option>
                   </select>
+                  <input id="rm-add-owner-custom" type="text" placeholder="First name" class="form-select" style="font-size:12px;margin-top:4px;display:none;" />
                 </div>
                 <div>
                   <label class="form-label" style="font-size:11px;">Category</label>
@@ -5355,7 +5358,7 @@ setInterval(updateClientStats, 30000);
 .rm-due.today{background:rgba(224,85,85,.15);color:#e05555;}
 .rm-due.overdue{background:#e05555;color:#fff;}
 .rm-cat{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(45,107,182,.1);color:var(--text);font-weight:600;flex-shrink:0;}
-.rm-badge{font-size:10px;font-weight:700;padding:2px 9px;border-radius:12px;flex-shrink:0;}
+.rm-badge{font-size:10px;font-weight:700;padding:2px 9px;border-radius:12px;flex-shrink:0;background:rgba(220,120,0,.1);color:#b45309;}
 .rm-badge.sarah{background:rgba(37,99,168,.12);color:var(--text);}
 .rm-badge.david{background:rgba(46,158,110,.12);color:var(--green);}
 .rm-badge.both{background:rgba(147,51,234,.1);color:#9333ea;}
@@ -8593,7 +8596,10 @@ function renderRoadmap(){
   const all      = dbGet(DB_KEYS.roadmapTasks)||[];
   const active   = all.filter(t=>!t.archived);
   const archived = all.filter(t=>t.archived);
-  const filtered = _rmFilter==='all' ? active : active.filter(t=>t.owner===_rmFilter);
+  const _coreOwners = ['sarah','david','both'];
+  const filtered = _rmFilter==='all'  ? active
+                 : _rmFilter==='team' ? active.filter(t=>!_coreOwners.includes(t.owner))
+                 : active.filter(t=>t.owner===_rmFilter);
 
   const countEl = document.getElementById('rm-task-count');
   if(countEl) countEl.textContent = `${active.length} open task${active.length!==1?'s':''}`;
@@ -8614,8 +8620,10 @@ function renderRoadmap(){
   _rmRenderArchive(archived);
 }
 
+function _rmOwnerLabel(owner){ return owner==='both'?'Both':(owner||'').charAt(0).toUpperCase()+(owner||'').slice(1); }
+
 function _rmRenderCard(t){
-  const ownerLabel = t.owner==='sarah'?'Sarah':t.owner==='david'?'David':'Both';
+  const ownerLabel = _rmOwnerLabel(t.owner);
   const safeId     = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
   const catLabel   = RM_CATEGORIES[t.category]||'';
   const isNew      = _rmIsNew(t);
@@ -8645,7 +8653,7 @@ function _rmRenderArchive(archived){
   const sorted=[...archived].sort((a,b)=>new Date(b.archived_at||0)-new Date(a.archived_at||0));
   body.innerHTML=sorted.map(t=>{
     const safeId    = escHtmlAdmin(String(t.id)).replace(/'/g,'&#39;');
-    const ownerLabel= t.owner==='sarah'?'Sarah':t.owner==='david'?'David':'Both';
+    const ownerLabel= _rmOwnerLabel(t.owner);
     const archivedOn= t.archived_at
       ? new Date(t.archived_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
       : '';
@@ -8736,7 +8744,12 @@ function rmToggleAddForm(){
 function rmAddManualTask(){
   const text    =document.getElementById('rm-add-text').value.trim();
   const bucket  =document.getElementById('rm-add-bucket').value;
-  const owner   =document.getElementById('rm-add-owner').value;
+  let   owner   =document.getElementById('rm-add-owner').value;
+  if(owner==='_other'){
+    const custom=(document.getElementById('rm-add-owner-custom').value||'').trim().toLowerCase().replace(/\s+/g,'');
+    if(!custom){showToast('Enter team member name','error');return;}
+    owner=custom;
+  }
   const category=document.getElementById('rm-add-category').value;
   if(!text){showToast('Enter a task description','error');return;}
   const now=new Date().toISOString();
@@ -8754,6 +8767,9 @@ function rmAddManualTask(){
   dbSet(DB_KEYS.roadmapTasks,all);
   cloudAutoSync();
   document.getElementById('rm-add-text').value='';
+  document.getElementById('rm-add-owner').value='both';
+  document.getElementById('rm-add-owner-custom').style.display='none';
+  document.getElementById('rm-add-owner-custom').value='';
   document.getElementById('rm-add-form').style.display='none';
   renderRoadmap();
   showToast('Task added ✓');
