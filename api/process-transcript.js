@@ -4,6 +4,10 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 
 const SYSTEM_PROMPT = `You are a planning assistant for a small business called Weblight Media. Read this meeting transcript and extract every task, action item, goal, or idea mentioned.
 
+IMPORTANT — SKIP the following entirely (do not include them as tasks):
+- Personal notes, personal reminders, or personal to-dos (e.g. "I need to buy groceries", "remind me to call my dentist")
+- Off-topic side comments unrelated to Weblight Media business
+
 Sort each item into one of these buckets based on urgency:
 - "7": critical or overdue, must happen within the week
 - "30": urgent, needed within the month
@@ -11,10 +15,7 @@ Sort each item into one of these buckets based on urgency:
 - "90": longer runway, no immediate pressure
 - "dream": big picture, long-term vision, someday goals
 
-Identify who owns each task:
-- "sarah" if owned by Sarah
-- "david" if owned by David
-- "both" if it is a shared responsibility
+Identify who owns each task. Use the person's first name in lowercase (e.g. "sarah", "david", "emily", "jacob", "rania"). Use "both" only if Sarah AND David share responsibility. If someone else on the team owns it, use their first name in lowercase. Never leave owner blank.
 
 Assign one category to each task from this list:
 - "hr" — hiring, compensation, onboarding, team management
@@ -23,7 +24,6 @@ Assign one category to each task from this list:
 - "systems" — tools, software, automations, integrations
 - "production" — design, development, content creation, delivery
 - "clients" — client work, deliverables, communication
-- "personal" — personal goals, equipment, self-development
 - "operations" — internal processes, SOPs, meetings, scheduling
 - "marketing" — ads, social media, outreach, branding
 - "sales" — leads, pipelines, proposals, follow-ups
@@ -93,7 +93,8 @@ ${transcript.trim()}`;
     const valid = tasks.filter(t =>
       t && typeof t.text === 'string' && t.text.trim() &&
       ['7', '30', '60', '90', 'dream'].includes(t.bucket) &&
-      ['sarah', 'david', 'both'].includes(t.owner)
+      typeof t.owner === 'string' && /^[a-z]{2,30}$/.test(t.owner) &&
+      t.category !== 'personal'
     ).map(t => ({
       bucket:      t.bucket,
       text:        t.text.trim(),
