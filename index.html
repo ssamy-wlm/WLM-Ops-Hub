@@ -6271,6 +6271,19 @@ function _mergeCloudArr(cloudArr, localArr, limit=200){
                  .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
 }
 
+// Merge blockers with "resolved wins" — once any side marks a blocker resolved, it stays resolved
+function _mergeBlockers(primaryArr, secondaryArr){
+  const merged = _mergeCloudArr(primaryArr, secondaryArr);
+  const all = [...(Array.isArray(primaryArr)?primaryArr:[]), ...(Array.isArray(secondaryArr)?secondaryArr:[])];
+  const resolvedMap = {};
+  all.forEach(b=>{ if(b.status==='resolved') resolvedMap[String(b.id)]=b; });
+  merged.forEach(b=>{
+    const rv = resolvedMap[String(b.id)];
+    if(rv){ b.status='resolved'; b.resolvedAt=b.resolvedAt||rv.resolvedAt; b.resolvedNote=b.resolvedNote||rv.resolvedNote; }
+  });
+  return merged;
+}
+
 // Merge roadmap tasks by updated_at so the most recently changed version wins
 // This prevents live-sync from reverting archives, bucket moves, etc.
 function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
@@ -6343,7 +6356,7 @@ async function cloudPushAll(silent=false){
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
       eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
-      blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
+      blockers:     _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
       feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
       announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
@@ -6465,7 +6478,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       const filtered = r.eods.filter(e=>!mergedDelEods.includes(e.id));
       dbSet(DB_KEYS.eods, _mergeCloudArr(filtered, (dbGet(DB_KEYS.eods)||[]).filter(e=>!mergedDelEods.includes(e.id)), 300));
     }
-    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeCloudArr(r.blockers, dbGet(DB_KEYS.blockers)||[]));
+    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
     if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
     if(r.announcement) dbSet('wl_announcement', r.announcement);
