@@ -1102,8 +1102,8 @@ async function cloudFetchUsers(){
   if(!binId) return null;
   const cfg = getCloudConfig();
   try{
-    const headers = cfg.apiKey ? {'X-Master-Key': cfg.apiKey} : {};
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
+    const headers = cfg.apiKey ? {'x-bin-key': cfg.apiKey} : {};
+    const res = await fetch(`/api/jsonbin-proxy?binId=${binId}`, {headers});
     if(!res.ok) return null;
     const data = await res.json();
     const record = data?.record || {};
@@ -1128,8 +1128,8 @@ async function cloudPushData(){
   const binId = getWorkspaceBinId();
   if(!cfg.apiKey || !binId) return;
   try {
-    const headers = {'X-Master-Key': cfg.apiKey};
-    const r0 = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
+    const headers = {'x-bin-key': cfg.apiKey};
+    const r0 = await fetch(`/api/jsonbin-proxy?binId=${binId}`, {headers});
     if(!r0.ok) return;
     const d = await r0.json();
     const cloudRecord = d?.record || {};
@@ -1146,9 +1146,9 @@ async function cloudPushData(){
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
       resolvedBlockerIds: mergedResIds,
     };
-    await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+    await fetch(`/api/jsonbin-proxy?binId=${binId}`, {
       method:'PUT',
-      headers:{...headers,'Content-Type':'application/json','X-Bin-Versioning':'false'},
+      headers:{...headers,'Content-Type':'application/json'},
       body:JSON.stringify(payload)
     });
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
@@ -1280,9 +1280,9 @@ async function submitForcedPasswordChange(){
     const cfg = getCloudConfig();
     const admins = dbGet(DB_KEYS.admins)||[];
     try{
-      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+      await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`,{
         method:'PUT',
-        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        headers:{'Content-Type':'application/json','x-bin-key':cfg.apiKey},
         body: JSON.stringify({users: allUsers, admins})
       });
     }catch(e){ /* non-critical, local already saved */ }
@@ -2343,9 +2343,9 @@ async function changeUserPassword(){
     const cfg=getCloudConfig();
     const admins=dbGet(DB_KEYS.admins)||[];
     try{
-      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+      await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`,{
         method:'PUT',
-        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        headers:{'Content-Type':'application/json','x-bin-key':cfg.apiKey},
         body:JSON.stringify({users:all, admins})
       });
     }catch(e){}
