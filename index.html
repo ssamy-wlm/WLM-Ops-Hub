@@ -5509,8 +5509,8 @@ window.doLogin = async function(){
   if(!storedAdmins.length && cloudIsConfigured()){
     try{
       const cfg = getCloudConfig();
-      const fb = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,
-        {headers:{'X-Master-Key':cfg.apiKey,'X-Bin-Meta':'false'}});
+      const fb = await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`,
+        {headers:{'x-bin-key':cfg.apiKey,'x-bin-meta':'false'}});
       if(fb.ok){
         const fd = await fb.json();
         const cloudAdmins = fd?.admins || fd?.record?.admins || [];
@@ -6331,7 +6331,7 @@ async function cloudPushAll(silent=false){
     // Pull latest first so we don't overwrite data from other team members
     let cloudRecord = {};
     try {
-      const r0 = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {headers:{'X-Master-Key':cfg.apiKey}});
+      const r0 = await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`, {headers:{'x-bin-key':cfg.apiKey}});
       if(r0.ok){ const d=await r0.json(); cloudRecord=d?.record||{}; }
     } catch(e){}
 
@@ -6396,9 +6396,9 @@ async function cloudPushAll(silent=false){
       roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]),
     };
 
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
+    const res = await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`, {
       method: 'PUT',
-      headers: {'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+      headers: {'Content-Type':'application/json','x-bin-key':cfg.apiKey},
       body: JSON.stringify(payload)
     });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -6432,7 +6432,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
   }
   setCloudStatus('Pulling from cloud…','syncing');
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {headers:{'X-Master-Key':cfg.apiKey}});
+    const res = await fetch(`/api/jsonbin-proxy?binId=${cfg.binId}`, {headers:{'x-bin-key':cfg.apiKey}});
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const r = data?.record || {};
