@@ -1037,7 +1037,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="admin-stats">
         <div class="admin-stat"><div class="as-val" id="ov-total-users">0</div><div class="as-label">Total Users</div></div>
-        <div class="admin-stat"><div class="as-val" id="ov-eods-week">0</div><div class="as-label">EODs This Week</div></div>
+        <div class="admin-stat"><div class="as-val" id="ov-eods-week">0</div><div class="as-label">EODs Last 7 Days</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Total Reports</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-blockers">0</div><div class="as-label">Active Blockers</div></div>
       </div>
@@ -6033,8 +6033,10 @@ function loadAdminReportsTab(){
   _allEodReports = dbGet(DB_KEYS.eods) || [];
   // Stats
   const now = new Date();
-  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
-  const todayStr = now.toISOString().slice(0,10);
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay() + (now.getDay()===0?-6:1));
+  startOfWeek.setHours(0,0,0,0);
+  const todayStr = [now.getFullYear(), String(now.getMonth()+1).padStart(2,'0'), String(now.getDate()).padStart(2,'0')].join('-');
   const activeUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status!=='archived');
   const activeCount = activeUsers.length || 1;
   const thisWeek = _allEodReports.filter(e=>new Date(e.submittedAt||e.date+'T00:00:00')>=startOfWeek).length;
@@ -6621,18 +6623,13 @@ function refreshAdminOverview(){
   const eods = dbGet(DB_KEYS.eods)||[];
   const blockers = dbGet(DB_KEYS.blockers)||[];
 
-  // Week boundaries (Mon – Sun)
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay() + (now.getDay()===0?-6:1));
-  startOfWeek.setHours(0,0,0,0);
-  const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate()+6); endOfWeek.setHours(23,59,59,999);
-  const sowStr = startOfWeek.toISOString().slice(0,10);
-  const eowStr = endOfWeek.toISOString().slice(0,10);
-
-  // Include 1 day before week start to catch reports stored with UTC timezone offset
-  const sowBuf = new Date(startOfWeek); sowBuf.setDate(sowBuf.getDate()-1);
-  const sowBufStr = sowBuf.toISOString().slice(0,10);
-  const weekEods = eods.filter(e=>e.date>=sowBufStr && e.date<=eowStr);
+  // Rolling 7-day window so reports never disappear at the start of a new week
+  const window7 = new Date(now); window7.setDate(now.getDate()-6); window7.setHours(0,0,0,0);
+  // Also include 1 extra day before the window for UTC timezone offset safety
+  const windowBuf = new Date(window7); windowBuf.setDate(windowBuf.getDate()-1);
+  const windowBufStr = windowBuf.toISOString().slice(0,10);
+  const todayStr = [now.getFullYear(), String(now.getMonth()+1).padStart(2,'0'), String(now.getDate()).padStart(2,'0')].join('-');
+  const weekEods = eods.filter(e=>e.date>=windowBufStr && e.date<=todayStr);
   const activeBlockers = blockers.filter(b=>b.status==='open');
   const usersWhoSubmitted = new Set(weekEods.map(e=>e.user)).size;
   const onTimeRate = allUsers.length>0 ? Math.round((usersWhoSubmitted/allUsers.length)*100) : 0;
@@ -6646,13 +6643,13 @@ function refreshAdminOverview(){
   const weekLabel=document.getElementById('ov-eod-week-label');
   if(weekLabel){
     const opts={month:'short',day:'numeric'};
-    weekLabel.textContent='Week of '+startOfWeek.toLocaleDateString('en-US',opts)+' – '+endOfWeek.toLocaleDateString('en-US',opts);
+    weekLabel.textContent='Last 7 days: '+window7.toLocaleDateString('en-US',opts)+' – '+now.toLocaleDateString('en-US',opts);
   }
 
   // EOD list — show ALL active users, use all-time eods for last-submission info
   const eodList = document.getElementById('ov-eod-list');
   if(eodList){
-    // Build per-user maps: this week's reports and all-time last report
+    // Build per-user maps: this 7-day window reports and all-time last report
     const byUserWeek = {};
     weekEods.forEach(e=>{ if(!byUserWeek[e.user]) byUserWeek[e.user]=[]; byUserWeek[e.user].push(e); });
     const lastReportByUser = {};
