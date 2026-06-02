@@ -37,7 +37,7 @@ export default async function handler(req, res) {
 
 async function handleGitHubRead(res) {
   // Public repo — raw URL needs no authentication and has no CORS restriction.
-  const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/refs/heads/${GH_BRANCH}/${GH_FILE}`;
+  const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${GH_FILE}`;
   try {
     const r = await fetch(rawUrl);
     if (!r.ok) {
