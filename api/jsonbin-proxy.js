@@ -16,9 +16,15 @@ export default async function handler(req, res) {
   const apiKey = req.headers['x-bin-key'] || '';
   const isRead = req.method === 'GET';
 
-  // GitHub-backed storage: used when the API key is a GitHub PAT
-  if (apiKey.startsWith('github_pat_') || apiKey.startsWith('ghp_')) {
-    return handleGitHub(req, res, apiKey, isRead);
+  // GitHub-backed storage:
+  // Accept either the passphrase 'wlm-sync' (proxy uses env var token server-side)
+  // or a direct GitHub PAT passed by the client.
+  const ghToken = process.env.GITHUB_STORAGE_TOKEN || '';
+  const isGitHubKey = apiKey === 'wlm-sync' || apiKey.startsWith('github_pat_') || apiKey.startsWith('ghp_');
+  if (isGitHubKey && (ghToken || apiKey.startsWith('github_pat_') || apiKey.startsWith('ghp_'))) {
+    const tokenToUse = (apiKey === 'wlm-sync') ? ghToken : apiKey;
+    if (!tokenToUse) return res.status(500).json({ error: 'Storage token not configured on server' });
+    return handleGitHub(req, res, tokenToUse, isRead);
   }
 
   // JSONBin fallback
