@@ -16,15 +16,15 @@ export default async function handler(req, res) {
   const apiKey = req.headers['x-bin-key'] || '';
   const isRead = req.method === 'GET';
 
-  // GitHub-backed storage:
-  // Accept either the passphrase 'wlm-sync' (proxy uses env var token server-side)
-  // or a direct GitHub PAT passed by the client.
-  const ghToken = process.env.GITHUB_STORAGE_TOKEN || '';
+  // GitHub-backed storage — triggered by 'wlm-sync' passphrase or a direct GitHub PAT.
   const isGitHubKey = apiKey === 'wlm-sync' || apiKey.startsWith('github_pat_') || apiKey.startsWith('ghp_');
-  if (isGitHubKey && (ghToken || apiKey.startsWith('github_pat_') || apiKey.startsWith('ghp_'))) {
-    const tokenToUse = (apiKey === 'wlm-sync') ? ghToken : apiKey;
-    if (!tokenToUse) return res.status(500).json({ error: 'Storage token not configured on server' });
-    return handleGitHub(req, res, tokenToUse, isRead);
+  if (isGitHubKey) {
+    // Reads use raw.githubusercontent.com — no auth needed for public repo.
+    if (isRead) return handleGitHubRead(res);
+    // Writes need a real token: env var first, then direct PAT from client.
+    const ghToken = process.env.GITHUB_STORAGE_TOKEN || (apiKey !== 'wlm-sync' ? apiKey : '');
+    if (!ghToken) return res.status(500).json({ error: 'GITHUB_STORAGE_TOKEN env var not set on server' });
+    return handleGitHubWrite(req, res, ghToken);
   }
 
   // JSONBin fallback
@@ -35,52 +35,47 @@ export default async function handler(req, res) {
   return handleJsonBin(req, res, binId, apiKey, isRead);
 }
 
-async function handleGitHub(req, res, token, isRead) {
-  const fileUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}?ref=${GH_BRANCH}`;
+async function handleGitHubRead(res) {
+  // Public repo — raw URL needs no authentication and has no CORS restriction.
+  const rawUrl = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/refs/heads/${GH_BRANCH}/${GH_FILE}`;
+  try {
+    const r = await fetch(rawUrl);
+    if (!r.ok) {
+      if (r.status === 404) return res.status(200).json({ record: {} });
+      return res.status(r.status).json({ error: `Read failed: ${r.status}` });
+    }
+    const record = JSON.parse(await r.text());
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({ record });
+  } catch (e) {
+    return res.status(502).json({ error: 'Read error: ' + e.message });
+  }
+}
+
+async function handleGitHubWrite(req, res, token) {
+  const fileUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`;
   const ghHeaders = {
     'Authorization': `Bearer ${token}`,
     'Accept': 'application/vnd.github.v3+json',
     'User-Agent': 'wlm-ops-hub',
+    'Content-Type': 'application/json',
   };
-
   try {
-    if (isRead) {
-      const r = await fetch(fileUrl, { headers: ghHeaders });
-      if (!r.ok) {
-        if (r.status === 404) return res.status(200).json({ record: {} });
-        return res.status(r.status).json({ error: `GitHub read failed: ${r.status}` });
-      }
-      const data = await r.json();
-      const decoded = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
-      const record = JSON.parse(decoded);
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(200).json({ record });
-    }
-
-    // Write: read current SHA first, then update
-    const getR = await fetch(fileUrl, { headers: ghHeaders });
+    // Get current SHA to avoid conflicts
+    const getR = await fetch(`${fileUrl}?ref=${GH_BRANCH}`, { headers: ghHeaders });
     let sha = null;
-    if (getR.ok) {
-      const existing = await getR.json();
-      sha = existing.sha;
-    }
+    if (getR.ok) sha = (await getR.json()).sha;
 
     const encoded = Buffer.from(JSON.stringify(req.body || {})).toString('base64');
     const putBody = { message: 'sync', content: encoded, branch: GH_BRANCH };
     if (sha) putBody.sha = sha;
 
-    const putR = await fetch(
-      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`,
-      { method: 'PUT', headers: { ...ghHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(putBody) }
-    );
-    if (!putR.ok) {
-      const err = await putR.text();
-      return res.status(putR.status).json({ error: `GitHub write failed: ${err}` });
-    }
+    const putR = await fetch(fileUrl, { method: 'PUT', headers: ghHeaders, body: JSON.stringify(putBody) });
+    if (!putR.ok) return res.status(putR.status).json({ error: `Write failed: ${await putR.text()}` });
     res.setHeader('Content-Type', 'application/json');
     return res.status(200).json({ record: req.body });
   } catch (e) {
-    return res.status(502).json({ error: 'GitHub storage error: ' + e.message });
+    return res.status(502).json({ error: 'Write error: ' + e.message });
   }
 }
 
