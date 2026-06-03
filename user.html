@@ -1071,31 +1071,6 @@ function _mergeCloudArr(cloudArr, localArr, limit=200){
                  .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
 }
 
-// Merge blockers so resolved status always wins — prevents stale "open" on one device from un-resolving a blocker
-function _mergeBlockers(primaryArr, secondaryArr){
-  const merged=_mergeCloudArr(primaryArr, secondaryArr);
-  const all=[...(Array.isArray(primaryArr)?primaryArr:[]),...(Array.isArray(secondaryArr)?secondaryArr:[])];
-  const resolvedMap={};
-  all.forEach(b=>{ if(b.status==='resolved') resolvedMap[String(b.id)]=b; });
-  merged.forEach(b=>{ const rv=resolvedMap[String(b.id)]; if(rv){ b.status='resolved'; b.resolvedAt=b.resolvedAt||rv.resolvedAt; b.resolvedNote=b.resolvedNote||rv.resolvedNote; } });
-  return merged;
-}
-
-const _RES_IDS_KEY = 'wl_resolved_blocker_ids';
-function _getResolvedIds(){ try{ return JSON.parse(localStorage.getItem(_RES_IDS_KEY)||'[]'); }catch{ return []; } }
-function _unionResolvedIds(cloudIds){
-  const merged=[...(new Set([..._getResolvedIds(),...(Array.isArray(cloudIds)?cloudIds:[])]))];
-  localStorage.setItem(_RES_IDS_KEY, JSON.stringify(merged));
-  return merged;
-}
-function _applyResolvedIds(ids){
-  if(!ids||!ids.length) return;
-  const all=dbGet(DB_KEYS.blockers)||[];
-  let changed=false;
-  all.forEach(b=>{ if(ids.includes(String(b.id))&&b.status!=='resolved'){ b.status='resolved'; changed=true; } });
-  if(changed) dbSet(DB_KEYS.blockers, all);
-}
-
 // Fetch latest data from JSONBin — pulls users AND all shared data
 async function cloudFetchUsers(){
   const binId = getWorkspaceBinId();
@@ -1111,8 +1086,7 @@ async function cloudFetchUsers(){
     if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
     // Pull all shared data so users see latest announcement, coc, etc.
     if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
-    if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeBlockers(record.blockers, dbGet(DB_KEYS.blockers)||[]));
-    if(record.resolvedBlockerIds) _applyResolvedIds(_unionResolvedIds(record.resolvedBlockerIds));
+    if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeCloudArr(record.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
     if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
     if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
@@ -1133,18 +1107,14 @@ async function cloudPushData(){
     if(!r0.ok) return;
     const d = await r0.json();
     const cloudRecord = d?.record || {};
-    // Merge append-only resolved IDs before building payload so resolved state survives race conditions
-    const mergedResIds = _unionResolvedIds(cloudRecord.resolvedBlockerIds);
-    _applyResolvedIds(mergedResIds);
     const payload = {
       ...cloudRecord,
       // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
       eods:     _mergeCloudArr(dbGet(DB_KEYS.eods)||[],     cloudRecord.eods,     300),
-      blockers: _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
+      blockers: _mergeCloudArr(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
       goals:    _mergeCloudArr(dbGet(DB_KEYS.goals)||[],    cloudRecord.goals),
       feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
-      resolvedBlockerIds: mergedResIds,
     };
     await fetch(`/api/jsonbin-proxy?binId=${binId}`, {
       method:'PUT',
@@ -1168,8 +1138,6 @@ let currentUser = null;
 let calYear, calMonth, selectedCalDate;
 let eodCurrentStep = 1;
 const today = new Date();
-// Local-time YYYY-MM-DD — avoids UTC offset shifting the date to yesterday in UTC+ timezones
-function _localDateStr(d){ const t=d||new Date(); return [t.getFullYear(),String(t.getMonth()+1).padStart(2,'0'),String(t.getDate()).padStart(2,'0')].join('-'); }
 let myGoals = [];
 
 // ADMIN CREDENTIALS (to block admin from logging in here)
@@ -1618,10 +1586,8 @@ function loadOpsStats(){
 
   // This week count
   const now = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay() + (now.getDay()===0?-6:1));
-  startOfWeek.setHours(0,0,0,0);
-  const thisWeek = eods.filter(e=>new Date(e.submittedAt||e.date+'T12:00:00')>=startOfWeek).length;
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
+  const thisWeek = eods.filter(e=>new Date(e.submittedAt||e.date)>=startOfWeek).length;
   document.getElementById('weeklyReportCount').textContent = thisWeek;
 
   // Blockers
@@ -1629,7 +1595,7 @@ function loadOpsStats(){
   document.getElementById('blockerSubText').textContent = blockers.length ? blockers.length+' active' : 'None active';
 
   // Check today EOD
-  const todayStr = _localDateStr();
+  const todayStr = today.toISOString().slice(0,10);
   const todayEOD = eods.find(e=>e.date===todayStr);
   if(todayEOD){
     document.getElementById('eodStatusBadge').className='status-badge badge-working';
@@ -1710,7 +1676,6 @@ function confirmResolveBlocker(){
     all[idx].resolvedNote = note;
     all[idx].resolvedAt   = date || new Date().toISOString().slice(0,10);
     dbSet(DB_KEYS.blockers, all);
-    _unionResolvedIds([String(all[idx].id)]); // persist so resolved survives any future merge
     cloudPushData();
   }
   closeModal('resolveBlockerModal');

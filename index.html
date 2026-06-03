@@ -1037,7 +1037,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="admin-stats">
         <div class="admin-stat"><div class="as-val" id="ov-total-users">0</div><div class="as-label">Total Users</div></div>
-        <div class="admin-stat"><div class="as-val" id="ov-eods-week">0</div><div class="as-label">EODs Last 7 Days</div></div>
+        <div class="admin-stat"><div class="as-val" id="ov-eods-week">0</div><div class="as-label">EODs This Week</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Total Reports</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-blockers">0</div><div class="as-label">Active Blockers</div></div>
       </div>
@@ -6033,10 +6033,8 @@ function loadAdminReportsTab(){
   _allEodReports = dbGet(DB_KEYS.eods) || [];
   // Stats
   const now = new Date();
-  const startOfWeek = new Date(now);
-  startOfWeek.setDate(now.getDate() - now.getDay() + (now.getDay()===0?-6:1));
-  startOfWeek.setHours(0,0,0,0);
-  const todayStr = [now.getFullYear(), String(now.getMonth()+1).padStart(2,'0'), String(now.getDate()).padStart(2,'0')].join('-');
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
+  const todayStr = now.toISOString().slice(0,10);
   const activeUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status!=='archived');
   const activeCount = activeUsers.length || 1;
   const thisWeek = _allEodReports.filter(e=>new Date(e.submittedAt||e.date+'T00:00:00')>=startOfWeek).length;
@@ -6273,35 +6271,6 @@ function _mergeCloudArr(cloudArr, localArr, limit=200){
                  .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
 }
 
-// Merge blockers with "resolved wins" — once any side marks a blocker resolved, it stays resolved
-function _mergeBlockers(primaryArr, secondaryArr){
-  const merged = _mergeCloudArr(primaryArr, secondaryArr);
-  const all = [...(Array.isArray(primaryArr)?primaryArr:[]), ...(Array.isArray(secondaryArr)?secondaryArr:[])];
-  const resolvedMap = {};
-  all.forEach(b=>{ if(b.status==='resolved') resolvedMap[String(b.id)]=b; });
-  merged.forEach(b=>{
-    const rv = resolvedMap[String(b.id)];
-    if(rv){ b.status='resolved'; b.resolvedAt=b.resolvedAt||rv.resolvedAt; b.resolvedNote=b.resolvedNote||rv.resolvedNote; }
-  });
-  return merged;
-}
-
-// Append-only resolved-blocker IDs — once in this list the blocker stays resolved across all devices
-const _RES_IDS_KEY = 'wl_resolved_blocker_ids';
-function _getResolvedIds(){ try{ return JSON.parse(localStorage.getItem(_RES_IDS_KEY)||'[]'); }catch{ return []; } }
-function _unionResolvedIds(cloudIds){
-  const merged = [...new Set([..._getResolvedIds(), ...(Array.isArray(cloudIds)?cloudIds:[])])];
-  localStorage.setItem(_RES_IDS_KEY, JSON.stringify(merged));
-  return merged;
-}
-function _applyResolvedIds(ids){
-  if(!ids || !ids.length) return;
-  const all = dbGet(DB_KEYS.blockers)||[];
-  let changed = false;
-  all.forEach(b=>{ if(ids.includes(String(b.id)) && b.status!=='resolved'){ b.status='resolved'; changed=true; } });
-  if(changed) dbSet(DB_KEYS.blockers, all);
-}
-
 // Merge roadmap tasks by updated_at so the most recently changed version wins
 // This prevents live-sync from reverting archives, bucket moves, etc.
 function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
@@ -6368,18 +6337,13 @@ async function cloudPushAll(silent=false){
     localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
     const mergedClients = Object.values(clientById);
 
-    // Resolved blocker IDs — append-only union so resolved state survives any merge race
-    const mergedResolvedIds = _unionResolvedIds(cloudRecord.resolvedBlockerIds);
-    _applyResolvedIds(mergedResolvedIds); // force resolved status on local before merge
-
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
       eods:         _mergeCloudArr(cloudEodsFiltered, dbGet(DB_KEYS.eods)||[], 300),
-      blockers:     _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
-      resolvedBlockerIds: mergedResolvedIds,
+      blockers:     _mergeCloudArr(cloudRecord.blockers, dbGet(DB_KEYS.blockers)||[]),
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
       feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
       announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
@@ -6501,9 +6465,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       const filtered = r.eods.filter(e=>!mergedDelEods.includes(e.id));
       dbSet(DB_KEYS.eods, _mergeCloudArr(filtered, (dbGet(DB_KEYS.eods)||[]).filter(e=>!mergedDelEods.includes(e.id)), 300));
     }
-    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
-    // Apply append-only resolved IDs from cloud — ensures resolved state survives any merge race
-    if(r.resolvedBlockerIds) _applyResolvedIds(_unionResolvedIds(r.resolvedBlockerIds));
+    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeCloudArr(r.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
     if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
     if(r.announcement) dbSet('wl_announcement', r.announcement);
@@ -6623,13 +6585,18 @@ function refreshAdminOverview(){
   const eods = dbGet(DB_KEYS.eods)||[];
   const blockers = dbGet(DB_KEYS.blockers)||[];
 
-  // Rolling 7-day window so reports never disappear at the start of a new week
-  const window7 = new Date(now); window7.setDate(now.getDate()-6); window7.setHours(0,0,0,0);
-  // Also include 1 extra day before the window for UTC timezone offset safety
-  const windowBuf = new Date(window7); windowBuf.setDate(windowBuf.getDate()-1);
-  const windowBufStr = windowBuf.toISOString().slice(0,10);
-  const todayStr = [now.getFullYear(), String(now.getMonth()+1).padStart(2,'0'), String(now.getDate()).padStart(2,'0')].join('-');
-  const weekEods = eods.filter(e=>e.date>=windowBufStr && e.date<=todayStr);
+  // Week boundaries (Mon – Sun)
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay() + (now.getDay()===0?-6:1));
+  startOfWeek.setHours(0,0,0,0);
+  const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate()+6); endOfWeek.setHours(23,59,59,999);
+  const sowStr = startOfWeek.toISOString().slice(0,10);
+  const eowStr = endOfWeek.toISOString().slice(0,10);
+
+  // Include 1 day before week start to catch reports stored with UTC timezone offset
+  const sowBuf = new Date(startOfWeek); sowBuf.setDate(sowBuf.getDate()-1);
+  const sowBufStr = sowBuf.toISOString().slice(0,10);
+  const weekEods = eods.filter(e=>e.date>=sowBufStr && e.date<=eowStr);
   const activeBlockers = blockers.filter(b=>b.status==='open');
   const usersWhoSubmitted = new Set(weekEods.map(e=>e.user)).size;
   const onTimeRate = allUsers.length>0 ? Math.round((usersWhoSubmitted/allUsers.length)*100) : 0;
@@ -6643,13 +6610,13 @@ function refreshAdminOverview(){
   const weekLabel=document.getElementById('ov-eod-week-label');
   if(weekLabel){
     const opts={month:'short',day:'numeric'};
-    weekLabel.textContent='Last 7 days: '+window7.toLocaleDateString('en-US',opts)+' – '+now.toLocaleDateString('en-US',opts);
+    weekLabel.textContent='Week of '+startOfWeek.toLocaleDateString('en-US',opts)+' – '+endOfWeek.toLocaleDateString('en-US',opts);
   }
 
   // EOD list — show ALL active users, use all-time eods for last-submission info
   const eodList = document.getElementById('ov-eod-list');
   if(eodList){
-    // Build per-user maps: this 7-day window reports and all-time last report
+    // Build per-user maps: this week's reports and all-time last report
     const byUserWeek = {};
     weekEods.forEach(e=>{ if(!byUserWeek[e.user]) byUserWeek[e.user]=[]; byUserWeek[e.user].push(e); });
     const lastReportByUser = {};
@@ -6742,14 +6709,12 @@ function refreshAdminOverview(){
 // Admin can mark any blocker resolved directly from the overview panel
 function adminResolveBlocker(id){
   const all = dbGet(DB_KEYS.blockers)||[];
-  const idx = all.findIndex(b=>String(b.id)===String(id));
+  const idx = all.findIndex(b=>b.id===id||b.id===String(id));
   if(idx===-1) return;
   all[idx].status = 'resolved';
   all[idx].resolvedAt = new Date().toISOString().slice(0,10);
   all[idx].resolvedNote = all[idx].resolvedNote || 'Marked resolved by admin';
   dbSet(DB_KEYS.blockers, all);
-  // Add to append-only resolved IDs so it survives any merge race condition
-  _unionResolvedIds([String(all[idx].id)]);
   // Push to cloud so users see it too
   cloudPushAll(true);
   refreshAdminOverview();
