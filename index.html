@@ -5387,10 +5387,7 @@ setInterval(updateClientStats, 30000);
 
 const DB_KEYS = {
   feed:     'wl_live_feed',
-  eods:     'wl_eod_reports',
-  blockers: 'wl_blockers_db',
-  weeklySummaries: 'wl_weekly_summaries',
-  monthlySummaries: 'wl_monthly_summaries',
+  projectActivities: 'wl_project_activities',
   users:    'wl_users_db',
   coc:      'wl_coc_data',
   settings: 'wl_settings',
@@ -5399,7 +5396,6 @@ const DB_KEYS = {
   orgLinks: 'wl_org_links',
   admins:        'wl_admins_db',
   otPolicy:      'wl_ot_policy',
-  deletedEodIds: 'wl_deleted_eod_ids',
   deletedUserIds:'wl_deleted_user_ids',
   messages:      'wl_messages_db',
   roadmapTasks:  'wl_roadmap_tasks',
@@ -5408,6 +5404,40 @@ const DB_KEYS = {
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
 function dbSet(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); } catch(e){} }
 function dbPush(key, item){ const arr = dbGet(key)||[]; arr.unshift(item); dbSet(key, arr.slice(0,500)); }
+
+// ═══════════════════════════════════════════════════════════════
+// PROJECT ACTIVITY TRACKING SYSTEM
+// ═══════════════════════════════════════════════════════════════
+function logProjectActivity(type, description, projectName, details){
+  const userName = _getCurrentUserName ? _getCurrentUserName() : 'Unknown User';
+  const activity = {
+    id: Date.now(),
+    user: userName,
+    type: type, // 'progress', 'update', 'edit', 'addition', 'deletion', 'comment'
+    description: description,
+    project: projectName || 'General',
+    details: details || '',
+    timestamp: new Date().toISOString(),
+    date: new Date().toISOString().slice(0,10)
+  };
+  dbPush(DB_KEYS.projectActivities, activity);
+  logActivity('project', userName, description, projectName);
+  return activity;
+}
+
+function getRecentProjectActivities(limit=50){
+  return (dbGet(DB_KEYS.projectActivities)||[]).slice(0, limit);
+}
+
+function getUserProjectActivities(userName, limit=20){
+  const all = dbGet(DB_KEYS.projectActivities)||[];
+  return all.filter(a => a.user === userName).slice(0, limit);
+}
+
+function getProjectActivitiesForProject(projectName, limit=20){
+  const all = dbGet(DB_KEYS.projectActivities)||[];
+  return all.filter(a => a.project === projectName).slice(0, limit);
+}
 
 // ── Log an activity event to the live feed ──
 function logActivity(type, userName, description, detail=''){
