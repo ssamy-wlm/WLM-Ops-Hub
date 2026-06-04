@@ -375,7 +375,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <div class="nav-group-label">Execution</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni">🏠</span>Operations</div>
       <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni">📋</span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
-      <div class="nav-item" onclick="showSection('myreports',this)"><span class="ni">📊</span>My Reports</div>
       <div class="nav-item" onclick="showSection('blockers',this)"><span class="ni">🚧</span>Blockers</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni">📋</span>Downtime Tasks</div>
       <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni">🎨</span>Brand Rights</div>
@@ -413,7 +412,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       </div>
       <div class="topbar-right">
         <div class="notif-btn" id="notifBtn" onclick="checkAnnouncements();showSection('operations',document.querySelector('.nav-item[onclick*=operations]'))">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div></div>
-        <button class="btn btn-primary btn-sm" onclick="openEODModal()">+ Submit EOD</button>
       </div>
     </div>
     <div class="content">
@@ -444,12 +442,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           <div class="stat-card">
             <div class="stat-label">Active Shift</div>
             <div class="stat-value" id="shiftDate">—</div>
-            <div class="stat-sub">EOD due by 5:00 PM</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">This Week</div>
-            <div class="stat-value" id="weeklyReportCount">0</div>
-            <div class="stat-sub">Reports submitted</div>
+            <div class="stat-sub">Work day active</div>
           </div>
           <div class="stat-card">
             <div class="stat-label">Open Blockers</div>
@@ -472,15 +465,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
                 </div>
                 <span class="status-badge badge-working" style="margin-left:auto">● Working</span>
               </div>
-              <div class="pulse-msg" id="todayEODStatus">No EOD report submitted yet today</div>
-            </div>
-            <div class="eod-section">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-                <div style="font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);">Today's Activity</div>
-                <span class="status-badge badge-pending" id="eodStatusBadge">EOD Pending</span>
-              </div>
-              <div class="eod-empty" id="eodTodayCard">No EOD report submitted yet today</div>
-              <div style="text-align:center;margin-top:12px;"><button class="btn btn-primary" onclick="openEODModal()">+ Submit EOD Report</button></div>
             </div>
           </div>
           <div>
@@ -513,28 +497,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
         <div class="roadmap-section" id="roadmap-section"></div>
         <div id="user-cal-wrap" style="margin-top:18px;"></div>
-      </div>
-
-      <!-- ── MY REPORTS ── -->
-      <div id="sec-myreports" class="page-section">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-          <div>
-            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">My EOD Reports</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">All your submitted end-of-day reports</div>
-          </div>
-          <button class="btn btn-primary" onclick="openEODModal()">+ Submit EOD</button>
-        </div>
-        <!-- Quick stats -->
-        <div class="report-row" style="margin-bottom:20px;">
-          <div class="report-metric"><div class="rm-val" id="myTotalReports">0</div><div class="rm-label">Total Submitted</div></div>
-          <div class="report-metric"><div class="rm-val" id="myThisWeek">0</div><div class="rm-label">This Week</div></div>
-          <div class="report-metric"><div class="rm-val" id="myThisMonth">0</div><div class="rm-label">This Month</div></div>
-          <div class="report-metric"><div class="rm-val" id="myStreak">0</div><div class="rm-label">Day Streak</div></div>
-        </div>
-        <!-- Reports list -->
-        <div id="myReportsList">
-          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No reports submitted yet. Click <strong>+ Submit EOD</strong> to get started.</div>
-        </div>
       </div>
 
       <!-- ── BLOCKERS ── -->
@@ -856,71 +818,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
 <!-- ══════════════ MODALS ══════════════ -->
 
-<!-- EOD Modal -->
-<div id="eodModal" class="modal-overlay">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <div><div class="modal-title">Submit EOD Report</div><div class="modal-sub">End-of-day summary — due by 5:00 PM</div></div>
-      <button class="modal-close" onclick="closeModal('eodModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="cal-wrap">
-        <div class="cal-nav">
-          <button class="cal-btn" onclick="calNav(-1)">‹</button>
-          <div class="cal-month" id="calMonthLabel"></div>
-          <button class="cal-btn" onclick="calNav(1)">›</button>
-        </div>
-        <div class="cal-grid" id="calGrid"></div>
-      </div>
-      <div style="background:rgba(45,107,182,.06);border-radius:10px;padding:10px 14px;margin-bottom:18px;font-size:13px;color:var(--text);font-weight:600;" id="selectedDateDisplay"></div>
-      <div class="step-indicator" id="stepInd">
-        <div class="step-dot done" id="s1"></div>
-        <div class="step-dot current" id="s2"></div>
-        <div class="step-dot" id="s3"></div>
-      </div>
-      <div class="eod-step active" id="eod-step1">
-        <div class="form-group"><label class="form-label">Tasks Completed Today</label><textarea class="form-textarea" id="eodTasks" rows="4" placeholder="List the main tasks you completed today…"></textarea></div>
-        <div class="form-group"><label class="form-label">Projects Worked On</label><input class="form-input" id="eodProjects" placeholder="e.g. Client A — Homepage Redesign"></div>
-        <div class="form-group"><label class="form-label">Hours of Deep Work</label><input class="form-input" type="number" id="eodHours" min="0" max="12" placeholder="e.g. 4"></div>
-      </div>
-      <div class="eod-step" id="eod-step2">
-        <div class="form-group"><label class="form-label">Wins Today 🎉</label><textarea class="form-textarea" id="eodWins" rows="3" placeholder="What went well today?"></textarea></div>
-        <div class="form-group">
-          <label class="form-label">Issues or Blockers ⚠️</label>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-            <label style="font-size:13px;color:var(--text-mid);">Number of blockers today:</label>
-            <div style="display:flex;gap:6px;" id="blocker-count-btns">
-              <button type="button" class="blocker-cnt-btn active" data-n="0" onclick="selectBlockerCount(0)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--primary);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">0</button>
-              <button type="button" class="blocker-cnt-btn" data-n="1" onclick="selectBlockerCount(1)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">1</button>
-              <button type="button" class="blocker-cnt-btn" data-n="2" onclick="selectBlockerCount(2)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">2</button>
-              <button type="button" class="blocker-cnt-btn" data-n="3" onclick="selectBlockerCount(3)" style="min-width:38px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;">3+</button>
-            </div>
-          </div>
-          <textarea class="form-textarea" id="eodIssues" rows="3" placeholder="Describe your blocker(s)…" style="display:none;"></textarea>
-        </div>
-      </div>
-      <div class="eod-step" id="eod-step3">
-        <div class="form-group"><label class="form-label">Tomorrow's Priority Tasks</label><textarea class="form-textarea" id="eodTomorrow" rows="3" placeholder="What will you tackle first tomorrow?"></textarea></div>
-        <div class="form-group"><label class="form-label">Support Needed from Manager</label><textarea class="form-textarea" id="eodSupport" rows="3" placeholder="Anything you need approved or answered?"></textarea></div>
-        <div class="form-group"><label class="form-label">Overall Day Rating</label>
-          <select class="form-select" id="eodRating">
-            <option>⭐⭐⭐⭐⭐ Excellent — hit all targets</option>
-            <option>⭐⭐⭐⭐ Good — mostly productive</option>
-            <option>⭐⭐⭐ Average — some disruptions</option>
-            <option>⭐⭐ Tough — significant blockers</option>
-            <option>⭐ Very difficult — needs discussion</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" id="eodBackBtn" onclick="eodStep(-1)" style="display:none">← Back</button>
-      <button class="btn btn-outline" onclick="closeModal('eodModal')">Cancel</button>
-      <button class="btn btn-primary" id="eodNextBtn" onclick="eodStep(1)">Next →</button>
-    </div>
-  </div>
-</div>
-
 <!-- Blocker Modal -->
 <div id="blockerModal" class="modal-overlay">
   <div class="modal">
@@ -1026,7 +923,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 // ═══════════════════════════════════════════════════
 const DB_KEYS = {
   feed:     'wl_live_feed',
-  eods:     'wl_eod_reports',
   blockers: 'wl_blockers_db',
   weeklySummaries: 'wl_weekly_summaries',
   monthlySummaries: 'wl_monthly_summaries',
@@ -1110,7 +1006,6 @@ async function cloudFetchUsers(){
     const users = record.users;
     if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
     // Pull all shared data so users see latest announcement, coc, etc.
-    if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
     if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeBlockers(record.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(record.resolvedBlockerIds) _applyResolvedIds(_unionResolvedIds(record.resolvedBlockerIds));
     if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
@@ -1139,7 +1034,6 @@ async function cloudPushData(){
     const payload = {
       ...cloudRecord,
       // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
-      eods:     _mergeCloudArr(dbGet(DB_KEYS.eods)||[],     cloudRecord.eods,     300),
       blockers: _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
       goals:    _mergeCloudArr(dbGet(DB_KEYS.goals)||[],    cloudRecord.goals),
       feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
@@ -1165,8 +1059,6 @@ function logActivity(type,userName,description,detail=''){
 
 // ── USER STATE ──
 let currentUser = null;
-let calYear, calMonth, selectedCalDate;
-let eodCurrentStep = 1;
 const today = new Date();
 let myGoals = [];
 
@@ -1611,36 +1503,11 @@ function loadCoC(){
 
 function loadOpsStats(){
   const name = currentUser?.name || '';
-  const eods = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
   const blockers = (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user===name&&b.status==='open');
 
-  // This week count
-  const now = new Date();
-  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
-  const thisWeek = eods.filter(e=>new Date(e.submittedAt||e.date)>=startOfWeek).length;
-  document.getElementById('weeklyReportCount').textContent = thisWeek;
-
-  // Blockers
   document.getElementById('openBlockerCount').textContent = blockers.length;
   document.getElementById('blockerSubText').textContent = blockers.length ? blockers.length+' active' : 'None active';
 
-  // Check today EOD
-  const todayStr = today.toISOString().slice(0,10);
-  const todayEOD = eods.find(e=>e.date===todayStr);
-  if(todayEOD){
-    document.getElementById('eodStatusBadge').className='status-badge badge-working';
-    document.getElementById('eodStatusBadge').textContent='✓ EOD Submitted';
-    document.getElementById('todayEODStatus').textContent='EOD submitted today ✓ · Rating: '+todayEOD.rating?.substring(0,8)||'';
-    document.getElementById('eodTodayCard').innerHTML=`
-      <div style="background:var(--bg);border-radius:10px;padding:14px;font-size:13px;color:var(--text-mid);">
-        <div style="font-weight:700;color:var(--green);margin-bottom:6px;">✓ EOD Submitted for ${todayStr}</div>
-        <div style="margin-bottom:4px;"><strong>Projects:</strong> ${todayEOD.projects||'—'}</div>
-        <div style="margin-bottom:4px;"><strong>Hours:</strong> ${todayEOD.hours||'—'}</div>
-        <div style="margin-bottom:4px;"><strong>Rating:</strong> ${todayEOD.rating?.substring(0,24)||'—'}</div>
-      </div>`;
-  }
-
-  // Render blockers list
   renderBlockersList(blockers);
 }
 
@@ -2072,158 +1939,6 @@ function showSection(id, el){
   if(id==='bizSetup') loadCoC();
   if(id==='mywork'||id==='myassignments') loadMyAssignments();
   if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
-}
-
-// ── MY REPORTS ──
-function loadMyReports(){
-  const name = currentUser?.name||'';
-  const all = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
-  const now = new Date();
-  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate()-now.getDay()+1); startOfWeek.setHours(0,0,0,0);
-  const startOfMonth = new Date(now.getFullYear(),now.getMonth(),1);
-
-  const thisWeek = all.filter(e=>new Date(e.submittedAt||e.date)>=startOfWeek).length;
-  const thisMonth = all.filter(e=>new Date(e.date+'T00:00:00')>=startOfMonth).length;
-
-  // Streak calculation
-  let streak = 0;
-  const dates = all.map(e=>e.date).sort().reverse();
-  const dayMs = 86400000;
-  const todayStr = today.toISOString().slice(0,10);
-  let checkDate = new Date(todayStr);
-  for(let i=0;i<365;i++){
-    const ds = checkDate.toISOString().slice(0,10);
-    if(dates.includes(ds)){ streak++; checkDate = new Date(checkDate-dayMs); }
-    else if(i===0){ checkDate = new Date(checkDate-dayMs); } // skip today if not submitted yet
-    else break;
-  }
-
-  document.getElementById('myTotalReports').textContent = all.length;
-  document.getElementById('myThisWeek').textContent = thisWeek;
-  document.getElementById('myThisMonth').textContent = thisMonth;
-  document.getElementById('myStreak').textContent = streak;
-
-  const list = document.getElementById('myReportsList');
-  if(!all.length){
-    list.innerHTML='<div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No reports submitted yet. Click <strong>+ Submit EOD</strong> to get started.</div>';
-    return;
-  }
-  list.innerHTML = all.slice(0,50).map(r=>`
-    <div class="eod-report-card">
-      <div class="eod-report-header">
-        <div class="eod-report-date">${r.date}</div>
-        <span class="status-badge badge-working">✓ Submitted</span>
-      </div>
-      ${r.projects?`<div class="eod-report-label">Projects</div><div class="eod-report-detail">${r.projects}</div>`:''}
-      ${r.hours?`<div class="eod-report-label">Deep Work</div><div class="eod-report-detail">${r.hours} hours</div>`:''}
-      ${r.tasks?`<div class="eod-report-label">Tasks Completed</div><div class="eod-report-detail" style="white-space:pre-line;">${r.tasks}</div>`:''}
-      ${r.wins?`<div class="eod-report-label">Wins 🎉</div><div class="eod-report-detail" style="white-space:pre-line;">${r.wins}</div>`:''}
-      ${r.issues?`<div class="eod-report-label">Issues / Blockers</div><div class="eod-report-detail" style="white-space:pre-line;">${r.issues}</div>`:''}
-      ${r.tomorrow?`<div class="eod-report-label">Tomorrow's Plan</div><div class="eod-report-detail" style="white-space:pre-line;">${r.tomorrow}</div>`:''}
-      ${r.rating?`<div class="eod-report-label">Day Rating</div><div class="eod-report-detail">${r.rating}</div>`:''}
-      <div style="font-size:11px;color:var(--text-light);margin-top:10px;">Submitted ${r.submittedAt?new Date(r.submittedAt).toLocaleString():r.date}</div>
-    </div>`).join('');
-}
-
-// ── CALENDAR ──
-function initCal(){
-  calYear = today.getFullYear();
-  calMonth = today.getMonth();
-  selectedCalDate = today.getDate();
-  renderCal();
-}
-function calNav(dir){ calMonth+=dir; if(calMonth>11){calMonth=0;calYear++;}else if(calMonth<0){calMonth=11;calYear--;} renderCal(); }
-const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
-const days=['Su','Mo','Tu','We','Th','Fr','Sa'];
-
-function renderCal(){
-  document.getElementById('calMonthLabel').textContent = months[calMonth]+' '+calYear;
-  const grid = document.getElementById('calGrid');
-  grid.innerHTML = days.map(d=>`<div class="cal-day-header">${d}</div>`).join('');
-  const firstDay = new Date(calYear,calMonth,1).getDay();
-  const daysInMonth = new Date(calYear,calMonth+1,0).getDate();
-  const prevDays = new Date(calYear,calMonth,0).getDate();
-  const name = currentUser?.name||'';
-  const myEods = (dbGet(DB_KEYS.eods)||[]).filter(e=>e.user===name);
-  const reportedDays = myEods.filter(e=>{ const d=new Date(e.date+'T00:00:00'); return d.getFullYear()===calYear&&d.getMonth()===calMonth; }).map(e=>new Date(e.date+'T00:00:00').getDate());
-  for(let i=0;i<firstDay;i++){ grid.innerHTML+=`<div class="cal-day other-month">${prevDays-firstDay+1+i}</div>`; }
-  for(let d=1;d<=daysInMonth;d++){
-    const isToday=d===today.getDate()&&calMonth===today.getMonth()&&calYear===today.getFullYear();
-    const isSel=d===selectedCalDate&&calMonth===today.getMonth()&&calYear===today.getFullYear();
-    const hasRep=reportedDays.includes(d);
-    const cls=[isToday?'today':'',isSel&&!isToday?'selected':'',hasRep?'has-report':''].filter(Boolean).join(' ');
-    grid.innerHTML+=`<div class="cal-day ${cls}" onclick="selectDay(${d})">${d}</div>`;
-  }
-  const remaining=42-(firstDay+daysInMonth);
-  for(let i=1;i<=remaining;i++) grid.innerHTML+=`<div class="cal-day other-month">${i}</div>`;
-  updateSelectedDisplay();
-}
-function selectDay(d){ selectedCalDate=d; renderCal(); }
-function updateSelectedDisplay(){
-  const el=document.getElementById('selectedDateDisplay');
-  if(el){ const date=new Date(calYear,calMonth,selectedCalDate); el.textContent='📅 Reporting for: '+date.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}); }
-}
-
-// ── EOD MODAL ──
-function openEODModal(){
-  initCal(); eodCurrentStep=1; updateEODStep();
-  document.getElementById('eodModal').classList.add('open');
-}
-let _eodBlockerCount = 0;
-function selectBlockerCount(n){
-  _eodBlockerCount = n;
-  document.querySelectorAll('.blocker-cnt-btn').forEach(btn=>{
-    const isActive = parseInt(btn.dataset.n)===n || (btn.dataset.n==='3' && n>=3);
-    btn.style.background = isActive ? 'var(--primary,#2D6BB6)' : 'var(--card,#fff)';
-    btn.style.color      = isActive ? '#fff' : 'var(--text)';
-    btn.style.borderColor= isActive ? 'var(--primary,#2D6BB6)' : 'var(--border)';
-  });
-  const ta = document.getElementById('eodIssues');
-  if(ta) ta.style.display = n>0 ? 'block' : 'none';
-  if(ta && n===0) ta.value = '';
-}
-function eodStep(dir){
-  const newStep=eodCurrentStep+dir;
-  if(newStep<1||newStep>3){
-    if(newStep>3){ submitEOD(); }
-    return;
-  }
-  eodCurrentStep=newStep; updateEODStep();
-}
-function updateEODStep(){
-  document.querySelectorAll('.eod-step').forEach((s,i)=>s.classList.toggle('active',i===eodCurrentStep-1));
-  ['s1','s2','s3'].forEach((id,i)=>{ const el=document.getElementById(id); el.className='step-dot'+(i<eodCurrentStep-1?' done':i===eodCurrentStep-1?' current':''); });
-  document.getElementById('eodBackBtn').style.display=eodCurrentStep>1?'inline-flex':'none';
-  document.getElementById('eodNextBtn').textContent=eodCurrentStep===3?'Submit Report ✓':'Next →';
-}
-function submitEOD(){
-  // Build date string from local calendar selection (avoid UTC offset shifting the day)
-  const selDate=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(selectedCalDate).padStart(2,'0')}`;
-  const name=currentUser?.name||'User';
-  const title=currentUser?.title||'';
-  const issuesText = _eodBlockerCount>0 ? (document.getElementById('eodIssues')?.value||'') : '';
-  const eodReport={
-    id:Date.now(), user:name, title, date:selDate, submittedAt:new Date().toISOString(),
-    tasks:document.getElementById('eodTasks')?.value||'',
-    projects:document.getElementById('eodProjects')?.value||'',
-    hours:document.getElementById('eodHours')?.value||'',
-    wins:document.getElementById('eodWins')?.value||'',
-    blockerCount:_eodBlockerCount,
-    issues:issuesText,
-    tomorrow:document.getElementById('eodTomorrow')?.value||'',
-    support:document.getElementById('eodSupport')?.value||'',
-    rating:document.getElementById('eodRating')?.value||''
-  };
-  dbPush(DB_KEYS.eods, eodReport);
-  logActivity('eod', name, 'Submitted EOD report for '+selDate, 'Rating: '+eodReport.rating.substring(0,4));
-  // Clear fields
-  ['eodTasks','eodProjects','eodHours','eodWins','eodIssues','eodTomorrow','eodSupport'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
-  // Reset blocker count selector
-  selectBlockerCount(0);
-  closeModal('eodModal');
-  showToast('EOD Report submitted! ✓');
-  loadOpsStats();
-  cloudPushData(); // sync to cloud so admin can see this report
 }
 
 // ── BLOCKER ──
