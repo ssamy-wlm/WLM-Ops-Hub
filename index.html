@@ -1027,17 +1027,23 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="admin-stats">
         <div class="admin-stat"><div class="as-val" id="ov-total-users">0</div><div class="as-label">Total Users</div></div>
-        <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Active Goals</div></div>
+        <div class="admin-stat"><div class="as-val" id="ov-active-clients">0</div><div class="as-label">Active Clients</div></div>
+        <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Active Projects</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-blockers">0</div><div class="as-label">Active Blockers</div></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:18px;">
         <div class="card">
-          <div class="card-header"><div class="card-title">Blockers</div></div>
-          <div class="card-body" id="ov-blocker-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active blockers.</div></div>
+          <div class="card-header">
+            <div>
+              <div class="card-title">Team Progress</div>
+              <div class="card-sub">Projects &amp; clients by assignee</div>
+            </div>
+          </div>
+          <div class="card-body" id="ov-team-progress" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
         </div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Team Goals</div></div>
-          <div class="card-body" id="ov-goals-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active goals.</div></div>
+          <div class="card-header"><div class="card-title">Blockers</div></div>
+          <div class="card-body" id="ov-blocker-list" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active blockers.</div></div>
         </div>
       </div>
     </div>
@@ -6199,33 +6205,88 @@ function refreshAdminOverview(){
   const dateLabel = document.getElementById('overviewDateLabel');
   if(dateLabel) dateLabel.textContent = dayNames[now.getDay()]+', '+monthNames[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear();
 
-  const allUsers = dbGet(DB_KEYS.users)||[];
-  const blockers = dbGet(DB_KEYS.blockers)||[];
-  const goals    = dbGet(DB_KEYS.goals)||[];
+  const allUsers  = dbGet(DB_KEYS.users)||[];
+  const blockers  = dbGet(DB_KEYS.blockers)||[];
+  const allClients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
 
-  const activeBlockers = blockers.filter(b=>b.status==='open');
-  const activeGoals    = goals.filter(g=>g.status!=='achieved');
+  const activeBlockers  = blockers.filter(b=>b.status==='open');
+  const activeClients   = allClients.filter(c=>c.status==='active');
+  const activeProjects  = allClients.reduce((acc,c)=>acc+(c.projects||[]).filter(p=>p.status!=='complete'&&p.status!=='cancelled').length,0);
 
-  const el1=document.getElementById('ov-total-users'); if(el1) el1.textContent=allUsers.length||0;
-  const elTot=document.getElementById('ov-total-reports'); if(elTot) elTot.textContent=activeGoals.length||0;
-  const el3=document.getElementById('ov-blockers'); if(el3) el3.textContent=activeBlockers.length||0;
+  const el1=document.getElementById('ov-total-users');    if(el1) el1.textContent=allUsers.length||0;
+  const elAC=document.getElementById('ov-active-clients'); if(elAC) elAC.textContent=activeClients.length||0;
+  const elTot=document.getElementById('ov-total-reports'); if(elTot) elTot.textContent=activeProjects||0;
+  const el3=document.getElementById('ov-blockers');        if(el3) el3.textContent=activeBlockers.length||0;
 
-  // Goals list
-  const goalsList = document.getElementById('ov-goals-list');
-  if(goalsList){
-    if(!activeGoals.length){
-      goalsList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No active goals.</div>';
+  // Build user → projects map from clients DB
+  const userProjMap = {}; // userId → [{clientName, clientColor, projName, progress, status, due, type}]
+  allClients.forEach(client=>{
+    (client.projects||[]).forEach(proj=>{
+      if(proj.status==='cancelled') return;
+      (proj.users||[]).forEach(uid=>{
+        if(!userProjMap[uid]) userProjMap[uid]=[];
+        userProjMap[uid].push({
+          clientName:  client.name||'Unknown Client',
+          clientColor: client.color||'var(--text)',
+          projName:    proj.name||'Unnamed Project',
+          progress:    typeof proj.progress==='number' ? proj.progress : null,
+          status:      proj.status||'in-progress',
+          due:         proj.due||null,
+          type:        proj.type||''
+        });
+      });
+    });
+  });
+
+  // Team Progress card
+  const progressContainer = document.getElementById('ov-team-progress');
+  if(progressContainer){
+    const uids = Object.keys(userProjMap);
+    if(!uids.length){
+      progressContainer.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No projects assigned to team members yet.</div>';
     } else {
-      goalsList.innerHTML = activeGoals.slice(0,8).map(g=>`
-        <div style="padding:9px 0;border-bottom:1px solid var(--border);">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${g.title||'Goal'}</div>
-            <span style="font-size:11px;color:var(--text-light);">${g.user||''}</span>
+      const statusColors={'in-progress':'var(--btn)','active':'#2e9e6e','pending':'var(--accent)','complete':'#2e9e6e','on-hold':'var(--orange)','review':'var(--accent)'};
+      const statusLabels={'in-progress':'In Progress','active':'Active','pending':'Pending','complete':'Complete','on-hold':'On Hold','review':'In Review'};
+      progressContainer.innerHTML = uids.map(uid=>{
+        const user    = allUsers.find(u=>u.id===uid)||{};
+        const name    = user.name||uid;
+        const title   = user.title||'';
+        const initials= name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+        const projs   = userProjMap[uid];
+        const doneCount = projs.filter(p=>p.status==='complete').length;
+        const activeCount = projs.length - doneCount;
+        return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
+            <div class="avatar" style="width:32px;height:32px;font-size:11px;flex-shrink:0;">${initials}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${name}</div>
+              ${title?`<div style="font-size:11px;color:var(--text-light);">${title}</div>`:''}
+            </div>
+            <div style="font-size:11px;color:var(--text-light);flex-shrink:0;">${activeCount} active${doneCount?` · ${doneCount} done`:''}</div>
           </div>
-          <div style="background:var(--bg2);border-radius:20px;height:4px;margin-top:6px;">
-            <div style="height:4px;border-radius:20px;background:linear-gradient(90deg,var(--text),var(--accent));width:${g.current&&g.target?Math.min(100,Math.round((g.current/g.target)*100)):0}%;"></div>
-          </div>
-        </div>`).join('');
+          ${projs.map(p=>{
+            const pct = p.progress!=null ? Math.min(100,Math.max(0,Math.round(p.progress))) : null;
+            const sc  = statusColors[p.status]||'var(--text-light)';
+            const sl  = statusLabels[p.status]||p.status;
+            const dueStr = p.due ? new Date(p.due).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+            const isOverdue = p.due && new Date(p.due)<now && p.status!=='complete';
+            return `<div style="margin-bottom:10px;padding-left:41px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap;">
+                <div style="font-size:12.5px;font-weight:600;color:var(--text-dark);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.projName}</div>
+                ${dueStr?`<span style="font-size:10px;color:${isOverdue?'var(--red)':'var(--text-light)'};flex-shrink:0;">${isOverdue?'⚠ ':''}${dueStr}</span>`:''}
+                <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;background:${sc}18;color:${sc};flex-shrink:0;">${sl}</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-light);margin-bottom:5px;">${p.clientName}${p.type&&p.type!==p.projName?' · '+p.type:''}</div>
+              ${pct!=null?`<div style="display:flex;align-items:center;gap:8px;">
+                <div style="flex:1;height:4px;background:var(--bg2);border-radius:2px;">
+                  <div style="height:4px;background:linear-gradient(90deg,${p.clientColor||'var(--btn)'},var(--accent));border-radius:2px;width:${pct}%;transition:width .3s;"></div>
+                </div>
+                <span style="font-size:10px;color:var(--text-light);flex-shrink:0;min-width:28px;text-align:right;">${pct}%</span>
+              </div>`:''}
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('');
     }
   }
 
