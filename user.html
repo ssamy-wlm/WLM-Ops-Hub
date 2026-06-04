@@ -777,11 +777,14 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
       <!-- ── MESSAGES ── -->
       <div id="sec-messages" class="page-section">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
           <div>
-            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">Messages</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages with anyone on your team</div>
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">Team Notes &amp; Messages</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Direct messages — tag a client or project to keep notes organised</div>
           </div>
+          <select id="user-msg-filter-client" class="form-select" style="font-size:12px;width:170px;" onchange="renderUserMessages()">
+            <option value="">All conversations</option>
+          </select>
         </div>
         <div class="msg-layout">
           <!-- Left: inbox list -->
@@ -808,6 +811,34 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           <div style="padding:16px 20px 20px;">
             <input id="msg-picker-search" type="text" class="form-input" placeholder="Search people…" oninput="renderContactPicker()" style="margin-bottom:12px;">
             <div id="msg-picker-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Context Picker Modal -->
+      <div id="user-ctx-picker-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+        <div class="modal" style="max-width:400px;width:92%;">
+          <div class="modal-header">
+            <div class="modal-title">Tag Client / Project</div>
+            <button class="modal-close" onclick="document.getElementById('user-ctx-picker-modal').style.display='none'">✕</button>
+          </div>
+          <div style="padding:16px 20px 20px;display:flex;flex-direction:column;gap:12px;">
+            <div>
+              <label class="form-label">Client</label>
+              <select id="user-ctx-client-sel" class="form-select" onchange="renderUserCtxProjects()">
+                <option value="">— no client —</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Project</label>
+              <select id="user-ctx-proj-sel" class="form-select">
+                <option value="">— no project —</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('user-ctx-picker-modal').style.display='none'">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="applyUserMsgContext()">Apply</button>
+            </div>
           </div>
         </div>
       </div>
@@ -2236,28 +2267,24 @@ function escHtmlUser(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 // ═══════════════════════════════════════════════════
 // ── MESSAGING ──
 // ═══════════════════════════════════════════════════
-let _msgPollInterval = null;
-let _userOpenConvEmail = null;
+let _msgPollInterval     = null;
+let _userOpenConvEmail   = null;
+let _userMsgClientId     = '';
+let _userMsgClientName   = '';
+let _userMsgProjectName  = '';
 
-// Derive a stable thread ID from a message (supports old + new model)
 function _getThreadId(m){
   if(m.from && m.to) return [m.from, m.to].sort().join('::');
-  // backward compat: old model had threadUser + fromRole
   if(m.fromRole === 'admin') return [m.from, m.threadUser].sort().join('::');
-  // old user-sent message: from=user, threadUser=user → thread with default admin
   return [m.from, 'ssamy@weblightmedia.com'].sort().join('::');
 }
 
-// Build contact list: all users except self + all admins
 function _getContactList(){
   const users  = dbGet(DB_KEYS.users)||[];
   const admins = dbGet(DB_KEYS.admins)||[];
   const myEmail = currentUser?.email||'';
   const contacts = [];
-  users.forEach(u=>{
-    if(u.email && u.email!==myEmail)
-      contacts.push({email:u.email, name:u.name||u.email, role:'user'});
-  });
+  users.forEach(u=>{ if(u.email && u.email!==myEmail) contacts.push({email:u.email, name:u.name||u.email, role:'user'}); });
   const seenAdmins = new Set();
   admins.forEach(a=>{
     if(a.email && !seenAdmins.has(a.email)){
@@ -2270,8 +2297,68 @@ function _getContactList(){
   return contacts;
 }
 
+function _populateUserMsgClientSelects(){
+  const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]').filter(c=>c.status==='active');
+  const filterSel = document.getElementById('user-msg-filter-client');
+  if(filterSel && filterSel.options.length<=1){
+    clients.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; filterSel.appendChild(o); });
+  }
+  const ctxSel = document.getElementById('user-ctx-client-sel');
+  if(ctxSel && ctxSel.options.length<=1){
+    clients.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name; ctxSel.appendChild(o); });
+  }
+}
+
+function renderUserCtxProjects(){
+  const clientId = document.getElementById('user-ctx-client-sel')?.value;
+  const projSel  = document.getElementById('user-ctx-proj-sel');
+  if(!projSel) return;
+  projSel.innerHTML='<option value="">— no project —</option>';
+  if(!clientId) return;
+  const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
+  const client  = clients.find(c=>c.id===clientId);
+  (client?.projects||[]).filter(p=>p.status!=='cancelled').forEach(p=>{ const o=document.createElement('option'); o.value=p.name; o.textContent=p.name; projSel.appendChild(o); });
+}
+
+function openUserContextPicker(){
+  _populateUserMsgClientSelects();
+  const ctxSel  = document.getElementById('user-ctx-client-sel');
+  const projSel = document.getElementById('user-ctx-proj-sel');
+  if(ctxSel) ctxSel.value = _userMsgClientId;
+  renderUserCtxProjects();
+  if(projSel) projSel.value = _userMsgProjectName;
+  document.getElementById('user-ctx-picker-modal').style.display='flex';
+}
+
+function applyUserMsgContext(){
+  const ctxSel  = document.getElementById('user-ctx-client-sel');
+  const projSel = document.getElementById('user-ctx-proj-sel');
+  _userMsgClientId    = ctxSel?.value||'';
+  _userMsgClientName  = ctxSel?.options[ctxSel.selectedIndex]?.text||'';
+  _userMsgProjectName = projSel?.value||'';
+  if(!_userMsgClientId){ _userMsgClientId=''; _userMsgClientName=''; _userMsgProjectName=''; }
+  document.getElementById('user-ctx-picker-modal').style.display='none';
+  const bar = document.getElementById('user-compose-ctx-bar');
+  if(bar) bar.innerHTML = _userCtxBarHTML();
+}
+
+function clearUserMsgContext(){
+  _userMsgClientId=''; _userMsgClientName=''; _userMsgProjectName='';
+  const bar = document.getElementById('user-compose-ctx-bar');
+  if(bar) bar.innerHTML = _userCtxBarHTML();
+}
+
+function _userCtxBarHTML(){
+  if(_userMsgClientName){
+    const label = _userMsgProjectName ? `${_userMsgClientName} › ${_userMsgProjectName}` : _userMsgClientName;
+    return `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--btn)16;border:1px solid var(--btn)44;border-radius:20px;padding:2px 10px 2px 8px;font-size:11px;color:var(--btn);font-weight:600;">📁 ${escHtmlUser(label)}<button onclick="clearUserMsgContext()" style="background:none;border:none;cursor:pointer;color:var(--btn);font-size:12px;padding:0;line-height:1;margin-left:2px;">×</button></span>`;
+  }
+  return `<button onclick="openUserContextPicker()" style="background:none;border:1px dashed var(--border);border-radius:20px;padding:3px 12px;font-size:11px;color:var(--text-light);cursor:pointer;">📁 Tag client / project</button>`;
+}
+
 function loadMessages(){
   cloudFetchUsers().then(()=>{
+    _populateUserMsgClientSelects();
     renderUserMessages();
     if(_userOpenConvEmail) markConvRead(_userOpenConvEmail);
   });
@@ -2283,6 +2370,7 @@ function loadMessages(){
 
 function renderUserMessages(){
   if(!currentUser) return;
+  _populateUserMsgClientSelects();
   renderUserInbox();
   if(_userOpenConvEmail) renderUserConv(_userOpenConvEmail);
   updateUserMsgBadge();
@@ -2291,10 +2379,10 @@ function renderUserMessages(){
 function renderUserInbox(){
   const inbox = document.getElementById('msg-user-inbox');
   if(!inbox) return;
-  const all     = dbGet(DB_KEYS.messages)||[];
-  const myEmail = currentUser.email;
+  const all      = dbGet(DB_KEYS.messages)||[];
+  const myEmail  = currentUser.email;
+  const filterClient = document.getElementById('user-msg-filter-client')?.value||'';
 
-  // Group messages into threads that involve me
   const threads = {};
   all.forEach(m=>{
     const tid = _getThreadId(m);
@@ -2303,11 +2391,13 @@ function renderUserInbox(){
     threads[tid].push(m);
   });
 
-  const sorted = Object.entries(threads).sort((a,b)=>{
-    const tA = Math.max(...a[1].map(m=>new Date(m.timestamp)));
-    const tB = Math.max(...b[1].map(m=>new Date(m.timestamp)));
-    return tB - tA;
+  let sorted = Object.entries(threads).sort((a,b)=>{
+    const tA=Math.max(...a[1].map(m=>new Date(m.timestamp)));
+    const tB=Math.max(...b[1].map(m=>new Date(m.timestamp)));
+    return tB-tA;
   });
+
+  if(filterClient) sorted=sorted.filter(([,msgs])=>msgs.some(m=>m.clientId===filterClient));
 
   if(!sorted.length){
     inbox.innerHTML='<div class="msg-empty" style="padding:20px 10px;font-size:12px;">No conversations yet.<br>Tap ✏️ New Message to start.</div>';
@@ -2323,13 +2413,15 @@ function renderUserInbox(){
     const contact     = contacts.find(c=>c.email===partnerEmail);
     const partnerName = contact?.name || latest.fromName || partnerEmail;
     const initials    = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
-    const preview     = (latest.content||'').length>50 ? latest.content.substring(0,50)+'…' : latest.content;
+    const preview     = (latest.content||'').length>48 ? latest.content.substring(0,48)+'…' : latest.content;
     const active      = _userOpenConvEmail===partnerEmail ? 'msg-active' : '';
     const safeEmail   = escHtmlUser(partnerEmail).replace(/'/g,'&#39;');
+    const ctxMsg      = [...msgs].reverse().find(m=>m.clientName);
+    const ctxTag      = ctxMsg ? `<span style="font-size:10px;background:var(--btn)14;color:var(--btn);border-radius:8px;padding:1px 6px;margin-left:4px;font-weight:600;">📁 ${escHtmlUser(ctxMsg.clientName)}${ctxMsg.projectName?' › '+escHtmlUser(ctxMsg.projectName):''}</span>` : '';
     return `<div class="msg-inbox-item ${active}" onclick="openUserConversation('${safeEmail}')">
       <div class="msg-inbox-avatar">${escHtmlUser(initials)}</div>
       <div class="msg-inbox-info">
-        <div class="msg-inbox-name">${escHtmlUser(partnerName)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}</div>
+        <div class="msg-inbox-name">${escHtmlUser(partnerName)}${unread?` <span class="msg-unread-badge">${unread}</span>`:''}${ctxTag}</div>
         <div class="msg-inbox-preview">${escHtmlUser(preview)}</div>
       </div>
       <div style="font-size:10px;color:var(--text-light);flex-shrink:0;">${new Date(latest.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
@@ -2345,20 +2437,21 @@ function renderUserConv(partnerEmail){
   const all     = dbGet(DB_KEYS.messages)||[];
   const msgs    = all.filter(m=>_getThreadId(m)===tid).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
 
-  const contacts     = _getContactList();
-  const contact      = contacts.find(c=>c.email===partnerEmail);
-  const firstMsg     = msgs[0];
-  const partnerName  = contact?.name || (firstMsg ? (firstMsg.from===partnerEmail ? firstMsg.fromName : (firstMsg.toName||partnerEmail)) : partnerEmail);
-  const initials     = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
+  const contacts    = _getContactList();
+  const contact     = contacts.find(c=>c.email===partnerEmail);
+  const firstMsg    = msgs[0];
+  const partnerName = contact?.name||(firstMsg?(firstMsg.from===partnerEmail?firstMsg.fromName:(firstMsg.toName||partnerEmail)):partnerEmail);
+  const initials    = partnerName.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
 
   const bubbles = msgs.map(m=>{
     const isMe = m.from===myEmail;
     const time = new Date(m.timestamp).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
     const date = new Date(m.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const ctxPill = m.clientName ? `<div style="font-size:10px;color:var(--btn);margin-bottom:4px;font-weight:600;">📁 ${escHtmlUser(m.clientName)}${m.projectName?' › '+escHtmlUser(m.projectName):''}</div>` : '';
     return `<div style="display:flex;flex-direction:column;">
       <div class="msg-bubble ${isMe?'from-me':'from-other'}">
         ${!isMe?`<div class="msg-sender-name">${escHtmlUser(m.fromName)}</div>`:''}
-        ${escHtmlUser(m.content)}
+        ${ctxPill}${escHtmlUser(m.content)}
         <div class="msg-meta">${date} · ${time}</div>
       </div>
     </div>`;
@@ -2372,7 +2465,8 @@ function renderUserConv(partnerEmail){
     </div>
     <div class="msg-thread" id="msg-user-thread">${bubbles||'<div class="msg-empty">No messages yet. Say hello! 👋</div>'}</div>
     <div class="msg-compose">
-      <textarea id="msg-user-input" placeholder="Message ${escHtmlUser(partnerName)}… (Enter to send, Shift+Enter for new line)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUserMessage();}"></textarea>
+      <textarea id="msg-user-input" placeholder="Write a message or note… (Enter to send)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendUserMessage();}"></textarea>
+      <div id="user-compose-ctx-bar" style="padding:6px 0 2px;">${_userCtxBarHTML()}</div>
       <div class="msg-compose-actions">
         <button class="btn btn-primary" onclick="sendUserMessage()" style="padding:0 28px;height:38px;">Send</button>
       </div>
@@ -2423,6 +2517,9 @@ function sendUserMessage(){
     timestamp: new Date().toISOString(),
     readBy:    [currentUser.email]
   };
+  if(_userMsgClientId)    msg.clientId    = _userMsgClientId;
+  if(_userMsgClientName)  msg.clientName  = _userMsgClientName;
+  if(_userMsgProjectName) msg.projectName = _userMsgProjectName;
   const all = dbGet(DB_KEYS.messages)||[];
   all.push(msg);
   dbSet(DB_KEYS.messages, all);
@@ -2461,10 +2558,9 @@ function renderContactPicker(){
   }
   list.innerHTML = filtered.map(c=>{
     const initials  = (c.name||c.email).split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase()||'?';
-    const roleLabel = c.role==='admin' ? `<span style="font-size:10px;background:rgba(37,99,168,.12);color:var(--text);border-radius:4px;padding:1px 6px;margin-left:4px;">Admin</span>` : '';
+    const roleLabel = c.role==='admin'?`<span style="font-size:10px;background:rgba(37,99,168,.12);color:var(--text);border-radius:4px;padding:1px 6px;margin-left:4px;">Admin</span>`:'';
     const safeEmail = escHtmlUser(c.email).replace(/'/g,'&#39;');
-    const safeName  = escHtmlUser(c.name||c.email).replace(/'/g,'&#39;');
-    return `<div class="msg-inbox-item" onclick="startNewConversation('${safeEmail}','${safeName}')">
+    return `<div class="msg-inbox-item" onclick="startNewConversation('${safeEmail}')">
       <div class="msg-inbox-avatar">${escHtmlUser(initials)}</div>
       <div class="msg-inbox-info">
         <div class="msg-inbox-name">${escHtmlUser(c.name||c.email)}${roleLabel}</div>
@@ -2480,7 +2576,6 @@ function startNewConversation(email){
   renderUserMessages();
 }
 
-// Legacy alias kept for safety
 function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenConvEmail); }
 
 // Render on page load if credentials section is active
