@@ -1071,6 +1071,16 @@ function _mergeCloudArr(cloudArr, localArr, limit=200){
                  .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
 }
 
+// Merge blockers so resolved status always wins — prevents stale "open" on one device from un-resolving a blocker
+function _mergeBlockers(primaryArr, secondaryArr){
+  const merged=_mergeCloudArr(primaryArr, secondaryArr);
+  const all=[...(Array.isArray(primaryArr)?primaryArr:[]),...(Array.isArray(secondaryArr)?secondaryArr:[])];
+  const resolvedMap={};
+  all.forEach(b=>{ if(b.status==='resolved') resolvedMap[String(b.id)]=b; });
+  merged.forEach(b=>{ const rv=resolvedMap[String(b.id)]; if(rv){ b.status='resolved'; b.resolvedAt=b.resolvedAt||rv.resolvedAt; b.resolvedNote=b.resolvedNote||rv.resolvedNote; } });
+  return merged;
+}
+
 // Fetch latest data from JSONBin — pulls users AND all shared data
 async function cloudFetchUsers(){
   const binId = getWorkspaceBinId();
@@ -1086,7 +1096,7 @@ async function cloudFetchUsers(){
     if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
     // Pull all shared data so users see latest announcement, coc, etc.
     if(record.eods)         dbSet(DB_KEYS.eods,     _mergeCloudArr(record.eods,     dbGet(DB_KEYS.eods)||[], 300));
-    if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeCloudArr(record.blockers, dbGet(DB_KEYS.blockers)||[]));
+    if(record.blockers)     dbSet(DB_KEYS.blockers,  _mergeBlockers(record.blockers, dbGet(DB_KEYS.blockers)||[]));
     if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
     if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
     if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
@@ -1111,7 +1121,7 @@ async function cloudPushData(){
       ...cloudRecord,
       // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
       eods:     _mergeCloudArr(dbGet(DB_KEYS.eods)||[],     cloudRecord.eods,     300),
-      blockers: _mergeCloudArr(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
+      blockers: _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
       goals:    _mergeCloudArr(dbGet(DB_KEYS.goals)||[],    cloudRecord.goals),
       feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
