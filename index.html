@@ -5377,6 +5377,200 @@ function seedStaticUsers(){
   _seedCoreTeam(); // only fires when DB is truly empty
 }
 
+// ── Seed SOP clients from the Client Services Production Tracker PDF ──
+// Idempotent: skips any client whose name already exists in wl_clients_db.
+// All social media posting projects are assigned to Sherine (looked up by name).
+function _seedSopClients(){
+  const live = _getClientDB();
+  const existingNames = new Set(live.map(c => (c.name||'').toLowerCase().trim()));
+
+  // Find Sherine by first name in the users DB; fall back to seed-data ID
+  const allUsers = dbGet(DB_KEYS.users) || [];
+  const sherineUser = allUsers.find(u => (u.name||'').toLowerCase().includes('sherine'));
+  const sherineId = sherineUser ? sherineUser.id : 'sherine';
+
+  const today = new Date().toISOString().split('T')[0];
+  let seed = Date.now();
+  function uid(){ return ++seed; }
+
+  function task(title){
+    return {id:'t'+uid(), title, done:false, completedBy:null, completedAt:null};
+  }
+
+  function proj(name, platforms, postsPerWk, contentMix, sopNotes, tasks){
+    return {
+      id:'p'+uid(), name,
+      type:'ongoing', status:'active',
+      start:today, due:'', priority:'high', color:'#2D6BB6',
+      desc:[platforms&&('Platforms: '+platforms), postsPerWk&&(postsPerWk+' posts/week'), contentMix, sopNotes].filter(Boolean).join('\n'),
+      progress:0, users:[sherineId],
+      progressLog:[], milestones:[], subprojects:[], tasks
+    };
+  }
+
+  const SOP_CLIENTS = [
+    { name:'Absolute Air Services', industry:'HVAC', color:'#1565C0',
+      projects:[proj('Social Media Management','Facebook',3,
+        '2× Canva graphics (Gemini AI), 1× Video (from shoot folder), + Web page links (seasonal)',
+        'Monthly batch — schedule entire month at once. No formal approval. GBP: 4–5★.',
+        [task('Prepare monthly batch — Canva graphics (Gemini AI) + video from shoot folder'),
+         task('Add seasonal web page links to posts'),
+         task('Schedule entire month at once'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Accounting Connections', industry:'Accounting', color:'#00695C',
+      projects:[proj('Social Media Management','Facebook, Instagram, LinkedIn',3,
+        '3× Canva graphics only (no links, no AI images). 2–4× Monday Motivation or Small Business Saturday/month.',
+        '⚠️ Emily/David approval required — email full month preview before scheduling.',
+        [task('Prepare monthly batch — Canva graphics only (no links, no AI images)'),
+         task('Include 2–4 Monday Motivation or Small Business Saturday posts'),
+         task('Email full month preview to Emily/David for approval'),
+         task('Schedule only after approval received'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Baber Law', industry:'Legal', color:'#4A148C',
+      projects:[proj('Social Media Management','Facebook, Instagram',3,
+        '3× Canva graphics (Gemini Gem). Style reference: bold text tutorial.',
+        'Monthly batch — set all posts to Draft in Sprout ("This is a draft") for review before publishing.',
+        [task('Prepare monthly Canva graphics using Gemini Gem (bold text tutorial style)'),
+         task('Set all posts to Draft in Sprout — select "This is a draft"'),
+         task('Publish after draft review is complete'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Glasco HVAC', industry:'HVAC', color:'#E65100',
+      projects:[proj('Social Media Management','Facebook',3,
+        '2× Canva graphics (Gemini AI), 1× Video (from shoot folder), + Web page links (seasonal). ⚠️ Phone: (860) 341-1999 only.',
+        'Monthly batch — schedule entire month at once. No formal approval.',
+        [task('Prepare monthly batch — Canva graphics (Gemini AI) + video from shoot folder'),
+         task('Add seasonal links — use phone (860) 341-1999 only in all posts'),
+         task('Schedule entire month at once'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Goode Bookkeeping', industry:'Bookkeeping', color:'#1B5E20',
+      projects:[proj('Social Media Management','Sprout Social',3,
+        '~1× Canva graphic (Gemini AI), ~1× Blog article link, ~1× Website page link (creative discretion).',
+        'As-needed cadence — post per week. No formal approval. Schedule at optimal time via Sprout.',
+        [task('Prepare weekly content — Canva graphic + blog article link + website page link'),
+         task('Schedule at optimal time via Sprout'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'HSCM (High School Counselor Marketing)', industry:'Education Marketing', color:'#0D47A1',
+      projects:[proj('Social Media Management','Facebook, X (Twitter), LinkedIn',3,
+        '~2× Canva graphics (Gemini AI), ~1× Blog or newsletter link (HSCounselorWeek.com). ⚠️ No political/controversial articles.',
+        'Monthly batch — schedule entire month at once. Post at optimal time (Sprout).',
+        [task('Prepare monthly batch — Canva graphics + HSCounselorWeek.com blog/newsletter links'),
+         task('Verify no political or controversial articles before scheduling'),
+         task('Schedule entire month at once via Sprout optimal time'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'HSPM (High School Principal Marketing)', industry:'Education Marketing', color:'#006064',
+      projects:[proj('Social Media Management','Facebook, X (Twitter), LinkedIn',3,
+        'Duplicate of HSCM posts. ⚠️ Change all "counselor" → "principal" in copy. Update blog links to HSPM blog.',
+        'Same batch as HSCM — done simultaneously. No formal approval. Sprout optimal time.',
+        [task('Duplicate HSCM content batch — change all "counselor" to "principal" in every post'),
+         task('Update blog links from HSCM blog to HSPM blog'),
+         task('Schedule simultaneously with HSCM at Sprout optimal time'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Leese Flooring Supplies', industry:'Flooring / Home Improvement', color:'#BF360C',
+      projects:[proj('Social Media Management','Sprout Social',3,
+        '1× Product Promotion, 1× Company History/Brand Story, 1× Equipment Repair Services. ⚠️ Manufacturer images only — no competitor images.',
+        'Monthly batch. Verify before publishing: dates, captions, hashtags, correct image attached. 5★ review replies only.',
+        [task('Prepare monthly batch — Product Promo + Company History/Brand Story + Equipment Repair Services'),
+         task('Use manufacturer images only — no competitor images'),
+         task('Verify before publishing: dates, captions, hashtags, and correct image attached'),
+         task('GBP review replies — every Monday (15–30 min) — 5★ reviews only'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'MMNT', industry:'Business', color:'#B71C1C',
+      projects:[proj('Social Media Management','Facebook, LinkedIn',3,
+        '3× Canva graphics only (no links, no AI images). + Holiday/closing posts (per holiday schedule).',
+        '⚠️ Emily/David approval required — email full month preview before scheduling.',
+        [task('Prepare monthly batch — Canva graphics only (no links, no AI images)'),
+         task('Add holiday/closing posts per WLM holiday schedule'),
+         task('Email full month preview to Emily/David for approval'),
+         task('Schedule only after approval received'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Servpro (Northern Queens)', industry:'Restoration', color:'#1A237E',
+      projects:[proj('Social Media Management','Facebook, Instagram',3,
+        '~2× Canva graphics (Gemini AI), 1× Article link (non-competing source). ⚠️ Location-specific captions. Phone: (718) 917-1585.',
+        'Monthly batch — one post = 3 location versions prepared simultaneously. Draft mode optional in Sprout.',
+        [task('Prepare monthly batch simultaneously with all Servpro locations — 3 location versions per post'),
+         task('Use location-specific captions — phone (718) 917-1585 for Northern Queens'),
+         task('Draft mode optional in Sprout before publishing'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Servpro (Scarsdale / Mount Vernon)', industry:'Restoration', color:'#283593',
+      projects:[proj('Social Media Management','Facebook, Instagram',3,
+        '~2× Canva graphics (Gemini AI), 1× Article link (non-competing source). ⚠️ Location-specific captions. Phone: (914) 699-5181.',
+        'Same batch as all Servpro locations. Draft mode optional in Sprout.',
+        [task('Prepare batch simultaneously with all Servpro locations — 3 location versions per post'),
+         task('Use location-specific captions — phone (914) 699-5181 for Scarsdale/Mount Vernon'),
+         task('Draft mode optional in Sprout before publishing'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Servpro (Yonkers)', industry:'Restoration', color:'#303F9F',
+      projects:[proj('Social Media Management','Facebook, Instagram',3,
+        '~2× Canva graphics (Gemini AI), 1× Article link (non-competing source). ⚠️ Location-specific captions. Phone: (914) 965-2000.',
+        'Same batch as all Servpro locations. Draft mode optional in Sprout.',
+        [task('Prepare batch simultaneously with all Servpro locations — 3 location versions per post'),
+         task('Use location-specific captions — phone (914) 965-2000 for Yonkers'),
+         task('Draft mode optional in Sprout before publishing'),
+         task('GBP review replies — every Monday (15–30 min)'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'The Learning Center', industry:'Early Childhood Education', color:'#6A1B9A',
+      projects:[proj('Social Media Management','Facebook, Instagram, LinkedIn, TikTok, YouTube',3,
+        '~1× Canva graphic (Gemini AI), ~1× Blog/website link, ~1× Brightwheel photo (approved students only). ⚠️ Cannot crosspost with Building Blocks.',
+        '⚠️ Child safety: approved students (👍) only. Use TLC Frank or Thomas Chrome profile only. 5★ review replies (Sprout optimal time).',
+        [task('Prepare monthly batch simultaneously with Building Blocks'),
+         task('Brightwheel photos: approved students (👍) only — use TLC Frank or Thomas Chrome profile'),
+         task('Child safety check: confirm no unapproved student photos before scheduling'),
+         task('GBP review replies — every Monday (15–30 min) — 5★ only'),
+         task('GBP profile update — monthly')])]},
+
+    { name:'Building Blocks', industry:'Early Childhood Education', color:'#F57F17',
+      projects:[proj('Social Media Management','Facebook, LinkedIn',3,
+        '~1× Canva graphic, ~1× Blog/website link, ~1× Brightwheel photo (approved students only). ⚠️ Cannot crosspost with The Learning Center.',
+        '⚠️ Child safety: approved students (👍) only. Use Sheryl Chrome profile only. 5★ review replies (Sprout optimal time).',
+        [task('Prepare monthly batch simultaneously with The Learning Center'),
+         task('Brightwheel photos: approved students (👍) only — use Sheryl Chrome profile only'),
+         task('Child safety check: confirm no unapproved student photos before scheduling'),
+         task('GBP review replies — every Monday (15–30 min) — 5★ only'),
+         task('GBP profile update — monthly')])]},
+  ];
+
+  let added = 0;
+  SOP_CLIENTS.forEach(sc => {
+    if(existingNames.has(sc.name.toLowerCase().trim())) return;
+    live.unshift({
+      id:'c'+uid(),
+      name:sc.name, industry:sc.industry,
+      status:'active', start:today, end:'', notes:'',
+      color:sc.color,
+      projects:sc.projects,
+      services:['Social Media Management']
+    });
+    added++;
+  });
+
+  if(added > 0){
+    _saveClientDB(live);
+    console.log('[WLM] ✅ SOP clients seeded: '+added+' client(s) added, social media assigned to '+sherineId+'.');
+  }
+}
+
 // Override the existing doLogin to log activity and check stored users
 window.doLogin = async function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -6359,6 +6553,8 @@ function startLiveSync(level){
 document.addEventListener('DOMContentLoaded', ()=>{
   // Seed static sample users into DB if not already present
   seedStaticUsers();
+  // Seed SOP clients from Client Services Production Tracker (idempotent)
+  _seedSopClients();
   // Render user table from DB
   renderUserTable();
   // Render admin accounts table from DB
