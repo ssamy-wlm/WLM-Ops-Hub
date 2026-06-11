@@ -6180,7 +6180,10 @@ function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
 }
 
 // Push ALL data to JSONBin (read-modify-write to avoid overwriting others)
-async function cloudPushAll(silent=false){
+// _retryReduced: internal flag — when a previous attempt failed because the
+// bin exceeded its size limit, retry once with trimmed history so critical
+// team/client data (users, admins, clients) still gets through.
+async function cloudPushAll(silent=false, _retryReduced=false){
   const cfg = getCloudConfig();
   if(!cfg.apiKey || !cfg.binId){
     if(!silent) showToast('Cloud not configured — click ⚙ Configure first');
@@ -6243,16 +6246,30 @@ async function cloudPushAll(silent=false){
       primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
       otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
       deletedUserIds,
-      messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], 500),
-      roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]),
+      messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], _retryReduced ? 100 : 500),
+      roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], _retryReduced ? 150 : 1000),
     };
+    if(_retryReduced) payload.feed = _mergeCloudArr(cloudRecord.feed, dbGet(DB_KEYS.feed)||[], 30);
+
+    const body = JSON.stringify(payload);
+    console.log('[WLM Cloud] Push payload size:', (body.length/1024).toFixed(1)+'KB');
 
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`, {
       method: 'PUT',
       headers: {'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-      body: JSON.stringify(payload)
+      body
     });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    if(!res.ok){
+      let detail = '';
+      try{ const errBody = await res.json(); if(errBody?.message) detail = ': '+errBody.message; }
+      catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
+      // Bin over its size limit — retry once with trimmed history so the
+      // critical team/client data (users, admins, clients) still syncs.
+      if(!_retryReduced && (res.status===413 || /size|too large|payload/i.test(detail))){
+        return await cloudPushAll(silent, true);
+      }
+      throw new Error(`HTTP ${res.status}${detail}`);
+    }
 
     // Store merged data locally so admin sees merged state too
     dbSet(DB_KEYS.users, payload.users);
@@ -6283,7 +6300,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
   setCloudStatus('Pulling from cloud…','syncing');
   try {
     const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`, {headers:{'X-Master-Key':cfg.apiKey}});
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    if(!res.ok){
+      let detail = '';
+      try{ const errBody = await res.json(); if(errBody?.message) detail = ': '+errBody.message; }
+      catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
+      throw new Error(`HTTP ${res.status}${detail}`);
+    }
     const data = await res.json();
     const r = data?.record || {};
 
