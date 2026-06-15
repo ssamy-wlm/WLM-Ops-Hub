@@ -325,11 +325,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <button onclick="togglePwVis('loginPassword',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-light);line-height:1;">👁</button>
       </div>
     </div>
-    <div id="workspaceSetup" style="display:none;padding:12px 14px;background:rgba(250,194,49,.07);border:1px solid rgba(250,194,49,.35);border-radius:10px;margin-bottom:12px;">
-      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">🔗 First-Time Setup — Workspace Code</div>
-      <div style="font-size:11px;color:var(--text-mid);margin-bottom:8px;">Enter the Workspace Code your admin shared with you. You only need this once.</div>
-      <input class="form-input" type="text" id="workspaceCode" placeholder="e.g. 66a1b2c3d4e5f6a7b8c9d0e1" style="font-size:13px;font-family:monospace;letter-spacing:.04em;">
-    </div>
     <div id="loginError" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:8px;">❌ Incorrect email or password. Please try again.</div>
     <button class="btn btn-primary" style="width:100%;" onclick="doLogin()">Sign In →</button>
     </div>
@@ -968,27 +963,9 @@ function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); 
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
 function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(key,arr.slice(0,500)); }
 
-// ── Cloud config (shared with admin panel via localStorage) ──
-const CLOUD_CFG_KEY = 'wl_cloud_config';
-const WORKSPACE_CODE_KEY = 'wl_workspace_code';
-const _DEFAULT_BIN = '69f267fa36566621a8086c5d'; // WLM JSONBin bin
-const _DEFAULT_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
-function getCloudConfig(){
-  const stored = dbGet(CLOUD_CFG_KEY)||{};
-  return { apiKey: stored.apiKey||_DEFAULT_API_KEY, binId: stored.binId||_DEFAULT_BIN };
-}
-function getWorkspaceBinId(){
-  // Use full cloud config binId if available, otherwise workspace code, otherwise default bin
-  const cfg = getCloudConfig();
-  if(cfg.binId) return cfg.binId;
-  return localStorage.getItem(WORKSPACE_CODE_KEY)||_DEFAULT_BIN;
-}
-function cloudIsConfigured(){
-  // Configured if we have either full cloud config OR a workspace code
-  const c=getCloudConfig();
-  if(c.apiKey&&c.binId) return true;
-  return !!(localStorage.getItem(WORKSPACE_CODE_KEY));
-}
+// ── Cloud sync target (shared store via /api/cloud-data, same backend as admin panel) ──
+const CLOUD_DATA_URL = '/api/cloud-data';
+function cloudIsConfigured(){ return true; }
 
 // Merge two arrays by id, deduplicating, newest first
 function _mergeCloudArr(cloudArr, localArr, limit=200){
@@ -1023,14 +1000,10 @@ function _applyResolvedIds(ids){
   if(changed) dbSet(DB_KEYS.blockers, all);
 }
 
-// Fetch latest data from JSONBin — pulls users AND all shared data
+// Fetch latest data from the shared cloud store — pulls users AND all shared data
 async function cloudFetchUsers(){
-  const binId = getWorkspaceBinId();
-  if(!binId) return null;
-  const cfg = getCloudConfig();
   try{
-    const headers = cfg.apiKey ? {'X-Master-Key': cfg.apiKey} : {};
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
+    const res = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
     if(!res.ok) return null;
     const data = await res.json();
     const record = data?.record || {};
@@ -1050,12 +1023,8 @@ async function cloudFetchUsers(){
 
 // Push user-generated data (EODs, blockers, goals, feed) to cloud using read-modify-write
 async function cloudPushData(){
-  const cfg = getCloudConfig();
-  const binId = getWorkspaceBinId();
-  if(!cfg.apiKey || !binId) return;
   try {
-    const headers = {'X-Master-Key': cfg.apiKey};
-    const r0 = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {headers});
+    const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
     if(!r0.ok) return;
     const d = await r0.json();
     const cloudRecord = d?.record || {};
@@ -1071,9 +1040,9 @@ async function cloudPushData(){
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
       resolvedBlockerIds: mergedResIds,
     };
-    await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+    await fetch(CLOUD_DATA_URL, {
       method:'PUT',
-      headers:{...headers,'Content-Type':'application/json','X-Bin-Versioning':'false'},
+      headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)
     });
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
@@ -1096,13 +1065,6 @@ let myGoals = [];
 // ADMIN CREDENTIALS (to block admin from logging in here)
 const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
 
-// Show workspace setup field only if no bin is available (always hidden now — default bin is hardcoded)
-function checkWorkspaceSetup(){
-  const setupEl = document.getElementById('workspaceSetup');
-  if(!setupEl) return;
-  setupEl.style.display = 'none'; // default bin is always available
-}
-
 // ── LOGIN ──
 async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -1110,11 +1072,6 @@ async function doLogin(){
   const errEl = document.getElementById('loginError');
   const btn   = document.querySelector('#loginScreen .btn-primary');
   if(!email||!pass){ errEl.style.display='block'; return; }
-
-  // Save workspace code if entered
-  const wcField = document.getElementById('workspaceCode');
-  const wcVal = (wcField?.value||'').trim();
-  if(wcVal) localStorage.setItem(WORKSPACE_CODE_KEY, wcVal);
 
   // Block admin accounts
   if(ADMIN_CREDS.some(c=>c.email===email && c.password===pass)){
@@ -1150,12 +1107,8 @@ async function doLogin(){
     return;
   }
 
-  // If login failed and we had a workspace code entered, clear it so user can try again
-  if(wcVal){ localStorage.removeItem(WORKSPACE_CODE_KEY); if(wcField) wcField.value=''; }
-
   errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
   errEl.style.display='block';
-  checkWorkspaceSetup();
 }
 
 function showForcedPasswordChange(){
@@ -1198,13 +1151,14 @@ async function submitForcedPasswordChange(){
   // Push updated password to cloud so all devices see the updated password
   if(cloudIsConfigured() && btn){
     btn.textContent='Saving…'; btn.disabled=true;
-    const cfg = getCloudConfig();
     const admins = dbGet(DB_KEYS.admins)||[];
     try{
-      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+      const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+      const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
+      await fetch(CLOUD_DATA_URL,{
         method:'PUT',
-        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body: JSON.stringify({users: allUsers, admins})
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...cur, users: allUsers, admins})
       });
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
@@ -2082,13 +2036,14 @@ async function changeUserPassword(){
   showToast('Password updated ✓ — syncing…');
   // Push to cloud (both users and admins)
   if(cloudIsConfigured()){
-    const cfg=getCloudConfig();
     const admins=dbGet(DB_KEYS.admins)||[];
     try{
-      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+      const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+      const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
+      await fetch(CLOUD_DATA_URL,{
         method:'PUT',
-        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
-        body:JSON.stringify({users:all, admins})
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...cur, users:all, admins})
       });
     }catch(e){}
   }
@@ -2609,15 +2564,7 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
 })();
 
 document.addEventListener('DOMContentLoaded', ()=>{
-  // Always force the correct cloud credentials — clears any stale/old API key from localStorage
-  try{
-    localStorage.setItem('wl_cloud_config', JSON.stringify({
-      apiKey: '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6',
-      binId:  '69f267fa36566621a8086c5d'
-    }));
-  }catch(e){}
   setTimeout(renderUserCredVault, 1000);
-  checkWorkspaceSetup();
 });
 
 </script>

@@ -1443,38 +1443,30 @@ function refreshRecurringDueDates(){
 function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 
 // ═══════════════════════════════════════════════════════
-//  CLOUD SYNC (piggybacks on the same JSONBin config as index.html)
+//  CLOUD SYNC (shared store via /api/cloud-data, same backend as index.html)
 // ═══════════════════════════════════════════════════════
-// Always force the canonical credentials — never trust a stale localStorage value
-const _CANONICAL_API_KEY = '$2a$10$7P9ajJXH1z6z8nT6lFT06uXzWya5VoVbzw17MWn0ldpgc6l0fFDY6';
-const _CANONICAL_BIN_ID  = '69f267fa36566621a8086c5d';
-try{ localStorage.setItem('wl_cloud_config', JSON.stringify({apiKey:_CANONICAL_API_KEY, binId:_CANONICAL_BIN_ID})); }catch(e){}
+const CLOUD_DATA_URL = '/api/cloud-data';
 
-function _cloudCfg(){
-  return { apiKey: _CANONICAL_API_KEY, binId: _CANONICAL_BIN_ID };
-}
 let _cloudPushTimer=null;
 function _scheduleCloudPush(){
-  const cfg=_cloudCfg();
   clearTimeout(_cloudPushTimer);
   _cloudPushTimer=setTimeout(async ()=>{
     try{
-      const r0=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+      const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
       const cur=r0.ok?((await r0.json())?.record||{}):{};
       cur.clients=getClients();
       cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
-      await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}`,{
+      await fetch(CLOUD_DATA_URL,{
         method:'PUT',
-        headers:{'Content-Type':'application/json','X-Master-Key':cfg.apiKey,'X-Bin-Versioning':'false'},
+        headers:{'Content-Type':'application/json'},
         body:JSON.stringify(cur)
       });
     }catch(e){}
   },1500);
 }
 async function _pullClientsFromCloud(){
-  const cfg=_cloudCfg();
   try{
-    const r=await fetch(`https://api.jsonbin.io/v3/b/${cfg.binId}/latest`,{headers:{'X-Master-Key':cfg.apiKey}});
+    const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
     if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length) dbSave(CL_KEYS.clients,rec.clients);
@@ -3227,8 +3219,6 @@ function updateMyWorkBadge(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
-  // Always re-stamp correct cloud credentials on every load (prevents 403 from stale localStorage)
-  try{ localStorage.setItem('wl_cloud_config', JSON.stringify({apiKey:_CANONICAL_API_KEY, binId:_CANONICAL_BIN_ID})); }catch(e){}
   // Pull latest client data from cloud first (async — UI will render after)
   _pullClientsFromCloud().then(()=>{
     renderClientGrid();

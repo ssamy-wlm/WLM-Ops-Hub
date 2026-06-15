@@ -12,6 +12,7 @@
     "serve": "^14.2.6"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@vercel/blob": "^2.4.0"
   }
 }
