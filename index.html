@@ -1175,6 +1175,23 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
       </div>
+
+      <!-- ── EMAIL NOTIFICATIONS ── -->
+      <div class="card" style="margin-top:22px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✉️ Email Notifications</div>
+            <div class="card-sub">Test the assignment-email integration (powered by Resend)</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="emailTestStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">Send a test email to confirm RESEND_API_KEY is configured correctly on the server.</div>
+          <div style="display:grid;grid-template-columns:2fr auto;gap:10px;">
+            <input class="form-input" id="emailTestTo" type="email" placeholder="you@weblightmedia.com">
+            <button class="btn btn-sm btn-primary" onclick="sendTestAssignmentEmail()">Send Test Email</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ══ LIVE FEED ══ -->
@@ -5013,6 +5030,38 @@ function _emailUserAssignment(userId, title, body){
       })
     }).catch(()=>{});
   }catch(e){}
+}
+
+// ── Send a test assignment email and report the actual result (for admin diagnostics) ──
+async function sendTestAssignmentEmail(){
+  const to = document.getElementById('emailTestTo').value.trim();
+  const statusEl = document.getElementById('emailTestStatus');
+  if(!to || !to.includes('@')){ showToast('Enter a valid email address'); return; }
+  statusEl.textContent = '🔄 Sending test email…';
+  statusEl.style.color = 'var(--text-mid)';
+  try{
+    const res = await fetch('/api/send-assignment-email', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        to, name: 'there',
+        title: 'Test notification from WebLight Ops Hub',
+        body: 'If you received this, assignment emails are working correctly.',
+        link: window.location.origin + '/user'
+      })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(res.ok && data.ok){
+      statusEl.textContent = '✅ Sent! Check '+to+' (and spam folder).';
+      statusEl.style.color = 'var(--green,#2e9e6e)';
+    } else {
+      statusEl.textContent = '❌ Failed: '+(data.error||('HTTP '+res.status));
+      statusEl.style.color = 'var(--red)';
+    }
+  }catch(e){
+    statusEl.textContent = '❌ Request failed: '+e.message;
+    statusEl.style.color = 'var(--red)';
+  }
 }
 
 // ── Service scheduling helpers ──
