@@ -1,6 +1,6 @@
 {
   "name": "weblight-ops-hub",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "WebLight Media Operations Hub — Admin + Team Portal",
   "private": true,
   "type": "module",
