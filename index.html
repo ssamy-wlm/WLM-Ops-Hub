@@ -4994,6 +4994,25 @@ function _pushUserAssignment(userId, title, body, icon){
     arr.unshift({id:'ua'+Date.now()+Math.random().toString(36).slice(2), userId, title, body, icon:'🔔', ts:Date.now(), read:false});
     localStorage.setItem(key, JSON.stringify(arr.slice(0,300)));
   }catch(e){}
+  _emailUserAssignment(userId, title, body);
+}
+
+// ── Email assignment notification to a user (fire-and-forget, fails silently) ──
+function _emailUserAssignment(userId, title, body){
+  try{
+    const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===userId);
+    if(!u || !u.email) return;
+    fetch('/api/send-assignment-email', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        to: u.email,
+        name: (u.name||'').split(' ')[0],
+        title, body,
+        link: window.location.origin + '/user'
+      })
+    }).catch(()=>{});
+  }catch(e){}
 }
 
 // ── Service scheduling helpers ──
