@@ -1037,20 +1037,28 @@ function detectSession(){
       SESSION.isSuperAdmin = (as.role==='super-admin'||as.role==='superadmin'||as.isSuperAdmin);
       SESSION.id   = as.id||as.name||as.email;
       SESSION.name = as.name||'Admin';
+      // Resolve full identity from adminId (dynamic admins store adminId, not id/name in session)
+      if(as.adminId){
+        const _allAdmins = db(CL_KEYS.admins)||[];
+        const _ar = _allAdmins.find(a=>a.id===as.adminId);
+        if(_ar){ SESSION.name = _ar.name; SESSION.id = _ar.id; }
+      }
     }
     const us = db('wl_user_session');
     if(us && us.name){
       SESSION.name = us.name;
       SESSION.id   = us.id||us.name;
     }
-    // Enrich from user DB
+    // Enrich from user DB (user IDs take priority — they match p.users[] and assigneeId)
     const users = db(CL_KEYS.users)||[];
     const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
     if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
-    // Enrich from admins DB
-    const admins = db(CL_KEYS.admins)||[];
-    const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
-    if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    else {
+      // Enrich from admins DB only when no matching user record found
+      const admins = db(CL_KEYS.admins)||[];
+      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+      if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
+    }
   }catch(e){}
 
   // usermode=1 only restricts users who aren't real admins

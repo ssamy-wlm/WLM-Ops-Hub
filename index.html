@@ -7986,6 +7986,30 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
     });
     changed = true;
   }
+  // Emily: canonical id:'emily' matches wl_users_db + all service/project assignments
+  const _existingEmily = admins.find(a=>a.email==='emily@weblightmedia.com');
+  if(!_existingEmily){
+    admins.push({
+      id:'emily', name:'Emily Rovillo', email:'emily@weblightmedia.com',
+      title:'Creative Manager', initials:'ER', password:'123456',
+      level:'admin', assignedUsers:[], status:'active',
+      createdAt:'2024-01-01T00:00:00.000Z'
+    });
+    changed = true;
+  } else if(_existingEmily.id !== 'emily'){
+    // Normalize any dynamically-created Emily admin to the canonical id
+    const _oldId = _existingEmily.id;
+    _existingEmily.id = 'emily';
+    changed = true;
+    // Update any stored session that still references the old id
+    try{
+      const _sess = JSON.parse(localStorage.getItem('wl_admin_session')||'null');
+      if(_sess && _sess.adminId === _oldId){
+        _sess.adminId = 'emily';
+        localStorage.setItem('wl_admin_session', JSON.stringify(_sess));
+      }
+    }catch(e){}
+  }
   if(changed){
     dbSet(DB_KEYS.admins, admins);
     if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
