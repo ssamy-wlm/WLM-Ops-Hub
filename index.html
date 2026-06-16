@@ -4513,6 +4513,7 @@ function renderClientDetail(c){
           </div>
           <span class="proj-status-bar pstat-${pStatus}" style="font-size:10px;">${pStatus.replace('-',' ')}</span>
           <button class="btn btn-sm btn-green" onclick="markSvcDoneFromProject('${c.id}','${p.serviceId}')" style="font-size:11px;">✅ Mark Done</button>
+          <button class="btn btn-sm btn-outline" onclick="editTrackerSvc('${c.id}','${p.serviceId||p.id}')" style="font-size:11px;">✏️ Edit</button>
         </div>
         <div style="padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
           <div style="flex:1;font-size:11px;color:var(--text-light);">${p.desc||'No description'}</div>
@@ -4803,6 +4804,7 @@ function _renderServicesSection(c){
         ${chip}
         <span style="font-size:11px;color:var(--text-mid);">${assigneeName||'Unassigned'}</span>
         <button class="btn btn-sm btn-outline" onclick="markSvcDoneFromProject('${c.id}','${s.id}')" style="font-size:11px;color:var(--green);" title="Mark done">✓ Done</button>
+        <button class="btn btn-sm btn-outline" onclick="editTrackerSvc('${c.id}','${s.id}')" style="font-size:11px;">✏️ Edit</button>
       </div>`;
     }).join('');
   }
@@ -4862,6 +4864,35 @@ function markSvcDoneFromProject(clientId, serviceId){
   } else {
     showToast('Service not found','warn');
   }
+}
+
+// Edit a tracker-created service (c.services[] schema) by promoting it into
+// c.recurringServices[] so openSvcModal can handle it uniformly.
+function editTrackerSvc(clientId, svcId){
+  const live = _getClientDB();
+  const c = live.find(x=>x.id===clientId); if(!c) return;
+  const svc = (c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+  // If already mirrored in recurringServices, open directly
+  let rsvc = (c.recurringServices||[]).find(s=>s.id===svcId||s.name===svc.name);
+  if(!rsvc){
+    if(!c.recurringServices) c.recurringServices=[];
+    rsvc = {
+      id: svc.id||('svc'+Date.now()),
+      name: svc.name,
+      frequency: svc.freq||'monthly',
+      startDate: svc.lastDone||new Date().toISOString().slice(0,10),
+      nextDueDate: svc.due||'',
+      notes: svc.notes||'',
+      active: true,
+      assignedUserIds: svc.assigneeId ? [svc.assigneeId] : [],
+      assigneeName: svc.assigneeName||svc.assignee||'',
+      lastCompletedDate: svc.lastDone||'',
+    };
+    c.recurringServices.push(rsvc);
+    _saveClientDB(live);
+    cloudAutoSync();
+  }
+  openSvcModal(clientId, rsvc.id);
 }
 
 function openSvcModal(clientId, svcId){
