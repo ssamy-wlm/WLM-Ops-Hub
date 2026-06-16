@@ -1468,7 +1468,14 @@ async function _pullClientsFromCloud(){
     const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
-    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length) dbSave(CL_KEYS.clients,rec.clients);
+    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length){
+      // Merge: cloud fills in new assignments, local wins for existing records (preserves local edits)
+      const local=getClients();
+      const byId={};
+      rec.clients.forEach(c=>{if(c.id)byId[c.id]=c;});
+      local.forEach(c=>{if(c.id)byId[c.id]=c;});
+      dbSave(CL_KEYS.clients,Object.values(byId));
+    }
     if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
   }catch(e){}
 }
@@ -2985,19 +2992,25 @@ function renderMyWork(){
           </div>
           <div class="card-body">`;
       if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
-        html+=`<div style="font-size:11px;color:var(--text-mid);padding:6px 0;">You're assigned to this project.</div>`;
+        html+=`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;">
+          <span style="font-size:11px;color:var(--text-mid);">You're assigned to this project.</span>
+          <button class="btn btn-xs btn-outline" onclick="openTaskModal('${c.id}','${p.id}',null)">+ Add Task</button>
+        </div>`;
       }
       if(myTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">My Tasks</div>`;
-        html+=myTasks.map(t=>renderTaskRow(c.id,p.id,null,t,false)).join('');
+        html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+          <span style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;">My Tasks</span>
+          <button class="btn btn-xs btn-outline" onclick="openTaskModal('${c.id}','${p.id}',null)">+ Add</button>
+        </div>`;
+        html+=myTasks.map(t=>renderTaskRow(c.id,p.id,null,t,true)).join('');
       }
       if(mySubTasks.length){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Project Tasks</div>`;
-        html+=mySubTasks.map(t=>renderTaskRow(c.id,p.id,t._spId,t,false)).join('');
+        html+=mySubTasks.map(t=>renderTaskRow(c.id,p.id,t._spId,t,true)).join('');
       }
       if(mySubs.length){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Projects</div>`;
-        html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,false)).join('');
+        html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,true)).join('');
       }
       if(mySvcs.length){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Recurring Services</div>`;
