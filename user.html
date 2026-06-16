@@ -1016,10 +1016,21 @@ async function cloudFetchUsers(){
     if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
     if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
     if(record.messages)     dbSet(DB_KEYS.messages, _mergeCloudArr(record.messages, dbGet(DB_KEYS.messages)||[], 500));
+    if(Array.isArray(record.clients)){
+      const local = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
+      const byId = {};
+      record.clients.forEach(c=>{ if(c.id) byId[c.id]=c; });
+      local.forEach(c=>{ if(c.id) byId[c.id]=c; }); // local wins to preserve any unsync'd progress
+      localStorage.setItem('wl_clients_db', JSON.stringify(Object.values(byId)));
+    }
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
     return Array.isArray(users) ? users : null;
   }catch(e){ return null; }
 }
+
+// Debounced push — coalesces rapid saves (task done, progress update) into one cloud write
+let _cloudPushTimer;
+function _scheduleCloudPush(){ clearTimeout(_cloudPushTimer); _cloudPushTimer = setTimeout(cloudPushData, 2000); }
 
 // Push user-generated data (EODs, blockers, goals, feed) to cloud using read-modify-write
 async function cloudPushData(){
@@ -1031,6 +1042,11 @@ async function cloudPushData(){
     // Merge append-only resolved IDs before building payload so resolved state survives race conditions
     const mergedResIds = _unionResolvedIds(cloudRecord.resolvedBlockerIds);
     _applyResolvedIds(mergedResIds);
+    const localCl = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
+    const cloudCl = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
+    const clById = {};
+    cloudCl.forEach(c=>{ if(c.id) clById[c.id]=c; });
+    localCl.forEach(c=>{ if(c.id) clById[c.id]=c; }); // local wins (preserves progress updates)
     const payload = {
       ...cloudRecord,
       // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
@@ -1039,6 +1055,7 @@ async function cloudPushData(){
       feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
       resolvedBlockerIds: mergedResIds,
+      clients:  Object.values(clById),
     };
     await fetch(CLOUD_DATA_URL, {
       method:'PUT',
@@ -1240,6 +1257,8 @@ function initApp(){
   updateAssignmentsBadge();
   // Pre-load My Work section so it's ready when user navigates to it
   loadMyAssignments();
+  // Refresh assignments from cloud so admin-assigned projects appear immediately
+  cloudFetchUsers().then(()=>{ loadMyAssignments(); updateAssignmentsBadge(); });
   // Toast if user has unread assignment notifications
   setTimeout(()=>{
     try{
