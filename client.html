@@ -829,7 +829,15 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div style="font-size:26px;font-weight:800;color:var(--text-dark);" id="prog-auto-pct">0%</div>
         <div style="font-size:10px;color:var(--text-light);" id="prog-auto-breakdown">0 of 0 tasks complete</div>
       </div>
-      <div class="form-group"><label class="form-label">Update Note *</label>
+      <div class="form-group" style="margin-bottom:13px;">
+        <label class="form-label">Set Progress Manually</label>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:5px;">
+          <input type="range" id="prog-manual-pct" min="0" max="100" value="0" style="flex:1;accent-color:#2D6BB6;cursor:pointer;" oninput="document.getElementById('prog-manual-val').textContent=this.value+'%'">
+          <span id="prog-manual-val" style="font-size:15px;font-weight:800;color:#2D6BB6;min-width:40px;text-align:right;">0%</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-light);margin-top:4px;">Overrides auto-calc when tasks aren't tracked.</div>
+      </div>
+      <div class="form-group"><label class="form-label">Update Note <span style="font-weight:400;color:var(--text-light);">(optional)</span></label>
         <textarea class="form-input" id="prog-note" rows="3" placeholder="What was completed? What's next?" style="resize:vertical;"></textarea>
       </div>
       <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="prog-date"></div>
@@ -2610,17 +2618,21 @@ function openProgressModal(clientId,projId){
   const done=allTasks.filter(t=>t.done).length+spUnits.filter(s=>s.status==='completed').length;
   _el('prog-auto-pct').textContent=pct+'%';
   _el('prog-auto-breakdown').textContent=`${done} of ${total} tasks/sub-projects complete`;
+  const initPct=p.progress||0;
+  if(_el('prog-manual-pct')){ _el('prog-manual-pct').value=initPct; _el('prog-manual-val').textContent=initPct+'%'; }
   openModal('progressModal');
 }
 function saveProgress(){
   const note=_el('prog-note').value.trim();
-  if(!note){ showToast('Please add an update note','warn'); return; }
   const clientId=_el('prog-client-id').value, projId=_el('prog-proj-id').value;
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
   const p=c.projects.find(x=>x.id===projId); if(!p) return;
   if(!p.progressLog) p.progressLog=[];
-  const pct=calcProjectProgress(p);
+  const autoPct=calcProjectProgress(p);
+  const manualPct=parseInt(_el('prog-manual-pct')?.value||'0',10);
+  // Use manual if it differs from stored progress, otherwise fall back to auto-calc
+  const pct=(_el('prog-manual-pct')&&manualPct!==p.progress)?manualPct:autoPct;
   p.progressLog.push({date:_el('prog-date').value,pct,note,user:SESSION.name});
   p.progress=pct; if(pct===100) p.status='completed';
   saveClients(clients);

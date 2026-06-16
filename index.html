@@ -4791,7 +4791,10 @@ function _renderServicesSection(c){
   }
 
   // ── Section 1: c.services[] — written by client.html tracker ──
-  const trackerSvcs = c.services||[];
+  // Exclude any service already present in c.recurringServices[] (prevents duplicates after promotion)
+  const _adminSvcIds  = new Set((c.recurringServices||[]).map(s=>s.id));
+  const _adminSvcNames= new Set((c.recurringServices||[]).map(s=>(s.name||'').toLowerCase()));
+  const trackerSvcs = (c.services||[]).filter(s=>!_adminSvcIds.has(s.id)&&!_adminSvcNames.has((s.name||'').toLowerCase()));
   let trackerRows = '';
   if(trackerSvcs.length){
     trackerRows = trackerSvcs.map(s=>{
