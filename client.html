@@ -1468,14 +1468,7 @@ async function _pullClientsFromCloud(){
     const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
-    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length){
-      // Merge: cloud fills in new assignments, local wins for existing records (preserves local edits)
-      const local=getClients();
-      const byId={};
-      rec.clients.forEach(c=>{if(c.id)byId[c.id]=c;});
-      local.forEach(c=>{if(c.id)byId[c.id]=c;});
-      dbSave(CL_KEYS.clients,Object.values(byId));
-    }
+    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length) dbSave(CL_KEYS.clients,rec.clients);
     if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
   }catch(e){}
 }
@@ -3236,6 +3229,8 @@ function init(){
   _pullClientsFromCloud().then(()=>{
     renderClientGrid();
     populateScheduleClientFilter();
+    renderMyWork();
+    updateMyWorkBadge();
   }).catch(()=>{});
   ensureCatalog();
   seedTeamMembers();           // populate wl_users_db with agents if empty
