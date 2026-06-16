@@ -1657,6 +1657,42 @@ function userMarkTaskDone(clientId, projId, spId, taskId){
     showToast(`✅ Task marked done · ${pct}% complete`);
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
+
+function userUpdateProgress(clientId, projId){
+  try{
+    const pctEl  = document.getElementById('ppct-'+clientId+'-'+projId);
+    const noteEl = document.getElementById('pnote-'+clientId+'-'+projId);
+    if(!pctEl) return;
+    const pct  = parseInt(pctEl.value,10)||0;
+    const note = (noteEl?.value||'').trim();
+    const clients = _getAssignClients();
+    const c = clients.find(x=>x.id===clientId); if(!c) return;
+    const p = (c.projects||[]).find(x=>x.id===projId); if(!p) return;
+    p.progress = pct;
+    if(!p.progressLog) p.progressLog=[];
+    p.progressLog.push({ date: new Date().toISOString().slice(0,10), pct, note, user: currentUser?.name||'Team member' });
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    const notif = {
+      id:'n'+Date.now(), ts:Date.now(), read:false,
+      icon:'📈', color:'rgba(45,107,182,.1)',
+      title:`Progress update: ${p.name}`,
+      body:`${currentUser?.name||'Team member'} updated "${p.name}" (${c.name}) to ${pct}%.${note?' Note: '+note:''}`,
+      forUser:'admin', fromUser: currentUser?.name||''
+    };
+    const notifs = JSON.parse(localStorage.getItem(_TRACKER_NOTIF_KEY)||'[]');
+    notifs.unshift(notif);
+    localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(notifs.slice(0,500)));
+    const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
+    lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
+    localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
+    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    if(noteEl) noteEl.value='';
+    loadMyAssignments();
+    showToast(`Progress saved · ${pct}%`);
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';
@@ -1826,6 +1862,15 @@ function loadMyAssignments(){
       if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
         html+=`<div style="font-size:11px;color:var(--text-mid);padding:5px 0;">You're a team member on this project.</div>`;
       }
+      html+=`<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(45,107,182,.08);">
+        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;letter-spacing:.07em;">Update Progress</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="range" id="ppct-${c.id}-${p.id}" min="0" max="100" value="${p.progress||0}" style="flex:1;accent-color:#2D6BB6;cursor:pointer;" oninput="document.getElementById('pval-${c.id}-${p.id}').textContent=this.value+'%'">
+          <span id="pval-${c.id}-${p.id}" style="font-size:11px;font-weight:700;color:#2D6BB6;min-width:34px;text-align:right;">${p.progress||0}%</span>
+        </div>
+        <input type="text" id="pnote-${c.id}-${p.id}" placeholder="Add a note (optional)…" style="width:100%;margin-top:7px;padding:6px 10px;border:1px solid rgba(45,107,182,.2);border-radius:8px;font-size:11px;outline:none;box-sizing:border-box;background:#fafbff;">
+        <button onclick="userUpdateProgress('${c.id}','${p.id}')" style="margin-top:7px;width:100%;padding:7px;background:linear-gradient(135deg,#2D6BB6,#1a4f9c);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">Save Progress Update</button>
+      </div>`;
       html+=`</div></div>`;
     });
 
