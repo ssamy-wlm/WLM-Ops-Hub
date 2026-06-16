@@ -330,6 +330,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
     <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)"><span class="ni">🔁</span>Service Catalog</div>
     <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)"><span class="ni">🎯</span>Sales Funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
     <div class="nav-item" id="nav-notifications" onclick="showPage('notifications',this)"><span class="ni">🔔</span>Notifications<span class="nav-badge" id="notif-nav-badge" style="display:none;">0</span></div>
+    <div class="nav-item" id="nav-reports" onclick="showPage('reports',this)"><span class="ni">📊</span>Progress Reports</div>
   </div>
 
   <div class="sidebar-bottom">
@@ -578,6 +579,21 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <button class="btn btn-outline btn-sm" onclick="markAllNotifsRead();renderNotifPage();">Mark all read</button>
       </div>
       <div id="notif-page-list"></div>
+    </div>
+
+    <!-- ═══ PAGE: PROGRESS REPORTS ═══ -->
+    <div id="page-reports" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">📊 Progress Reports</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Monthly & yearly client progress overview</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <select id="rpt-client" class="form-input" style="font-size:11px;padding:5px 10px;" onchange="renderReports()"><option value="">All Active Clients</option></select>
+          <select id="rpt-year" class="form-input" style="font-size:11px;padding:5px 10px;" onchange="renderReports()"></select>
+        </div>
+      </div>
+      <div id="reports-body"></div>
     </div>
 
   </div><!-- /content -->
@@ -1608,6 +1624,140 @@ function readNotif(id){
   renderNotifPanel();
   renderNotifPage();
 }
+function renderReports(){
+  const el=_el('reports-body'); if(!el) return;
+  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const now=new Date();
+  const curYear=now.getFullYear();
+
+  // Populate year filter
+  const yrSel=_el('rpt-year');
+  if(yrSel&&!yrSel.options.length){
+    for(let y=curYear;y>=curYear-3;y--) yrSel.add(new Option(y,y,y===curYear,y===curYear));
+  }
+  const selYear=parseInt(yrSel?.value||curYear,10);
+
+  // Populate client filter
+  const clSel=_el('rpt-client');
+  if(clSel&&clSel.options.length<=1){
+    getClients().filter(c=>c.status==='active').forEach(c=>clSel.add(new Option(c.name,c.id)));
+  }
+  const selClient=clSel?.value||'';
+
+  const clients=getClients().filter(c=>(c.status==='active'||c.status==='paused')&&(!selClient||c.id===selClient));
+  if(!clients.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">No active clients</div></div>'; return; }
+
+  let html='';
+  clients.forEach(c=>{
+    const allProjs=c.projects||[];
+    const svcs=c.services||[];
+    const overallPct=allProjs.length?Math.round(allProjs.reduce((s,p)=>s+(p.progress||0),0)/allProjs.length):0;
+    const color=c.color||'#2D6BB6';
+    const initials=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+
+    // Monthly service completions: count services whose lastDone falls in each month of selYear
+    const monthCounts=MONTHS.map((_,mi)=>{
+      const monthStr=`${selYear}-${String(mi+1).padStart(2,'0')}`;
+      return svcs.filter(s=>s.lastDone&&s.lastDone.startsWith(monthStr)).length;
+    });
+    const maxCount=Math.max(...monthCounts,1);
+
+    // Monthly progress snapshots from progressLog
+    const monthProgress=MONTHS.map((_,mi)=>{
+      const monthStr=`${selYear}-${String(mi+1).padStart(2,'0')}`;
+      let lastPct=null;
+      allProjs.forEach(p=>{
+        (p.progressLog||[]).filter(e=>e.date&&e.date.startsWith(monthStr))
+          .forEach(e=>{ if(e.pct!==undefined) lastPct=Math.max(lastPct||0,e.pct); });
+      });
+      return lastPct;
+    });
+
+    // Services due/completed this month
+    const thisMonth=`${curYear}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const doneThisMonth=svcs.filter(s=>s.lastDone&&s.lastDone.startsWith(thisMonth)).length;
+    const dueThisMonth=svcs.filter(s=>s.due&&s.due.startsWith(thisMonth)).length;
+    const overdue=svcs.filter(s=>s.due&&s.due<today()).length;
+
+    // Recent progress log entries (all projects, sorted desc)
+    const allLogs=[];
+    allProjs.forEach(p=>{ (p.progressLog||[]).forEach(e=>allLogs.push({...e,proj:p.name})); });
+    allLogs.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    const recentLogs=allLogs.slice(0,4);
+
+    html+=`
+    <div class="card" style="margin-bottom:18px;overflow:hidden;">
+      <div style="height:4px;background:${color};"></div>
+      <div class="card-body" style="padding:16px;">
+        <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:14px;">
+          <div style="width:38px;height:38px;border-radius:10px;background:${color};display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:13px;flex-shrink:0;">${initials}</div>
+          <div style="flex:1;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
+            <div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap;">
+              <span style="font-size:10px;color:var(--text-mid);">📁 ${allProjs.length} project${allProjs.length!==1?'s':''}</span>
+              <span style="font-size:10px;color:var(--text-mid);">🔁 ${svcs.length} service${svcs.length!==1?'s':''}</span>
+              ${overdue?`<span style="font-size:10px;color:#e53e3e;font-weight:700;">⚠️ ${overdue} overdue</span>`:''}
+              <span style="font-size:10px;color:var(--text-mid);">✅ ${doneThisMonth} done this month</span>
+              ${dueThisMonth?`<span style="font-size:10px;color:#d97706;">📅 ${dueThisMonth} due this month</span>`:''}
+            </div>
+          </div>
+          <div style="text-align:center;flex-shrink:0;">
+            <div style="font-size:22px;font-weight:900;color:${color};">${overallPct}%</div>
+            <div style="font-size:9px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Overall</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Services Completed · ${selYear}</div>
+          <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;align-items:flex-end;">
+            ${monthCounts.map((cnt,mi)=>{
+              const h=cnt>0?Math.max(Math.round((cnt/maxCount)*40),8):4;
+              const isPast=new Date(selYear,mi+1,0)<now;
+              const isCur=mi===now.getMonth()&&selYear===curYear;
+              return `<div style="text-align:center;">
+                <div style="font-size:9px;font-weight:700;color:${cnt>0?color:'var(--text-light)'};">${cnt||''}</div>
+                <div style="height:${h}px;background:${cnt>0?color:isCur?'rgba(45,107,182,.15)':'var(--border)'};border-radius:3px;margin:2px 0;${isCur?'outline:1.5px solid '+color+';':''}" title="${MONTHS[mi]}: ${cnt} completed"></div>
+                <div style="font-size:8px;color:${isCur?color:isPast?'var(--text-mid)':'var(--text-light)'};">${MONTHS[mi]}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        ${allProjs.length?`
+        <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Project Progress · ${selYear}</div>
+          <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;align-items:flex-end;">
+            ${monthProgress.map((pct,mi)=>{
+              const h=pct!==null?Math.max(Math.round((pct/100)*40),4):4;
+              const isCur=mi===now.getMonth()&&selYear===curYear;
+              const displayPct=pct!==null?pct:(isCur?overallPct:null);
+              return `<div style="text-align:center;">
+                <div style="font-size:9px;font-weight:700;color:${displayPct!==null?color:'var(--text-light)'};">${displayPct!==null?displayPct+'%':''}</div>
+                <div style="height:${displayPct!==null?Math.max(Math.round((displayPct/100)*40),4):4}px;background:${displayPct!==null?color:'var(--border)'};border-radius:3px;margin:2px 0;${isCur?'outline:1.5px solid '+color+';':''}" title="${MONTHS[mi]}${displayPct!==null?': '+displayPct+'%':''}"></div>
+                <div style="font-size:8px;color:${isCur?color:'var(--text-light)'};">${MONTHS[mi]}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`:''}
+
+        ${recentLogs.length?`
+        <div>
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Recent Progress Updates</div>
+          ${recentLogs.map(e=>`
+            <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
+              <span style="font-size:16px;font-weight:900;color:${color};min-width:38px;">${e.pct}%</span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:11px;font-weight:700;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.proj}</div>
+                ${e.note?`<div style="font-size:10px;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.note}</div>`:''}
+              </div>
+              <div style="font-size:9px;color:var(--text-light);white-space:nowrap;">${e.date||''} · ${e.user||''}</div>
+            </div>`).join('')}
+        </div>`:''}
+      </div>
+    </div>`;
+  });
+  el.innerHTML=html;
+}
 
 // ═══════════════════════════════════════════════════════
 //  SERVICE ALERTS
@@ -1638,6 +1788,7 @@ const PAGE_META={
   'recurring-catalog': ['Service Catalog','All services offered — recurring and one-time'],
   'sales-funnel':      ['Sales Funnel','New client intake and prospect pipeline'],
   'notifications':     ['Notifications','Client assignments, updates and reminders'],
+  'reports':            ['Progress Reports','Monthly & yearly client progress overview'],
 };
 function showPage(name, el){
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
@@ -1657,6 +1808,7 @@ function showPage(name, el){
     renderFunnelBoard();
   }
   if(name==='notifications'){ renderNotifPage(); }
+  if(name==='reports'){ renderReports(); }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2161,6 +2313,7 @@ function renderServices(c){
     const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
     const days=daysUntil(svc.due);
     const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
+    const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
     return `
       <tr>
         <td><span style="font-size:13px;">${icon}</span></td>
@@ -2168,9 +2321,9 @@ function renderServices(c){
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${svc.assigneeName?`<span class="user-chip">${svc.assigneeName}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
-        ${SESSION.isAdmin?`<td>
+        ${svcCanEdit?`<td>
           <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}')">✏️</button>
-          <button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}')">✕</button>
+          ${SESSION.isAdmin?`<button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}')">✕</button>`:''}
         </td>`:'<td></td>'}
       </tr>`;
   }).join('');
@@ -2180,7 +2333,7 @@ function renderServices(c){
     </div>
     ${svcs.length?`<div style="overflow-x:auto;">
       <table class="service-table">
-        <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th>${SESSION.isAdmin?'<th>Actions</th>':'<th></th>'}</tr></thead>
+        <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`:'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>'}`;
@@ -3270,13 +3423,17 @@ function init(){
   refreshNotifBadge();
   updateMyWorkBadge();
   runScheduledAlerts();
-  // Poll every 60s for new alerts / badge refresh
+  // Poll every 30s for new alerts / badge refresh and cloud sync
   setInterval(()=>{
     refreshNotifBadge();
     renderNotifPanel();
     checkServiceAlerts();
     updateMyWorkBadge();
-  }, 60000);
+    _pullClientsFromCloud().then(()=>{ renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+  }, 30000);
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden) _pullClientsFromCloud().then(()=>{ renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+  });
 }
 
 // ═══════════════════════════════════════════════════════

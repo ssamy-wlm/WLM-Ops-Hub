@@ -1704,8 +1704,8 @@ function userUpdateProgress(clientId, projId){
     const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
     lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
     localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
-    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
-    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     if(noteEl) noteEl.value='';
     loadMyAssignments();
     showToast(`Progress saved · ${pct}%`);
