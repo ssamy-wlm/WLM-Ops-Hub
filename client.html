@@ -1019,9 +1019,10 @@ function detectSession(){
   const _urlParams = new URLSearchParams(window.location.search);
   const _forceUserMode = _urlParams.get('usermode') === '1';
 
+  const _hasAdminSession = !!(db('wl_admin_session')?.role);
   try{
     const as = db('wl_admin_session');
-    if(as && as.role && !_forceUserMode){
+    if(as && as.role){
       SESSION.isAdmin = true;
       SESSION.role    = as.role;
       SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
@@ -1038,16 +1039,14 @@ function detectSession(){
     const users = db(CL_KEYS.users)||[];
     const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
     if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
-    // Enrich from admins DB (skip if forced user mode)
-    if(!_forceUserMode){
-      const admins = db(CL_KEYS.admins)||[];
-      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
-      if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
-    }
+    // Enrich from admins DB
+    const admins = db(CL_KEYS.admins)||[];
+    const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+    if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
   }catch(e){}
 
-  // If ?usermode=1, override isAdmin to false regardless
-  if(_forceUserMode){
+  // usermode=1 only restricts users who aren't real admins
+  if(_forceUserMode && !_hasAdminSession){
     SESSION.isAdmin = false;
     SESSION.isCEO = false;
     SESSION.isSuperAdmin = false;
@@ -1983,11 +1982,12 @@ function renderOverview(c){
 
 // ── Projects Tab ──
 function renderProjects(c){
-  const canEdit=SESSION.isAdmin;
   const t=today();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
 
   const projs=(c.projects||[]).map(p=>{
+    const onProject=(p.users||[]).some(u=>u===SESSION.id||u===SESSION.name);
+    const canEdit=SESSION.isAdmin||onProject;
     // ── Recurring Service block ──────────────────────────────────────
     if(p.isRecurringService){
       const dueCls=p.due&&p.due<t?'overdue':p.due&&p.due<=in7s?'soon':'ok';
