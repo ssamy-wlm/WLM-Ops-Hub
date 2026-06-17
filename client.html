@@ -1499,7 +1499,17 @@ async function _doCloudPush(){
   try{
     const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     const cur=r0.ok?((await r0.json())?.record||{}):{};
-    cur.clients=getClients();
+    // Merge by client id (local wins per-id) instead of blindly replacing the whole
+    // clients array. A flat overwrite here would silently erase any client record
+    // another device/portal (e.g. user.html) pushed to the cloud after this
+    // browser's last pull but before this save — exactly the failure mode behind
+    // "marked done but it didn't reflect on the production tracker."
+    const cloudClients=Array.isArray(cur.clients)?cur.clients:[];
+    const localClients=getClients();
+    const byId={};
+    cloudClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
+    localClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
+    cur.clients=Object.values(byId);
     cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
     await fetch(CLOUD_DATA_URL,{
       method:'PUT',
@@ -1525,7 +1535,16 @@ async function _pullClientsFromCloud(){
     const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
-    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length) dbSave(CL_KEYS.clients,rec.clients);
+    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length){
+      // Merge by id (cloud wins per-id) rather than a blind overwrite, so any
+      // local-only client/edit not yet pushed to the cloud isn't discarded by
+      // this periodic background pull.
+      const localClients=getClients();
+      const byId={};
+      localClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
+      rec.clients.forEach(c=>{ if(c.id) byId[c.id]=c; });
+      dbSave(CL_KEYS.clients,Object.values(byId));
+    }
     if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
   }catch(e){}
 }
