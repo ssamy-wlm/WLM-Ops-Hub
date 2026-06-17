@@ -2185,7 +2185,8 @@ function renderProjects(c){
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;" onclick="event.stopPropagation();">
             <span class="chip chip-${p.status}" style="font-size:8px;">${(p.status||'in-progress').replace('-',' ')}</span>
             <span class="priority-badge pb-${p.priority}" style="font-size:8px;">${p.priority||'medium'}</span>
-            ${canEdit?`<button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')">✅ Mark Done</button>
+            ${canEdit?`<input type="date" id="svcdone-${c.id}-${p.serviceId}" value="${today()}" max="${today()}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();">
+            <button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')">✅ Mark Done</button>
             <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${p.serviceId}')">✏️ Edit</button>`:''}
           </div>
         </div>
@@ -2948,7 +2949,8 @@ function removeClientService(clientId,entryId){
 function markServiceDone(clientId, serviceId){
   const c=getClient(clientId); if(!c) return;
   const svc=(c.services||[]).find(s=>s.id===serviceId); if(!svc) return;
-  const doneDate=today();
+  const dateEl=_el('svcdone-'+clientId+'-'+serviceId);
+  const doneDate=(dateEl && dateEl.value) ? dateEl.value : today();
   svc.lastDone=doneDate;
   svc.due=calcNextDue(svc.freq, doneDate);
   updateClient(c);
@@ -2958,6 +2960,7 @@ function markServiceDone(clientId, serviceId){
     body:`${SESSION.name} marked "${svc.name}" complete for ${c.name}. Next due: ${svc.due||'TBD'}.`,
     forUser:'admin', fromUser:SESSION.name });
   renderClientDetail(clientId,'projects');
+  renderMyWork();
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
 }
 
@@ -3193,10 +3196,12 @@ function renderMyWork(){
           const cls=svc.due&&svc.due<t?'overdue':'ok';
           const days=daysUntil(svc.due);
           const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
-          return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;">
+          return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
-            <div class="alert-body"><div class="alert-title">${svc.name}</div>
+            <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}</div>
             <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+            <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;">
+            <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}')">✅ Mark Done</button>
           </div>`;
         }).join('');
       }
