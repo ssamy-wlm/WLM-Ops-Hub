@@ -7995,18 +7995,25 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
     });
     changed = true;
   }
-  // Emily: canonical id:'emily' matches wl_users_db + all service/project assignments
-  const _existingEmily = admins.find(a=>a.email==='emily@weblightmedia.com');
+  // Emily: canonical id:'emily' matches wl_users_db + all service/project assignments.
+  // Her real admin account uses erovillo@weblightmedia.com (NOT emily@weblightmedia.com —
+  // that earlier guess created a duplicate placeholder; remove it if present).
+  const _emilyDupIdx = admins.findIndex(a=>a.id==='emily' && (a.email||'').toLowerCase()!=='erovillo@weblightmedia.com');
+  if(_emilyDupIdx>-1){
+    admins.splice(_emilyDupIdx,1);
+    changed = true;
+  }
+  const _existingEmily = admins.find(a=>(a.email||'').toLowerCase()==='erovillo@weblightmedia.com');
   if(!_existingEmily){
     admins.push({
-      id:'emily', name:'Emily Rovillo', email:'emily@weblightmedia.com',
+      id:'emily', name:'Emily Rovillo', email:'erovillo@weblightmedia.com',
       title:'Creative Manager', initials:'ER', password:'123456',
       level:'admin', assignedUsers:[], status:'active',
       createdAt:'2024-01-01T00:00:00.000Z'
     });
     changed = true;
   } else if(_existingEmily.id !== 'emily'){
-    // Normalize any dynamically-created Emily admin to the canonical id
+    // Normalize her real account to the canonical id
     const _oldId = _existingEmily.id;
     _existingEmily.id = 'emily';
     changed = true;
