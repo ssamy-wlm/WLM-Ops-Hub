@@ -5420,7 +5420,7 @@ function _seedCoreTeam(){
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active'},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active'},
     {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active'},
-    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaa@weblightmedia.com',  title:'Webmaster & Copywriter',        role:'member',  status:'active'},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active'},
     {id:'mo',      name:'Mo Money',       email:'mo@weblightmedia.com',      title:'Sales & Account Manager',       role:'member',  status:'active'},
     {id:'sally',   name:'Sally Smooth',   email:'sally@weblightmedia.com',   title:'Operations Manager',            role:'member',  status:'active'},
     {id:'viral',   name:'Viral Vera',     email:'viral@weblightmedia.com',   title:'Video Specialist',              role:'member',  status:'active'},
@@ -5498,6 +5498,78 @@ function _reassignSocialMediaToSherine(){
   if(changed){
     _saveClientDB(live);
     console.log('[WLM] ✅ Social Media Management reassigned to '+sherineName+' across all clients.');
+  }
+}
+
+// ── Seed Assmaa Fouad's real-world workload (idempotent — adds services/projects
+// once, skips any that already exist on subsequent loads):
+//  • Russ Hudson Consulting — video editing, WordPress/Rev posting, Mailchimp emails, Zendesk support
+//  • Leese Flooring Supplies — town page + FAQ copywriting
+//  • WebLight Media (internal) — weekly site checks, Grade.us posting, training time
+//  • Goode Bookkeeping & Consulting — reassigns the existing Blog Content service to her
+function _seedAssmaaWorkload(){
+  const live = _getClientDB();
+  const allUsers = dbGet(DB_KEYS.users) || [];
+  const assmaaUser = allUsers.find(u => (u.name||'').toLowerCase().includes('assmaa'));
+  const assmaaId = assmaaUser ? assmaaUser.id : 'assmaa';
+  const assmaaName = (assmaaUser ? assmaaUser.name : 'Assmaa Fouad').split(' ')[0];
+  let changed = false;
+
+  const addService = (client, svc) => {
+    if(!client) return;
+    if(!Array.isArray(client.services)) client.services = [];
+    if(client.services.some(s=>(s.name||'').toLowerCase()===svc.name.toLowerCase())) return;
+    const svcId = 'svc_'+(client.code||'client').toLowerCase()+'_'+svc.name.toLowerCase().replace(/[^a-z0-9]+/g,'_')+'_'+Date.now()+Math.floor(Math.random()*1000);
+    client.services.push({
+      id: svcId, catalogId: svc.catalogId, name: svc.name,
+      freq: svc.freq, freqLabel: svc.freqLabel,
+      assignee: assmaaName, lastDone: null, due: null, status: 'active',
+      platforms: svc.platforms||'', notes: svc.notes||'',
+      assigneeName: assmaaName, assigneeId: assmaaId
+    });
+    if(!Array.isArray(client.projects)) client.projects = [];
+    client.projects.push({
+      id: 'proj_'+svcId, name: svc.name, type:'Recurring Service', billing:'recurring',
+      status:'in-progress', priority:'medium', due:'', progress:0, color: client.color||'#2D6BB6',
+      users:[assmaaId],
+      desc: (svc.platforms?`Platforms: ${svc.platforms} · `:'')+`Frequency: ${svc.freqLabel}`,
+      serviceId: svcId, freq: svc.freq, freqLabel: svc.freqLabel, lastDone:'',
+      subprojects:[], tasks:[], milestones:[], progressLog:[], isRecurringService:true
+    });
+    changed = true;
+  };
+
+  const russ = live.find(c=>(c.name||'').toLowerCase()==='russ hudson consulting');
+  addService(russ, {name:'Video Editing', catalogId:'photo-video', freq:'monthly', freqLabel:'Ongoing', notes:'Edit course/training videos for posting to the site.'});
+  addService(russ, {name:'Course Content Posting', catalogId:'wm', freq:'monthly', freqLabel:'Ongoing', platforms:'WordPress, Rev', notes:'Prepare and post materials to the site using WordPress and Rev.'});
+  addService(russ, {name:'Student Email Communications', catalogId:'newsletter', freq:'monthly', freqLabel:'Ongoing', platforms:'Mailchimp', notes:'Send emails to students via Mailchimp.'});
+  addService(russ, {name:'Student Support Tickets', catalogId:'rm-weekly', freq:'weekly', freqLabel:'Ongoing', platforms:'Zendesk', notes:"Review and respond to student tickets in Zendesk, with Abby's support."});
+
+  const leese = live.find(c=>(c.name||'').toLowerCase()==='leese flooring supplies');
+  addService(leese, {name:'Town Page & FAQ Content', catalogId:'rec-content', freq:'monthly', freqLabel:'2 town pages + 1 FAQ / month', platforms: leese?leese.website:'', notes:'Write and post two town pages and one FAQ per month.'});
+
+  const wlm = live.find(c=>(c.name||'').toLowerCase()==='weblight media');
+  addService(wlm, {name:'Weekly Site Checks (All Clients)', catalogId:'wm', freq:'weekly', freqLabel:'Weekly', notes:'Perform weekly site checks for all clients.'});
+  addService(wlm, {name:'Grade.us Recipient List Posting', catalogId:'rec-content', freq:'monthly', freqLabel:'Ongoing', platforms:'Grade.us', notes:'Post the lists of recipients to clients on Grade.us.'});
+  addService(wlm, {name:'Training Time', catalogId:'events-training', freq:'monthly', freqLabel:'As needed', notes:'Learning new tools and plugins as needed to support client work, as requested by Abby.'});
+
+  const goode = live.find(c=>(c.name||'').toLowerCase()==='goode bookkeeping & consulting');
+  if(goode){
+    const blogSvc = (goode.services||[]).find(s=>s.catalogId==='svc_blog' || /blog/i.test(s.name||''));
+    if(blogSvc && blogSvc.assigneeId !== assmaaId){
+      blogSvc.assignee = assmaaName; blogSvc.assigneeName = assmaaName; blogSvc.assigneeId = assmaaId;
+      changed = true;
+    }
+    const blogProj = blogSvc ? (goode.projects||[]).find(p=>p.serviceId===blogSvc.id) : null;
+    if(blogProj && (!Array.isArray(blogProj.users) || blogProj.users.length!==1 || blogProj.users[0]!==assmaaId)){
+      blogProj.users = [assmaaId];
+      changed = true;
+    }
+  }
+
+  if(changed){
+    _saveClientDB(live);
+    console.log('[WLM] ✅ Assmaa Fouad workload seeded (Russ Hudson, Leese Flooring, WebLight Media, Goode Bookkeeping).');
   }
 }
 
@@ -6453,6 +6525,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeSopSeedDuplicates();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
+  // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
+  _seedAssmaaWorkload();
   // Render user table from DB
   renderUserTable();
   // Render admin accounts table from DB
