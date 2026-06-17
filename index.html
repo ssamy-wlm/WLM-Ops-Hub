@@ -4232,7 +4232,16 @@ let activeProjectId = null;
 
 const _ROSTER_COLORS=['#2D6BB6','#9333ea','#e05555','#16a34a','#d97706','#0891b2','#7c3aed'];
 function buildTeamRoster(){
-  return (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active').map((u,i)=>({
+  const users = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active');
+  // Include admin-only accounts (Sarah Samy, Emily, David, Abby, etc.) so they're assignable too.
+  // Dedupe by name — admin/user emails don't always match (e.g. dj@... vs david@...).
+  const userNames = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&!userNames.has((a.name||'').trim().toLowerCase()));
+  const combined = [...users, ...admins];
+  if(!userNames.has('sarah samy') && !admins.some(a=>(a.name||'').trim().toLowerCase()==='sarah samy')){
+    combined.push({id:'sarah', name:'Sarah Samy'});
+  }
+  return combined.map((u,i)=>({
     id:u.id,
     name:u.name,
     initials:u.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(),

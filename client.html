@@ -1143,8 +1143,16 @@ function daysUntil(dateStr){
 // ═══════════════════════════════════════════════════════
 const ROSTER_COLS=['#2D6BB6','#9333ea','#e05555','#16a34a','#d97706','#0891b2','#7c3aed','#be185d','#475569','#b45309'];
 function getRoster(){
-  const users = db(CL_KEYS.users)||[];
-  return users.filter(u=>u.status==='active'||!u.status).map((u,i)=>({
+  const users = (db(CL_KEYS.users)||[]).filter(u=>u.status==='active'||!u.status);
+  // Include admin-only accounts (Sarah Samy, Emily, David, Abby, etc.) so they're assignable too.
+  // Dedupe by name — admin/user emails don't always match (e.g. dj@... vs david@...).
+  const userNames = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
+  const admins = (db(CL_KEYS.admins)||[]).filter(a=>(a.status==='active'||!a.status)&&!userNames.has((a.name||'').trim().toLowerCase()));
+  const combined = [...users, ...admins];
+  if(!userNames.has('sarah samy') && !admins.some(a=>(a.name||'').trim().toLowerCase()==='sarah samy')){
+    combined.push({id:'sarah', name:'Sarah Samy'});
+  }
+  return combined.map((u,i)=>({
     id:   u.id||u.name,
     name: u.name||'Unknown',
     initials: (u.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase(),
