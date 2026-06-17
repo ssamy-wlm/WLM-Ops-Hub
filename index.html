@@ -5414,7 +5414,7 @@ function _seedCoreTeam(){
     {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active'},
     {id:'abby',    name:'Abby Conklin',   email:'abby@weblightmedia.com',    title:'Director of Production',        role:'admin',   status:'active'},
     {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active'},
-    {id:'sherine', name:'Sherine Magdy',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active'},
+    {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active'},
     {id:'mostafa', name:'Mostafa Jamal',  email:'mostafa@weblightmedia.com', title:'Ads and SEO Specialist',        role:'member',  status:'active'},
     {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active'},
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active'},
@@ -5457,7 +5457,7 @@ function _reassignSocialMediaToSherine(){
   const allUsers = dbGet(DB_KEYS.users) || [];
   const sherineUser = allUsers.find(u => (u.name||'').toLowerCase().includes('sherine'));
   const sherineId = sherineUser ? sherineUser.id : 'sherine';
-  const sherineName = (sherineUser ? sherineUser.name : 'Sherine Magdy').split(' ')[0];
+  const sherineName = (sherineUser ? sherineUser.name : 'Sherine Amind').split(' ')[0];
 
   let changed = false;
   const isSMM = s => (s.name||'').toLowerCase().includes('social media');
@@ -8147,6 +8147,44 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
     dbSet(DB_KEYS.admins, admins);
     if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
     if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+  }
+})();
+
+// ── Reconcile dual-identity team members: anyone who exists in BOTH wl_users_db
+// (the canonical ID used by every service/project assignment) and wl_admins_db
+// (a separately-created admin-portal login) gets their admin record's ID
+// normalized to match. Without this, detectSession() in client.html can resolve
+// a different ID depending on which portal someone logs into, silently stripping
+// their edit rights on their own assigned work — generalizes the Emily Rovillo
+// fix above to run for everyone, since the two records' names can drift (e.g. a
+// placeholder seed name that was never corrected to match someone's real account).
+(function _reconcileDualIdentityIds(){
+  const users  = dbGet(DB_KEYS.users)  || [];
+  const admins = dbGet(DB_KEYS.admins) || [];
+  const firstNameOf = n => (n||'').trim().split(/\s+/)[0].toLowerCase();
+  let changed = false;
+  users.forEach(u=>{
+    const uFirst = firstNameOf(u.name);
+    if(!u.id || !uFirst) return;
+    const dup = admins.find(a=>a.id!==u.id && firstNameOf(a.name)===uFirst);
+    if(dup){
+      const oldId = dup.id;
+      dup.id = u.id;
+      changed = true;
+      try{
+        const sess = JSON.parse(localStorage.getItem('wl_admin_session')||'null');
+        if(sess && sess.adminId === oldId){
+          sess.adminId = u.id;
+          localStorage.setItem('wl_admin_session', JSON.stringify(sess));
+        }
+      }catch(e){}
+    }
+  });
+  if(changed){
+    dbSet(DB_KEYS.admins, admins);
+    if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
+    if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    console.log('[WLM] ✅ Reconciled dual-identity admin/user account IDs.');
   }
 })();
 

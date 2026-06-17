@@ -1066,14 +1066,21 @@ function detectSession(){
       SESSION.name = us.name;
       SESSION.id   = us.id||us.name;
     }
-    // Enrich from user DB (user IDs take priority — they match p.users[] and assigneeId)
+    // Enrich from user DB (user IDs take priority — they match p.users[] and assigneeId).
+    // Falls back to a first-name match so a surname mismatch between someone's admin
+    // login record and their wl_users_db assignment record (e.g. a placeholder/seed
+    // name that was never corrected) doesn't strand them with a non-matching ID.
+    const _firstNameOf = n => (n||'').trim().split(/\s+/)[0].toLowerCase();
+    const _myFirst = _firstNameOf(SESSION.name);
     const users = db(CL_KEYS.users)||[];
-    const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name));
+    const me = users.find(u=>(u.id&&u.id===SESSION.id)||(u.name&&u.name===SESSION.name))
+            || (_myFirst && users.find(u=>_firstNameOf(u.name)===_myFirst));
     if(me){ SESSION.name=me.name; SESSION.id=me.id||me.name; }
     else {
       // Enrich from admins DB only when no matching user record found
       const admins = db(CL_KEYS.admins)||[];
-      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name));
+      const ma = admins.find(a=>(a.id&&a.id===SESSION.id)||(a.name&&a.name===SESSION.name))
+              || (_myFirst && admins.find(a=>_firstNameOf(a.name)===_myFirst));
       if(ma){ SESSION.name=ma.name; SESSION.id=ma.id||ma.name; }
     }
   }catch(e){}
@@ -2162,8 +2169,20 @@ function renderProjects(c){
   const t=today();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
 
+  // First-name fallback so a surname mismatch between someone's assigned ID
+  // (p.users[]) and their resolved SESSION identity doesn't strand them
+  // without edit rights on their own work.
+  const _sessFirst=(SESSION.name||'').trim().split(/\s+/)[0].toLowerCase();
+  const _idDirectory=[...(db(CL_KEYS.users)||[]),...(db(CL_KEYS.admins)||[])];
+  const _idMatchesSession = u => {
+    if(u===SESSION.id||u===SESSION.name) return true;
+    if(!_sessFirst) return false;
+    const rec=_idDirectory.find(x=>x.id===u);
+    return !!rec && (rec.name||'').trim().split(/\s+/)[0].toLowerCase()===_sessFirst;
+  };
+
   const projs=(c.projects||[]).map(p=>{
-    const onProject=(p.users||[]).some(u=>u===SESSION.id||u===SESSION.name);
+    const onProject=(p.users||[]).some(_idMatchesSession);
     const canEdit=SESSION.isAdmin||onProject;
     // ── Recurring Service block ──────────────────────────────────────
     if(p.isRecurringService){
