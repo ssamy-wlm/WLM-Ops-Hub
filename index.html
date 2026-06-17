@@ -5497,6 +5497,7 @@ function _reassignSocialMediaToSherine(){
 
   if(changed){
     _saveClientDB(live);
+    cloudAutoSync(); // persist to cloud so changes survive live sync pulls
     console.log('[WLM] ✅ Social Media Management reassigned to '+sherineName+' across all clients.');
   }
 }
@@ -5569,6 +5570,7 @@ function _seedAssmaaWorkload(){
 
   if(changed){
     _saveClientDB(live);
+    cloudAutoSync(); // persist to cloud so changes survive live sync pulls
     console.log('[WLM] ✅ Assmaa Fouad workload seeded (Russ Hudson, Leese Flooring, WebLight Media, Goode Bookkeeping).');
   }
 }
@@ -5600,6 +5602,7 @@ function _assignBrightwheelExportToAbby(){
 
   if(changed){
     _saveClientDB(live);
+    cloudAutoSync(); // persist to cloud so changes survive live sync pulls
     console.log('[WLM] ✅ BrightWheel Review Request Export assigned to '+abbyName+'.');
   }
 }
@@ -6503,6 +6506,13 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(!(dbGet(DB_KEYS.users)||[]).length && typeof _seedCoreTeam === 'function'){
       _seedCoreTeam();
     }
+
+    // ── Re-apply idempotent client-data fixups every time the cloud-wins client
+    // overwrite above runs, so a stale cloud blob never silently undoes them.
+    // Each fixup pushes back to cloud itself if it actually changes anything.
+    if(typeof _reassignSocialMediaToSherine === 'function') _reassignSocialMediaToSherine();
+    if(typeof _seedAssmaaWorkload === 'function') _seedAssmaaWorkload();
+    if(typeof _assignBrightwheelExportToAbby === 'function') _assignBrightwheelExportToAbby();
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
