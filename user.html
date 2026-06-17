@@ -1031,6 +1031,14 @@ async function cloudFetchUsers(){
 // Debounced push — coalesces rapid saves (task done, progress update) into one cloud write
 let _cloudPushTimer;
 function _scheduleCloudPush(){ clearTimeout(_cloudPushTimer); _cloudPushTimer = setTimeout(cloudPushData, 2000); }
+// Flush any pending debounced push immediately when the tab is closed/backgrounded/
+// navigated away from — otherwise a Mark Done click followed by closing the tab
+// within the 2s debounce window silently loses the change to cloud sync.
+function _flushCloudPush(){
+  if(_cloudPushTimer){ clearTimeout(_cloudPushTimer); _cloudPushTimer=null; cloudPushData(); }
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
+window.addEventListener('pagehide', _flushCloudPush);
 
 // Push user-generated data (EODs, blockers, goals, feed) to cloud using read-modify-write
 async function cloudPushData(){
@@ -1668,9 +1676,10 @@ function userMarkTaskDone(clientId, projId, spId, taskId){
     const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
     lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
     localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
-    // Trigger cloud push if available
-    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
-    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    // Push immediately (not debounced) — a discrete Mark Done click shouldn't risk
+    // being lost to cloud sync if the tab closes before a debounce timer fires.
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     // Refresh the my-work panel
     loadMyAssignments();
     showToast(`✅ Task marked done · ${pct}% complete`);
@@ -1713,8 +1722,8 @@ function userMarkServiceDone(clientId, svcId){
     const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
     lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
     localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
-    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
-    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     loadMyAssignments();
     showToast(`✅ Service marked done · Next due ${svc.due}`);
   }catch(e){ showToast('Could not save — try again','warn'); }

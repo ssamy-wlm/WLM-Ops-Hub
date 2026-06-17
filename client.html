@@ -1495,22 +1495,31 @@ function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 const CLOUD_DATA_URL = '/api/cloud-data';
 
 let _cloudPushTimer=null;
+async function _doCloudPush(){
+  try{
+    const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
+    const cur=r0.ok?((await r0.json())?.record||{}):{};
+    cur.clients=getClients();
+    cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
+    await fetch(CLOUD_DATA_URL,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(cur)
+    });
+  }catch(e){}
+}
 function _scheduleCloudPush(){
   clearTimeout(_cloudPushTimer);
-  _cloudPushTimer=setTimeout(async ()=>{
-    try{
-      const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
-      const cur=r0.ok?((await r0.json())?.record||{}):{};
-      cur.clients=getClients();
-      cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
-      await fetch(CLOUD_DATA_URL,{
-        method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(cur)
-      });
-    }catch(e){}
-  },1500);
+  _cloudPushTimer=setTimeout(_doCloudPush,1500);
 }
+// Flush any pending debounced push immediately when the tab is closed/backgrounded/
+// navigated away from — otherwise a Mark Done click followed by closing the tab
+// within the 1.5s debounce window silently loses the change to cloud sync.
+function _flushCloudPush(){
+  if(_cloudPushTimer){ clearTimeout(_cloudPushTimer); _cloudPushTimer=null; _doCloudPush(); }
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
+window.addEventListener('pagehide', _flushCloudPush);
 async function _pullClientsFromCloud(){
   try{
     const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
@@ -2980,6 +2989,9 @@ function markServiceDone(clientId, serviceId){
     forUser:'admin', fromUser:SESSION.name });
   renderClientDetail(clientId,'projects');
   renderMyWork();
+  // Push immediately (not debounced) — a discrete Mark Done click shouldn't risk
+  // being lost to cloud sync if the tab closes before the debounce timer fires.
+  if(typeof _flushCloudPush==='function') _flushCloudPush();
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
 }
 
