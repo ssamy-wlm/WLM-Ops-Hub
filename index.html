@@ -5573,6 +5573,37 @@ function _seedAssmaaWorkload(){
   }
 }
 
+// ── Assign the BrightWheel Review Request service/project to Abby Conklin (idempotent) ──
+function _assignBrightwheelExportToAbby(){
+  const live = _getClientDB();
+  const allUsers = dbGet(DB_KEYS.users) || [];
+  const abbyUser = allUsers.find(u => (u.name||'').toLowerCase().includes('abby'));
+  const abbyId = abbyUser ? abbyUser.id : 'abby';
+  const abbyName = (abbyUser ? abbyUser.name : 'Abby Conklin').split(' ')[0];
+  const isBrightwheelExport = n => (n||'').toLowerCase().includes('brightwheel review request');
+  let changed = false;
+
+  live.forEach(c=>{
+    [...(c.services||[]), ...(c.recurringServices||[])].forEach(s=>{
+      if(isBrightwheelExport(s.name) && s.assigneeId !== abbyId){
+        s.assignee = abbyName; s.assigneeName = abbyName; s.assigneeId = abbyId;
+        changed = true;
+      }
+    });
+    (c.projects||[]).forEach(p=>{
+      if(isBrightwheelExport(p.name) && (!Array.isArray(p.users) || p.users.length!==1 || p.users[0]!==abbyId)){
+        p.users = [abbyId];
+        changed = true;
+      }
+    });
+  });
+
+  if(changed){
+    _saveClientDB(live);
+    console.log('[WLM] ✅ BrightWheel Review Request Export assigned to '+abbyName+'.');
+  }
+}
+
 // Override the existing doLogin to log activity and check stored users
 window.doLogin = async function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
@@ -6527,6 +6558,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
   _seedAssmaaWorkload();
+  // Assign the BrightWheel Review Request Export to Abby Conklin (idempotent)
+  _assignBrightwheelExportToAbby();
   // Render user table from DB
   renderUserTable();
   // Render admin accounts table from DB
