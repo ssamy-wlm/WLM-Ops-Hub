@@ -1685,9 +1685,11 @@ function userMarkServiceDone(clientId, svcId){
     const c = clients.find(x=>x.id===clientId); if(!c) return;
     const svc = (c.services||[]).find(s=>s.id===svcId); if(!svc) return;
     const todayStr = new Date().toISOString().slice(0,10);
-    svc.lastDone = todayStr;
+    const dateEl = document.getElementById('sdone-'+clientId+'-'+svcId);
+    const doneStr = (dateEl && dateEl.value) ? dateEl.value : todayStr;
+    svc.lastDone = doneStr;
     const freq = svc.freq||'monthly';
-    const d = new Date(todayStr);
+    const d = new Date(doneStr);
     if(freq==='weekly') d.setDate(d.getDate()+7);
     else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
     else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
@@ -1953,6 +1955,7 @@ function loadMyAssignments(){
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
               <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
             </div>
+            <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
             <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
           </div>
         </div>`;
