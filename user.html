@@ -1677,6 +1677,47 @@ function userMarkTaskDone(clientId, projId, spId, taskId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
+// Mark a recurring tracker service (c.services[]) done from the team portal —
+// rolls the due date forward and keeps the mirrored project in sync.
+function userMarkServiceDone(clientId, svcId){
+  try{
+    const clients = _getAssignClients();
+    const c = clients.find(x=>x.id===clientId); if(!c) return;
+    const svc = (c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const todayStr = new Date().toISOString().slice(0,10);
+    svc.lastDone = todayStr;
+    const freq = svc.freq||'monthly';
+    const d = new Date(todayStr);
+    if(freq==='weekly') d.setDate(d.getDate()+7);
+    else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
+    else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
+    else d.setMonth(d.getMonth()+1);
+    svc.due = d.toISOString().slice(0,10);
+    const proj = (c.projects||[]).find(p=>p.serviceId===svcId);
+    if(proj){ proj.due=svc.due; proj.lastDone=svc.lastDone; }
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    // Push notification to tracker (wl_notifications_db)
+    const notif = {
+      id:'n'+Date.now(),
+      ts: Date.now(), read: false,
+      icon:'✅', color:'rgba(46,158,110,.1)',
+      title:`Service done: ${svc.name}`,
+      body:`${currentUser?.name||'Team member'} marked "${svc.name}" done for ${c.name}. Next due: ${svc.due}.`,
+      forUser:'admin', fromUser: currentUser?.name||''
+    };
+    const existing = JSON.parse(localStorage.getItem(_TRACKER_NOTIF_KEY)||'[]');
+    existing.unshift(notif);
+    localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(existing.slice(0,500)));
+    const lf = JSON.parse(localStorage.getItem('wl_live_feed')||'[]');
+    lf.unshift({id:'lf'+Date.now(),type:'client',user:notif.fromUser,desc:notif.title,detail:notif.body,ts:Date.now()});
+    localStorage.setItem('wl_live_feed', JSON.stringify(lf.slice(0,200)));
+    if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    else if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    loadMyAssignments();
+    showToast(`✅ Service marked done · Next due ${svc.due}`);
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+
 function userUpdateProgress(clientId, projId){
   try{
     const pctEl  = document.getElementById('ppct-'+clientId+'-'+projId);
@@ -1912,6 +1953,7 @@ function loadMyAssignments(){
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
               <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2D6BB6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
             </div>
+            <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
           </div>
         </div>`;
       });
