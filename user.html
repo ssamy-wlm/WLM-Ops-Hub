@@ -758,8 +758,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
 
         <!-- Stats row -->
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;">
-          <div class="stat-card"><div class="stat-label">Tasks Assigned</div><div class="stat-value" id="as-task-count" style="font-size:24px;">0</div><div class="stat-sub">Pending tasks</div></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
           <div class="stat-card"><div class="stat-label">Projects</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Projects &amp; recurring services</div></div>
           <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value" id="as-client-count" style="font-size:24px;">0</div><div class="stat-sub">Clients working on</div></div>
           <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="as-due-week-count" style="font-size:24px;color:var(--orange);">0</div><div class="stat-sub">Within 7 days</div></div>
@@ -1862,7 +1861,7 @@ function loadMyAssignments(){
   }
 
   // ── Build assignment items ──
-  let taskCount=0, projCount=0, dueWeekCount=0, dueMonthCount=0;
+  let projCount=0, dueWeekCount=0, dueMonthCount=0;
   const clientIds=new Set();
   let html=''; let found=false;
 
@@ -1891,7 +1890,6 @@ function loadMyAssignments(){
       if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
       found=true; clientHasWork=true;
       if(onProject) projCount++;
-      taskCount+=myTasks.length+mySubTasks.length;
       if(p.due){
         const isOver=p.due<todayStr, isSoon=!isOver&&p.due<=in7s, isMonth=!isOver&&p.due<=in30s;
         if(isOver||isSoon) dueWeekCount++;
@@ -2013,7 +2011,7 @@ function loadMyAssignments(){
 
   // Update stats
   const set=(id,v,col)=>{ const e=document.getElementById(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
-  set('as-task-count',taskCount); set('as-proj-count',projCount); set('as-client-count',clientIds.size);
+  set('as-proj-count',projCount); set('as-client-count',clientIds.size);
   set('as-due-week-count',dueWeekCount,dueWeekCount>0?'var(--orange)':'var(--text-dark)');
   set('as-due-month-count',dueMonthCount,dueMonthCount>0?'#2D6BB6':'var(--text-dark)');
 
