@@ -1956,6 +1956,7 @@ function loadMyAssignments(){
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
         const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
         svcCount++;
+        projCount++; // each recurring service is itself a project assignment
         if(isOver||isSoon) dueCount++;
         html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(37,99,168,.05);">
           <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
@@ -1982,6 +1983,7 @@ function loadMyAssignments(){
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
         const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
         svcCount++;
+        projCount++; // each recurring service is itself a project assignment
         if(isOver||isSoon) dueCount++;
         html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(37,99,168,.05);">
           <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
