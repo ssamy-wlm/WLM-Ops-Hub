@@ -2362,23 +2362,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <!-- TAB: Quick Links -->
       <div id="eu-links" class="eu-panel" style="display:none;">
         <div style="font-size:13px;color:var(--text-mid);margin-bottom:16px;">Manage the quick links shown on this user's Operations dashboard.</div>
-        <div id="qlRows">
-          <div class="ql-edit-row" style="display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-            <div class="form-group" style="margin:0"><label class="form-label">Label</label><input class="form-input" value="Sync CRM" placeholder="Link label"></div>
-            <div class="form-group" style="margin:0"><label class="form-label">URL</label><input class="form-input" value="https://synccrm.com" placeholder="https://…"></div>
-            <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-          </div>
-          <div class="ql-edit-row" style="display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-            <div class="form-group" style="margin:0"><label class="form-label">Label</label><input class="form-input" value="ScheduleDrop" placeholder="Link label"></div>
-            <div class="form-group" style="margin:0"><label class="form-label">URL</label><input class="form-input" value="https://scheduledrop.com" placeholder="https://…"></div>
-            <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-          </div>
-          <div class="ql-edit-row" style="display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-            <div class="form-group" style="margin:0"><label class="form-label">Label</label><input class="form-input" value="Delphi AI" placeholder="Link label"></div>
-            <div class="form-group" style="margin:0"><label class="form-label">URL</label><input class="form-input" value="https://delphi.ai" placeholder="https://…"></div>
-            <button class="btn btn-danger btn-sm" onclick="this.closest('.ql-edit-row').remove()">✕</button>
-          </div>
-        </div>
+        <div id="qlRows"></div>
         <button class="btn btn-outline btn-sm" onclick="addQLRow()">+ Add Link</button>
       </div>
 
@@ -2462,116 +2446,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-blue btn-sm" onclick="addCredRow()" style="flex-shrink:0;margin-left:16px;">+ Add Credential</button>
         </div>
         <div id="editCredRows">
-
-          <!-- Credential card helper — replicated for each tool -->
-          <div class="cred-full-card">
-            <div class="cred-card-top">
-              <div style="display:flex;align-items:center;gap:10px;flex:1;">
-                <div class="cred-card-icon">GW</div>
-                <div>
-                  <input class="form-input cred-name-input" value="Google Workspace" placeholder="Platform name" style="font-size:13px;font-weight:700;padding:5px 8px;border-color:transparent;background:transparent;" onfocus="this.style.borderColor='var(--border-hover)';this.style.background='#fff'" onblur="this.style.borderColor='transparent';this.style.background='transparent'">
-                  <div style="font-size:11px;color:var(--text-light);padding-left:8px;">Google · Email & Drive</div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span class="cred-status cred-notset" id="cred-status-gw">Off</span>
-                <label class="cred-toggle"><input type="checkbox" onchange="toggleCredCard(this,'cred-status-gw')"><span class="ct-track"></span><span class="ct-thumb"></span></label>
-                <button class="btn btn-danger btn-sm" style="padding:5px 9px;" onclick="this.closest('.cred-full-card').remove()">✕</button>
-              </div>
-            </div>
-            <div class="cred-card-fields">
-              <div class="form-row" style="gap:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login Email / Username</label><input class="form-input" placeholder="user@gmail.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0;position:relative;"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="Password" id="pw-gw" style="font-size:13px;padding-right:38px;"><button onclick="togglePwVis('pw-gw',this)" style="position:absolute;right:10px;top:32px;background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-light);">👁</button></div>
-              </div>
-              <div class="form-row" style="gap:10px;margin-top:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login URL</label><input class="form-input" placeholder="https://workspace.google.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0"><label class="form-label">Access Notes</label><input class="form-input" placeholder="e.g. Use company SSO, 2FA required" style="font-size:13px;"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="cred-full-card">
-            <div class="cred-card-top">
-              <div style="display:flex;align-items:center;gap:10px;flex:1;">
-                <div class="cred-card-icon" style="background:linear-gradient(135deg,#2e9e6e,#5cd8a0)">SC</div>
-                <div>
-                  <input class="form-input cred-name-input" value="Sync CRM" placeholder="Platform name" style="font-size:13px;font-weight:700;padding:5px 8px;border-color:transparent;background:transparent;" onfocus="this.style.borderColor='var(--border-hover)';this.style.background='#fff'" onblur="this.style.borderColor='transparent';this.style.background='transparent'">
-                  <div style="font-size:11px;color:var(--text-light);padding-left:8px;">CRM & Pipeline</div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span class="cred-status cred-notset" id="cred-status-sc">Off</span>
-                <label class="cred-toggle"><input type="checkbox" onchange="toggleCredCard(this,'cred-status-sc')"><span class="ct-track"></span><span class="ct-thumb"></span></label>
-                <button class="btn btn-danger btn-sm" style="padding:5px 9px;" onclick="this.closest('.cred-full-card').remove()">✕</button>
-              </div>
-            </div>
-            <div class="cred-card-fields">
-              <div class="form-row" style="gap:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login Email / Username</label><input class="form-input" placeholder="user@synccrm.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0;position:relative;"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="Password" id="pw-sc" style="font-size:13px;padding-right:38px;"><button onclick="togglePwVis('pw-sc',this)" style="position:absolute;right:10px;top:32px;background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-light);">👁</button></div>
-              </div>
-              <div class="form-row" style="gap:10px;margin-top:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login URL</label><input class="form-input" placeholder="https://synccrm.com/login" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0"><label class="form-label">Access Notes</label><input class="form-input" placeholder="e.g. Read-only access on pipeline" style="font-size:13px;"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="cred-full-card">
-            <div class="cred-card-top">
-              <div style="display:flex;align-items:center;gap:10px;flex:1;">
-                <div class="cred-card-icon" style="background:linear-gradient(135deg,#d97706,#f5b942)">FG</div>
-                <div>
-                  <input class="form-input cred-name-input" value="Figma" placeholder="Platform name" style="font-size:13px;font-weight:700;padding:5px 8px;border-color:transparent;background:transparent;" onfocus="this.style.borderColor='var(--border-hover)';this.style.background='#fff'" onblur="this.style.borderColor='transparent';this.style.background='transparent'">
-                  <div style="font-size:11px;color:var(--text-light);padding-left:8px;">Design Software</div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span class="cred-status cred-set" id="cred-status-fg">On</span>
-                <label class="cred-toggle"><input type="checkbox" checked onchange="toggleCredCard(this,'cred-status-fg')"><span class="ct-track" style="background:var(--text)"></span><span class="ct-thumb" style="left:21px"></span></label>
-                <button class="btn btn-danger btn-sm" style="padding:5px 9px;" onclick="this.closest('.cred-full-card').remove()">✕</button>
-              </div>
-            </div>
-            <div class="cred-card-fields">
-              <div class="form-row" style="gap:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login Email / Username</label><input class="form-input" value="jamie@weblight.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0;position:relative;"><label class="form-label">Password</label><input class="form-input" type="password" value="Figma2026!" id="pw-fg" style="font-size:13px;padding-right:38px;"><button onclick="togglePwVis('pw-fg',this)" style="position:absolute;right:10px;top:32px;background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-light);">👁</button></div>
-              </div>
-              <div class="form-row" style="gap:10px;margin-top:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login URL</label><input class="form-input" value="https://figma.com/login" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0"><label class="form-label">Access Notes</label><input class="form-input" value="Full editor access on all client files" style="font-size:13px;"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="cred-full-card">
-            <div class="cred-card-top">
-              <div style="display:flex;align-items:center;gap:10px;flex:1;">
-                <div class="cred-card-icon" style="background:linear-gradient(135deg,#4a154b,#7b3f7e)">SL</div>
-                <div>
-                  <input class="form-input cred-name-input" value="Slack" placeholder="Platform name" style="font-size:13px;font-weight:700;padding:5px 8px;border-color:transparent;background:transparent;" onfocus="this.style.borderColor='var(--border-hover)';this.style.background='#fff'" onblur="this.style.borderColor='transparent';this.style.background='transparent'">
-                  <div style="font-size:11px;color:var(--text-light);padding-left:8px;">Communication</div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;">
-                <span class="cred-status cred-set" id="cred-status-sl">On</span>
-                <label class="cred-toggle"><input type="checkbox" checked onchange="toggleCredCard(this,'cred-status-sl')"><span class="ct-track" style="background:var(--text)"></span><span class="ct-thumb" style="left:21px"></span></label>
-                <button class="btn btn-danger btn-sm" style="padding:5px 9px;" onclick="this.closest('.cred-full-card').remove()">✕</button>
-              </div>
-            </div>
-            <div class="cred-card-fields">
-              <div class="form-row" style="gap:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login Email / Username</label><input class="form-input" value="jamie@weblight.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0;position:relative;"><label class="form-label">Password</label><input class="form-input" type="password" placeholder="Uses Google SSO" id="pw-sl" style="font-size:13px;padding-right:38px;"><button onclick="togglePwVis('pw-sl',this)" style="position:absolute;right:10px;top:32px;background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-light);">👁</button></div>
-              </div>
-              <div class="form-row" style="gap:10px;margin-top:10px;">
-                <div class="form-group" style="margin:0"><label class="form-label">Login URL</label><input class="form-input" value="https://weblight-media.slack.com" style="font-size:13px;"></div>
-                <div class="form-group" style="margin:0"><label class="form-label">Access Notes</label><input class="form-input" value="Member of #design and #general channels" style="font-size:13px;"></div>
-              </div>
-            </div>
-          </div>
-
         </div><!-- /editCredRows -->
       </div>
 
