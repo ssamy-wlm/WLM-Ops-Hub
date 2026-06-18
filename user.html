@@ -758,11 +758,12 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         </div>
 
         <!-- Stats row -->
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;">
           <div class="stat-card"><div class="stat-label">Tasks Assigned</div><div class="stat-value" id="as-task-count" style="font-size:24px;">0</div><div class="stat-sub">Pending tasks</div></div>
-          <div class="stat-card"><div class="stat-label">Services</div><div class="stat-value" id="as-svc-count" style="font-size:24px;">0</div><div class="stat-sub">Recurring services</div></div>
-          <div class="stat-card"><div class="stat-label">Projects</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Projects assigned</div></div>
-          <div class="stat-card"><div class="stat-label">Services Due</div><div class="stat-value" id="as-due-count" style="font-size:24px;color:var(--orange);">0</div><div class="stat-sub">Within 7 days</div></div>
+          <div class="stat-card"><div class="stat-label">Projects</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Projects &amp; recurring services</div></div>
+          <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value" id="as-client-count" style="font-size:24px;">0</div><div class="stat-sub">Clients working on</div></div>
+          <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="as-due-week-count" style="font-size:24px;color:var(--orange);">0</div><div class="stat-sub">Within 7 days</div></div>
+          <div class="stat-card"><div class="stat-label">Due This Month</div><div class="stat-value" id="as-due-month-count" style="font-size:24px;color:#2D6BB6;">0</div><div class="stat-sub">Within 30 days</div></div>
         </div>
 
         <div id="my-assignments-list">
@@ -1836,6 +1837,7 @@ function loadMyAssignments(){
   const clients= _getAssignClients();
   const todayStr = new Date().toISOString().slice(0,10);
   const in7  = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const in30 = new Date(); in30.setDate(in30.getDate()+30); const in30s=in30.toISOString().slice(0,10);
 
   // ── Notification banner ──
   const notifs  = _getAssignNotifs();
@@ -1860,10 +1862,12 @@ function loadMyAssignments(){
   }
 
   // ── Build assignment items ──
-  let taskCount=0, projCount=0, svcCount=0, dueCount=0;
+  let taskCount=0, projCount=0, dueWeekCount=0, dueMonthCount=0;
+  const clientIds=new Set();
   let html=''; let found=false;
 
   clients.forEach(c=>{
+    let clientHasWork=false;
     // ── Services from client.html tracker (c.services[], assigneeId/assigneeName schema) ──
     const myTrackerSvcs=(c.services||[]).filter(s=>{
       return s.assigneeId===myId || s.assigneeId===myName ||
@@ -1885,9 +1889,14 @@ function loadMyAssignments(){
       );
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).some(u=>u===myId||u===myName));
       if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
-      found=true;
+      found=true; clientHasWork=true;
       if(onProject) projCount++;
       taskCount+=myTasks.length+mySubTasks.length;
+      if(p.due){
+        const isOver=p.due<todayStr, isSoon=!isOver&&p.due<=in7s, isMonth=!isOver&&p.due<=in30s;
+        if(isOver||isSoon) dueWeekCount++;
+        if(isOver||isMonth) dueMonthCount++;
+      }
 
       html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;overflow:hidden;box-shadow:0 2px 12px rgba(37,99,168,.07);">
         <div style="padding:14px 18px;background:linear-gradient(135deg,${c.color||'#2D6BB6'}18,transparent);border-bottom:1px solid rgba(45,107,182,.1);display:flex;align-items:center;gap:11px;">
@@ -1947,17 +1956,18 @@ function loadMyAssignments(){
 
     // ── Show tracker services (c.services[]) assigned to me ──
     if(myTrackerSvcs.length){
-      found=true;
+      found=true; clientHasWork=true;
       myTrackerSvcs.forEach(s=>{
         const due=s.due||'';
         const isOver=due&&due<todayStr;
         const isSoon=due&&!isOver&&due<=in7s;
+        const isMonth=due&&!isOver&&due<=in30s;
         const icon=isOver?'🔴':isSoon?'🟡':'🟢';
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
         const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
-        svcCount++;
         projCount++; // each recurring service is itself a project assignment
-        if(isOver||isSoon) dueCount++;
+        if(isOver||isSoon) dueWeekCount++;
+        if(isOver||isMonth) dueMonthCount++;
         html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(37,99,168,.05);">
           <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
             <span style="font-size:18px;">${icon}</span>
@@ -1974,17 +1984,18 @@ function loadMyAssignments(){
 
     // ── Show index.html services (c.recurringServices[]) assigned to me ──
     if(myIdxSvcs.length){
-      found=true;
+      found=true; clientHasWork=true;
       myIdxSvcs.forEach(s=>{
         const due=s.nextDueDate||'';
         const isOver=due&&due<todayStr;
         const isSoon=due&&!isOver&&due<=in7s;
+        const isMonth=due&&!isOver&&due<=in30s;
         const icon=isOver?'🔴':isSoon?'🟡':'🟢';
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
         const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d left');
-        svcCount++;
         projCount++; // each recurring service is itself a project assignment
-        if(isOver||isSoon) dueCount++;
+        if(isOver||isSoon) dueWeekCount++;
+        if(isOver||isMonth) dueMonthCount++;
         html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:10px;overflow:hidden;box-shadow:0 2px 8px rgba(37,99,168,.05);">
           <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
             <span style="font-size:18px;">${icon}</span>
@@ -1996,12 +2007,15 @@ function loadMyAssignments(){
         </div>`;
       });
     }
+
+    if(clientHasWork) clientIds.add(c.id);
   });
 
   // Update stats
   const set=(id,v,col)=>{ const e=document.getElementById(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
-  set('as-task-count',taskCount); set('as-svc-count',svcCount); set('as-proj-count',projCount);
-  set('as-due-count',dueCount,dueCount>0?'var(--orange)':'var(--text-dark)');
+  set('as-task-count',taskCount); set('as-proj-count',projCount); set('as-client-count',clientIds.size);
+  set('as-due-week-count',dueWeekCount,dueWeekCount>0?'var(--orange)':'var(--text-dark)');
+  set('as-due-month-count',dueMonthCount,dueMonthCount>0?'#2D6BB6':'var(--text-dark)');
 
   const list=document.getElementById('my-assignments-list');
   if(list){
