@@ -1760,18 +1760,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <!-- Company Structure / Org Chart -->
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header">
-          <div><div class="card-title">🏛 Company Structure</div><div class="card-sub">Drag bubbles to reposition · Click a bubble to edit · Draw connections between members</div></div>
+          <div><div class="card-title">🏛 Company Structure</div><div class="card-sub">Drag bubbles to reposition · Click a bubble to edit</div></div>
           <div style="display:flex;gap:8px;">
-            <button class="btn btn-outline btn-sm" id="org-connect-btn" onclick="toggleConnectMode()" style="font-size:11px;">🔗 Connect Mode</button>
             <button class="btn btn-blue btn-sm" onclick="openOrgAddPanel()" style="font-size:11px;">+ Add Member</button>
             <button class="btn btn-primary btn-sm" onclick="orgSave();cloudAutoSync(true);showToast('Company structure saved!','success');" style="font-size:11px;">💾 Save</button>
           </div>
         </div>
         <div class="card-body" style="padding:0;">
-          <!-- Toolbar -->
-          <div id="org-toolbar" style="display:none;padding:12px 18px;background:rgba(45,107,182,.06);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">
-            🔗 <strong>Connect Mode:</strong> Click a bubble, then click another to draw/remove a link between them. Click the button again to exit.
-          </div>
           <!-- Canvas -->
           <div id="org-canvas" style="position:relative;width:100%;min-height:580px;background:radial-gradient(circle,rgba(135,171,213,.08) 1px,transparent 1px) 0 0/28px 28px,var(--bg);border-radius:0 0 12px 12px;overflow:auto;cursor:default;display:flex;justify-content:center;">
             <svg id="org-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;"></svg>
@@ -3680,7 +3675,6 @@ function orgLoad(){
 }
 
 let orgDragging = null, orgDragOffset = {x:0,y:0};
-let connectMode = false, connectFrom = null;
 let orgIdCounter = 200;
 
 // Ensure every registered user account appears in the org chart.
@@ -3779,7 +3773,7 @@ function renderOrgChart(){
     wrapper.style.cssText=`position:absolute;left:${node.x}px;top:${node.y}px;width:${r*2}px;cursor:${node.fixed?'default':'grab'};user-select:none;display:flex;flex-direction:column;align-items:center;gap:6px;`;
     // The circle
     const div = document.createElement('div');
-    div.style.cssText=`width:${r*2}px;height:${r*2}px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border:2.5px solid ${connectMode&&connectFrom===node.id?'#f5b942':node.fixed?'#1a3f6f':'rgba(255,255,255,.4)'};box-shadow:0 4px 18px rgba(30,50,80,.18);overflow:hidden;flex-shrink:0;`;
+    div.style.cssText=`width:${r*2}px;height:${r*2}px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border:2.5px solid ${node.fixed?'#1a3f6f':'rgba(255,255,255,.4)'};box-shadow:0 4px 18px rgba(30,50,80,.18);overflow:hidden;flex-shrink:0;`;
     if(node.photo){
       div.style.background=`url(${node.photo}) center/cover`;
     } else {
@@ -3818,7 +3812,6 @@ function renderOrgChart(){
 }
 
 function onOrgMouseDown(e, id){
-  if(connectMode) return;
   orgDragging=id;
   const node=orgNodes.find(n=>n.id===id);
   const canvas=document.getElementById('org-canvas');
@@ -3827,7 +3820,6 @@ function onOrgMouseDown(e, id){
   e.preventDefault();
 }
 function onOrgTouchStart(e,id){
-  if(connectMode) return;
   const t=e.touches[0];
   orgDragging=id;
   const node=orgNodes.find(n=>n.id===id);
@@ -3864,22 +3856,6 @@ function onOrgMouseUp(){ if(orgDragging){ orgDragging=null; orgSave(); } else { 
 
 function onOrgBubbleClick(e, id){
   if(orgDragging) return;
-  if(connectMode){
-    if(!connectFrom){
-      connectFrom=id;
-      renderOrgChart();
-      showToast('Now click the second bubble to connect');
-    } else if(connectFrom!==id){
-      // Toggle link
-      const exists=orgLinks.findIndex(l=>(l[0]===connectFrom&&l[1]===id)||(l[0]===id&&l[1]===connectFrom));
-      if(exists>-1){ orgLinks.splice(exists,1); showToast('Link removed'); }
-      else { orgLinks.push([connectFrom,id]); showToast('Link added ✓'); }
-      connectFrom=null;
-      orgSave();
-      renderOrgChart();
-    }
-    return;
-  }
   // Edit mode — open edit panel
   const node=orgNodes.find(n=>n.id===id);
   if(!node) return;
@@ -3889,21 +3865,6 @@ function onOrgBubbleClick(e, id){
   document.getElementById('org-edit-level').value=node.level||'member';
   document.getElementById('org-add-panel').style.display='none';
   document.getElementById('org-edit-panel').style.display='block';
-}
-
-function toggleConnectMode(){
-  connectMode=!connectMode;
-  connectFrom=null;
-  const btn=document.getElementById('org-connect-btn');
-  const toolbar=document.getElementById('org-toolbar');
-  if(connectMode){
-    btn.style.background='var(--text)';btn.style.color='#fff';btn.style.borderColor='var(--text)';
-    toolbar.style.display='block';
-  } else {
-    btn.style.background='';btn.style.color='';btn.style.borderColor='';
-    toolbar.style.display='none';
-  }
-  renderOrgChart();
 }
 
 function openOrgAddPanel(){
