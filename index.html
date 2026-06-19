@@ -5379,17 +5379,21 @@ function _restoreMisarchivedRealWorkers(){
   return changed;
 }
 
-// Assmaa's pay rate was lost when her record got wiped by the archive/tombstone
-// bug above — her real rate is $5/hr (probation start/end dates were also lost
-// but have no recoverable value, so they're intentionally left blank).
+// Assmaa's pay rate and probation dates were lost when her record got wiped by
+// the archive/tombstone bug above — her real rate is $5/hr, and she started
+// (and her 2-month probation began) on 2026-04-30.
 function _fixAssmaaPayRate(){
   const liveUsers = dbGet(DB_KEYS.users)||[];
   const u = liveUsers.find(u=>u.id==='assmaa');
-  if(!u || u.payRate===5) return false;
-  u.payRate = 5;
+  if(!u) return false;
+  let changed = false;
+  if(u.payRate!==5){ u.payRate = 5; changed = true; }
+  if(u.probationStart!=='2026-04-30'){ u.probationStart = '2026-04-30'; changed = true; }
+  if(u.probationEnd!=='2026-06-30'){ u.probationEnd = '2026-06-30'; changed = true; }
+  if(!changed) return false;
   dbSet(DB_KEYS.users, liveUsers);
   if(typeof cloudAutoSync==='function') cloudAutoSync();
-  console.log('[WLM] Corrected Assmaa Fouad pay rate to $5/hr.');
+  console.log('[WLM] Corrected Assmaa Fouad pay rate and probation dates.');
   return true;
 }
 
