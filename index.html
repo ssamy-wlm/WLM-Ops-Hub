@@ -4359,7 +4359,10 @@ function openClientDetail(clientId){
 
 function renderClientDetail(c){
   const initials = c.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  const allProjs = c.projects||[];
+  // Recurring-service mirrors (p.isRecurringService) are excluded here — they're rendered
+  // once, with due-date coloring, in _renderServicesSection() below. Showing them in both
+  // places duplicated every recurring service on the client card.
+  const allProjs = (c.projects||[]).filter(p=>!p.isRecurringService);
   const totalPct = allProjs.length ? Math.round(allProjs.reduce((s,p)=>s+(p.progress||0),0)/allProjs.length) : 0;
   const todayStr = new Date().toISOString().slice(0,10);
 
@@ -4372,38 +4375,6 @@ function renderClientDetail(c){
     const pProgress = p.progress||0;
     const pStatus = p.status||'not-started';
     const pPriority = p.priority||'medium';
-
-    // ── Recurring Service card (seeded from client.html) ──────────────
-    if(p.isRecurringService){
-      const due = p.due||'';
-      const isOver = due && due < todayStr;
-      const isSoon = due && !isOver && due <= (()=>{const d=new Date();d.setDate(d.getDate()+7);return d.toISOString().slice(0,10);})();
-      const icon = isOver?'🔴':isSoon?'🟡':'🟢';
-      const dueColor = isOver?'var(--red)':isSoon?'var(--orange)':'var(--green)';
-      const days = due ? Math.ceil((new Date(due)-new Date(todayStr))/86400000) : null;
-      const daysLabel = days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+'d away');
-      const assignees = pUsers.map(uid=>{
-        const u=TEAM_ROSTER.find(x=>x.id===uid);
-        return u?`<span style="display:inline-flex;align-items:center;gap:4px;background:${u.color}22;color:${u.color};font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;">${u.initials} ${u.name}</span>`:'';
-      }).join('');
-      return `
-      <div style="border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:12px;background:${isOver?'#fff8f8':isSoon?'#fffef0':'#fff'};">
-        <div style="padding:12px 16px;background:linear-gradient(135deg,${pColor}18,transparent);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <span style="font-size:18px;flex-shrink:0;">${icon}</span>
-          <div style="flex:1;min-width:120px;">
-            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${p.name}</div>
-            <div style="font-size:10px;color:var(--text-light);">🔁 Recurring Service · <strong>${p.freqLabel||p.freq||''}</strong>${due?` · Next due: <span style="color:${dueColor};font-weight:700;">${due}</span>${daysLabel?' ('+daysLabel+')':''}`:''}</div>
-          </div>
-          <span class="proj-status-bar pstat-${pStatus}" style="font-size:10px;">${pStatus.replace('-',' ')}</span>
-          <button class="btn btn-sm btn-green" onclick="markSvcDoneFromProject('${c.id}','${p.serviceId}')" style="font-size:11px;">✅ Mark Done</button>
-          <button class="btn btn-sm btn-outline" onclick="editTrackerSvc('${c.id}','${p.serviceId||p.id}')" style="font-size:11px;">✏️ Edit</button>
-        </div>
-        <div style="padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <div style="flex:1;font-size:11px;color:var(--text-light);">${p.desc||'No description'}</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;">${assignees||'<span style="font-size:11px;color:var(--text-light);">Unassigned</span>'}</div>
-        </div>
-      </div>`;
-    }
 
     // ── Regular project card ──────────────────────────────────────────
     const users = pUsers.map(uid=>{

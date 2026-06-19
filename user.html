@@ -738,7 +738,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
           <div>
             <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text-dark);">📋 My Work</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Projects, tasks and recurring services assigned to you from the production tracker</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Tasks assigned to you from the production tracker</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
             <a href="client.html?usermode=1" target="_blank" class="btn btn-outline btn-sm">Open Tracker ↗</a>
@@ -759,7 +759,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
         <!-- Stats row -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
-          <div class="stat-card"><div class="stat-label">Projects</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Projects &amp; recurring services</div></div>
+          <div class="stat-card"><div class="stat-label">Tasks</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div><div class="stat-sub">Tasks &amp; recurring services</div></div>
           <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value" id="as-client-count" style="font-size:24px;">0</div><div class="stat-sub">Clients working on</div></div>
           <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="as-due-week-count" style="font-size:24px;color:var(--orange);">0</div><div class="stat-sub">Within 7 days</div></div>
           <div class="stat-card"><div class="stat-label">Due This Month</div><div class="stat-value" id="as-due-month-count" style="font-size:24px;color:#2D6BB6;">0</div><div class="stat-sub">Within 30 days</div></div>
@@ -2020,7 +2020,7 @@ function loadMyAssignments(){
     list.innerHTML=found?html:`<div style="text-align:center;padding:60px;color:var(--text-light);">
       <div style="font-size:40px;margin-bottom:12px;">📋</div>
       <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No work assigned yet</div>
-      <div style="font-size:12px;">When an admin assigns projects or services to you from the production tracker, they'll appear here automatically.</div>
+      <div style="font-size:12px;">When an admin assigns a task to you from the production tracker, it'll appear here automatically.</div>
     </div>`;
   }
   updateAssignmentsBadge();
