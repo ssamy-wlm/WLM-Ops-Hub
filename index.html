@@ -3010,8 +3010,17 @@ function addUser(){
   if(existing.find(u=>u.email===email)){showToast('An account with that email already exists');return;}
   // Build user object and save
   const fullName=first+' '+last;
-  const newUser={
+  // If an unconnected seed placeholder already exists for this name (e.g. from the
+  // org structure), connect to it in place — keep its original id so any tracker
+  // assignments already pointing at that id stay valid — instead of duplicating it.
+  const seededMatch = existing.find(u=>u.seeded===true && (u.name||'').trim().toLowerCase()===fullName.toLowerCase());
+  const newUser=seededMatch || {
     id: 'u_'+Date.now(),
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    firstLogin: null
+  };
+  Object.assign(newUser, {
     name: fullName,
     email,
     password: pass,
@@ -3024,11 +3033,10 @@ function addUser(){
     managerId,
     probationStart,
     probationEnd,
-    status: 'active',
-    createdAt: new Date().toISOString(),
-    firstLogin: null
-  };
-  existing.push(newUser);
+    status: 'active'
+  });
+  delete newUser.seeded;
+  if(!seededMatch) existing.push(newUser);
   dbSet(DB_KEYS.users, existing);
 
   // ── Auto-add to org chart ──
@@ -3076,6 +3084,10 @@ function addUser(){
 // ── RENDER USER TABLE FROM DB ──
 function renderUserTable(){
   let allUsers = dbGet(DB_KEYS.users)||[];
+  // Hide unconnected seed placeholders — they're org-chart names with no real
+  // email/account yet, and shouldn't appear in the Users list until an admin
+  // connects them via "+ Add New User" (see addUser()'s seed-merge logic below).
+  allUsers = allUsers.filter(u => u.seeded!==true);
   // Restrict to assigned users for limited admin roles
   if(_adminLevel && RESTRICTED_ADMIN_ROLES.includes(_adminLevel) && _adminAssignedUsers.length){
     allUsers = allUsers.filter(u => _adminAssignedUsers.includes(u.name) || _adminAssignedUsers.includes(u.id));
@@ -5299,18 +5311,18 @@ function _seedCoreTeam(){
   const existing = dbGet(DB_KEYS.users)||[];
   if(existing.length) return;
   const coreTeam = [
-    {id:'emily',   name:'Emily Rovillo',  email:'emily@weblightmedia.com',   title:'Creative Manager',              role:'member',  status:'active'},
-    {id:'jamil',   name:'Jamil Ahmed',    email:'jamil@weblightmedia.com',   title:'Video Producer',                role:'member',  status:'active'},
-    {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active'},
-    {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active'},
-    {id:'abby',    name:'Abby Conklin',   email:'abby@weblightmedia.com',    title:'Director of Production',        role:'admin',   status:'active'},
-    {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active'},
-    {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active'},
-    {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active'},
-    {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active'},
-    {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active'},
-    {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active'},
-    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active'},
+    {id:'emily',   name:'Emily Rovillo',  email:'emily@weblightmedia.com',   title:'Creative Manager',              role:'member',  status:'active', seeded:true},
+    {id:'jamil',   name:'Jamil Ahmed',    email:'jamil@weblightmedia.com',   title:'Video Producer',                role:'member',  status:'active', seeded:true},
+    {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active', seeded:true},
+    {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active', seeded:true},
+    {id:'abby',    name:'Abby Conklin',   email:'abby@weblightmedia.com',    title:'Director of Production',        role:'admin',   status:'active', seeded:true},
+    {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active', seeded:true},
+    {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
+    {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active', seeded:true},
+    {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
+    {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
+    {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active', seeded:true},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', seeded:true},
   ];
   dbSet(DB_KEYS.users, coreTeam);
   console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
@@ -5368,6 +5380,27 @@ function _cleanupPlaceholderSeedUsers(){
     dbSet(DB_KEYS.users, allUsers.filter(u=>!toRemove.has(u.id)));
     console.log('[WLM] Archived '+toRemove.size+' placeholder/duplicate seed user(s): '+[...toRemove].join(', '));
   }
+  localStorage.setItem(DONE_KEY,'1');
+}
+
+// ── One-time migration: tag pre-existing seed user records as `seeded:true` ──
+// _seedCoreTeam() only ran before this flag existed, so live records created by
+// it (matched by their known seed id) have no marker yet. Only tag a record if
+// it still has no password set — a real admin-connected account always has one,
+// so this can never mistakenly hide a genuine account that happens to reuse a seed id.
+function _tagSeededPlaceholderUsers(){
+  const DONE_KEY = 'wl_seeded_flag_migration_v1_done';
+  if(localStorage.getItem(DONE_KEY)) return;
+  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha','assmaa'];
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  let changed = false;
+  allUsers.forEach(u=>{
+    if(SEED_IDS.includes(u.id) && !u.password && u.seeded!==true){
+      u.seeded = true;
+      changed = true;
+    }
+  });
+  if(changed) dbSet(DB_KEYS.users, allUsers);
   localStorage.setItem(DONE_KEY,'1');
 }
 
@@ -6517,6 +6550,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeSopSeedDuplicates();
   // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
   _cleanupPlaceholderSeedUsers();
+  // Tag pre-existing seed records as unconnected placeholders (one-time, idempotent)
+  _tagSeededPlaceholderUsers();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
