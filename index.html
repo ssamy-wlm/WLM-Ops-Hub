@@ -1190,6 +1190,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="blocker">Blockers</option>
             <option value="goal">Goals</option>
             <option value="login">Logins</option>
+            <option value="client">Tasks &amp; Services</option>
+            <option value="timeoff">Time Off</option>
+            <option value="admin">Admin</option>
+            <option value="report">Reports</option>
             <option value="nav">Navigation</option>
           </select>
           <button class="btn btn-danger btn-sm" onclick="clearFeed()">🗑 Clear Feed</button>
@@ -5263,6 +5267,7 @@ const DB_KEYS = {
   deletedUserIds:'wl_deleted_user_ids',
   messages:      'wl_messages_db',
   roadmapTasks:  'wl_roadmap_tasks',
+  timeOffRequests: 'wl_timeoff_requests',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -5712,9 +5717,9 @@ function renderFeedList(events){
     list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet.</div>';
     return;
   }
-  const icons = {blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢'};
-  const iconClass = {blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-nav',client:'feed-icon-nav'};
-  const badgeStyle = {blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)'};
+  const icons = {blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢',timeoff:'🏖',admin:'🔧',message:'💬'};
+  const iconClass = {blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-nav',client:'feed-icon-nav',timeoff:'feed-icon-goal',admin:'feed-icon-nav',message:'feed-icon-login'};
+  const badgeStyle = {blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)',timeoff:'background:#fdf4ff;color:#9333ea',admin:'background:var(--bg2);color:var(--text-mid)',message:'background:rgba(45,107,182,.1);color:var(--text)'};
   list.innerHTML = events.map(e=>{
     const t = new Date(e.time);
     const timeStr = t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' · ' + e.date;
@@ -6162,12 +6167,35 @@ function updateCloudStatusUI(){
   }
 }
 
-// Merge two arrays by id, deduplicating and keeping newest, limited to `limit` items
+// Merge two arrays by id, deduplicating and keeping newest, limited to `limit` items.
+// IDs aren't always numeric (e.g. 'lf'+Date.now(), 'to_'+Date.now()) — pull the embedded
+// timestamp out of the id, or fall back to a time/ts/submittedAt field, so sorting never
+// silently breaks (a NaN comparator gives unspecified order and can drop recent items).
 function _mergeCloudArr(cloudArr, localArr, limit=200){
   const combined = [...(Array.isArray(cloudArr)?cloudArr:[]), ...(Array.isArray(localArr)?localArr:[])];
   const seen = new Set();
+  const sortKey = x => {
+    const n = parseInt(String(x.id).replace(/\D/g,''), 10);
+    if(!isNaN(n)) return n;
+    const t = new Date(x.time||x.ts||x.submittedAt||0).getTime();
+    return isNaN(t) ? 0 : t;
+  };
   return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
-                 .sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,limit);
+                 .sort((a,b)=>sortKey(b)-sortKey(a)).slice(0,limit);
+}
+
+// Merge time-off requests with "decision wins" — once any side records an approve/deny
+// decision, that decision (and admin note) stays, even if the other side still has 'pending'.
+function _mergeTimeOff(primaryArr, secondaryArr){
+  const merged = _mergeCloudArr(primaryArr, secondaryArr, 1000);
+  const all = [...(Array.isArray(primaryArr)?primaryArr:[]), ...(Array.isArray(secondaryArr)?secondaryArr:[])];
+  const decidedMap = {};
+  all.forEach(r=>{ if(r.status==='approved'||r.status==='denied') decidedMap[String(r.id)]=r; });
+  merged.forEach(r=>{
+    const dv = decidedMap[String(r.id)];
+    if(dv){ r.status=dv.status; r.reviewedAt=r.reviewedAt||dv.reviewedAt; r.reviewedBy=r.reviewedBy||dv.reviewedBy; r.adminNote=r.adminNote||dv.adminNote; }
+  });
+  return merged;
 }
 
 // Merge blockers with "resolved wins" — once any side marks a blocker resolved, it stays resolved
@@ -6280,6 +6308,7 @@ async function cloudPushAll(silent=false, _retryReduced=false){
       deletedUserIds,
       messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], _retryReduced ? 100 : 500),
       roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], _retryReduced ? 150 : 1000),
+      timeOffRequests: _mergeTimeOff(cloudRecord.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]),
     };
     if(_retryReduced) payload.feed = _mergeCloudArr(cloudRecord.feed, dbGet(DB_KEYS.feed)||[], 30);
 
@@ -6309,6 +6338,8 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     dbSet(DB_KEYS.blockers, payload.blockers);
     dbSet(DB_KEYS.goals, payload.goals);
     dbSet(DB_KEYS.feed, payload.feed);
+    dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
+    if(payload.clients) _saveClientDB(payload.clients);
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6419,6 +6450,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
     if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
     if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeRoadmapArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]));
+    if(r.timeOffRequests) dbSet(DB_KEYS.timeOffRequests, _mergeTimeOff(r.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]));
 
     // ── Safety net: if users DB is still empty after merge, re-seed core team ──
     // Protects against a genuinely blank/corrupt cloud bin locking everyone out.
@@ -6612,8 +6644,8 @@ function refreshAdminOverview(){
     if(!actEvents.length){
       activityEl.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No recent activity.</div>';
     } else {
-      const actIcons  = {blocker:'🚧',goal:'🎯',login:'👤',report:'📄',client:'🏢',admin:'🔧',message:'💬'};
-      const actColors = {blocker:'var(--red)',goal:'#2e9e6e',login:'var(--text-light)',report:'var(--accent)',client:'var(--btn)',admin:'var(--text-mid)',message:'var(--btn)'};
+      const actIcons  = {blocker:'🚧',goal:'🎯',login:'👤',report:'📄',client:'🏢',admin:'🔧',message:'💬',timeoff:'🏖'};
+      const actColors = {blocker:'var(--red)',goal:'#2e9e6e',login:'var(--text-light)',report:'var(--accent)',client:'var(--btn)',admin:'var(--text-mid)',message:'var(--btn)',timeoff:'#9333ea'};
       function _timeSince(ts){
         if(!ts) return '';
         const diff = Math.floor((Date.now()-new Date(ts).getTime())/1000);
