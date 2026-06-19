@@ -2,7 +2,7 @@
 // Requires BLOB_READ_WRITE_TOKEN (auto-set by Vercel when Blob storage is
 // enabled for this project — Vercel dashboard → Storage → Create → Blob).
 
-import { put, head, BlobNotFoundError } from '@vercel/blob';
+import { put, get } from '@vercel/blob';
 
 const BLOB_PATH = 'wlm-ops-hub/cloud-data.json';
 
@@ -21,22 +21,13 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     try {
-      let info;
-      try {
-        info = await head(BLOB_PATH);
-      } catch (e) {
-        // @vercel/blob's error classes never set `.name`, so `e.name` is always
-        // the generic "Error" — checking it here silently never matched and let
-        // a missing blob (e.g. before the first-ever push) fall through to a 500.
-        if (e instanceof BlobNotFoundError) {
-          return res.status(200).json({ record: {} });
-        }
-        throw e;
-      }
-      const r = await fetch(`${info.url}?t=${Date.now()}`, { cache: 'no-store' });
-      if (!r.ok) return res.status(200).json({ record: {} });
-      const record = await r.json();
-      return res.status(200).json({ record });
+      // get() returns null on a missing blob instead of throwing, and (unlike a
+      // raw fetch of the blob URL) sends the auth token this store's private
+      // access level requires.
+      const blob = await get(BLOB_PATH, { access: 'private', useCache: false });
+      if (!blob) return res.status(200).json({ record: {} });
+      const text = await new Response(blob.stream).text();
+      return res.status(200).json({ record: text ? JSON.parse(text) : {} });
     } catch (err) {
       return res.status(500).json({ error: err.message || 'Failed to read cloud data' });
     }
@@ -46,7 +37,7 @@ export default async function handler(req, res) {
     try {
       const record = req.body || {};
       await put(BLOB_PATH, JSON.stringify(record), {
-        access: 'public',
+        access: 'private',
         contentType: 'application/json',
         addRandomSuffix: false,
         allowOverwrite: true,
