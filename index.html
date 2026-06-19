@@ -5447,7 +5447,11 @@ function _tagSeededPlaceholderUsers(){
 function _reassignSocialMediaToSherine(){
   const live = _getClientDB();
   const allUsers = dbGet(DB_KEYS.users) || [];
-  const sherineUser = allUsers.find(u => (u.name||'').toLowerCase().includes('sherine'));
+  // Prefer the real logged-in account (has a password) over the bare seed
+  // placeholder, so work assignments land on the canonical user record and
+  // the placeholder duplicate correctly stays hidden as a non-payroll seed entry.
+  const sherineUser = allUsers.find(u => (u.name||'').toLowerCase().includes('sherine') && u.password)
+                    || allUsers.find(u => (u.name||'').toLowerCase().includes('sherine'));
   const sherineId = sherineUser ? sherineUser.id : 'sherine';
   const sherineName = (sherineUser ? sherineUser.name : 'Sherine Amind').split(' ')[0];
 
@@ -6498,7 +6502,6 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // placeholders now that both users AND client assignment data are fully synced.
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
-    if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
@@ -6542,6 +6545,9 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _reassignSocialMediaToSherine === 'function') _reassignSocialMediaToSherine();
     if(typeof _seedAssmaaWorkload === 'function') _seedAssmaaWorkload();
     if(typeof _assignBrightwheelExportToAbby === 'function') _assignBrightwheelExportToAbby();
+    // Re-tag seed placeholders now that the fixups above have settled real
+    // work onto the correct (non-placeholder) user records.
+    if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6936,8 +6942,10 @@ function initPayroll(){
   const label = document.getElementById('payroll-week-label');
   if(label) label.textContent='Week of '+mon.toLocaleDateString('en-US',opts)+' – '+fri.toLocaleDateString('en-US',opts)+' · Pay Date: '+sat.toLocaleDateString('en-US',opts);
   
-  // David Joslin (CEO & Founder) is salaried/ownership, not hourly — exclude from payroll
-  const allUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active' && u.seeded!==true && (u.name||'').trim().toLowerCase()!=='david joslin');
+  // David Joslin (CEO & Founder) and Jacob Joslin (partner/ownership, Director of
+  // Finance) are salaried/ownership, not hourly — exclude from payroll
+  const OWNERSHIP_NAMES = ['david joslin','jacob joslin'];
+  const allUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active' && u.seeded!==true && !OWNERSHIP_NAMES.includes((u.name||'').trim().toLowerCase()));
   const container = document.getElementById('payrollRows');
   if(!container) return;
 
