@@ -5344,14 +5344,16 @@ function _cleanupPlaceholderSeedUsers(){
   localStorage.setItem(DONE_KEY,'1');
 }
 
-// ── One-time migration: tag pre-existing seed user records as `seeded:true` ──
+// ── Migration: tag pre-existing seed user records as `seeded:true` ──
 // _seedCoreTeam() only ran before this flag existed, so live records created by
 // it (matched by their known seed id) have no marker yet. Only tag a record if
 // it still has no password set — a real admin-connected account always has one,
 // so this can never mistakenly hide a genuine account that happens to reuse a seed id.
+// Cheap and idempotent, so it's safe to re-run on every load AND after every cloud
+// pull — a cloud copy that predates this flag would otherwise overwrite the tag
+// back off on the next sync. When it actually tags something, push that to the
+// cloud immediately so other devices stop seeing the untagged record too.
 function _tagSeededPlaceholderUsers(){
-  const DONE_KEY = 'wl_seeded_flag_migration_v1_done';
-  if(localStorage.getItem(DONE_KEY)) return;
   const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha','assmaa'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
@@ -5361,8 +5363,11 @@ function _tagSeededPlaceholderUsers(){
       changed = true;
     }
   });
-  if(changed) dbSet(DB_KEYS.users, allUsers);
-  localStorage.setItem(DONE_KEY,'1');
+  if(changed){
+    dbSet(DB_KEYS.users, allUsers);
+    if(typeof cloudAutoSync==='function') cloudAutoSync();
+  }
+  return changed;
 }
 
 // ── Reassign every "Social Media Management" service/project to Sherine ──
@@ -6401,6 +6406,9 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
         if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
       });
       dbSet(DB_KEYS.users, mergedUsers);
+      // Re-tag any seed placeholder that came back from the cloud untagged
+      // (an older device/session pushed it before the seeded flag existed).
+      if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     }
     // Admins: same safe-merge — never overwrite local admins with empty cloud array.
     if(Array.isArray(r.admins) && r.admins.length > 0){
@@ -6511,7 +6519,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeSopSeedDuplicates();
   // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
   _cleanupPlaceholderSeedUsers();
-  // Tag pre-existing seed records as unconnected placeholders (one-time, idempotent)
+  // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after every cloud pull too)
   _tagSeededPlaceholderUsers();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
@@ -6846,7 +6854,8 @@ function initPayroll(){
   const label = document.getElementById('payroll-week-label');
   if(label) label.textContent='Week of '+mon.toLocaleDateString('en-US',opts)+' – '+fri.toLocaleDateString('en-US',opts)+' · Pay Date: '+sat.toLocaleDateString('en-US',opts);
   
-  const allUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active' && u.seeded!==true);
+  // David Joslin (CEO & Founder) is salaried/ownership, not hourly — exclude from payroll
+  const allUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active' && u.seeded!==true && (u.name||'').trim().toLowerCase()!=='david joslin');
   const container = document.getElementById('payrollRows');
   if(!container) return;
 
