@@ -1284,94 +1284,86 @@ function initApp(){
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
 }
 
-// ── 30-60-90 Day Roadmap ──
-const ROADMAP_PHASES = [
-  {
-    key:'p1', label:'FIRST 14 DAYS', range:[0,14],
-    items:[
-      'Account access completed',
-      'Client onboarding calls reviewed',
-      'Service deliverables mapped',
-      'Core training completed',
-      'First check-in with assigned clients',
-      'First mockups / deliverables started',
-    ]
-  },
-  {
-    key:'p2', label:'DAYS 15–30', range:[15,30],
-    items:[
-      'First deliverables sent to clients',
-      'Client feedback received',
-      'Revisions completed',
-      'Ad creatives / content delivered',
-      'First revision cycle done',
-      'Progress report sent to manager',
-    ]
-  },
-  {
-    key:'p3', label:'DAYS 31–90', range:[31,90],
-    items:[
-      'Optimization routines active',
-      'Monthly reporting cycle started',
-      'Upsell opportunities identified',
-      'Account health reviewed',
-      'Scaling workflows documented',
-      'Reduced hand-holding achieved',
-    ]
-  }
-];
+// ── My Roadmap — actual assigned work, bucketed by how soon it's due ──
+// Gathers the same kinds of items loadMyAssignments() shows in My Work (tracker
+// services, index.html recurring services, ad-hoc projects, and their tasks/
+// sub-project tasks), but flattened to {name, client, due} for bucketing.
+function _collectMyWorkItems(){
+  if(!currentUser) return [];
+  const myId=currentUser.id, myName=currentUser.name;
+  const clients = _getAssignClients();
+  const items = [];
+  clients.forEach(c=>{
+    (c.services||[]).forEach(s=>{
+      const mine = s.assigneeId===myId||s.assigneeId===myName||s.assigneeName===myName||s.assignee===myName||s.assignee===myId;
+      if(mine) items.push({name:s.name, client:c.name, due:s.due||''});
+    });
+    (c.recurringServices||[]).forEach(s=>{
+      if((s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName)) items.push({name:s.name, client:c.name, due:s.nextDueDate||''});
+    });
+    (c.projects||[]).forEach(p=>{
+      if(p.isRecurringService) return;
+      const onProject=(p.users||[]).some(u=>u===myId||u===myName);
+      const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
+      const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done));
+      if(onProject) items.push({name:p.name, client:c.name, due:p.due||''});
+      myTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||''}));
+      mySubTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||''}));
+    });
+  });
+  return items;
+}
 
 function renderRoadmap(){
   const el = document.getElementById('roadmap-section');
   if(!el || !currentUser) return;
-  const storageKey = 'wl_roadmap_'+currentUser.id;
-  const checked = JSON.parse(localStorage.getItem(storageKey)||'{}');
-  const startDate = currentUser.createdAt ? new Date(currentUser.createdAt) : new Date();
-  const today = new Date(); today.setHours(0,0,0,0); startDate.setHours(0,0,0,0);
-  const dayOn = Math.floor((today - startDate)/(1000*60*60*24))+1;
-  const dayLabel = dayOn>0 ? `Day ${Math.min(dayOn,90)} of 90` : 'Starting today';
+  const items = _collectMyWorkItems();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const horizon = d=>{ const dt=new Date(); dt.setDate(dt.getDate()+d); return dt.toISOString().slice(0,10); };
+  const in7s=horizon(7), in30s=horizon(30), in60s=horizon(60);
 
-  const phaseCols = ROADMAP_PHASES.map(ph=>{
-    const [lo,hi] = ph.range;
-    const isActive = dayOn>=lo && dayOn<=hi;
-    const isDone   = dayOn>hi;
-    const total = ph.items.length;
-    const doneCount = ph.items.filter((_,i)=>checked[ph.key+'_'+i]).length;
-    const pct = Math.round(doneCount/total*100);
+  const overdue  = items.filter(i=>i.due && i.due<todayStr);
+  const b7       = items.filter(i=>i.due && i.due>=todayStr && i.due<=in7s);
+  const b30      = items.filter(i=>i.due && i.due>in7s && i.due<=in30s);
+  const b60      = items.filter(i=>i.due && i.due>in30s && i.due<=in60s);
+  const longTerm = items.filter(i=>!i.due || i.due>in60s);
 
-    const itemsHtml = ph.items.map((txt,i)=>{
-      const id=`rm_${ph.key}_${i}`;
-      const isCk = !!checked[ph.key+'_'+i];
-      return `<div class="roadmap-item${isCk?' checked':''}" onclick="toggleRoadmapItem('${ph.key}',${i})">
-        <div class="roadmap-check">${isCk?'✓':''}</div>
-        <span>${txt}</span>
-      </div>`;
-    }).join('');
+  const row = i=>`<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:6px;">
+    <span class="roadmap-dot"></span><span style="flex:1;color:var(--text-dark);">${i.name}</span>
+    <span style="font-size:10px;color:var(--text-light);white-space:nowrap;">${i.client}${i.due?' · '+i.due:''}</span>
+  </div>`;
+  const renderList = list => list.length ? list.map(row).join('') : '<div style="font-size:11px;color:var(--text-light);padding:4px 0;">Nothing here.</div>';
 
-    return `<div class="roadmap-phase${isActive?' active-phase':isDone?' done-phase':''}">
-      <div class="roadmap-phase-title">${isActive?'▶ ':''}${ph.label}${isDone?' ✓':''}</div>
-      ${itemsHtml}
-      <div class="roadmap-progress-bar"><div class="roadmap-progress-fill" style="width:${pct}%"></div></div>
-      <div style="font-size:10px;color:var(--text-light);margin-top:4px;">${doneCount}/${total} completed</div>
-    </div>`;
-  }).join('');
+  const totalOpen = items.length;
+  const insight = totalOpen===0
+    ? "No open work right now — you're all caught up."
+    : overdue.length===0
+      ? `You're on track — ${totalOpen} open item${totalOpen===1?'':'s'}, none overdue.`
+      : `${overdue.length} overdue item${overdue.length===1?'':'s'} out of ${totalOpen} — may be worth revisiting your scheduling and prioritization.`;
 
   el.innerHTML = `
-    <div class="roadmap-title">📍 30–60–90 Day Roadmap</div>
-    <div class="roadmap-subtitle">${dayLabel} — click items to check off progress</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
-      ${phaseCols}
+    <div class="roadmap-title">📍 My Roadmap</div>
+    <div class="roadmap-subtitle">Your assigned work, grouped by how soon it's due</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;">
+      <div class="roadmap-phase${overdue.length?' active-phase':''}">
+        <div class="roadmap-phase-title">NEXT 7 DAYS</div>
+        ${overdue.length?`<div style="font-size:10px;font-weight:700;color:var(--red);margin-bottom:6px;">${overdue.length} overdue</div>`:''}
+        ${renderList(overdue.concat(b7))}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">NEXT 30 DAYS</div>
+        ${renderList(b30)}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">NEXT 60 DAYS</div>
+        ${renderList(b60)}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">LONG TERM</div>
+        ${renderList(longTerm)}
+        <div style="font-size:11px;color:var(--text-mid);margin-top:10px;padding-top:8px;border-top:1px solid var(--cream-dark);">${insight}</div>
+      </div>
     </div>`;
-}
-
-function toggleRoadmapItem(phaseKey, idx){
-  if(!currentUser) return;
-  const storageKey = 'wl_roadmap_'+currentUser.id;
-  const checked = JSON.parse(localStorage.getItem(storageKey)||'{}');
-  const k = phaseKey+'_'+idx;
-  checked[k] = !checked[k];
-  localStorage.setItem(storageKey, JSON.stringify(checked));
-  renderRoadmap();
 }
 
 // ── My Service Schedule (shown on Operations page) ──────────────────────────
@@ -2049,7 +2041,7 @@ function showSection(id, el){
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
 
-  if(id==='operations') renderMyServiceSchedule();
+  if(id==='operations'){ renderMyServiceSchedule(); renderRoadmap(); }
   if(id==='myreports') loadMyReports();
   if(id==='goals') loadGoals();
   if(id==='blockers') loadOpsStats();

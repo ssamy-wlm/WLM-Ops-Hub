@@ -1418,13 +1418,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <input type="hidden" id="proj-client-id">
           <input type="hidden" id="proj-edit-id" value="">
           <div class="form-group" style="margin:0;grid-column:1/-1"><label class="form-label">Project Name *</label><input class="form-input" id="pf-name" placeholder="e.g. Website Redesign"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Type</label>
+          <div class="form-group" id="pf-recurring-row" style="margin:0;grid-column:1/-1">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--text-dark);cursor:pointer;">
+              <input type="checkbox" id="pf-recurring" onchange="_toggleProjRecurring()"> 🔁 This is a recurring service
+            </label>
+          </div>
+          <div class="form-group pf-oneoff" style="margin:0"><label class="form-label">Type</label>
             <select class="form-select" id="pf-type">
               <option>Web Design</option><option>Social Media</option><option>SEO</option>
               <option>Paid Ads</option><option>Branding</option><option>Content</option><option>Other</option>
             </select>
           </div>
-          <div class="form-group" style="margin:0"><label class="form-label">Status</label>
+          <div class="form-group pf-oneoff" style="margin:0"><label class="form-label">Status</label>
             <select class="form-select" id="pf-status">
               <option value="not-started">Not Started</option>
               <option value="in-progress">In Progress</option>
@@ -1434,16 +1439,25 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             </select>
           </div>
           <div class="form-group" style="margin:0"><label class="form-label">Start Date</label><input class="form-input" type="date" id="pf-start"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Due Date</label><input class="form-input" type="date" id="pf-due"></div>
-          <div class="form-group" style="margin:0"><label class="form-label">Priority</label>
+          <div class="form-group pf-oneoff" id="pf-due-group" style="margin:0"><label class="form-label">Due Date</label><input class="form-input" type="date" id="pf-due"></div>
+          <div class="form-group" id="pf-freq-group" style="margin:0;display:none;"><label class="form-label">Frequency</label>
+            <select class="form-select" id="pf-svc-freq">
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="yearly">Yearly</option>
+              <option value="weekly">Weekly</option>
+              <option value="one-time">One-Time</option>
+            </select>
+          </div>
+          <div class="form-group pf-oneoff" style="margin:0"><label class="form-label">Priority</label>
             <select class="form-select" id="pf-priority">
               <option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option>
             </select>
           </div>
-          <div class="form-group" style="margin:0"><label class="form-label">Color Tag</label>
+          <div class="form-group pf-oneoff" style="margin:0"><label class="form-label">Color Tag</label>
             <input type="color" id="pf-color" value="#2D6BB6" style="width:100%;height:38px;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:2px;">
           </div>
-          <div class="form-group" style="margin:0;grid-column:1/-1">
+          <div class="form-group pf-oneoff" style="margin:0;grid-column:1/-1">
             <label class="form-label">Progress — <span id="pf-progress-val">0</span>%</label>
             <input type="range" id="pf-progress" min="0" max="100" step="5" value="0" style="width:100%;accent-color:var(--text);" oninput="document.getElementById('pf-progress-val').textContent=this.value">
           </div>
@@ -4446,7 +4460,6 @@ function renderClientDetail(c){
         <div style="font-size:11px;color:var(--text-light);">Overall progress</div>
       </div>
       <button class="btn btn-primary" onclick="openProjectModal('${c.id}')">+ Add Project</button>
-      <button class="btn btn-outline" onclick="openSvcModal('${c.id}')" style="font-size:13px;">+ Service</button>
       <button class="btn btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:13px;color:${c.status==='active'?'var(--green)':'var(--text-light)'};">${c.status==='active'?'✓ Active':'○ Inactive'}</button>
       <button class="btn btn-outline" onclick="document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
     </div>
@@ -4545,6 +4558,12 @@ function openProjectModal(clientId, projId){
   document.getElementById('projectModalSub').textContent = c.name;
   document.getElementById('proj-client-id').value=clientId;
   document.getElementById('proj-edit-id').value=projId||'';
+  // The "recurring service" toggle only applies to new projects — editing an existing
+  // recurring service goes through openSvcModal (via the Recurring Services section's
+  // Edit button), not this modal.
+  document.getElementById('pf-recurring-row').style.display = projId ? 'none' : '';
+  document.getElementById('pf-recurring').checked = false;
+  _toggleProjRecurring();
   // Populate user checkboxes
   const cbWrap=document.getElementById('pf-user-checkboxes');
   cbWrap.innerHTML=TEAM_ROSTER.map(u=>`
@@ -4577,11 +4596,26 @@ function openProjectModal(clientId, projId){
   openModal('projectModal');
 }
 function editProject(clientId, projId){ openProjectModal(clientId, projId); }
+// Show frequency field / hide one-off-project fields when "recurring service" is checked
+function _toggleProjRecurring(){
+  const on = document.getElementById('pf-recurring').checked;
+  document.querySelectorAll('.pf-oneoff').forEach(el=>el.style.display = on?'none':'');
+  document.getElementById('pf-freq-group').style.display = on?'':'none';
+}
 function saveProject(){
   const clientId=document.getElementById('proj-client-id').value;
   const editId=document.getElementById('proj-edit-id').value;
   const name=document.getElementById('pf-name').value.trim();
   if(!name){showToast('Project name is required');return;}
+  if(!editId && document.getElementById('pf-recurring').checked){
+    const freq=document.getElementById('pf-svc-freq').value;
+    const startDate=document.getElementById('pf-start').value||new Date().toISOString().slice(0,10);
+    const notes=document.getElementById('pf-desc').value;
+    const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
+    closeModal('projectModal');
+    _persistRecurringService(clientId,'',name,freq,startDate,notes,users);
+    return;
+  }
   const live=_getClientDB();
   const c=live.find(x=>x.id===clientId);if(!c)return;
   const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
@@ -4782,9 +4816,17 @@ function saveSvc(){
   if(!name){showToast('Service name is required');return;}
   const freq=document.getElementById('svc-freq').value;
   const startDate=document.getElementById('svc-start').value||new Date().toISOString().slice(0,10);
-  const nextDueDate=_calcNextDue(freq,startDate);
   const notes=document.getElementById('svc-notes').value;
   const newUsers=[...document.querySelectorAll('#svc-user-checkboxes input:checked')].map(cb=>cb.value);
+  closeModal('svcModal');
+  _persistRecurringService(clientId,svcId,name,freq,startDate,notes,newUsers);
+}
+
+// Create or update a recurring service across all three schemas (c.recurringServices[],
+// c.services[], and the c.projects[] mirror) — shared by the Service modal and the
+// "recurring service" toggle in the Add Project modal.
+function _persistRecurringService(clientId,svcId,name,freq,startDate,notes,newUsers){
+  const nextDueDate=_calcNextDue(freq,startDate);
   const live=_getClientDB();
   const c=live.find(x=>x.id===clientId); if(!c) return;
 
@@ -4862,7 +4904,6 @@ function saveSvc(){
       'Client: '+c.name+' · '+freq,
       '🔁');
   });
-  closeModal('svcModal');
   // Re-fetch client from DB to get latest state before re-rendering
   const updated = _getClientDB().find(x=>x.id===clientId)||c;
   renderClientGrid();
