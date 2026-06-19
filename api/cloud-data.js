@@ -2,7 +2,7 @@
 // Requires BLOB_READ_WRITE_TOKEN (auto-set by Vercel when Blob storage is
 // enabled for this project — Vercel dashboard → Storage → Create → Blob).
 
-import { put, head } from '@vercel/blob';
+import { put, head, BlobNotFoundError } from '@vercel/blob';
 
 const BLOB_PATH = 'wlm-ops-hub/cloud-data.json';
 
@@ -25,7 +25,10 @@ export default async function handler(req, res) {
       try {
         info = await head(BLOB_PATH);
       } catch (e) {
-        if (e.name === 'BlobNotFoundError') {
+        // @vercel/blob's error classes never set `.name`, so `e.name` is always
+        // the generic "Error" — checking it here silently never matched and let
+        // a missing blob (e.g. before the first-ever push) fall through to a 500.
+        if (e instanceof BlobNotFoundError) {
           return res.status(200).json({ record: {} });
         }
         throw e;
