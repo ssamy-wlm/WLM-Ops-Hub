@@ -5283,7 +5283,7 @@ function _seedCoreTeam(){
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
     {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active', seeded:true},
-    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active'},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', seeded:true},
   ];
   dbSet(DB_KEYS.users, coreTeam);
   console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
@@ -5344,31 +5344,40 @@ function _cleanupPlaceholderSeedUsers(){
   localStorage.setItem(DONE_KEY,'1');
 }
 
+// Does this user have any real assigned work in the client tracker (a service
+// or project actually pointing at their id/name)? If so they're an active
+// working member regardless of whether they've ever logged in — used to keep
+// the seeded-placeholder migration below from hiding people like Assmaa or
+// Sherine who were assigned real client work before ever getting an account.
+function _userHasAssignedWork(userId, userName){
+  const nameLower = (userName||'').trim().toLowerCase();
+  return _getClientDB().some(c=>{
+    const svcMatch = (c.services||[]).some(s=>s.assigneeId===userId || (s.assigneeName||s.assignee||'').trim().toLowerCase()===nameLower);
+    const recSvcMatch = (c.recurringServices||[]).some(s=>(s.assignedUserIds||[]).includes(userId) || (s.assigneeName||'').trim().toLowerCase()===nameLower);
+    const projMatch = (c.projects||[]).some(p=>(p.users||[]).includes(userId));
+    return svcMatch || recSvcMatch || projMatch;
+  });
+}
+
 // ── Migration: tag pre-existing seed user records as `seeded:true` ──
 // _seedCoreTeam() only ran before this flag existed, so live records created by
 // it (matched by their known seed id) have no marker yet. Only tag a record if
-// it still has no password set — a real admin-connected account always has one,
-// so this can never mistakenly hide a genuine account that happens to reuse a seed id.
+// it still has no password set AND no real assigned work — a real admin-connected
+// account always has a password, and someone with real assigned client work is an
+// active member regardless of login status, so neither can ever be mistakenly hidden.
 // Cheap and idempotent, so it's safe to re-run on every load AND after every cloud
 // pull — a cloud copy that predates this flag would otherwise overwrite the tag
 // back off on the next sync. When it actually tags something, push that to the
 // cloud immediately so other devices stop seeing the untagged record too.
 function _tagSeededPlaceholderUsers(){
-  // Assmaa Fouad has real assigned client work seeded via _seedAssmaaWorkload()
-  // even though she has no login yet — she's an active working member, not an
-  // unconnected org-structure placeholder, so she's never tagged/hidden.
-  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha'];
+  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha','assmaa'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
-    if(SEED_IDS.includes(u.id) && !u.password && u.seeded!==true){
-      u.seeded = true;
-      changed = true;
-    }
-    if(u.id==='assmaa' && u.seeded===true){
-      delete u.seeded;
-      changed = true;
-    }
+    if(!SEED_IDS.includes(u.id) || u.password) return;
+    const isPlaceholder = !_userHasAssignedWork(u.id, u.name);
+    if(isPlaceholder && u.seeded!==true){ u.seeded = true; changed = true; }
+    if(!isPlaceholder && u.seeded===true){ delete u.seeded; changed = true; }
   });
   if(changed){
     dbSet(DB_KEYS.users, allUsers);
@@ -6413,9 +6422,6 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
         if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
       });
       dbSet(DB_KEYS.users, mergedUsers);
-      // Re-tag any seed placeholder that came back from the cloud untagged
-      // (an older device/session pushed it before the seeded flag existed).
-      if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     }
     // Admins: same safe-merge — never overwrite local admins with empty cloud array.
     if(Array.isArray(r.admins) && r.admins.length > 0){
@@ -6430,6 +6436,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     }
     // Restore client data from cloud (local edits already merged on push side)
     if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
+    // Re-tag/un-tag seed placeholders now that both users AND client assignment
+    // data are fully synced — an older device/session may have pushed a seed
+    // record before the seeded flag existed, or before its real work was assigned.
+    if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
@@ -6526,12 +6536,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeSopSeedDuplicates();
   // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
   _cleanupPlaceholderSeedUsers();
-  // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after every cloud pull too)
-  _tagSeededPlaceholderUsers();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
   _seedAssmaaWorkload();
+  // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after
+  // every cloud pull too) — runs after the above so real assigned work is already in
+  // place and never gets mistakenly tagged as an unconnected placeholder.
+  _tagSeededPlaceholderUsers();
   // Assign the BrightWheel Review Request Export to Abby Conklin (idempotent)
   _assignBrightwheelExportToAbby();
   // Render user table from DB
