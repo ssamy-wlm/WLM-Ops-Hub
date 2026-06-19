@@ -5283,7 +5283,7 @@ function _seedCoreTeam(){
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
     {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active', seeded:true},
-    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', seeded:true},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', payRate:5, seeded:true},
   ];
   dbSet(DB_KEYS.users, coreTeam);
   console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
@@ -5377,6 +5377,20 @@ function _restoreMisarchivedRealWorkers(){
     console.log('[WLM] Restored misarchived real-working seed user(s).');
   }
   return changed;
+}
+
+// Assmaa's pay rate was lost when her record got wiped by the archive/tombstone
+// bug above — her real rate is $5/hr (probation start/end dates were also lost
+// but have no recoverable value, so they're intentionally left blank).
+function _fixAssmaaPayRate(){
+  const liveUsers = dbGet(DB_KEYS.users)||[];
+  const u = liveUsers.find(u=>u.id==='assmaa');
+  if(!u || u.payRate===5) return false;
+  u.payRate = 5;
+  dbSet(DB_KEYS.users, liveUsers);
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Corrected Assmaa Fouad pay rate to $5/hr.');
+  return true;
 }
 
 // Does this user have any real assigned work in the client tracker (a service
@@ -6479,6 +6493,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // cloud snapshot might otherwise keep reintroducing, then re-tag/un-tag seed
     // placeholders now that both users AND client assignment data are fully synced.
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
+    if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
     if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
@@ -6578,6 +6593,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _cleanupPlaceholderSeedUsers();
   // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa (idempotent)
   _restoreMisarchivedRealWorkers();
+  // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
+  _fixAssmaaPayRate();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
