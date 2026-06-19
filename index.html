@@ -6846,7 +6846,7 @@ function initPayroll(){
   const label = document.getElementById('payroll-week-label');
   if(label) label.textContent='Week of '+mon.toLocaleDateString('en-US',opts)+' – '+fri.toLocaleDateString('en-US',opts)+' · Pay Date: '+sat.toLocaleDateString('en-US',opts);
   
-  const allUsers = dbGet(DB_KEYS.users)||[];
+  const allUsers = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active' && u.seeded!==true);
   const container = document.getElementById('payrollRows');
   if(!container) return;
 
