@@ -5283,7 +5283,7 @@ function _seedCoreTeam(){
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
     {id:'neha',    name:'Neha',           email:'neha@weblightmedia.com',    title:'Web Developer',                 role:'member',  status:'active', seeded:true},
-    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', seeded:true},
+    {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active'},
   ];
   dbSet(DB_KEYS.users, coreTeam);
   console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
@@ -5354,12 +5354,19 @@ function _cleanupPlaceholderSeedUsers(){
 // back off on the next sync. When it actually tags something, push that to the
 // cloud immediately so other devices stop seeing the untagged record too.
 function _tagSeededPlaceholderUsers(){
-  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha','assmaa'];
+  // Assmaa Fouad has real assigned client work seeded via _seedAssmaaWorkload()
+  // even though she has no login yet — she's an active working member, not an
+  // unconnected org-structure placeholder, so she's never tagged/hidden.
+  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
     if(SEED_IDS.includes(u.id) && !u.password && u.seeded!==true){
       u.seeded = true;
+      changed = true;
+    }
+    if(u.id==='assmaa' && u.seeded===true){
+      delete u.seeded;
       changed = true;
     }
   });
