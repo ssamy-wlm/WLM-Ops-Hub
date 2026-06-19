@@ -5320,14 +5320,13 @@ function _cleanupPlaceholderSeedUsers(){
   const allUsers = dbGet(DB_KEYS.users)||[];
   if(!allUsers.length){ localStorage.setItem(DONE_KEY,'1'); return; }
 
+  // NOTE: Sherine/Assmaa are deliberately excluded from the duplicate-removal
+  // check below — they're real working members with real assigned client work
+  // (see _userHasAssignedWork), not interchangeable placeholder duplicates, and
+  // archiving+tombstoning their seed id permanently hides them from every future
+  // cloud-pull merge (see _restoreMisarchivedRealWorkers, which undoes this if it
+  // already happened on this device before this fix existed).
   const toRemove = new Set(['mo','sally','viral','artAgent','mostafa'].filter(id=>allUsers.some(u=>u.id===id)));
-  ['sherine','assmaa'].forEach(id=>{
-    const seedUser = allUsers.find(u=>u.id===id);
-    if(!seedUser) return;
-    const firstName = (seedUser.name||'').toLowerCase().split(' ')[0];
-    const hasOtherMatch = allUsers.some(u=>u.id!==id && (u.name||'').toLowerCase().startsWith(firstName));
-    if(hasOtherMatch) toRemove.add(id);
-  });
 
   if(toRemove.size){
     const archives = dbGet('wl_archived_users')||[];
@@ -5342,6 +5341,42 @@ function _cleanupPlaceholderSeedUsers(){
     console.log('[WLM] Archived '+toRemove.size+' placeholder/duplicate seed user(s): '+[...toRemove].join(', '));
   }
   localStorage.setItem(DONE_KEY,'1');
+}
+
+// ── Corrective fix: undo a previous run of the dedup cleanup above that may
+// have already archived + tombstoned Sherine/Assmaa's seed record on this
+// device. A tombstoned id is permanently filtered out of every cloud-pull
+// merge (see cloudPullAll), so no amount of fixing the `seeded` flag can bring
+// them back once that's happened — this clears the tombstone and restores the
+// record from the archive if it's missing. Idempotent; safe to re-run anytime.
+function _restoreMisarchivedRealWorkers(){
+  const RESTORE_IDS = ['assmaa','sherine'];
+  let changed = false;
+
+  const delIds = dbGet(DB_KEYS.deletedUserIds)||[];
+  const filteredDelIds = delIds.filter(id=>!RESTORE_IDS.includes(id));
+  if(filteredDelIds.length !== delIds.length){
+    dbSet(DB_KEYS.deletedUserIds, filteredDelIds);
+    changed = true;
+  }
+
+  const liveUsers = dbGet(DB_KEYS.users)||[];
+  const archives = dbGet('wl_archived_users')||[];
+  RESTORE_IDS.forEach(id=>{
+    if(liveUsers.some(u=>u.id===id)) return;
+    const archived = archives.find(u=>u.id===id);
+    if(archived){
+      const {archivedAt, archivedBy, ...restored} = archived;
+      liveUsers.push(restored);
+      changed = true;
+    }
+  });
+  if(changed){
+    dbSet(DB_KEYS.users, liveUsers);
+    if(typeof cloudAutoSync==='function') cloudAutoSync();
+    console.log('[WLM] Restored misarchived real-working seed user(s).');
+  }
+  return changed;
 }
 
 // Does this user have any real assigned work in the client tracker (a service
@@ -6275,7 +6310,9 @@ async function cloudPushAll(silent=false, _retryReduced=false){
 
     const localDelUsers  = dbGet(DB_KEYS.deletedUserIds)||[];
     const cloudDelUsers  = cloudRecord.deletedUserIds||[];
-    const deletedUserIds = [...new Set([...localDelUsers, ...cloudDelUsers])];
+    // assmaa/sherine are real working members that were mistakenly tombstoned once
+    // before — never let an old cloud copy of the tombstone list resurrect that.
+    const deletedUserIds = [...new Set([...localDelUsers, ...cloudDelUsers])].filter(id=>id!=='assmaa'&&id!=='sherine');
     dbSet(DB_KEYS.deletedUserIds, deletedUserIds);
 
     // Filter deleted users from cloud before merging
@@ -6384,7 +6421,9 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 
     // Merge tombstone lists (deleted IDs) — union of cloud + local
     const pulledDelUsers = r.deletedUserIds||[];
-    let   mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])];
+    // assmaa/sherine are real working members that were mistakenly tombstoned once
+    // before — never let an old cloud copy of the tombstone list resurrect that.
+    let   mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])].filter(id=>id!=='assmaa'&&id!=='sherine');
 
     // ── CRITICAL: if the cloud explicitly lists a user as ACTIVE (present in r.users,
     // not archived), the admin has intentionally restored them on another device.
@@ -6436,9 +6475,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     }
     // Restore client data from cloud (local edits already merged on push side)
     if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
-    // Re-tag/un-tag seed placeholders now that both users AND client assignment
-    // data are fully synced — an older device/session may have pushed a seed
-    // record before the seeded flag existed, or before its real work was assigned.
+    // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa that an older
+    // cloud snapshot might otherwise keep reintroducing, then re-tag/un-tag seed
+    // placeholders now that both users AND client assignment data are fully synced.
+    if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
@@ -6536,6 +6576,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeSopSeedDuplicates();
   // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
   _cleanupPlaceholderSeedUsers();
+  // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa (idempotent)
+  _restoreMisarchivedRealWorkers();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
