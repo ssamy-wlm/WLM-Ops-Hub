@@ -4273,6 +4273,43 @@ function renderClientGrid(list){
   updateClientStats();
 }
 
+// Canonical project/service counts — the single source of truth for "completed" /
+// "ongoing" / "overdue" everywhere in the app (Overview, Clients tab, client.html).
+// Recurring services count as ongoing work alongside manual projects, whether or
+// not they've been mirrored into c.projects[] yet.
+function computeProjectStats(clients){
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  // c.projects[] contains isRecurringService mirrors (from seed/client.html) + manual projects
+  // c.services[] = tracker services (source of truth) — mirrors already counted via c.projects[]
+  // c.recurringServices[] = index.html-style services (no automatic mirror)
+  const allProjects = (clients||[]).reduce((arr,c)=>arr.concat(c.projects||[]),[]);
+
+  // Collect c.recurringServices[] entries (index.html schema — no project mirror exists for these)
+  const idxRecSvcs = (clients||[]).reduce((arr,c)=>arr.concat(c.recurringServices||[]),[]);
+
+  // Collect c.services[] that have NO mirrored project (safety net for un-migrated data)
+  const unmirroredSvcs = (clients||[]).reduce((arr,c)=>{
+    const mirroredIds = new Set((c.projects||[]).filter(p=>p.isRecurringService).map(p=>p.serviceId));
+    (c.services||[]).forEach(s=>{ if(!mirroredIds.has(s.id)) arr.push(s); });
+    return arr;
+  },[]);
+
+  const completed = allProjects.filter(p=>p.status==='completed').length;
+
+  const ongoingProj   = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
+  const ongoingIdxSvc = idxRecSvcs.filter(s=>s.active!==false).length;
+  const ongoingUnmir  = unmirroredSvcs.filter(s=>s.status!=='on-hold'&&s.status!=='completed').length;
+  const ongoing = ongoingProj + ongoingIdxSvc + ongoingUnmir;
+
+  const overdueProj   = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr).length;
+  const overdueIdxSvc = idxRecSvcs.filter(s=>s.nextDueDate&&s.nextDueDate<todayStr).length;
+  const overdueUnmir  = unmirroredSvcs.filter(s=>s.due&&s.due<todayStr&&s.status!=='completed').length;
+  const overdue = overdueProj + overdueIdxSvc + overdueUnmir;
+
+  return { completed, ongoing, overdue };
+}
+
 function updateClientStats(){
   const t = document.getElementById('stat-total-clients');
   const a = document.getElementById('stat-active-clients');
@@ -4280,42 +4317,14 @@ function updateClientStats(){
   const op= document.getElementById('stat-ongoing-projects');
   const od= document.getElementById('stat-overdue-projects');
   if(!t) return;
-  const todayStr = new Date().toISOString().slice(0,10);
   const liveClients = _getClientDB();
-
-  // c.projects[] contains isRecurringService mirrors (from seed/client.html) + manual projects
-  // c.services[] = tracker services (source of truth) — mirrors already counted via c.projects[]
-  // c.recurringServices[] = index.html-style services (no automatic mirror)
-  const allProjects = liveClients.reduce((arr,c)=>arr.concat(c.projects||[]),[]);
-
-  // Collect c.recurringServices[] entries (index.html schema — no project mirror exists for these)
-  const idxRecSvcs = liveClients.reduce((arr,c)=>arr.concat(c.recurringServices||[]),[]);
-
-  // Collect c.services[] that have NO mirrored project (safety net for un-migrated data)
-  const unmirroredSvcs = liveClients.reduce((arr,c)=>{
-    const mirroredIds = new Set((c.projects||[]).filter(p=>p.isRecurringService).map(p=>p.serviceId));
-    (c.services||[]).forEach(s=>{ if(!mirroredIds.has(s.id)) arr.push(s); });
-    return arr;
-  },[]);
+  const stats = computeProjectStats(liveClients);
 
   t.textContent = liveClients.length;
   a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
-
-  // Completed projects (service mirrors count separately via status)
-  if(cp) cp.textContent = allProjects.filter(p=>p.status==='completed').length;
-
-  // Ongoing = all non-completed, non-on-hold projects + index recurring svcs + unmirrored tracker svcs
-  const ongoingProj = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
-  const ongoingIdxSvc = idxRecSvcs.filter(s=>s.active!==false).length;
-  const ongoingUnmir  = unmirroredSvcs.filter(s=>s.status!=='on-hold'&&s.status!=='completed').length;
-  if(op) op.textContent = ongoingProj + ongoingIdxSvc + ongoingUnmir;
-
-  // Overdue = projects past due + index recurring svcs past due + unmirrored svcs past due
-  const overdueProj    = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr).length;
-  const overdueIdxSvc  = idxRecSvcs.filter(s=>s.nextDueDate&&s.nextDueDate<todayStr).length;
-  const overdueUnmir   = unmirroredSvcs.filter(s=>s.due&&s.due<todayStr&&s.status!=='completed').length;
-  const overdue = overdueProj + overdueIdxSvc + overdueUnmir;
-  if(od){ od.textContent = overdue; od.style.color = overdue>0?'var(--red)':'var(--text-light)'; }
+  if(cp) cp.textContent = stats.completed;
+  if(op) op.textContent = stats.ongoing;
+  if(od){ od.textContent = stats.overdue; od.style.color = stats.overdue>0?'var(--red)':'var(--text-light)'; }
 
   // ── Client notification badge in nav ──
   try{
@@ -6771,7 +6780,7 @@ function refreshAdminOverview(){
 
   const activeBlockers  = blockers.filter(b=>b.status==='open');
   const activeClients   = allClients.filter(c=>c.status==='active');
-  const activeProjects  = allClients.reduce((acc,c)=>acc+(c.projects||[]).filter(p=>p.status!=='complete'&&p.status!=='cancelled').length,0);
+  const activeProjects  = computeProjectStats(allClients).ongoing;
 
   const el1=document.getElementById('ov-total-users');    if(el1) el1.textContent=allUsers.length||0;
   const elAC=document.getElementById('ov-active-clients'); if(elAC) elAC.textContent=activeClients.length||0;

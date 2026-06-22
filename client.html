@@ -2003,10 +2003,37 @@ function renderClientGrid(list){
   updateStats();
 }
 
+// Canonical project/service counts — kept identical to the same-named function in
+// index.html so "Ongoing Projects" agrees everywhere in the app. Recurring services
+// count as ongoing work alongside manual projects, whether or not they've been
+// mirrored into c.projects[] yet.
+function computeProjectStats(clients){
+  const todayStr = today();
+  const allProjects = (clients||[]).reduce((arr,c)=>arr.concat(c.projects||[]),[]);
+  const idxRecSvcs = (clients||[]).reduce((arr,c)=>arr.concat(c.recurringServices||[]),[]);
+  const unmirroredSvcs = (clients||[]).reduce((arr,c)=>{
+    const mirroredIds = new Set((c.projects||[]).filter(p=>p.isRecurringService).map(p=>p.serviceId));
+    (c.services||[]).forEach(s=>{ if(!mirroredIds.has(s.id)) arr.push(s); });
+    return arr;
+  },[]);
+
+  const completed = allProjects.filter(p=>p.status==='completed').length;
+
+  const ongoingProj   = allProjects.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length;
+  const ongoingIdxSvc = idxRecSvcs.filter(s=>s.active!==false).length;
+  const ongoingUnmir  = unmirroredSvcs.filter(s=>s.status!=='on-hold'&&s.status!=='completed').length;
+  const ongoing = ongoingProj + ongoingIdxSvc + ongoingUnmir;
+
+  const overdueProj   = allProjects.filter(p=>p.status!=='completed'&&p.due&&p.due<todayStr).length;
+  const overdueIdxSvc = idxRecSvcs.filter(s=>s.nextDueDate&&s.nextDueDate<todayStr).length;
+  const overdueUnmir  = unmirroredSvcs.filter(s=>s.due&&s.due<todayStr&&s.status!=='completed').length;
+  const overdue = overdueProj + overdueIdxSvc + overdueUnmir;
+
+  return { completed, ongoing, overdue };
+}
+
 function updateStats(){
   const clients=getClients();
-  const allProj=clients.flatMap(c=>(c.projects||[]).filter(p=>!p.isRecurringService));
-  const t=today();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   let due=0;
   clients.forEach(c=>{ (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s) due++; }); });
@@ -2014,7 +2041,7 @@ function updateStats(){
   set('st-total',clients.length);
   set('st-active',clients.filter(c=>c.status==='active').length,'var(--green)');
   set('st-inactive',clients.filter(c=>c.status!=='active').length,'#aaa');
-  set('st-ongoing',allProj.filter(p=>p.status!=='completed'&&p.status!=='on-hold').length);
+  set('st-ongoing',computeProjectStats(clients).ongoing);
   set('st-due',due,due>0?'var(--orange)':'var(--green)');
 }
 
