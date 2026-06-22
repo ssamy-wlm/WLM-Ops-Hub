@@ -1865,7 +1865,7 @@ function showPage(name, el){
   _el('page-title').textContent=title;
   _el('page-sub').textContent=sub;
   _el('notif-panel').classList.remove('open');
-  if(name==='clients'){ populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
+  if(name==='clients'){ populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
   if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
@@ -1892,7 +1892,11 @@ function populateDropdowns(){
   populateUserChecks('pf-user-checkboxes',roster,[]);
   populateUserChecks('sp-user-checkboxes',roster,[]);
   const fm=_el('filter-manager');
-  if(fm) fm.innerHTML=`<option value="">All Account Managers</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  if(fm){
+    const cur=fm.value;
+    fm.innerHTML=`<option value="">All Account Managers</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+    fm.value=cur;
+  }
 }
 function populateUserChecks(containerId, roster, checked){
   const wrap=_el(containerId); if(!wrap) return;
@@ -2068,8 +2072,16 @@ function filterClients(){
   // service type — match catalogId or service name
   if(sv){ const svl=sv.toLowerCase(); list=list.filter(c=>(c.services||[]).some(s=>(s.name||'').toLowerCase()===svl||(s.name||'').toLowerCase().includes(svl)||svl.includes((s.name||'').toLowerCase()))); }
 
-  // project type — match any project whose type equals selected
-  if(pjType) list=list.filter(c=>(c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjType.toLowerCase()));
+  // project type — match any project whose type equals selected, or (for recurring-service
+  // mirrors, which are always tagged type:'Recurring Service') whose underlying service name
+  // exactly matches the selected category
+  if(pjType){
+    const pjTypeL=pjType.toLowerCase();
+    list=list.filter(c=>(c.projects||[]).some(p=>
+      (p.type||'').toLowerCase()===pjTypeL ||
+      (p.isRecurringService && (p.name||'').toLowerCase()===pjTypeL)
+    ));
+  }
 
   // project status — match any project with that status
   if(pjSt) list=list.filter(c=>(c.projects||[]).some(p=>(p.status||'')===pjSt));
@@ -3550,6 +3562,7 @@ function updateMyWorkBadge(){
 function init(){
   // Pull latest client data from cloud first (async — UI will render after)
   _pullClientsFromCloud().then(()=>{
+    populateDropdowns();
     renderClientGrid();
     populateScheduleClientFilter();
     renderMyWork();
@@ -3580,10 +3593,10 @@ function init(){
     renderNotifPanel();
     checkServiceAlerts();
     updateMyWorkBadge();
-    _pullClientsFromCloud().then(()=>{ renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    _pullClientsFromCloud().then(()=>{ populateDropdowns(); renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   }, 30000);
   document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden) _pullClientsFromCloud().then(()=>{ renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   });
 }
 
