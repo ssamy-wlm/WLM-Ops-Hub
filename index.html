@@ -5516,6 +5516,32 @@ function _removeDeadAbbySeedDuplicate(){
   return true;
 }
 
+// ── One-time-per-record fix: Abby Conklin and Emily Rovillo both reported
+// "Invalid email or password" on their admin accounts despite the seed
+// defaulting their password to '123456' — whatever caused it to drift (a past
+// edit, a stale cloud snapshot, etc.), force it back to the known default once
+// so their first login works. Marked via `_firstLoginPwSet` on the record
+// itself (travels through cloud sync) rather than a local done-flag, so it
+// fires exactly once per account and never reverts a password either of them
+// sets afterward.
+function _resetAbbyAndEmilyFirstLoginPassword(){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const TARGET_EMAILS = ['aconklin@weblightmedia.com','erovillo@weblightmedia.com'];
+  let changed = false;
+  admins.forEach(a=>{
+    if(TARGET_EMAILS.includes((a.email||'').toLowerCase()) && !a._firstLoginPwSet){
+      a.password = '123456';
+      a._firstLoginPwSet = true;
+      changed = true;
+    }
+  });
+  if(!changed) return false;
+  dbSet(DB_KEYS.admins, admins);
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Reset Abby/Emily admin password to default for first login.');
+  return true;
+}
+
 // Does this user have any real assigned work in the client tracker (a service
 // or project actually pointing at their id/name)? If so they're an active
 // working member regardless of whether they've ever logged in — used to keep
@@ -6644,6 +6670,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
     if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
+    if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
@@ -6754,6 +6781,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _fixAssmaaPayRate();
   // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
   _removeDeadAbbySeedDuplicate();
+  // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
+  _resetAbbyAndEmilyFirstLoginPassword();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
