@@ -1676,12 +1676,31 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               </select>
             </div>
           </div>
-          <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">How to enter the day(s)</label>
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-sm" id="tol-mode-btn-range" onclick="_tolSetMode('range')">Date Range</button>
+              <button type="button" class="btn btn-sm" id="tol-mode-btn-specific" onclick="_tolSetMode('specific')">Specific Days</button>
+              <button type="button" class="btn btn-sm" id="tol-mode-btn-manual" onclick="_tolSetMode('manual')">Manual Day Count</button>
+            </div>
+          </div>
+
+          <div id="tol-mode-range" class="form-row">
             <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="tol-start" oninput="_tolPreviewDays()"></div>
             <div class="form-group"><label class="form-label">End Date</label><input class="form-input" type="date" id="tol-end" oninput="_tolPreviewDays()"></div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Or enter the number of days manually (overrides the date range — use a negative number for a balance correction, e.g. -1)</label>
+
+          <div id="tol-mode-specific" class="form-group" style="display:none;">
+            <label class="form-label">Add each day taken (does not need to be consecutive — e.g. logging past days off taken on scattered dates)</label>
+            <div style="display:flex;gap:8px;align-items:flex-end;">
+              <input class="form-input" type="date" id="tol-specific-date-input" style="max-width:200px;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="_tolAddSpecificDay()">+ Add Day</button>
+            </div>
+            <div id="tol-specific-days-list" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"></div>
+          </div>
+
+          <div id="tol-mode-manual" class="form-group" style="display:none;">
+            <label class="form-label">Number of days (use a negative number for a balance correction, e.g. -1)</label>
             <input class="form-input" type="number" step="1" id="tol-manual-days" placeholder="e.g. 1.5, or -1 for a correction" oninput="_tolPreviewDays()">
           </div>
           <div id="tol-days-preview" style="font-size:12px;color:var(--text-mid);margin:-6px 0 12px 2px;"></div>
@@ -7044,12 +7063,56 @@ function _populateTimeOffEmployeeSelect(){
   if(prev && roster.some(p=>p.id===prev)) sel.value = prev;
 }
 
+let _tolMode = 'range';
+let _tolSpecificDays = [];
+
+function _tolSetMode(mode){
+  _tolMode = mode;
+  ['range','specific','manual'].forEach(m=>{
+    const block = document.getElementById('tol-mode-'+m);
+    if(block) block.style.display = (m===mode) ? '' : 'none';
+    const btn = document.getElementById('tol-mode-btn-'+m);
+    if(btn) btn.className = 'btn btn-sm ' + (m===mode ? 'btn-primary' : 'btn-outline');
+  });
+  _tolPreviewDays();
+}
+
+function _tolRenderSpecificDaysList(){
+  const list = document.getElementById('tol-specific-days-list');
+  if(!list) return;
+  list.innerHTML = _tolSpecificDays.slice().sort().map(d=>
+    `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:8px;background:rgba(45,107,182,.1);color:var(--btn);font-size:12px;font-weight:600;">
+      ${d}
+      <span style="cursor:pointer;font-weight:700;padding:0 4px;" onclick="_tolRemoveSpecificDay('${d}')">×</span>
+    </span>`
+  ).join('');
+  _tolPreviewDays();
+}
+
+function _tolAddSpecificDay(){
+  const input = document.getElementById('tol-specific-date-input');
+  const d = input?.value;
+  if(!d) return;
+  if(!_tolSpecificDays.includes(d)) _tolSpecificDays.push(d);
+  input.value = '';
+  _tolRenderSpecificDaysList();
+}
+
+function _tolRemoveSpecificDay(d){
+  _tolSpecificDays = _tolSpecificDays.filter(x=>x!==d);
+  _tolRenderSpecificDaysList();
+}
+
 function _tolPreviewDays(){
   const out = document.getElementById('tol-days-preview');
   if(!out) return;
-  const manualRaw = document.getElementById('tol-manual-days')?.value;
-  if(manualRaw!==''&&manualRaw!=null){
-    out.textContent = `${manualRaw} day(s) — manual entry, overrides date range`;
+  if(_tolMode==='specific'){
+    out.textContent = _tolSpecificDays.length ? `${_tolSpecificDays.length} day(s) — one entry per selected date` : '';
+    return;
+  }
+  if(_tolMode==='manual'){
+    const manualRaw = document.getElementById('tol-manual-days')?.value;
+    out.textContent = (manualRaw!==''&&manualRaw!=null) ? `${manualRaw} day(s) — manual entry` : '';
     return;
   }
   const start = document.getElementById('tol-start')?.value;
@@ -7064,9 +7127,6 @@ function _tolPreviewDays(){
 function logTimeOffEntry(){
   const employeeId = document.getElementById('tol-employee')?.value||'';
   const type        = document.getElementById('tol-type')?.value||'';
-  let   start        = document.getElementById('tol-start')?.value||'';
-  let   end          = document.getElementById('tol-end')?.value||'';
-  const manualRaw    = document.getElementById('tol-manual-days')?.value;
   const note         = document.getElementById('tol-note')?.value?.trim()||'';
   const errEl        = document.getElementById('tol-error');
   if(errEl) errEl.style.display='none';
@@ -7076,51 +7136,60 @@ function logTimeOffEntry(){
   if(!person) return fail('Please select an employee.');
   if(type!=='sick' && type!=='vacation') return fail('Please select a type.');
 
-  let days, daysManuallySet;
-  if(manualRaw!==''&&manualRaw!=null){
-    days = Number(manualRaw);
-    if(isNaN(days) || days===0) return fail('Enter a non-zero number of days, or use the date range instead.');
-    daysManuallySet = true;
-    // Manual entries still need a date so the balance calc can bucket them into
-    // the right calendar year — default to today if no range was given.
-    if(!start) start = new Date().toISOString().slice(0,10);
-    if(!end) end = start;
-  } else {
-    if(!start || !end) return fail('Pick a date range, or enter the number of days manually.');
-    if(end<start) return fail('End date must be on or after start date.');
-    days = _calcBusinessDays(start,end);
-    if(days<=0) return fail('That date range has no business days — enter the number of days manually instead.');
-    daysManuallySet = false;
-  }
-
-  // Permanent, append-only entry — there is no edit/delete for this record, ever.
+  const loggedBy = (typeof _getCurrentUserName==='function') ? _getCurrentUserName() : 'Admin';
+  // Permanent, append-only entries — there is no edit/delete for this record, ever.
   // Corrections must be logged as a new entry (e.g. days:-1, with a note).
-  const entry = {
+  const makeEntry = (startDate, endDate, days, daysManuallySet) => ({
     id: 'tol_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
     employeeId,
     employeeName: person.name,
     type,
-    startDate: start,
-    endDate: end,
+    startDate,
+    endDate,
     days,
     daysManuallySet,
     note,
-    loggedBy: (typeof _getCurrentUserName==='function') ? _getCurrentUserName() : 'Admin',
+    loggedBy,
     loggedAt: new Date().toISOString(),
     status: 'approved',
-  };
+  });
+
+  let newEntries;
+  if(_tolMode==='specific'){
+    if(!_tolSpecificDays.length) return fail('Add at least one day, or switch to Date Range / Manual Day Count.');
+    newEntries = _tolSpecificDays.map(d=>makeEntry(d, d, 1, false));
+  } else if(_tolMode==='manual'){
+    const manualRaw = document.getElementById('tol-manual-days')?.value;
+    const days = Number(manualRaw);
+    if(manualRaw==='' || manualRaw==null || isNaN(days) || days===0) return fail('Enter a non-zero number of days.');
+    // Manual entries still need a date so the balance calc can bucket them into
+    // the right calendar year — default to today.
+    const today = new Date().toISOString().slice(0,10);
+    newEntries = [makeEntry(today, today, days, true)];
+  } else {
+    const start = document.getElementById('tol-start')?.value||'';
+    const end   = document.getElementById('tol-end')?.value||'';
+    if(!start || !end) return fail('Pick a start and end date.');
+    if(end<start) return fail('End date must be on or after start date.');
+    const days = _calcBusinessDays(start,end);
+    if(days<=0) return fail('That date range has no business days — use Specific Days or Manual Day Count instead.');
+    newEntries = [makeEntry(start, end, days, false)];
+  }
 
   const ledger = dbGet(DB_KEYS.timeOffLedger)||[];
-  ledger.unshift(entry);
+  newEntries.forEach(e=>ledger.unshift(e));
   dbSet(DB_KEYS.timeOffLedger, ledger);
 
-  logActivity('timeoff', entry.loggedBy, `Logged ${type} time off for ${person.name}`, `${days} day(s)${note?' — '+note:''}`);
-  showToast(`✅ Logged ${days} ${type} day(s) for ${person.name}`);
+  const totalDays = newEntries.reduce((s,e)=>s+e.days,0);
+  logActivity('timeoff', loggedBy, `Logged ${type} time off for ${person.name}`, `${totalDays} day(s) across ${newEntries.length} entry/entries${note?' — '+note:''}`);
+  showToast(`✅ Logged ${totalDays} ${type} day(s) for ${person.name}`);
 
   document.getElementById('tol-start').value='';
   document.getElementById('tol-end').value='';
   document.getElementById('tol-manual-days').value='';
   document.getElementById('tol-note').value='';
+  _tolSpecificDays = [];
+  _tolRenderSpecificDaysList();
   const dp = document.getElementById('tol-days-preview'); if(dp) dp.textContent='';
 
   renderAdminTimeOffLedger();
@@ -7129,6 +7198,8 @@ function logTimeOffEntry(){
 
 function renderAdminTimeOffLedger(){
   _populateTimeOffEmployeeSelect();
+  _tolSetMode(_tolMode);
+  _tolRenderSpecificDaysList();
 
   const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   const balGrid = document.getElementById('tolBalanceGrid');
@@ -7156,7 +7227,9 @@ function renderAdminTimeOffLedger(){
       const typeBg    = e.type==='sick' ? 'rgba(224,85,85,.1)' : 'rgba(45,107,182,.1)';
       const dateLabel = e.daysManuallySet
         ? `${e.days} day(s) (manual entry)`
-        : `${e.startDate} → ${e.endDate} (${e.days} day(s))`;
+        : e.startDate===e.endDate
+          ? `${e.startDate} (${e.days} day(s))`
+          : `${e.startDate} → ${e.endDate} (${e.days} day(s))`;
       const loggedAt = e.loggedAt ? new Date(e.loggedAt).toLocaleString() : '';
       return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
