@@ -1034,6 +1034,31 @@ function db(k){ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch(
 function dbSave(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
 function dbPush(k,item){ const a=db(k)||[]; a.unshift(item); dbSave(k,a.slice(0,1000)); }
 
+// ── Per-record dirty tracking for the shared clients dataset ──────────────
+// Every clients merge here used to blindly let the FULL local 'wl_clients_db'
+// cache win, id by id, over the cloud's copy — not just the one record this
+// tab actually edited. Since each tab's cache lags the cloud (it only
+// refreshes every ~30s / on visibility/init), ANY push from ANY tab — even
+// one editing a totally different client — could silently overwrite a
+// teammate's just-pushed edit. Shared by index.html/client.html/user.html
+// via the same localStorage key so all three see consistent behavior.
+function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
+function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
+function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+  const snapById = {};
+  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
+  const byId = {};
+  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
+  (localClients||[]).forEach(c=>{
+    if(!c.id) return;
+    const prevKnown = snapById[c.id];
+    // Only let local win for a record that actually differs from what we last
+    // knew the cloud to contain — i.e. a record we ourselves changed.
+    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  });
+  return Object.values(byId);
+}
+
 // ═══════════════════════════════════════════════════════
 //  SESSION DETECTION
 // ═══════════════════════════════════════════════════════
@@ -1499,23 +1524,22 @@ async function _doCloudPush(){
   try{
     const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
     const cur=r0.ok?((await r0.json())?.record||{}):{};
-    // Merge by client id (local wins per-id) instead of blindly replacing the whole
-    // clients array. A flat overwrite here would silently erase any client record
-    // another device/portal (e.g. user.html) pushed to the cloud after this
-    // browser's last pull but before this save — exactly the failure mode behind
-    // "marked done but it didn't reflect on the production tracker."
+    // Merge onto the freshest cloud copy, only letting OUR locally-dirty records
+    // win (see _mergeClientsLocalOntoCloud above) — not the whole local cache.
     const cloudClients=Array.isArray(cur.clients)?cur.clients:[];
     const localClients=getClients();
-    const byId={};
-    cloudClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
-    localClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
-    cur.clients=Object.values(byId);
+    const mergedClients=_mergeClientsLocalOntoCloud(cloudClients, localClients);
+    cur.clients=mergedClients;
     cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
     await fetch(CLOUD_DATA_URL,{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(cur)
     });
+    // Bring this tab's own cache up to the merged result and remember it as the
+    // new known-cloud baseline, so the next push's dirty-check stays accurate.
+    dbSave(CL_KEYS.clients, mergedClients);
+    _setClientsCloudSnapshot(mergedClients);
   }catch(e){}
 }
 function _scheduleCloudPush(){
@@ -1536,14 +1560,12 @@ async function _pullClientsFromCloud(){
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
     if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length){
-      // Merge by id (cloud wins per-id) rather than a blind overwrite, so any
-      // local-only client/edit not yet pushed to the cloud isn't discarded by
-      // this periodic background pull.
+      // Accept cloud's latest for everything except records we ourselves have
+      // dirtied locally and not yet pushed (see _mergeClientsLocalOntoCloud).
       const localClients=getClients();
-      const byId={};
-      localClients.forEach(c=>{ if(c.id) byId[c.id]=c; });
-      rec.clients.forEach(c=>{ if(c.id) byId[c.id]=c; });
-      dbSave(CL_KEYS.clients,Object.values(byId));
+      const merged=_mergeClientsLocalOntoCloud(rec.clients, localClients);
+      dbSave(CL_KEYS.clients, merged);
+      _setClientsCloudSnapshot(merged);
     }
     if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
   }catch(e){}

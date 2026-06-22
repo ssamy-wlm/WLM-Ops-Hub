@@ -642,8 +642,20 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <!-- ── TIME OFF ── -->
       <div id="sec-timeoff" class="page-section">
         <div style="max-width:640px;">
-          <div style="font-size:20px;font-weight:800;color:var(--text-dark);margin-bottom:6px;">🏖 Request Time Off</div>
-          <div style="font-size:13px;color:var(--text-light);margin-bottom:20px;">Submit a time off request for admin review and approval.</div>
+          <div style="font-size:20px;font-weight:800;color:var(--text-dark);margin-bottom:6px;">🏖 Time Off</div>
+          <div style="font-size:13px;color:var(--text-light);margin-bottom:20px;">Your sick &amp; vacation balance, and a request form for admin review.</div>
+
+          <!-- My Balance — derived live from the permanent time-off ledger, view only -->
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);margin-bottom:14px;">My Balance</div>
+            <div id="myTimeOffBalance"></div>
+          </div>
+
+          <!-- My Time Off History — entries logged by an admin, permanent, view only -->
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;">
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);margin-bottom:14px;">My Time Off History</div>
+            <div id="myTimeOffLedgerList"><div style="font-size:13px;color:var(--text-light);">No time off logged yet.</div></div>
+          </div>
 
           <!-- My Request History -->
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;">
@@ -959,6 +971,7 @@ const DB_KEYS = {
   announcement: 'wl_announcement',
   messages:     'wl_messages_db',
   timeOffRequests: 'wl_timeoff_requests',
+  timeOffLedger: 'wl_timeoff_ledger',
 };
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
@@ -1004,6 +1017,38 @@ function _mergeTimeOff(primaryArr, secondaryArr){
   return merged;
 }
 
+// Time-off LEDGER entries are permanent and immutable — write-once, never edited
+// or deleted after creation (corrections are new offsetting entries only). So
+// unlike _mergeClientsLocalOntoCloud below, merging the ledger only ever needs
+// a plain union-by-id: keep every entry either side has, with NO cap — unlike
+// _mergeCloudArr's `limit`, which would silently truncate history.
+function _mergeTimeOffLedger(cloudArr, localArr){
+  const byId = {};
+  (Array.isArray(cloudArr)?cloudArr:[]).forEach(e=>{ if(e && e.id) byId[e.id]=e; });
+  (Array.isArray(localArr)?localArr:[]).forEach(e=>{ if(e && e.id && !byId[e.id]) byId[e.id]=e; });
+  return Object.values(byId);
+}
+
+// ── Per-record dirty tracking for the shared clients dataset (see matching
+// copy in index.html/client.html for full rationale): only let a tab's local
+// copy of a client record win the merge if that record actually differs from
+// the last cloud state we knew about — never let a stale full-cache push
+// clobber a teammate's freshly-synced edit to some other client.
+function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
+function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
+function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+  const snapById = {};
+  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
+  const byId = {};
+  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
+  (localClients||[]).forEach(c=>{
+    if(!c.id) return;
+    const prevKnown = snapById[c.id];
+    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  });
+  return Object.values(byId);
+}
+
 const _RES_IDS_KEY = 'wl_resolved_blocker_ids';
 function _getResolvedIds(){ try{ return JSON.parse(localStorage.getItem(_RES_IDS_KEY)||'[]'); }catch{ return []; } }
 function _unionResolvedIds(cloudIds){
@@ -1037,12 +1082,16 @@ async function cloudFetchUsers(){
     if(record.messages)     dbSet(DB_KEYS.messages, _mergeCloudArr(record.messages, dbGet(DB_KEYS.messages)||[], 500));
     if(record.feed)         dbSet(DB_KEYS.feed,      _mergeCloudArr(record.feed,     dbGet(DB_KEYS.feed)||[], 100));
     if(record.timeOffRequests) dbSet(DB_KEYS.timeOffRequests, _mergeTimeOff(record.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]));
+    // Ledger is permanent/append-only — always merge, even if cloud's copy is empty.
+    dbSet(DB_KEYS.timeOffLedger, _mergeTimeOffLedger(record.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]));
     if(Array.isArray(record.clients)){
       const local = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
-      const byId = {};
-      record.clients.forEach(c=>{ if(c.id) byId[c.id]=c; });
-      local.forEach(c=>{ if(c.id) byId[c.id]=c; }); // local wins to preserve any unsync'd progress
-      localStorage.setItem('wl_clients_db', JSON.stringify(Object.values(byId)));
+      // Only keep local's version of records we ourselves changed since our
+      // last known cloud state — otherwise take cloud's latest, so a stale
+      // local cache here can't clobber another teammate's just-synced edit.
+      const merged = _mergeClientsLocalOntoCloud(record.clients, local);
+      localStorage.setItem('wl_clients_db', JSON.stringify(merged));
+      _setClientsCloudSnapshot(merged);
     }
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
     return Array.isArray(users) ? users : null;
@@ -1073,9 +1122,11 @@ async function cloudPushData(){
     _applyResolvedIds(mergedResIds);
     const localCl = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
     const cloudCl = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
-    const clById = {};
-    cloudCl.forEach(c=>{ if(c.id) clById[c.id]=c; });
-    localCl.forEach(c=>{ if(c.id) clById[c.id]=c; }); // local wins (preserves progress updates)
+    // Only let local win for records we ourselves dirtied since our last known
+    // cloud state — a blind "local wins for every id" merge let any push here
+    // (even one triggered by an unrelated EOD/blocker save) silently overwrite
+    // a teammate's just-synced edit to some other client's project/task.
+    const mergedClients = _mergeClientsLocalOntoCloud(cloudCl, localCl);
     const payload = {
       ...cloudRecord,
       // local-first merge: local state wins so resolves/edits aren't overwritten by stale cloud copy
@@ -1084,8 +1135,9 @@ async function cloudPushData(){
       feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
       messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
       timeOffRequests: _mergeTimeOff(dbGet(DB_KEYS.timeOffRequests)||[], cloudRecord.timeOffRequests),
+      timeOffLedger: _mergeTimeOffLedger(dbGet(DB_KEYS.timeOffLedger)||[], cloudRecord.timeOffLedger),
       resolvedBlockerIds: mergedResIds,
-      clients:  Object.values(clById),
+      clients:  mergedClients,
     };
     await fetch(CLOUD_DATA_URL, {
       method:'PUT',
@@ -1095,6 +1147,9 @@ async function cloudPushData(){
     // Store merged data locally too, so this device reflects what was just pushed
     dbSet(DB_KEYS.feed, payload.feed);
     dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
+    dbSet(DB_KEYS.timeOffLedger, payload.timeOffLedger);
+    localStorage.setItem('wl_clients_db', JSON.stringify(mergedClients));
+    _setClientsCloudSnapshot(mergedClients);
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
   }catch(e){}
 }
@@ -2234,8 +2289,83 @@ setInterval(()=>{
     loadCoC();
     checkAnnouncements();
     updateAssignmentsBadge(); // check for new client assignments
+    if(document.getElementById('sec-timeoff')?.classList.contains('active')){
+      cloudFetchUsers().then(renderMyTimeOffLedger);
+    }
   }
 },20000);
+
+// ═══════════════════════════════════════════════════════════
+// TIME OFF LEDGER — read-only balance + history for the logged-in user.
+// Entries here are written only by admins (Ops Hub); this page never edits
+// or deletes anything — balance is always derived live from the permanent ledger.
+// ═══════════════════════════════════════════════════════════
+const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
+
+function _isOnProbation(u){
+  if(!u || !u.probationEnd) return false;
+  const today = new Date().toISOString().slice(0,10);
+  return u.probationEnd > today;
+}
+
+function getMyTimeOffBalance(year){
+  year = year || new Date().getFullYear();
+  const onProbation = _isOnProbation(currentUser);
+  const allMine = (dbGet(DB_KEYS.timeOffLedger)||[]).filter(e=>e.employeeId===currentUser?.id);
+  const thisYear = allMine.filter(e=>e.startDate && new Date(e.startDate).getFullYear()===year);
+  const sum = type => thisYear.filter(e=>e.type===type).reduce((s,e)=>s+(Number(e.days)||0),0);
+  const usedSick = sum('sick'), usedVacation = sum('vacation');
+  const entSick     = onProbation ? 0 : TIME_OFF_ENTITLEMENT.sick;
+  const entVacation = onProbation ? 0 : TIME_OFF_ENTITLEMENT.vacation;
+  return {
+    onProbation,
+    sick:     { used: usedSick,     entitlement: entSick,     remaining: entSick - usedSick },
+    vacation: { used: usedVacation, entitlement: entVacation, remaining: entVacation - usedVacation },
+    allEntries: allMine,
+  };
+}
+
+function renderMyTimeOffLedger(){
+  const bal = getMyTimeOffBalance();
+  const balBox = document.getElementById('myTimeOffBalance');
+  if(balBox){
+    const probNote = bal.onProbation
+      ? `<div style="font-size:12px;color:#d97706;font-weight:700;margin-top:10px;">⏳ Still on probation — sick/vacation entitlement begins once probation ends.</div>`
+      : '';
+    balBox.innerHTML = `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:140px;padding:14px;border:1px solid var(--border);border-radius:10px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:var(--text-dark);">${bal.sick.remaining}/${bal.sick.entitlement}</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:4px;">🤒 Sick Days Remaining</div>
+        </div>
+        <div style="flex:1;min-width:140px;padding:14px;border:1px solid var(--border);border-radius:10px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:var(--text-dark);">${bal.vacation.remaining}/${bal.vacation.entitlement}</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:4px;">🏖 Vacation Days Remaining</div>
+        </div>
+      </div>${probNote}`;
+  }
+  const list = document.getElementById('myTimeOffLedgerList');
+  if(list){
+    const entries = bal.allEntries.slice().sort((a,b)=>new Date(b.loggedAt)-new Date(a.loggedAt));
+    if(!entries.length){
+      list.innerHTML = '<div style="font-size:13px;color:var(--text-light);">No time off logged yet.</div>';
+    } else {
+      list.innerHTML = entries.map(e=>{
+        const typeColor = e.type==='sick' ? 'var(--red)' : 'var(--btn)';
+        const typeBg    = e.type==='sick' ? 'rgba(224,85,85,.1)' : 'rgba(45,107,182,.1)';
+        const dateLabel = e.daysManuallySet ? `${e.days} day(s) (manual entry)` : `${e.startDate} → ${e.endDate} (${e.days} day(s))`;
+        return `<div style="padding:12px 0;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${typeBg};color:${typeColor};">${(e.type||'').toUpperCase()}</span>
+            <div style="font-size:11px;color:var(--text-light);">Logged by ${escHtmlUser(e.loggedBy||'Admin')}</div>
+          </div>
+          <div style="font-size:13px;color:var(--text-dark);font-weight:600;margin-top:4px;">${dateLabel}</div>
+          ${e.note?`<div style="font-size:12px;color:var(--text-mid);margin-top:4px;">${escHtmlUser(e.note)}</div>`:''}
+        </div>`;
+      }).join('');
+    }
+  }
+}
 
 // ═══════════════════════════════════════════════════════════
 // TIME OFF — user submission + history
@@ -2315,7 +2445,7 @@ function renderMyTimeOff(){
 const _origShowSectionUser = window.showSection;
 window.showSection = function(id, el){
   _origShowSectionUser(id, el);
-  if(id==='timeoff') setTimeout(renderMyTimeOff, 80);
+  if(id==='timeoff'){ setTimeout(renderMyTimeOff, 80); cloudFetchUsers().then(renderMyTimeOffLedger); }
   if(id==='credentials') setTimeout(renderUserCredVault, 80);
 };
 
