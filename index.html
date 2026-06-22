@@ -5380,7 +5380,6 @@ function _seedCoreTeam(){
     {id:'jamil',   name:'Jamil Ahmed',    email:'jamil@weblightmedia.com',   title:'Video Producer',                role:'member',  status:'active', seeded:true},
     {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active', seeded:true},
     {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active', seeded:true},
-    {id:'abby',    name:'Abby Conklin',   email:'abby@weblightmedia.com',    title:'Director of Production',        role:'admin',   status:'active', seeded:true},
     {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active', seeded:true},
     {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
     {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active', seeded:true},
@@ -5501,6 +5500,22 @@ function _fixAssmaaPayRate(){
   return true;
 }
 
+// ── One-time/idempotent cleanup: remove the dead "abby" user-DB record.
+// _seedCoreTeam() used to seed a passwordless abby@weblightmedia.com entry in
+// DB_KEYS.users, but Abby's real, working login is the admin account seeded
+// separately in _seedMissingAdmins() under aconklin@weblightmedia.com — the two
+// emails confused admins resetting her password. The dead record never had a
+// password and was never usable for login, so it's always safe to drop.
+function _removeDeadAbbySeedDuplicate(){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const filtered = allUsers.filter(u=>!(u.id==='abby' && (u.email||'').toLowerCase()==='abby@weblightmedia.com' && !u.password));
+  if(filtered.length === allUsers.length) return false;
+  dbSet(DB_KEYS.users, filtered);
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Removed dead "abby@weblightmedia.com" duplicate user record.');
+  return true;
+}
+
 // Does this user have any real assigned work in the client tracker (a service
 // or project actually pointing at their id/name)? If so they're an active
 // working member regardless of whether they've ever logged in — used to keep
@@ -5527,7 +5542,7 @@ function _userHasAssignedWork(userId, userName){
 // back off on the next sync. When it actually tags something, push that to the
 // cloud immediately so other devices stop seeing the untagged record too.
 function _tagSeededPlaceholderUsers(){
-  const SEED_IDS = ['emily','jamil','jacob','david','abby','yehia','sherine','carol','brian','aileen','neha','assmaa'];
+  const SEED_IDS = ['emily','jamil','jacob','david','yehia','sherine','carol','brian','aileen','neha','assmaa'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
@@ -6628,6 +6643,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // placeholders now that both users AND client assignment data are fully synced.
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
+    if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
@@ -6736,6 +6752,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _restoreMisarchivedRealWorkers();
   // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
   _fixAssmaaPayRate();
+  // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
+  _removeDeadAbbySeedDuplicate();
   // Reassign all Social Media Management services/projects to Sherine (idempotent)
   _reassignSocialMediaToSherine();
   // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
