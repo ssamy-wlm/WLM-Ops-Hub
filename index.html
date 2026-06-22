@@ -3963,6 +3963,26 @@ const _CL_DB_KEY = 'wl_clients_db';
 function _getClientDB(){ try{ return JSON.parse(localStorage.getItem(_CL_DB_KEY)||'null')||[]; }catch(e){ return []; } }
 function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify(arr)); }catch(e){} }
 
+// ── Per-record dirty tracking for the shared clients dataset (see matching
+// copy in client.html for full rationale): only let a tab's local copy of a
+// client record win the merge if that record actually differs from the last
+// cloud state we knew about — never let a stale full-cache push clobber a
+// teammate's freshly-synced edit to some other client.
+function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
+function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
+function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+  const snapById = {};
+  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
+  const byId = {};
+  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
+  (localClients||[]).forEach(c=>{
+    if(!c.id) return;
+    const prevKnown = snapById[c.id];
+    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  });
+  return Object.values(byId);
+}
+
 // ── Service Catalog ──────────────────────────────────────────────
 const WL_SERVICE_CATALOG = [
   // Recurring Services
@@ -6350,13 +6370,13 @@ async function cloudPushAll(silent=false, _retryReduced=false){
       else mergedAdmins.push(la);       // new local admin added to cloud
     });
 
-    // Merge client DBs: local wins by id, cloud fills in any clients only it has
+    // Merge client DBs: only let local win for records we actually edited
+    // since our last known cloud state (see _mergeClientsLocalOntoCloud) —
+    // not a blind "local overwrites cloud for every id it has" merge, which
+    // let any unrelated push clobber other team members' edits.
     const localClients = _getClientDB();
     const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
-    const clientById = {};
-    cloudClients.forEach(c=>{ if(c.id) clientById[c.id]=c; });
-    localClients.forEach(c=>{ if(c.id) clientById[c.id]=c; }); // local overwrites cloud
-    const mergedClients = Object.values(clientById);
+    const mergedClients = _mergeClientsLocalOntoCloud(cloudClients, localClients);
 
     // Resolved blocker IDs — append-only union so resolved state survives any merge race
     const mergedResolvedIds = _unionResolvedIds(cloudRecord.resolvedBlockerIds);
@@ -6413,7 +6433,7 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     dbSet(DB_KEYS.goals, payload.goals);
     dbSet(DB_KEYS.feed, payload.feed);
     dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
-    if(payload.clients) _saveClientDB(payload.clients);
+    if(payload.clients){ _saveClientDB(payload.clients); _setClientsCloudSnapshot(payload.clients); }
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6495,8 +6515,14 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       });
       dbSet(DB_KEYS.admins, mergedAdmins);
     }
-    // Restore client data from cloud (local edits already merged on push side)
-    if(r.clients && Array.isArray(r.clients) && r.clients.length) _saveClientDB(r.clients);
+    // Restore client data from cloud, but keep any of our own not-yet-pushed
+    // local edits to specific records (see _mergeClientsLocalOntoCloud) —
+    // don't just blindly overwrite with cloud's copy.
+    if(r.clients && Array.isArray(r.clients) && r.clients.length){
+      const mergedClients = _mergeClientsLocalOntoCloud(r.clients, _getClientDB());
+      _saveClientDB(mergedClients);
+      _setClientsCloudSnapshot(mergedClients);
+    }
     // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa that an older
     // cloud snapshot might otherwise keep reintroducing, then re-tag/un-tag seed
     // placeholders now that both users AND client assignment data are fully synced.
