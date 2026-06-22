@@ -992,6 +992,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="admin-nav-item admin-drop-trigger" onclick="switchAdminTab(this,'users')" id="admin-drop-users">Users</div>
           <div class="admin-nav-dropdown-menu">
             <div class="admin-nav-item" onclick="switchAdminTab(this,'timeoff')">Time Off</div>
+            <div class="admin-nav-item" onclick="switchAdminTab(this,'ptoLedger')">Time Off Ledger</div>
             <div class="admin-nav-item" onclick="switchAdminTab(this,'archive')">Archive</div>
           </div>
         </div>
@@ -1649,6 +1650,58 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="card">
         <div class="card-body" id="adminTimeOffList"><div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No time off requests yet.</div></div>
+      </div>
+    </div>
+
+    <!-- ══ TIME OFF LEDGER (permanent sick/vacation balance tracker) ══ -->
+    <div id="admin-ptoLedger" class="page-section">
+      <div style="margin-bottom:18px;">
+        <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📒 Time Off Ledger</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">6 sick days + 15 vacation days per year, starting the day probation ends. Entries are permanent — corrections are made with a new offsetting entry, never by editing or deleting the original.</div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-header"><div class="card-title">Log Time Off</div></div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Employee *</label>
+              <select class="form-select" id="tol-employee"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Type *</label>
+              <select class="form-select" id="tol-type">
+                <option value="sick">Sick / Emergency</option>
+                <option value="vacation">Vacation / Holiday</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="tol-start" oninput="_tolPreviewDays()"></div>
+            <div class="form-group"><label class="form-label">End Date</label><input class="form-input" type="date" id="tol-end" oninput="_tolPreviewDays()"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Or enter the number of days manually (overrides the date range — use a negative number for a balance correction, e.g. -1)</label>
+            <input class="form-input" type="number" step="1" id="tol-manual-days" placeholder="e.g. 1.5, or -1 for a correction" oninput="_tolPreviewDays()">
+          </div>
+          <div id="tol-days-preview" style="font-size:12px;color:var(--text-mid);margin:-6px 0 12px 2px;"></div>
+          <div class="form-group">
+            <label class="form-label">Note</label>
+            <textarea class="form-textarea" id="tol-note" rows="2" placeholder="Reason, or note explaining a correction…"></textarea>
+          </div>
+          <div id="tol-error" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:12px;"></div>
+          <button class="btn btn-primary" onclick="logTimeOffEntry()">Log Time Off →</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-header"><div class="card-title">Balances — All Employees</div></div>
+        <div class="card-body" id="tolBalanceGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Ledger History</div></div>
+        <div class="card-body" id="tolHistoryList"><div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No time off logged yet.</div></div>
       </div>
     </div>
 
@@ -5261,6 +5314,7 @@ const DB_KEYS = {
   messages:      'wl_messages_db',
   roadmapTasks:  'wl_roadmap_tasks',
   timeOffRequests: 'wl_timeoff_requests',
+  timeOffLedger: 'wl_timeoff_ledger',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -6290,6 +6344,20 @@ function _mergeTimeOff(primaryArr, secondaryArr){
   return merged;
 }
 
+// Time-off LEDGER entries (distinct from the pending/approved/denied requests above)
+// are permanent and immutable — write-once, never edited or deleted after creation.
+// That means, unlike _mergeClientsLocalOntoCloud (which needs snapshot-diff dirty
+// tracking because the SAME client record gets mutated repeatedly by different
+// people), merging the ledger only ever needs a plain union-by-id: keep every
+// entry either side has, with NO cap — _mergeCloudArr's limit would silently
+// truncate history, which is exactly what this data must never do.
+function _mergeTimeOffLedger(cloudArr, localArr){
+  const byId = {};
+  (Array.isArray(cloudArr)?cloudArr:[]).forEach(e=>{ if(e && e.id) byId[e.id]=e; });
+  (Array.isArray(localArr)?localArr:[]).forEach(e=>{ if(e && e.id && !byId[e.id]) byId[e.id]=e; });
+  return Object.values(byId);
+}
+
 // Merge blockers with "resolved wins" — once any side marks a blocker resolved, it stays resolved
 function _mergeBlockers(primaryArr, secondaryArr){
   const merged = _mergeCloudArr(primaryArr, secondaryArr);
@@ -6403,6 +6471,7 @@ async function cloudPushAll(silent=false, _retryReduced=false){
       messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], _retryReduced ? 100 : 500),
       roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], _retryReduced ? 150 : 1000),
       timeOffRequests: _mergeTimeOff(cloudRecord.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]),
+      timeOffLedger: _mergeTimeOffLedger(cloudRecord.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]),
     };
     if(_retryReduced) payload.feed = _mergeCloudArr(cloudRecord.feed, dbGet(DB_KEYS.feed)||[], 30);
 
@@ -6433,6 +6502,7 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     dbSet(DB_KEYS.goals, payload.goals);
     dbSet(DB_KEYS.feed, payload.feed);
     dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
+    dbSet(DB_KEYS.timeOffLedger, payload.timeOffLedger);
     if(payload.clients){ _saveClientDB(payload.clients); _setClientsCloudSnapshot(payload.clients); }
 
     const now = new Date().toISOString();
@@ -6558,6 +6628,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
     if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeRoadmapArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]));
     if(r.timeOffRequests) dbSet(DB_KEYS.timeOffRequests, _mergeTimeOff(r.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]));
+    // Ledger is permanent/append-only — always merge (union by id), never skip
+    // even if r.timeOffLedger is an empty array, so a stale empty cloud blob
+    // can never look like "nothing to merge" and get treated as authoritative.
+    dbSet(DB_KEYS.timeOffLedger, _mergeTimeOffLedger(r.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]));
 
     // ── Safety net: if users DB is still empty after merge, re-seed core team ──
     // Protects against a genuinely blank/corrupt cloud bin locking everyone out.
@@ -6584,6 +6658,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminOverview === 'function') refreshAdminOverview();
     if(typeof refreshLiveFeed === 'function') refreshLiveFeed();
     if(typeof renderAdminTimeOff === 'function') renderAdminTimeOff();
+    if(typeof renderAdminTimeOffLedger === 'function') renderAdminTimeOffLedger();
     if(typeof renderSavedPayrolls === 'function') renderSavedPayrolls();
     if(typeof refreshArchive === 'function') refreshArchive();
     if(typeof updateAdminMsgBadge === 'function') updateAdminMsgBadge();
@@ -6802,6 +6877,7 @@ window.switchAdminTab = function(el, tab){
   }
   if(tab==='archive')  setTimeout(refreshArchive, 80);
   if(tab==='timeoff')  setTimeout(renderAdminTimeOff, 80);
+  if(tab==='ptoLedger') setTimeout(renderAdminTimeOffLedger, 80);
   if(tab==='payroll')  setTimeout(initPayroll, 80);
 };
 
@@ -6952,6 +7028,147 @@ function reviewTimeOff(id, decision){
   cloudAutoSync(true);
   showToast(`Time off request ${decision} ✓`);
   logActivity('admin','Admin',`Time off ${decision} for ${requests[idx].userName}`, requests[idx].startDate+' → '+requests[idx].endDate);
+}
+
+// ═══════════════════════════════════════════════════════════
+// TIME OFF LEDGER — admin logs permanent sick/vacation entries; balance is
+// always derived live from getTimeOffBalance(), never stored.
+// ═══════════════════════════════════════════════════════════
+function _populateTimeOffEmployeeSelect(){
+  const sel = document.getElementById('tol-employee');
+  if(!sel) return;
+  const prev = sel.value;
+  const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  sel.innerHTML = '<option value="">Select employee…</option>' +
+    roster.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+  if(prev && roster.some(p=>p.id===prev)) sel.value = prev;
+}
+
+function _tolPreviewDays(){
+  const out = document.getElementById('tol-days-preview');
+  if(!out) return;
+  const manualRaw = document.getElementById('tol-manual-days')?.value;
+  if(manualRaw!==''&&manualRaw!=null){
+    out.textContent = `${manualRaw} day(s) — manual entry, overrides date range`;
+    return;
+  }
+  const start = document.getElementById('tol-start')?.value;
+  const end   = document.getElementById('tol-end')?.value;
+  if(start && end && end>=start){
+    out.textContent = `${_calcBusinessDays(start,end)} business day(s) — auto-calculated from date range`;
+  } else {
+    out.textContent = '';
+  }
+}
+
+function logTimeOffEntry(){
+  const employeeId = document.getElementById('tol-employee')?.value||'';
+  const type        = document.getElementById('tol-type')?.value||'';
+  let   start        = document.getElementById('tol-start')?.value||'';
+  let   end          = document.getElementById('tol-end')?.value||'';
+  const manualRaw    = document.getElementById('tol-manual-days')?.value;
+  const note         = document.getElementById('tol-note')?.value?.trim()||'';
+  const errEl        = document.getElementById('tol-error');
+  if(errEl) errEl.style.display='none';
+  const fail = msg => { if(errEl){ errEl.textContent=msg; errEl.style.display='block'; } };
+
+  const person = _timeOffRoster().find(p=>p.id===employeeId);
+  if(!person) return fail('Please select an employee.');
+  if(type!=='sick' && type!=='vacation') return fail('Please select a type.');
+
+  let days, daysManuallySet;
+  if(manualRaw!==''&&manualRaw!=null){
+    days = Number(manualRaw);
+    if(isNaN(days) || days===0) return fail('Enter a non-zero number of days, or use the date range instead.');
+    daysManuallySet = true;
+    // Manual entries still need a date so the balance calc can bucket them into
+    // the right calendar year — default to today if no range was given.
+    if(!start) start = new Date().toISOString().slice(0,10);
+    if(!end) end = start;
+  } else {
+    if(!start || !end) return fail('Pick a date range, or enter the number of days manually.');
+    if(end<start) return fail('End date must be on or after start date.');
+    days = _calcBusinessDays(start,end);
+    if(days<=0) return fail('That date range has no business days — enter the number of days manually instead.');
+    daysManuallySet = false;
+  }
+
+  // Permanent, append-only entry — there is no edit/delete for this record, ever.
+  // Corrections must be logged as a new entry (e.g. days:-1, with a note).
+  const entry = {
+    id: 'tol_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+    employeeId,
+    employeeName: person.name,
+    type,
+    startDate: start,
+    endDate: end,
+    days,
+    daysManuallySet,
+    note,
+    loggedBy: (typeof _getCurrentUserName==='function') ? _getCurrentUserName() : 'Admin',
+    loggedAt: new Date().toISOString(),
+    status: 'approved',
+  };
+
+  const ledger = dbGet(DB_KEYS.timeOffLedger)||[];
+  ledger.unshift(entry);
+  dbSet(DB_KEYS.timeOffLedger, ledger);
+
+  logActivity('timeoff', entry.loggedBy, `Logged ${type} time off for ${person.name}`, `${days} day(s)${note?' — '+note:''}`);
+  showToast(`✅ Logged ${days} ${type} day(s) for ${person.name}`);
+
+  document.getElementById('tol-start').value='';
+  document.getElementById('tol-end').value='';
+  document.getElementById('tol-manual-days').value='';
+  document.getElementById('tol-note').value='';
+  const dp = document.getElementById('tol-days-preview'); if(dp) dp.textContent='';
+
+  renderAdminTimeOffLedger();
+  cloudAutoSync();
+}
+
+function renderAdminTimeOffLedger(){
+  _populateTimeOffEmployeeSelect();
+
+  const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  const balGrid = document.getElementById('tolBalanceGrid');
+  if(balGrid){
+    balGrid.innerHTML = roster.length ? roster.map(p=>{
+      const bal = getTimeOffBalance(p.id);
+      const probBadge = bal.onProbation
+        ? `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:rgba(217,119,6,.12);color:#d97706;margin-left:6px;">ON PROBATION</span>`
+        : '';
+      return `<div style="padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">${escHtml(p.name)}${probBadge}</div>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--text-mid);flex-wrap:wrap;">
+          <div>🤒 Sick: <strong>${bal.sick.remaining}/${bal.sick.entitlement}</strong> remaining</div>
+          <div>🏖 Vacation: <strong>${bal.vacation.remaining}/${bal.vacation.entitlement}</strong> remaining</div>
+        </div>
+      </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No employees yet.</div>';
+  }
+
+  const list = document.getElementById('tolHistoryList');
+  if(list){
+    const entries = (dbGet(DB_KEYS.timeOffLedger)||[]).slice().sort((a,b)=>new Date(b.loggedAt)-new Date(a.loggedAt));
+    list.innerHTML = entries.length ? entries.map(e=>{
+      const typeColor = e.type==='sick' ? 'var(--red)' : 'var(--btn)';
+      const typeBg    = e.type==='sick' ? 'rgba(224,85,85,.1)' : 'rgba(45,107,182,.1)';
+      const dateLabel = e.daysManuallySet
+        ? `${e.days} day(s) (manual entry)`
+        : `${e.startDate} → ${e.endDate} (${e.days} day(s))`;
+      const loggedAt = e.loggedAt ? new Date(e.loggedAt).toLocaleString() : '';
+      return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(e.employeeName||'Unknown')}</div>
+          <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${typeBg};color:${typeColor};">${(e.type||'').toUpperCase()}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-mid);margin-top:4px;">${dateLabel}</div>
+        ${e.note?`<div style="font-size:12px;color:var(--text-mid);margin-top:4px;background:var(--bg);padding:8px 10px;border-radius:8px;">${escHtml(e.note)}</div>`:''}
+        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Logged by ${escHtml(e.loggedBy||'Admin')} · ${loggedAt}</div>
+      </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No time off logged yet.</div>';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -7378,6 +7595,52 @@ function _isOnProbation(u){
   if(!u || !u.probationEnd) return false;
   const today = new Date().toISOString().slice(0,10);
   return u.probationEnd > today;
+}
+
+// ═══════════════════════════════════════════════════════════
+// TIME OFF LEDGER — permanent, append-only record of sick/vacation days.
+// Balances are NEVER stored; they're derived live as entitlement minus the sum
+// of this year's ledger entries, so the math can never drift or get corrupted.
+// Corrections happen via new offsetting entries (e.g. days:-1, "correction, see note")
+// — there is intentionally no edit or delete path for ledger entries anywhere.
+// ═══════════════════════════════════════════════════════════
+const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
+
+// Every admin AND every regular user automatically gets entitlement tracking —
+// no per-person setup. Accounts with no probationEnd set (e.g. admin-only
+// accounts that predate the probation fields) are treated as already past
+// probation, consistent with the _isOnProbation() convention above.
+function _timeOffRoster(){
+  const users  = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active'&&u.id&&u.name);
+  const seen   = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&a.id&&a.name&&!seen.has((a.name||'').trim().toLowerCase()));
+  return [...users, ...admins];
+}
+
+function _calcBusinessDays(start,end){
+  if(!start||!end) return 0;
+  let days=0; const d=new Date(start); const endD=new Date(end);
+  while(d<=endD){ if(d.getDay()!==0 && d.getDay()!==6) days++; d.setDate(d.getDate()+1); }
+  return days;
+}
+
+// Derived balance for one employee — recomputed live from the permanent ledger.
+function getTimeOffBalance(employeeId, year){
+  year = year || new Date().getFullYear();
+  const person = _timeOffRoster().find(p=>p.id===employeeId);
+  const onProbation = person ? _isOnProbation(person) : false;
+  const ledger = (dbGet(DB_KEYS.timeOffLedger)||[]).filter(e=>
+    e.employeeId===employeeId && e.startDate && new Date(e.startDate).getFullYear()===year);
+  const sum = type => ledger.filter(e=>e.type===type).reduce((s,e)=>s+(Number(e.days)||0),0);
+  const usedSick     = sum('sick');
+  const usedVacation = sum('vacation');
+  const entSick     = onProbation ? 0 : TIME_OFF_ENTITLEMENT.sick;
+  const entVacation = onProbation ? 0 : TIME_OFF_ENTITLEMENT.vacation;
+  return {
+    onProbation,
+    sick:     { used: usedSick,     entitlement: entSick,     remaining: entSick - usedSick },
+    vacation: { used: usedVacation, entitlement: entVacation, remaining: entVacation - usedVacation },
+  };
 }
 
 let _platformsLocal = null;
