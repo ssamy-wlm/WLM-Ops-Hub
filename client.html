@@ -2298,7 +2298,7 @@ function renderProjects(c){
       </div>`).join('');
 
     return `
-      <div class="project-block">
+      <div class="project-block" data-proj-id="${p.id}">
         <div class="project-head" onclick="toggleProjectBlock(this)">
           <div class="project-head-expand">▶</div>
           <div style="width:10px;height:10px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
@@ -2374,7 +2374,7 @@ function renderSubprojectRow(clientId, projId, sp, canEdit){
 
 function renderTaskRow(clientId, projId, spId, t, canEdit){
   return `
-    <div class="task-item${t.done?' done-task':''}">
+    <div class="task-item${t.done?' done-task':''}" id="task-row-${t.id}">
       <input type="checkbox" class="task-cb" ${t.done?'checked':''} onchange="toggleTaskDone('${clientId}','${projId}','${spId||''}','${t.id}',this.checked)">
       <span class="task-name">${t.name}</span>
       ${t.assigneeId?`<span class="task-assignee">${getUser(t.assigneeId)?.name||t.assigneeId}</span>`:''}
@@ -2454,6 +2454,41 @@ function toggleProjectBlock(header){
   const exp=header.querySelector('.project-head-expand');
   const body=header.nextElementSibling;
   if(body){ body.classList.toggle('open'); exp.classList.toggle('open'); }
+}
+
+// ── Deep-link support: ?openClient=&openProject=&openTask= (used by task-edit
+// notification emails to jump straight to the task that changed) ──
+function _openDeepLinkFromUrl(){
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const clientId=params.get('openClient');
+    if(!clientId) return;
+    const projId=params.get('openProject');
+    const taskId=params.get('openTask');
+    if(!getClient(clientId)) return;
+    openClientDetail(clientId);
+    renderClientDetail(clientId,'projects');
+    setTimeout(()=>{
+      if(projId){
+        const block=document.querySelector(`[data-proj-id="${projId}"]`);
+        if(block){
+          const body=block.querySelector('.project-body');
+          const exp=block.querySelector('.project-head-expand');
+          if(body) body.classList.add('open');
+          if(exp) exp.classList.add('open');
+        }
+      }
+      if(taskId){
+        const row=document.getElementById('task-row-'+taskId);
+        if(row){
+          row.scrollIntoView({behavior:'smooth',block:'center'});
+          row.style.transition='background .3s';
+          row.style.background='rgba(45,107,182,.18)';
+          setTimeout(()=>{ row.style.background=''; },2200);
+        }
+      }
+    },300);
+  }catch(e){}
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2755,11 +2790,12 @@ function saveTask(){
   const assigneeId=_el('tf-assignee').value;
   const assigneeName=getRoster().find(u=>u.id===assigneeId)?.name||'';
   const data={name,assigneeId,assigneeName,due:_el('tf-due').value,done:false};
+  const editedBy={id:SESSION.id,name:SESSION.name};
   if(taskId){
     const t=container.tasks.find(x=>x.id===taskId);
-    if(t) Object.assign(t,{name,assigneeId,assigneeName,due:data.due});
+    if(t) Object.assign(t,{name,assigneeId,assigneeName,due:data.due,lastEditedBy:editedBy});
   } else {
-    container.tasks.push({id:'t'+uid(),...data});
+    container.tasks.push({id:'t'+uid(),...data,lastEditedBy:editedBy});
     if(assigneeId){
       pushNotif({ icon:'✅', color:'rgba(45,107,182,.1)',
         title:`Task assigned: ${name}`,
@@ -2797,6 +2833,7 @@ function toggleTaskDone(clientId,projId,spId,taskId,checked){
   task.done=checked;
   task.completedBy=checked?SESSION.name:null;
   task.completedAt=checked?new Date().toISOString():null;
+  task.lastEditedBy={id:SESSION.id,name:SESSION.name};
   const pct=recalcProgress(clients,clientId,projId);
   if(pct===100){
     pushNotif({ icon:'🎉', color:'rgba(46,158,110,.1)',
@@ -3490,6 +3527,7 @@ function init(){
     populateScheduleClientFilter();
     renderMyWork();
     updateMyWorkBadge();
+    _openDeepLinkFromUrl();
   }).catch(()=>{});
   ensureCatalog();
   seedTeamMembers();           // populate wl_users_db with agents if empty
