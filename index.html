@@ -1702,6 +1702,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="tol-mode-manual" class="form-group" style="display:none;">
             <label class="form-label">Number of days (use a negative number for a balance correction, e.g. -1)</label>
             <input class="form-input" type="number" step="1" id="tol-manual-days" placeholder="e.g. 1.5, or -1 for a correction" oninput="_tolPreviewDays()">
+            <label class="form-label" style="margin-top:10px;">Date this applies to (optional — defaults to today)</label>
+            <input class="form-input" type="date" id="tol-manual-date" style="max-width:200px;" oninput="_tolPreviewDays()">
           </div>
           <div id="tol-days-preview" style="font-size:12px;color:var(--text-mid);margin:-6px 0 12px 2px;"></div>
           <div class="form-group">
@@ -7112,7 +7114,8 @@ function _tolPreviewDays(){
   }
   if(_tolMode==='manual'){
     const manualRaw = document.getElementById('tol-manual-days')?.value;
-    out.textContent = (manualRaw!==''&&manualRaw!=null) ? `${manualRaw} day(s) — manual entry` : '';
+    const manualDate = document.getElementById('tol-manual-date')?.value;
+    out.textContent = (manualRaw!==''&&manualRaw!=null) ? `${manualRaw} day(s) — manual entry${manualDate?' dated '+manualDate:' (defaults to today)'}` : '';
     return;
   }
   const start = document.getElementById('tol-start')?.value;
@@ -7163,9 +7166,9 @@ function logTimeOffEntry(){
     const days = Number(manualRaw);
     if(manualRaw==='' || manualRaw==null || isNaN(days) || days===0) return fail('Enter a non-zero number of days.');
     // Manual entries still need a date so the balance calc can bucket them into
-    // the right calendar year — default to today.
-    const today = new Date().toISOString().slice(0,10);
-    newEntries = [makeEntry(today, today, days, true)];
+    // the right calendar year — use the chosen date if given, else default to today.
+    const manualDate = document.getElementById('tol-manual-date')?.value || new Date().toISOString().slice(0,10);
+    newEntries = [makeEntry(manualDate, manualDate, days, true)];
   } else {
     const start = document.getElementById('tol-start')?.value||'';
     const end   = document.getElementById('tol-end')?.value||'';
@@ -7187,6 +7190,7 @@ function logTimeOffEntry(){
   document.getElementById('tol-start').value='';
   document.getElementById('tol-end').value='';
   document.getElementById('tol-manual-days').value='';
+  document.getElementById('tol-manual-date').value='';
   document.getElementById('tol-note').value='';
   _tolSpecificDays = [];
   _tolRenderSpecificDaysList();
