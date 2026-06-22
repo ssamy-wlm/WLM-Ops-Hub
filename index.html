@@ -7611,9 +7611,13 @@ const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
 // accounts that predate the probation fields) are treated as already past
 // probation, consistent with the _isOnProbation() convention above.
 function _timeOffRoster(){
-  const users  = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active'&&u.id&&u.name);
+  // Exclude unused seed/placeholder accounts (seeded:true with no real activity) —
+  // same exclusion Payroll already applies — so misspelled leftover seed entries
+  // (e.g. "Sherine Amind", "Yehia Elaify") never show up as separate employees
+  // alongside the real account someone actually created for that person.
+  const users  = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active'&&u.id&&u.name&&u.seeded!==true);
   const seen   = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
-  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&a.id&&a.name&&!seen.has((a.name||'').trim().toLowerCase()));
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&a.id&&a.name&&a.seeded!==true&&!seen.has((a.name||'').trim().toLowerCase()));
   return [...users, ...admins];
 }
 
