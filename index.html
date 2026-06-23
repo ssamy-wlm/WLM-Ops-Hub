@@ -137,6 +137,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .urgent-coc{background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.2);}
 
 /* Roadmap */
+.tracker-embed-wrap{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);height:calc(100vh - 170px);min-height:520px;}
+.tracker-embed-frame{display:block;width:100%;height:100%;border:none;}
 .roadmap-section{background:var(--cream);border:1px solid var(--cream-dark);border-radius:14px;padding:20px;}
 .roadmap-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--text-dark);margin-bottom:14px;}
 .roadmap-phase{margin-bottom:14px;}
@@ -168,19 +170,11 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .note-win{color:var(--green);}
 .note-issue{color:var(--red);}
 
-/* ── BLOCKERS ── */
-.blocker-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;}
-.bstat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;text-align:center;}
-.bstat-val{font-family:'Playfair Display',serif;font-size:24px;color:var(--text-dark);margin-bottom:4px;}
-.bstat-label{font-size:11px;color:var(--text-light);}
-.bstat.warn{border-color:rgba(217,119,6,.3);background:#fffbf0;}
-.bstat.crit{border-color:rgba(224,85,85,.3);background:#fff8f8;}
 .blocker-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:10px;transition:box-shadow .2s;}
 .blocker-item:hover{box-shadow:var(--shadow-md);}
 .blocker-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
 .blocker-title{font-size:14px;font-weight:700;color:var(--text-dark);flex:1;}
 .blocker-desc{font-size:13px;color:var(--text-mid);margin-bottom:10px;}
-.blocker-meta{display:flex;gap:10px;font-size:11px;color:var(--text-light);}
 
 /* ── GOALS ── */
 .goal-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:10px;}
@@ -431,16 +425,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="38" height="38" style="display:block;border-radius:8px;flex-shrink:0;"><rect width="100" height="100" fill="#2563AB"/><path d="M 18 56 C 22 14, 78 14, 82 56" fill="none" stroke="#F5C42C" stroke-width="8.5" stroke-linecap="round"/><text x="50" y="74" font-family="Arial Black,Arial,sans-serif" font-size="52" font-weight="900" fill="white" text-anchor="middle">W</text><rect x="33" y="78" width="34" height="5.5" rx="2.75" fill="#F5C42C"/><rect x="37" y="86.5" width="26" height="5.5" rx="2.75" fill="#F5C42C"/><rect x="41" y="95" width="18" height="5.5" rx="2.75" fill="#F5C42C"/></svg>
     </div>
     <div class="sidebar-nav">
-      <div class="nav-group-label">Execution</div>
+      <div class="nav-group-label">My Work</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni">🏠</span>Operations</div>
       <div class="nav-item" onclick="showSection('reports',this)"><span class="ni">📊</span>Reports</div>
-      <div class="nav-item" onclick="showSection('blockers',this)"><span class="ni">🚧</span>Blockers</div>
+      <div class="nav-item" onclick="showSection('tracker',this)"><span class="ni">📅</span>Tracker</div>
+      <div class="nav-group-label">Resources</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni">📋</span>Downtime Tasks</div>
       <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni">🎨</span>Brand Rights</div>
-      <div class="nav-group-label">Control</div>
       <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni">🛡️</span>Decision Rights</div>
       <div class="nav-item" onclick="showSection('goals',this)"><span class="ni">🎯</span>Goals</div>
-      <div class="nav-group-label">Infrastructure</div>
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni">🔑</span>Credentials</div>
     </div>
     <div class="sidebar-user">
@@ -474,7 +467,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
       <!-- ── OPERATIONS ── -->
       <div id="sec-operations" class="page-section active">
-        <div class="ops-grid-3">
+        <div class="ops-grid-3" style="grid-template-columns:1fr 1fr;max-width:560px;">
           <div class="stat-card">
             <div class="stat-label">Active Shift</div>
             <div class="stat-value" id="shiftDate">—</div>
@@ -484,11 +477,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="stat-label">This Week</div>
             <div class="stat-value">3</div>
             <div class="stat-sub">Reports submitted</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Open Blockers</div>
-            <div class="stat-value" style="color:var(--orange)">1</div>
-            <div class="stat-sub">1 needs escalation</div>
           </div>
         </div>
         <div class="ops-grid">
@@ -574,7 +562,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="wk-stats">
               <div class="wk-stat"><div class="wk-stat-val">12</div><div class="wk-stat-label">Tasks</div></div>
               <div class="wk-stat"><div class="wk-stat-val">2</div><div class="wk-stat-label">Revisions</div></div>
-              <div class="wk-stat"><div class="wk-stat-val">0</div><div class="wk-stat-label">Blockers</div></div>
+              <div class="wk-stat"><div class="wk-stat-val">0</div><div class="wk-stat-label">Follow-ups</div></div>
               <div class="wk-stat"><div class="wk-stat-val">1</div><div class="wk-stat-label">Issues</div></div>
             </div>
             <div class="wk-note"><span class="note-win">✓</span> Completed homepage redesign for Client A</div>
@@ -687,25 +675,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
-      <!-- ── BLOCKERS ── -->
-      <div id="sec-blockers" class="page-section">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="btn btn-primary" onclick="openBlockerModal()">+ Add Blocker</button></div>
-        <div class="blocker-stats">
-          <div class="bstat"><div class="bstat-val">1</div><div class="bstat-label">Total Active</div></div>
-          <div class="bstat warn"><div class="bstat-val" style="color:var(--orange)">0</div><div class="bstat-label">Escalated 48h+</div></div>
-          <div class="bstat crit"><div class="bstat-val" style="color:var(--red)">0</div><div class="bstat-label">Critical 7+ days</div></div>
-          <div class="bstat"><div class="bstat-val" style="color:var(--orange)">1</div><div class="bstat-label">Warning 3–7 days</div></div>
+      <!-- ── TRACKER (embedded production tracker) ── -->
+      <div id="sec-tracker" class="page-section">
+        <div class="tracker-embed-wrap">
+          <iframe id="trackerFrame" class="tracker-embed-frame" src="about:blank" title="Production Tracker"></iframe>
         </div>
-        <div class="blocker-item">
-          <div class="blocker-header">
-            <span class="status-badge badge-pending">⚠ Warning</span>
-            <div class="blocker-title">Awaiting client copy for landing page</div>
-            <td class="td-actions"><button class="btn btn-sm btn-outline">Resolve</button></td>
-          </div>
-          <div class="blocker-desc">Client has not provided the final copy for the hero section and CTA buttons. Design is blocked until text is confirmed.</div>
-          <div class="blocker-meta"><span>📅 Opened Mar 2</span><span>👤 Jamie Soto</span><span>🏢 Client A Project</span></div>
-        </div>
-        <div id="blockerList"></div>
       </div>
 
       <!-- ── DOWNTIME TASKS ── -->
@@ -1000,6 +974,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-item" onclick="switchAdminTab(this,'summaries')">Summaries</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')">Live Feed</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'clients')">Clients</div>
+        <div class="admin-nav-item" onclick="switchAdminTab(this,'tracker')">Tracker</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')">Payroll</div>
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
       </div>
@@ -1019,11 +994,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="font-size:12px;color:var(--text-light);font-weight:600;" id="overviewDateLabel"></div>
         <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
       </div>
-      <div class="admin-stats">
+      <div class="admin-stats" style="grid-template-columns:repeat(3,1fr);">
         <div class="admin-stat"><div class="as-val" id="ov-total-users">0</div><div class="as-label">Total Users</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-active-clients">0</div><div class="as-label">Active Clients</div></div>
         <div class="admin-stat"><div class="as-val" id="ov-total-reports">0</div><div class="as-label">Active Projects</div></div>
-        <div class="admin-stat"><div class="as-val" id="ov-blockers">0</div><div class="as-label">Active Blockers</div></div>
       </div>
       <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:18px;">
         <div class="card">
@@ -1188,7 +1162,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </select>
           <select class="form-select" id="feed-filter-type" onchange="filterFeed()" style="font-size:13px;width:160px;">
             <option value="">All Activity</option>
-            <option value="blocker">Blockers</option>
             <option value="goal">Goals</option>
             <option value="login">Logins</option>
             <option value="client">Tasks &amp; Services</option>
@@ -1201,14 +1174,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <!-- Live stats bar -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px;" id="feed-stats-bar">
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text-dark);" id="feed-stat-total">0</div>
           <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Total Events</div>
-        </div>
-        <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
-          <div style="font-size:22px;font-weight:800;color:var(--orange);" id="feed-stat-blockers">0</div>
-          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Blockers Logged</div>
         </div>
         <div class="card" style="padding:14px 16px;margin:0;text-align:center;">
           <div style="font-size:22px;font-weight:800;color:var(--text);" id="feed-stat-logins">0</div>
@@ -1328,7 +1297,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:12px;font-weight:700;color:var(--text-dark);">Full Client &amp; Production Tracker available</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Projects, sub-projects, tasks, recurring services, milestones, progress logs, sales funnel, service schedule and team assignments.</div>
         </div>
-        <a href="client.html" target="_blank" class="btn btn-outline btn-sm" style="white-space:nowrap;flex-shrink:0;">Open Tracker →</a>
+        <a href="javascript:void(0)" onclick="switchAdminTab(document.querySelector('.admin-nav-item[onclick*=tracker]'),'tracker')" class="btn btn-outline btn-sm" style="white-space:nowrap;flex-shrink:0;">Open Tracker →</a>
       </div>
 
       <!-- Stats bar -->
@@ -1365,6 +1334,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+    </div>
+
+    <!-- ══ TRACKER (embedded production tracker) ══ -->
+    <div id="admin-tracker" class="page-section">
+      <div class="tracker-embed-wrap">
+        <iframe id="adminTrackerFrame" class="tracker-embed-frame" src="about:blank" title="Production Tracker"></iframe>
+      </div>
     </div>
 
     <!-- ════ ADD / EDIT CLIENT MODAL ════ -->
@@ -2593,34 +2569,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 </div>
 </div>
 
-<!-- Blocker Modal -->
-<div id="blockerModal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <div><div class="modal-title">Log a Blocker</div><div class="modal-sub">Document what is preventing your progress</div></div>
-      <button class="modal-close" onclick="closeModal('blockerModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group"><label class="form-label">Blocker Title</label><input class="form-input" placeholder="Short description of the issue" id="blockerTitle"></div>
-      <div class="form-group"><label class="form-label">Full Description</label><textarea class="form-textarea" placeholder="Describe the blocker in detail…" id="blockerDesc"></textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Project Affected</label><input class="form-input" placeholder="Client or project name" id="blockerProject"></div>
-        <div class="form-group"><label class="form-label">Severity</label>
-          <select class="form-select" id="blockerSeverity">
-            <option>Warning (3–7 days)</option>
-            <option>Escalated (48h+)</option>
-            <option>Critical (7+ days)</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('blockerModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="addBlocker()">Submit Blocker</button>
-    </div>
-  </div>
-</div>
-
 <!-- Goal Modal -->
 <div id="goalModal" class="modal-overlay">
   <div class="modal">
@@ -2875,8 +2823,15 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',reports:'Reports',blockers:'Blockers',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile'};
+  const titles = {operations:'Operations',reports:'Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
+  if(id==='tracker') loadTrackerFrame();
+}
+
+// ── TRACKER (embedded production tracker iframe) ──
+function loadTrackerFrame(){
+  const frame = document.getElementById('trackerFrame');
+  if(frame && frame.src==='about:blank') frame.src = 'client.html';
 }
 
 // ── ADMIN TABS ──
@@ -2893,6 +2848,12 @@ function switchAdminTab(el, tab){
   }
   if(tab==='messages')    renderAdminMessages();
   if(tab==='bizSettings') loadRoadmap();
+  if(tab==='tracker')     loadAdminTrackerFrame();
+}
+
+function loadAdminTrackerFrame(){
+  const frame = document.getElementById('adminTrackerFrame');
+  if(frame && frame.src==='about:blank') frame.src = 'client.html';
 }
 
 // ── REPORT TABS ──
@@ -3051,7 +3012,6 @@ function saveEditUser(){
   logActivity('admin','Admin','Updated user: '+name,'');
   cloudAutoSync();
 }
-function openBlockerModal(){document.getElementById('blockerModal').classList.add('open');}
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
 function openAppearanceModal(){document.getElementById('appearanceModal').classList.add('open');}
 
@@ -3200,23 +3160,6 @@ function renderUserTable(){
       </div></td>
     </tr>`;
   }).join('');
-}
-
-// ── BLOCKER ──
-function addBlocker(){
-  const title=document.getElementById('blockerTitle').value;
-  const desc=document.getElementById('blockerDesc').value;
-  const proj=document.getElementById('blockerProject').value;
-  const sev=document.getElementById('blockerSeverity').value;
-  if(!title){showToast('Please enter a blocker title');return;}
-  const list=document.getElementById('blockerList');
-  const el=document.createElement('div');
-  el.className='blocker-item';
-  el.innerHTML=`<div class="blocker-header"><span class="status-badge badge-pending">⚠ ${sev.split(' ')[0]}</span><div class="blocker-title">${title}</div><button class="btn btn-sm btn-outline" onclick="this.closest('.blocker-item').remove();showToast('Blocker resolved')">Resolve</button></div><div class="blocker-desc">${desc}</div><div class="blocker-meta"><span>📅 Today</span><span>🏢 ${proj||'General'}</span></div>`;
-  list.appendChild(el);
-  closeModal('blockerModal');
-  showToast('Blocker logged');
-  ['blockerTitle','blockerDesc','blockerProject'].forEach(id=>document.getElementById(id).value='');
 }
 
 // ── EU TABS ──
@@ -3434,16 +3377,12 @@ function removeUser(btn, userId){
   if(!confirm(`Archive ${displayName} from the system?\nThey will be moved to Archive and lose login access.`)) return;
   if(u){
     // Archive the user with all their data
-    const blockers = dbGet(DB_KEYS.blockers)||[];
-    const userBlockers = blockers.filter(b=>b.user===u.name);
-    const archivedUser = {...u, archivedAt: new Date().toISOString(), archivedBy:'Admin', blockers: userBlockers.slice(0,20)};
+    const archivedUser = {...u, archivedAt: new Date().toISOString(), archivedBy:'Admin'};
     const archives = dbGet('wl_archived_users')||[];
     archives.unshift(archivedUser);
     dbSet('wl_archived_users', archives);
     // Remove from active users
     dbSet(DB_KEYS.users, allUsers.filter(x=>x.id!==userId && x.name!==userId));
-    // Remove their blockers from active lists
-    dbSet(DB_KEYS.blockers, (dbGet(DB_KEYS.blockers)||[]).filter(b=>b.user!==u.name));
     // Track deleted user ID so cloud pull never restores them
     if(u.id){
       const delUids=dbGet(DB_KEYS.deletedUserIds)||[];
@@ -4219,7 +4158,7 @@ function renderClientGrid(list){
   if(!grid) return;
   grid.innerHTML = '';
   if(!list.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="client.html?usermode=1" target="_blank" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="javascript:void(0)" onclick="switchAdminTab(document.querySelector(&quot;.admin-nav-item[onclick*=tracker]&quot;),&#39;tracker&#39;)" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
     updateClientStats();
     return;
   }
@@ -5328,7 +5267,6 @@ setInterval(updateClientStats, 30000);
 
 const DB_KEYS = {
   feed:     'wl_live_feed',
-  blockers: 'wl_blockers_db',
   weeklySummaries: 'wl_weekly_summaries',
   monthlySummaries: 'wl_monthly_summaries',
   yearlySummaries:  'wl_yearly_summaries',
@@ -5870,27 +5808,6 @@ window.showSection = function(id, el){
   logActivity('nav', userName, 'Navigated to ' + id, id);
 };
 
-// Patch addBlocker to save to shared DB
-const _origAddBlocker = window.addBlocker;
-window.addBlocker = function(){
-  const title = document.getElementById('blockerTitle')?.value;
-  const desc  = document.getElementById('blockerDesc')?.value;
-  const proj  = document.getElementById('blockerProject')?.value;
-  const sev   = document.getElementById('blockerSeverity')?.value;
-  if(!title){ showToast('Please enter a blocker title'); return; }
-  const userName = _getCurrentUserName();
-  const blocker = {
-    id: Date.now(),
-    title, desc, proj, sev,
-    user: userName,
-    date: new Date().toISOString(),
-    status: 'open'
-  };
-  dbPush(DB_KEYS.blockers, blocker);
-  logActivity('blocker', userName, 'Logged blocker: ' + title, sev);
-  // call original
-  _origAddBlocker();
-};
 
 // ── LIVE FEED FUNCTIONS ──
 function refreshLiveFeed(){
@@ -5903,7 +5820,6 @@ function refreshLiveFeed(){
 function updateFeedStats(events){
   const todayStr = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
   document.getElementById('feed-stat-total').textContent = events.length;
-  document.getElementById('feed-stat-blockers').textContent = events.filter(e=>e.type==='blocker').length;
   document.getElementById('feed-stat-logins').textContent = events.filter(e=>e.type==='login' && e.date===todayStr).length;
   const activeUsers = [...new Set(events.filter(e=>e.date===todayStr).map(e=>e.user))].length;
   document.getElementById('feed-stat-active').textContent = activeUsers;
@@ -6429,35 +6345,6 @@ function _mergeTimeOffLedger(cloudArr, localArr){
   return Object.values(byId);
 }
 
-// Merge blockers with "resolved wins" — once any side marks a blocker resolved, it stays resolved
-function _mergeBlockers(primaryArr, secondaryArr){
-  const merged = _mergeCloudArr(primaryArr, secondaryArr);
-  const all = [...(Array.isArray(primaryArr)?primaryArr:[]), ...(Array.isArray(secondaryArr)?secondaryArr:[])];
-  const resolvedMap = {};
-  all.forEach(b=>{ if(b.status==='resolved') resolvedMap[String(b.id)]=b; });
-  merged.forEach(b=>{
-    const rv = resolvedMap[String(b.id)];
-    if(rv){ b.status='resolved'; b.resolvedAt=b.resolvedAt||rv.resolvedAt; b.resolvedNote=b.resolvedNote||rv.resolvedNote; }
-  });
-  return merged;
-}
-
-// Append-only resolved-blocker IDs — once in this list the blocker stays resolved across all devices
-const _RES_IDS_KEY = 'wl_resolved_blocker_ids';
-function _getResolvedIds(){ try{ return JSON.parse(localStorage.getItem(_RES_IDS_KEY)||'[]'); }catch{ return []; } }
-function _unionResolvedIds(cloudIds){
-  const merged = [...new Set([..._getResolvedIds(), ...(Array.isArray(cloudIds)?cloudIds:[])])];
-  localStorage.setItem(_RES_IDS_KEY, JSON.stringify(merged));
-  return merged;
-}
-function _applyResolvedIds(ids){
-  if(!ids || !ids.length) return;
-  const all = dbGet(DB_KEYS.blockers)||[];
-  let changed = false;
-  all.forEach(b=>{ if(ids.includes(String(b.id)) && b.status!=='resolved'){ b.status='resolved'; changed=true; } });
-  if(changed) dbSet(DB_KEYS.blockers, all);
-}
-
 // Merge roadmap tasks by updated_at so the most recently changed version wins
 // This prevents live-sync from reverting archives, bucket moves, etc.
 function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
@@ -6517,17 +6404,11 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
     const mergedClients = _mergeClientsLocalOntoCloud(cloudClients, localClients);
 
-    // Resolved blocker IDs — append-only union so resolved state survives any merge race
-    const mergedResolvedIds = _unionResolvedIds(cloudRecord.resolvedBlockerIds);
-    _applyResolvedIds(mergedResolvedIds); // force resolved status on local before merge
-
     const payload = {
       users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
-      blockers:     _mergeBlockers(dbGet(DB_KEYS.blockers)||[], cloudRecord.blockers),
-      resolvedBlockerIds: mergedResolvedIds,
       goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
       feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
       announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
@@ -6569,7 +6450,6 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     // Store merged data locally so admin sees merged state too
     dbSet(DB_KEYS.users, payload.users);
     dbSet(DB_KEYS.admins, payload.admins);
-    dbSet(DB_KEYS.blockers, payload.blockers);
     dbSet(DB_KEYS.goals, payload.goals);
     dbSet(DB_KEYS.feed, payload.feed);
     dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
@@ -6673,9 +6553,6 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
-    if(r.blockers)     dbSet(DB_KEYS.blockers, _mergeBlockers(r.blockers, dbGet(DB_KEYS.blockers)||[]));
-    // Apply append-only resolved IDs from cloud — ensures resolved state survives any merge race
-    if(r.resolvedBlockerIds) _applyResolvedIds(_unionResolvedIds(r.resolvedBlockerIds));
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
     if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
     if(r.announcement) dbSet('wl_announcement', r.announcement);
@@ -6822,17 +6699,14 @@ function refreshAdminOverview(){
   if(dateLabel) dateLabel.textContent = dayNames[now.getDay()]+', '+monthNames[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear();
 
   const allUsers  = dbGet(DB_KEYS.users)||[];
-  const blockers  = dbGet(DB_KEYS.blockers)||[];
   const allClients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
 
-  const activeBlockers  = blockers.filter(b=>b.status==='open');
   const activeClients   = allClients.filter(c=>c.status==='active');
   const activeProjects  = computeProjectStats(allClients).ongoing;
 
   const el1=document.getElementById('ov-total-users');    if(el1) el1.textContent=allUsers.length||0;
   const elAC=document.getElementById('ov-active-clients'); if(elAC) elAC.textContent=activeClients.length||0;
   const elTot=document.getElementById('ov-total-reports'); if(elTot) elTot.textContent=activeProjects||0;
-  const el3=document.getElementById('ov-blockers');        if(el3) el3.textContent=activeBlockers.length||0;
 
   // Build user → projects map from clients DB
   const userProjMap = {}; // userId → [{clientName, clientColor, projName, progress, status, due, type}]
