@@ -343,8 +343,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       </div>
     </div>
     <div class="sb-links">
-      <a class="sb-link" href="index.html">⚙️ Admin</a>
-      <a class="sb-link" href="user.html">👤 Portal</a>
+      <a class="sb-link" href="index.html" target="_top">⚙️ Admin</a>
+      <a class="sb-link" href="user.html" target="_top">👤 Portal</a>
     </div>
   </div>
 </div>
@@ -1377,6 +1377,26 @@ function seedWLMClients(){
       migrateServicesToProjects();
     }
   }catch(e){ console.warn('[WLM] Seed failed:',e); }
+}
+
+// Runs on every init — fills services into any client that currently has none.
+// Idempotent: skips clients that already have services. Matches WLM_SEED_DATA
+// by normalized name, catching clients seedWLMClients() didn't link by id.
+function backfillMissingServices(){
+  const clients=getClients();
+  if(!clients.length) return;
+  const seedMap={};
+  WLM_SEED_DATA.forEach(s=>{
+    if(s.name) seedMap[s.name.toLowerCase().replace(/[^a-z0-9]/g,'')]=s.services||[];
+  });
+  let hits=0;
+  clients.forEach(c=>{
+    if((c.services||[]).length) return; // already has services
+    const key=(c.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const svcs=seedMap[key];
+    if(svcs&&svcs.length){ c.services=svcs; hits++; }
+  });
+  if(hits){ saveClients(clients); console.log('[WLM] backfill: services added to '+hits+' clients'); }
 }
 
 // ── One-time migration: rebuild service-mirrored projects for ALL clients ──
