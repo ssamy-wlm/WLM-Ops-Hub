@@ -5412,6 +5412,13 @@ function _restoreMisarchivedRealWorkers(){
     if(liveUsers.some(u=>u.id===id)) return;
     const archived = archives.find(u=>u.id===id);
     if(archived){
+      // Skip if a different-id record with the same name already exists live —
+      // that means a real account already covers this person (e.g. re-added
+      // manually after the mistaken tombstone), and restoring the old seed
+      // copy on top of it would just recreate the by-name duplicate this
+      // function exists to fix.
+      const sameName = (archived.name||'').trim().toLowerCase();
+      if(sameName && liveUsers.some(u=>u.id!==id && (u.name||'').trim().toLowerCase()===sameName)) return;
       const {archivedAt, archivedBy, ...restored} = archived;
       liveUsers.push(restored);
       changed = true;
@@ -5456,6 +5463,29 @@ function _removeDeadAbbySeedDuplicate(){
   dbSet(DB_KEYS.users, filtered);
   if(typeof cloudAutoSync==='function') cloudAutoSync();
   console.log('[WLM] Removed dead "abby@weblightmedia.com" duplicate user record.');
+  return true;
+}
+
+// ── One-time/idempotent cleanup: remove an already-created duplicate-by-name
+// "Assmaa Fouad" record. _restoreMisarchivedRealWorkers() above used to restore
+// her archived seed copy (id:'assmaa') purely by id with no check for whether a
+// different-id record with the same name already existed live — on a device
+// that hit both the mistaken-tombstone bug and a manual re-add, that produced
+// two "Assmaa Fouad" rows everywhere (e.g. the Overtime Policy panel). Keep
+// whichever record actually has real assigned client work; if both or neither
+// do, keep the canonical seed id ('assmaa') since the payroll/probation fixes
+// above target it directly.
+function _removeDuplicateAssmaaRecord(){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const dupes = allUsers.filter(u=>(u.name||'').trim().toLowerCase()==='assmaa fouad');
+  if(dupes.length < 2) return false;
+  const keep = dupes.find(u=>u.id==='assmaa' && _userHasAssignedWork(u.id,u.name))
+            || dupes.find(u=>u.id==='assmaa')
+            || dupes[0];
+  const dropIds = dupes.filter(u=>u!==keep).map(u=>u.id);
+  dbSet(DB_KEYS.users, allUsers.filter(u=>!dropIds.includes(u.id)));
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Removed duplicate "Assmaa Fouad" user record(s): '+dropIds.join(', '));
   return true;
 }
 
@@ -6554,6 +6584,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // placeholders now that both users AND client assignment data are fully synced.
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
+    if(typeof _removeDuplicateAssmaaRecord==='function') _removeDuplicateAssmaaRecord();
     if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
     if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
@@ -6661,6 +6692,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _restoreMisarchivedRealWorkers();
   // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
   _fixAssmaaPayRate();
+  // Remove a duplicate-by-name "Assmaa Fouad" record if one was already created (idempotent)
+  _removeDuplicateAssmaaRecord();
   // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
   _removeDeadAbbySeedDuplicate();
   // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
