@@ -8029,7 +8029,7 @@ const ADMIN_COLORS = [
 // Access level config — value, label, description, badge colour
 const ADMIN_LEVELS = [
   { value:'account_manager',    label:'Account Manager',    desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#0891b2' },
-  { value:'production_manager', label:'Production Manager', desc:'Assigned users only — Clients, Projects, Reports & Summaries — no payroll or settings', color:'#059669' },
+  { value:'production_manager', label:'Production Manager', desc:'Clients, Projects, Live Feed & Business Setup — no payroll or admin management', color:'#059669' },
   { value:'creative_manager',   label:'Creative Manager',   desc:'Clients & Tracker only — can edit services/projects & dates — no reports, payroll or settings', color:'#e07b39' },
   { value:'admin',              label:'Admin',              desc:'Full access to users, settings & reports',        color:'#2D6BB6' },
   { value:'super',              label:'Super Admin',        desc:'Full access including admin management',          color:'#9333ea' },
@@ -8051,7 +8051,7 @@ function applyAdminRoleRestrictions(level, adminObj){
   //    Live Feed, Payroll, Business Setup. Full tracker edit rights in client.html. ──
   if(level === CREATIVE_MANAGER_ROLE){
     // Show tabs: clients, messages. Hide everything else.
-    const showOnly = ['clients'];
+    const showOnly = ['clients','messages'];
     document.querySelectorAll('.admin-nav-item').forEach(el=>{
       const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
       if(!m) return;
@@ -8074,8 +8074,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   }
 
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
-  // Hide forbidden nav tabs
-  const hideTabs = ['payroll','timeoff','archive','bizSettings','livefeed'];
+  // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
+  // so she keeps Live Feed & Business Setup; Account Manager stays clients-only.
+  const hideTabs = level === 'production_manager'
+    ? ['payroll','timeoff','archive']
+    : ['payroll','timeoff','archive','bizSettings','livefeed'];
   document.querySelectorAll('.admin-nav-item').forEach(el=>{
     const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
     if(m && hideTabs.includes(m[1])) el.style.display='none';
@@ -8511,7 +8514,7 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
     admins.push({
       id:'emily', name:'Emily Rovillo', email:'erovillo@weblightmedia.com',
       title:'Creative Manager', initials:'ER', password:'123456',
-      level:'admin', assignedUsers:[], status:'active',
+      level:'creative_manager', assignedUsers:[], status:'active',
       createdAt:'2024-01-01T00:00:00.000Z'
     });
     changed = true;
@@ -8533,6 +8536,41 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
     dbSet(DB_KEYS.admins, admins);
     if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
     if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+  }
+})();
+
+// ── Lock down access levels for restricted admins whose stored record predates
+// (or drifted from) the intended role. Emily (Creative Manager) should only see
+// Clients + Tracker — never Users/Payroll/Business Setup. Abby (Director of
+// Production) should see Clients/Tracker/Live Feed/Business Setup but never Payroll. ──
+(function _fixAdminAccessLevels(){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  let changed = false;
+  const emilyAcct = admins.find(a=>(a.email||'').toLowerCase()==='erovillo@weblightmedia.com');
+  if(emilyAcct && emilyAcct.level !== 'creative_manager'){
+    emilyAcct.level = 'creative_manager';
+    changed = true;
+  }
+  const abbyAcct = admins.find(a=>(a.email||'').toLowerCase()==='aconklin@weblightmedia.com');
+  if(abbyAcct && abbyAcct.level !== 'production_manager'){
+    abbyAcct.level = 'production_manager';
+    changed = true;
+  }
+  if(changed){
+    dbSet(DB_KEYS.admins, admins);
+    if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
+    if(typeof cloudAutoSync==='function') cloudAutoSync(true);
+    // If the currently-logged-in session is one of these accounts, re-apply
+    // restrictions immediately instead of waiting for the next login.
+    try{
+      const sess = JSON.parse(localStorage.getItem('wl_admin_session')||'null');
+      const fixedAcct = [emilyAcct, abbyAcct].find(a=>a && a.id===sess?.adminId);
+      if(fixedAcct && typeof applyAdminRoleRestrictions==='function'){
+        sess.level = fixedAcct.level;
+        localStorage.setItem('wl_admin_session', JSON.stringify(sess));
+        setTimeout(()=>applyAdminRoleRestrictions(fixedAcct.level, fixedAcct), 150);
+      }
+    }catch(e){}
   }
 })();
 
