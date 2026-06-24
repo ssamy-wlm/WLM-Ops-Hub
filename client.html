@@ -127,7 +127,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .search-wrap .si{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--text-light);pointer-events:none;}
 
 /* ── CLIENT GRID ── */
-.client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;}
+.client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;grid-auto-flow:dense;}
 .client-card{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;transition:box-shadow .18s,transform .15s;position:relative;}
 .client-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.10);transform:translateY(-2px);}
 .client-card.inactive-card{opacity:.62;}
@@ -145,7 +145,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 .service-tag-one-time{background:rgba(250,194,49,.10);color:#b07900;border-color:rgba(250,194,49,.25);}
 
 /* ── CLIENT DETAIL PANEL ── */
-#client-detail-panel{display:none;margin-top:20px;}
+#client-detail-panel{display:none;margin-top:20px;grid-column:1/-1;}
 .detail-header{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
 .detail-avatar{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;}
 .detail-avatar img{width:100%;height:100%;object-fit:cover;border-radius:14px;}
@@ -2062,6 +2062,11 @@ let _activeClientId=null;
 function renderClientGrid(list){
   list=list||getClients();
   const grid=_el('client-grid'); if(!grid) return;
+  // The detail panel gets moved inside the grid (see openClientDetail) so it can
+  // expand directly under the clicked card — pull it back out before wiping the
+  // grid's contents, or this would delete the panel along with the old cards.
+  const detailPanel=_el('client-detail-panel');
+  if(detailPanel && detailPanel.parentNode===grid) grid.parentNode.insertBefore(detailPanel, grid.nextSibling);
   grid.innerHTML='';
   if(!list.length){
     grid.innerHTML=`<div style="grid-column:1/-1;"><div class="empty-state"><div class="empty-state-icon">🏢</div><div class="empty-state-title">No clients yet</div><div class="empty-state-sub">${SESSION.isAdmin?'Click <strong>+ New Client</strong> to get started.':'No clients assigned to you yet.'}</div></div></div>`;
@@ -2081,7 +2086,8 @@ function renderClientGrid(list){
 
     const div=document.createElement('div');
     div.className=`client-card${c.status==='inactive'||c.status==='paused'?' inactive-card':''}`;
-    div.onclick=()=>openClientDetail(c.id);
+    div.dataset.clientId=c.id;
+    div.onclick=()=>openClientDetail(c.id, div);
     div.innerHTML=`
       <div class="client-stripe" style="background:${c.color||'#2D6BB6'};"></div>
       <div class="client-card-head">
@@ -2106,6 +2112,18 @@ function renderClientGrid(list){
       </div>`;
     grid.appendChild(div);
   });
+  // If a client's detail panel was open before this refresh, re-anchor it under
+  // its (newly rebuilt) card and refresh its contents with the latest data.
+  if(_activeClientId && detailPanel && detailPanel.style.display!=='none'){
+    const openCard=[...grid.children].find(el=>el.dataset && el.dataset.clientId===_activeClientId);
+    if(openCard && getClient(_activeClientId)){
+      openCard.insertAdjacentElement('afterend', detailPanel);
+      renderClientDetail(_activeClientId);
+    } else {
+      _activeClientId=null;
+      detailPanel.style.display='none';
+    }
+  }
   updateStats();
 }
 
@@ -2249,12 +2267,22 @@ function renderClientFilterChips(){
 // ═══════════════════════════════════════════════════════
 //  CLIENT DETAIL
 // ═══════════════════════════════════════════════════════
-function openClientDetail(id){
-  _activeClientId=id;
+// cardEl is the clicked grid card; the shared panel gets relocated to sit
+// directly under it so the client "opens in place" instead of jumping to a
+// fixed panel after the whole grid.
+function openClientDetail(id, cardEl){
   const panel=_el('client-detail-panel');
+  // Clicking an already-open client's card again collapses it back in place.
+  if(_activeClientId===id && panel.style.display!=='none'){
+    _activeClientId=null;
+    panel.style.display='none';
+    return;
+  }
+  _activeClientId=id;
   panel.style.display='block';
+  if(cardEl) cardEl.insertAdjacentElement('afterend', panel);
   renderClientDetail(id);
-  setTimeout(()=>panel.scrollIntoView({behavior:'smooth',block:'start'}),50);
+  setTimeout(()=>panel.scrollIntoView({behavior:'smooth',block:'nearest'}),50);
 }
 
 function renderClientDetail(clientId, tab){
