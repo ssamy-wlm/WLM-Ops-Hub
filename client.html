@@ -381,11 +381,10 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 
     <!-- ═══ PAGE: ALL CLIENTS ═══ -->
     <div id="page-clients" class="page-section active">
-      <div class="stat-row" style="grid-template-columns:repeat(5,1fr);">
+      <div class="stat-row" style="grid-template-columns:repeat(4,1fr);">
         <div class="stat-card"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
         <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
         <div class="stat-card"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
-        <div class="stat-card"><div class="stat-label">Ongoing Bundles</div><div class="stat-value" id="st-ongoing">0</div></div>
         <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
       </div>
 
@@ -2165,7 +2164,6 @@ function updateStats(){
   set('st-total',clients.length);
   set('st-active',clients.filter(c=>c.status==='active').length,'var(--green)');
   set('st-inactive',clients.filter(c=>c.status!=='active').length,'#aaa');
-  set('st-ongoing',computeProjectStats(clients).ongoing);
   set('st-due',due,due>0?'var(--orange)':'var(--green)');
 }
 
