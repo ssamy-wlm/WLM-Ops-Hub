@@ -380,7 +380,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div class="stat-card"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
         <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
         <div class="stat-card"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
-        <div class="stat-card"><div class="stat-label">Ongoing Projects</div><div class="stat-value" id="st-ongoing">0</div></div>
+        <div class="stat-card"><div class="stat-label">Ongoing Bundles</div><div class="stat-value" id="st-ongoing">0</div></div>
         <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
       </div>
 
@@ -407,7 +407,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             <option value="">All Services</option>
           </select>
           <select class="form-select" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
-            <option value="">All Project Types</option>
+            <option value="">All Bundle Types</option>
             <option value="Web Design">Web Design</option>
             <option value="Web Development">Web Development</option>
             <option value="SEO">SEO</option>
@@ -419,7 +419,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
             <option value="Video Production">Video Production</option>
           </select>
           <select class="form-select" id="filter-proj-status" onchange="filterClients()" style="flex:1;min-width:130px;max-width:160px;font-size:11px;padding:7px 10px;">
-            <option value="">All Project Statuses</option>
+            <option value="">All Bundle Statuses</option>
             <option value="not-started">Not Started</option>
             <option value="in-progress">In Progress</option>
             <option value="completed">Completed</option>
@@ -514,7 +514,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
               <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:5px 9px;min-width:130px;">
                 <option value="">All Types</option>
                 <option value="service">Recurring Services</option>
-                <option value="project">Projects</option>
+                <option value="project">Bundles</option>
               </select>
             </div>
           </div>
@@ -644,7 +644,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
         <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="cf-start"></div>
         <div class="form-group"><label class="form-label">Website</label><input class="form-input" id="cf-website" placeholder="https://"></div>
         <div class="form-group"><label class="form-label">Referred By</label><input class="form-input" id="cf-referred" placeholder="Name or source"></div>
-        <div class="form-group"><label class="form-label">Initial Project</label><input class="form-input" id="cf-initial-project" placeholder="e.g. Website Redesign"></div>
+        <div class="form-group"><label class="form-label">Initial Bundle</label><input class="form-input" id="cf-initial-project" placeholder="e.g. Website Redesign"></div>
         <div class="form-group full"><label class="form-label">Recurring Services (comma-separated tags)</label><input class="form-input" id="cf-recurring-tags" placeholder="e.g. SEO, Social Media, Email Marketing"></div>
       </div>
 
@@ -687,18 +687,18 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 </div>
 
 
-<!-- ADD / EDIT PROJECT -->
+<!-- ADD / EDIT BUNDLE -->
 <div id="projectModal" class="modal-overlay">
   <div class="modal">
     <div class="modal-header">
-      <div><div class="modal-title" id="projectModalTitle">New Project</div><div class="modal-sub" id="projectModalSub"></div></div>
+      <div><div class="modal-title" id="projectModalTitle">New Bundle</div><div class="modal-sub" id="projectModalSub"></div></div>
       <button class="modal-close" onclick="closeModal('projectModal')">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="pf-client-id">
       <input type="hidden" id="pf-proj-id">
       <div class="form-grid">
-        <div class="form-group full"><label class="form-label">Project Name *</label><input class="form-input" id="pf-name" placeholder="e.g. Website Redesign"></div>
+        <div class="form-group full"><label class="form-label">Bundle Name *</label><input class="form-input" id="pf-name" placeholder="e.g. Website Redesign"></div>
         <div class="form-group"><label class="form-label">Type / Service</label>
           <select class="form-select" id="pf-type">
             <option>Web Design</option><option>Web Development</option><option>SEO</option>
@@ -735,7 +735,7 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           <label class="form-label">Assigned Team Members</label>
           <div id="pf-user-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;"></div>
         </div>
-        <div class="form-group full"><label class="form-label">Description</label><textarea class="form-input" id="pf-desc" rows="2" placeholder="What does this project involve?" style="resize:vertical;"></textarea></div>
+        <div class="form-group full"><label class="form-label">Description</label><textarea class="form-input" id="pf-desc" rows="2" placeholder="What does this bundle involve?" style="resize:vertical;"></textarea></div>
         <div class="form-group"><label class="form-label">Color Tag</label>
           <input type="color" id="pf-color" value="#2D6BB6" style="width:100%;height:34px;border:1px solid var(--border);border-radius:8px;cursor:pointer;padding:2px;">
         </div>
@@ -743,22 +743,22 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('projectModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveProject()">💾 Save Project</button>
+      <button class="btn btn-primary" onclick="saveProject()">💾 Save Bundle</button>
     </div>
   </div>
 </div>
 
 
-<!-- ADD SUB-PROJECT -->
+<!-- ADD SUB-ITEM -->
 <div id="subprojectModal" class="modal-overlay">
   <div class="modal modal-sm">
     <div class="modal-header">
-      <div><div class="modal-title">Sub-Project</div><div class="modal-sub" id="sp-modal-sub"></div></div>
+      <div><div class="modal-title">Sub-Item</div><div class="modal-sub" id="sp-modal-sub"></div></div>
       <button class="modal-close" onclick="closeModal('subprojectModal')">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="sp-client-id"><input type="hidden" id="sp-proj-id"><input type="hidden" id="sp-id">
-      <div class="form-group"><label class="form-label">Sub-Project Name *</label><input class="form-input" id="sp-name" placeholder="e.g. Homepage, Services Page, Blog"></div>
+      <div class="form-group"><label class="form-label">Sub-Item Name *</label><input class="form-input" id="sp-name" placeholder="e.g. Homepage, Services Page, Blog"></div>
       <div class="form-group"><label class="form-label">Billing / Frequency</label>
         <select class="form-select" id="sp-billing">
           <option value="one-time">One-Time</option>
@@ -870,11 +870,14 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
 <div id="addServiceModal" class="modal-overlay">
   <div class="modal modal-sm">
     <div class="modal-header">
-      <div><div class="modal-title" id="svc-modal-title">Recurring Service</div><div class="modal-sub" id="svc-modal-sub"></div></div>
+      <div><div class="modal-title" id="svc-modal-title">Bundle Service</div><div class="modal-sub" id="svc-modal-sub"></div></div>
       <button class="modal-close" onclick="closeModal('addServiceModal')">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="svc-client-id"><input type="hidden" id="svc-entry-id">
+      <div class="form-group"><label class="form-label">Bundle *</label>
+        <select class="form-select" id="svc-bundle" onchange="onSvcBundleChange()"><option value="">— Select bundle —</option></select>
+      </div>
       <div class="form-group"><label class="form-label">Service *</label>
         <select class="form-select" id="svc-name" onchange="prefillServiceDefaults()"><option value="">— Select —</option></select>
       </div>
@@ -1201,31 +1204,47 @@ function userChip(id){
 // ═══════════════════════════════════════════════════════
 //  SERVICE CATALOG
 // ═══════════════════════════════════════════════════════
-const DEFAULT_CATALOG=[
-  {id:'svc1',name:'Social Media Management',freq:'monthly',desc:'Monthly social content, scheduling and engagement.',defaultAssignee:''},
-  {id:'svc2',name:'SEO – On-Page Optimization',freq:'monthly',desc:'Monthly on-page SEO audit and optimizations.',defaultAssignee:''},
-  {id:'svc3',name:'SEO – Backlink Building',freq:'monthly',desc:'Monthly link-building campaign.',defaultAssignee:''},
-  {id:'svc4',name:'Google Ads Management',freq:'monthly',desc:'Monthly paid search campaign management.',defaultAssignee:''},
-  {id:'svc5',name:'Meta Ads Management',freq:'monthly',desc:'Monthly Facebook & Instagram ad campaigns.',defaultAssignee:''},
-  {id:'svc6',name:'Email Marketing',freq:'monthly',desc:'Monthly email newsletter design and send.',defaultAssignee:''},
-  {id:'svc7',name:'Blog / Content Writing',freq:'monthly',desc:'Monthly blog posts and copywriting.',defaultAssignee:''},
-  {id:'svc8',name:'Website Maintenance',freq:'monthly',desc:'Monthly updates, security and backups.',defaultAssignee:''},
-  {id:'svc9',name:'Analytics Reporting',freq:'monthly',desc:'Monthly performance report.',defaultAssignee:''},
-  {id:'svc10',name:'Annual Website Redesign',freq:'yearly',desc:'Full site redesign and refresh.',defaultAssignee:''},
-  {id:'svc11',name:'Domain & Hosting Renewal',freq:'yearly',desc:'Annual domain and hosting renewal.',defaultAssignee:''},
-  {id:'svc12',name:'Annual Brand Audit',freq:'yearly',desc:'Full brand review and update.',defaultAssignee:''},
-  {id:'svc13',name:'Website Build (New)',freq:'one-time',desc:'Brand new website design and development.',defaultAssignee:''},
-  {id:'svc14',name:'Logo Design',freq:'one-time',desc:'Brand identity and logo creation.',defaultAssignee:''},
-  {id:'svc15',name:'Video Production',freq:'one-time',desc:'Video shoot, edit and delivery.',defaultAssignee:''},
-  {id:'svc16',name:'Brand Strategy',freq:'one-time',desc:'Brand positioning, messaging and visual identity.',defaultAssignee:''},
-  {id:'svc17',name:'Graphic Design',freq:'one-time',desc:'Custom graphics, flyers, banners and print materials.',defaultAssignee:''},
-  {id:'svc18',name:'Photography',freq:'one-time',desc:'Professional photo shoot and editing.',defaultAssignee:''},
-  {id:'svc19',name:'Hosting Management',freq:'yearly',desc:'Annual website hosting management and renewals via SiteGround.',defaultAssignee:''},
+// Bundle → Service catalog. Every client's recurring/one-off work is grouped
+// into a Bundle (e.g. "Hosting Bundle"); each catalog entry below belongs to
+// exactly one bundle via the `bundle` field.
+const BUNDLE_DEFS=[
+  {bundle:'Marketing Bundle', freq:'monthly', items:['Servpro','Shapiro','Russ Hudson']},
+  {bundle:'Hosting Bundle', freq:'monthly', items:[
+    ['Website Hosting','yearly'],['Weekly Checks','weekly'],['WordPress Management','monthly'],
+    ['Plugin Management','monthly'],['DNS Management','yearly'],['Website Customer Care','monthly'],
+    ['Registration Management','yearly'],['Migration','one-time'],['Setup Analytics','one-time']]},
+  {bundle:'Monthly Content Bundle', freq:'monthly', items:['Blogging','Newsletters','Business Listings','Google Business Profile','Bright Local','Backlinks']},
+  {bundle:'PPC Management Bundle', freq:'monthly', items:['Google Ads','Facebook/Instagram Ads','LinkedIn Ads','Microsoft Ads']},
+  {bundle:'Analytics Bundle', freq:'monthly', items:[['SEM Rush','monthly'],['Google Analytics','monthly'],['Agency Analytics Dashboard','monthly'],['Consulting','one-time']]},
+  {bundle:'Website Development Bundle', freq:'one-time', items:['Website Design','Website Writing','Onsite SEO']},
+  {bundle:'Website Maintenance Bundle', freq:'monthly', items:['Website Edits']},
+  {bundle:'Photo/Video Production Bundle', freq:'one-time', items:[
+    ['Company Head Shots','one-time'],['Product Photography','one-time'],['Website Photography','one-time'],
+    ['SM Photography','monthly'],['Website Video','one-time'],['SM Video','monthly'],['Header Videos','one-time'],
+    ['Product Videos','one-time'],['Promotional Videos','one-time'],['Social Media Photo and Video','monthly'],
+    ['Avatar Twinning','one-time'],['AI Content','monthly'],['Video Logo Builds','one-time'],['Video Ads','one-time']]},
+  {bundle:'SEO Project Bundle', freq:'monthly', items:[['AI and Google Search Optimization','monthly'],['Competitive Research','one-time']]},
+  {bundle:'Review Management Bundle', freq:'monthly', items:['Review Generation Grade_Us','Review Replies']},
+  {bundle:'Branding Bundle', freq:'one-time', items:['Logo Design','Print Work']},
+  {bundle:'Consulting Bundle', freq:'one-time', items:['Custom Website Programing','3rd party website integration']},
+  {bundle:'Social Media Management Bundle', freq:'monthly', items:['Facebook','Instagram','LinkedIn','TikTok','Pinterest','Graphics','Short form Video']},
 ];
+const DEFAULT_CATALOG=(()=>{
+  let n=0; const out=[];
+  BUNDLE_DEFS.forEach(def=>{
+    def.items.forEach(item=>{
+      const [name,freq]=Array.isArray(item)?item:[item,def.freq];
+      n++;
+      out.push({id:'svc'+n,name,bundle:def.bundle,freq,desc:`${name} (${def.bundle})`,defaultAssignee:''});
+    });
+  });
+  return out;
+})();
+function getBundleNames(){ return BUNDLE_DEFS.map(b=>b.bundle); }
 function ensureCatalog(){
   const cat=db(CL_KEYS.serviceCatalog)||[];
-  // Always ensure svc19 (Hosting Management) is present
-  if(!cat.length||!cat.find(s=>s.id==='svc19')){
+  // Reseed whenever the stored catalog predates the Bundle system (no `bundle` field yet)
+  if(!cat.length||!cat.some(s=>s.bundle)){
     dbSave(CL_KEYS.serviceCatalog,DEFAULT_CATALOG);
   }
 }
@@ -1627,6 +1646,20 @@ function recalcProgress(clients, clientId, projId){
   return pct;
 }
 
+// Overall completion % for a client: average across every manual Bundle's own
+// progress AND every recurring service (counted done/not-done via lastDone) —
+// e.g. 10 services, 2 ever completed once = 20%. Recurring-service mirrors
+// inside c.projects are excluded so they aren't double-counted at a stuck 0%.
+function calcClientOverallStats(c){
+  const bundles=(c.projects||[]).filter(p=>!p.isRecurringService);
+  const svcs=c.services||[];
+  const contrib=[...bundles.map(p=>p.progress||0), ...svcs.map(s=>s.lastDone?100:0)];
+  const overallPct=contrib.length?Math.round(contrib.reduce((a,b)=>a+b,0)/contrib.length):0;
+  const bundleNames=new Set();
+  svcs.forEach(s=>{ const cat=getCatalog().find(e=>e.id===s.catalogId); if(cat?.bundle) bundleNames.add(cat.bundle); });
+  return {overallPct, bundleCount:bundleNames.size, serviceCount:svcs.length, manualBundleCount:bundles.length};
+}
+
 // ═══════════════════════════════════════════════════════
 //  NOTIFICATIONS (cross-module)
 // ═══════════════════════════════════════════════════════
@@ -1736,7 +1769,8 @@ function renderReports(){
   clients.forEach(c=>{
     const allProjs=c.projects||[];
     const svcs=c.services||[];
-    const overallPct=allProjs.length?Math.round(allProjs.reduce((s,p)=>s+(p.progress||0),0)/allProjs.length):0;
+    const stats=calcClientOverallStats(c);
+    const overallPct=stats.overallPct;
     const color=c.color||'#2D6BB6';
     const initials=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
 
@@ -1779,7 +1813,7 @@ function renderReports(){
           <div style="flex:1;">
             <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
             <div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap;">
-              <span style="font-size:10px;color:var(--text-mid);">📁 ${allProjs.length} project${allProjs.length!==1?'s':''}</span>
+              <span style="font-size:10px;color:var(--text-mid);">📁 ${stats.bundleCount+stats.manualBundleCount} bundle${(stats.bundleCount+stats.manualBundleCount)!==1?'s':''}</span>
               <span style="font-size:10px;color:var(--text-mid);">🔁 ${svcs.length} service${svcs.length!==1?'s':''}</span>
               ${overdue?`<span style="font-size:10px;color:#e53e3e;font-weight:700;">⚠️ ${overdue} overdue</span>`:''}
               <span style="font-size:10px;color:var(--text-mid);">✅ ${doneThisMonth} done this month</span>
@@ -1810,7 +1844,7 @@ function renderReports(){
 
         ${allProjs.length?`
         <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;">
-          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Project Progress · ${selYear}</div>
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Bundle Progress · ${selYear}</div>
           <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:4px;align-items:flex-end;">
             ${monthProgress.map((pct,mi)=>{
               const h=pct!==null?Math.max(Math.round((pct/100)*40),4):4;
@@ -1929,8 +1963,12 @@ function populateUserChecks(containerId, roster, checked){
 }
 function populateServiceDropdown(){
   const cat=getCatalog();
-  const opts=cat.map(s=>`<option value="${s.id}" data-freq="${s.freq}">${s.name}</option>`).join('');
-  const el=_el('svc-name'); if(el) el.innerHTML=`<option value="">— Select service —</option>`+opts;
+  const bSel=_el('svc-bundle');
+  if(bSel){
+    const cur=bSel.value;
+    bSel.innerHTML=`<option value="">— Select bundle —</option>`+getBundleNames().map(b=>`<option value="${b}"${cur===b?' selected':''}>${b}</option>`).join('');
+  }
+  populateServiceOptionsForBundle(bSel?bSel.value:'');
   // Filter-service dropdown: use catalogId so matching is exact
   const flt=_el('filter-service');
   if(flt){
@@ -1943,8 +1981,19 @@ function populateServiceDropdown(){
     const cur=ptSel.value;
     const typeSet=new Set(['Web Design','Web Development','SEO','Social Media Management','Paid Ads','Branding','Content Creation','Email Marketing','Video Production']);
     getClients().forEach(c=>(c.projects||[]).forEach(p=>{ if(p.type) typeSet.add(p.type); }));
-    ptSel.innerHTML=`<option value="">All Project Types</option>`+[...typeSet].sort().map(t=>`<option value="${t}"${cur===t?' selected':''}>${t}</option>`).join('');
+    ptSel.innerHTML=`<option value="">All Bundle Types</option>`+[...typeSet].sort().map(t=>`<option value="${t}"${cur===t?' selected':''}>${t}</option>`).join('');
   }
+}
+function populateServiceOptionsForBundle(bundle){
+  const cat=getCatalog();
+  const cur=_el('svc-name')?.value||'';
+  const list=bundle?cat.filter(s=>s.bundle===bundle):cat;
+  const opts=list.map(s=>`<option value="${s.id}" data-freq="${s.freq}">${s.name}</option>`).join('');
+  const el=_el('svc-name');
+  if(el){ el.innerHTML=`<option value="">— Select service —</option>`+opts; if(list.some(s=>s.id===cur)) el.value=cur; }
+}
+function onSvcBundleChange(){
+  populateServiceOptionsForBundle(_el('svc-bundle')?.value||'');
 }
 function populateScheduleClientFilter(){
   const sel=_el('schedule-client-filter'); if(!sel) return;
@@ -2151,8 +2200,8 @@ function renderClientFilterChips(){
   if(q)  chips.push({label:'Search: "'+q+'"',       id:'client-search',   reset:''});
   if(st) chips.push({label:'Status: '+st,            id:'filter-status',   reset:''});
   if(sv) chips.push({label:'Service: '+svcLabel,     id:'filter-service',  reset:''});
-  if(pt) chips.push({label:'Project Type: '+pt,      id:'filter-proj-type',reset:''});
-  if(ps) chips.push({label:'Project Status: '+ps.replace('-',' '), id:'filter-proj-status', reset:''});
+  if(pt) chips.push({label:'Bundle Type: '+pt,      id:'filter-proj-type',reset:''});
+  if(ps) chips.push({label:'Bundle Status: '+ps.replace('-',' '), id:'filter-proj-status', reset:''});
   if(mg) chips.push({label:'Manager: '+mgLabel,      id:'filter-manager',  reset:''});
   if(!chips.length){ wrap.style.display='none'; return; }
   wrap.style.display='flex';
@@ -2179,7 +2228,7 @@ function renderClientDetail(clientId, tab){
   tab=tab||'overview';
   const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
-  const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
+  const totalPct=calcClientOverallStats(c).overallPct;
   const logoHtml=c.logo
     ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
     :`<span style="font-size:22px;font-weight:800;color:#fff;">${init}</span>`;
@@ -2193,7 +2242,7 @@ function renderClientDetail(clientId, tab){
 
   const tabs=['overview','projects','services','brand-notes'].map(t=>`
     <div class="detail-tab${tab===t?' active':''}" onclick="renderClientDetail('${c.id}','${t}')">${
-      {overview:'📋 Overview',projects:'📁 Projects',services:'🔁 Services','brand-notes':'🎨 Brand & Notes'}[t]
+      {overview:'📋 Overview',projects:'📁 Bundles',services:'🔁 Services','brand-notes':'🎨 Brand & Notes'}[t]
     }</div>`).join('');
 
   let body='';
@@ -2216,7 +2265,7 @@ function renderClientDetail(clientId, tab){
           <div class="detail-info-item"><div class="detail-info-label">Account Manager</div><div class="detail-info-value">${c.accountManager||'—'}</div></div>
           <div class="detail-info-item"><div class="detail-info-label">Start Date</div><div class="detail-info-value">${c.start||'—'}</div></div>
           <div class="detail-info-item"><div class="detail-info-label">Referred By</div><div class="detail-info-value">${c.referredBy||'—'}</div></div>
-          <div class="detail-info-item"><div class="detail-info-label">Initial Project</div><div class="detail-info-value">${c.initialProject||'—'}</div></div>
+          <div class="detail-info-item"><div class="detail-info-label">Initial Bundle</div><div class="detail-info-value">${c.initialProject||'—'}</div></div>
           ${adminContact}
         </div>
       </div>
@@ -2260,8 +2309,8 @@ function renderOverview(c){
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
       <div>
-        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Projects (${allProj.length})</div>
-        ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No projects yet.</div>'}
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Bundles (${allProj.length})</div>
+        ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No bundles yet.</div>'}
         ${c.recurringTags?`<div style="margin-top:12px;font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Recurring Services</div>
         <div>${c.recurringTags.split(',').filter(Boolean).map(t=>`<span class="service-tag service-tag-monthly">${t.trim()}</span>`).join('')}</div>`:''}
       </div>
@@ -2362,7 +2411,7 @@ function renderProjects(c){
           <div style="width:10px;height:10px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
           <div style="flex:1;">
             <div style="font-size:12px;font-weight:800;color:var(--text-dark);">${p.name}</div>
-            <div style="font-size:9px;color:var(--text-light);">${p.type||'Project'} · <span class="chip chip-${p.billing||'one-time'}">${p.billing||'one-time'}</span> · Due ${p.due||'TBD'}</div>
+            <div style="font-size:9px;color:var(--text-light);">${p.type||'Bundle'} · <span class="chip chip-${p.billing||'one-time'}">${p.billing||'one-time'}</span> · Due ${p.due||'TBD'}</div>
           </div>
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
             <div style="width:60px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
@@ -2386,10 +2435,10 @@ function renderProjects(c){
               <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Assigned Team</div>
               <div style="margin-bottom:10px;">${assignedChips||'<span style="font-size:10px;color:var(--text-light);">No members assigned</span>'}</div>
               ${(p.subprojects||[]).length?`
-                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Sub-Projects</div>
+                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Sub-Items</div>
                 <div>${subHtml}</div>`:''}
               ${(p.tasks||[]).length?`
-                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">Project Tasks</div>
+                <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">Bundle Tasks</div>
                 <div>${taskHtml}</div>`:''}
               ${p.desc?`<div style="font-size:10px;color:var(--text-light);font-style:italic;margin-top:9px;">${p.desc}</div>`:''}
             </div>
@@ -2405,10 +2454,10 @@ function renderProjects(c){
 
   return `
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:11px;">
-      ${canEdit?`<button class="btn btn-primary btn-sm" onclick="openProjectModal('${c.id}')">+ Add Project</button>`:''}
-      ${canEdit?`<button class="btn btn-outline btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
+      ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Bundle</button>
+      <button class="btn btn-outline btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
-    ${projs||'<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No projects or services yet</div></div>'}`;
+    ${projs||'<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No bundles or services yet</div></div>'}`;
 }
 
 function renderSubprojectRow(clientId, projId, sp, canEdit){
@@ -2663,7 +2712,7 @@ function toggleClientStatus(id){
 function openProjectModal(clientId, projId){
   const c=getClient(clientId); if(!c) return;
   const roster=getRoster();
-  _el('projectModalTitle').textContent=projId?'Edit Project':'New Project';
+  _el('projectModalTitle').textContent=projId?'Edit Bundle':'New Bundle';
   _el('projectModalSub').textContent=c.name;
   _el('pf-client-id').value=clientId;
   _el('pf-proj-id').value=projId||'';
@@ -2689,7 +2738,7 @@ function saveProject(){
   const clientId=_el('pf-client-id').value;
   const projId=_el('pf-proj-id').value;
   const name=_el('pf-name').value.trim();
-  if(!name){ showToast('Project name is required','warn'); return; }
+  if(!name){ showToast('Bundle name is required','warn'); return; }
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
   const users=[...document.querySelectorAll('#pf-user-checkboxes input:checked')].map(cb=>cb.value);
@@ -2705,7 +2754,7 @@ function saveProject(){
       Object.assign(p,data);
       if(oldStatus!==data.status){
         pushNotif({ icon:'🔄', color:'rgba(45,107,182,.1)',
-          title:`Project status changed: ${name}`,
+          title:`Bundle status changed: ${name}`,
           body:`${SESSION.name} updated "${name}" (${c.name}) from "${oldStatus.replace('-',' ')}" → "${data.status.replace('-',' ')}".`,
           forUser:'admin', fromUser:SESSION.name });
       }
@@ -2716,7 +2765,7 @@ function saveProject(){
     // Notify all assigned users
     users.forEach(uid=>{
       pushNotif({ icon:'📁', color:'rgba(45,107,182,.1)',
-        title:`New project assigned: ${name}`,
+        title:`New bundle assigned: ${name}`,
         body:`You've been added to "${name}" for ${c.name}. Due: ${data.due||'TBD'}.`,
         forUser:uid, fromUser:SESSION.name });
     });
@@ -2725,18 +2774,18 @@ function saveProject(){
   closeModal('projectModal');
   renderClientDetail(clientId,'projects');
   renderClientGrid();
-  showToast(projId?'Project updated ✓':'Project added ✓');
+  showToast(projId?'Bundle updated ✓':'Bundle added ✓');
 }
 
 function deleteProject(clientId,projId){
-  if(!confirm('Delete this project and all its tasks?')) return;
+  if(!confirm('Delete this bundle and all its tasks?')) return;
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
   c.projects=c.projects.filter(p=>p.id!==projId);
   saveClients(clients);
   renderClientDetail(clientId,'projects');
   renderClientGrid();
-  showToast('Project deleted');
+  showToast('Bundle deleted');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2895,7 +2944,7 @@ function toggleTaskDone(clientId,projId,spId,taskId,checked){
   const pct=recalcProgress(clients,clientId,projId);
   if(pct===100){
     pushNotif({ icon:'🎉', color:'rgba(46,158,110,.1)',
-      title:`Project complete: ${p.name}`,
+      title:`Bundle complete: ${p.name}`,
       body:`${SESSION.name} finished all tasks on "${p.name}" for ${c.name}. 100% complete!`,
       forUser:'admin', fromUser:SESSION.name });
   } else if(checked){
@@ -3018,15 +3067,17 @@ function onSvcFreqChange(){
 function openAddServiceModal(clientId,entryId){
   const c=getClient(clientId); if(!c) return;
   _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||'';
-  _el('svc-modal-title').textContent=entryId?'Edit Service':'Add Recurring Service';
+  _el('svc-modal-title').textContent=entryId?'Edit Service':'Add Bundle Service';
   _el('svc-modal-sub').textContent=c.name;
-  populateServiceDropdown();
   const roster=getRoster();
   const aEl=_el('svc-assignee');
   aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   if(entryId){
     const svc=(c.services||[]).find(s=>s.id===entryId);
     if(svc){
+      const catEntry=getCatalog().find(s=>s.id===svc.catalogId);
+      if(_el('svc-bundle')) _el('svc-bundle').value=catEntry?.bundle||'';
+      populateServiceDropdown();
       _el('svc-name').value=svc.catalogId||'';
       _el('svc-freq').value=svc.freq||'monthly';
       _el('svc-lastdone').value=svc.lastDone||'';
@@ -3036,6 +3087,8 @@ function openAddServiceModal(clientId,entryId){
       _updateDueHint(svc.due||'');
     }
   } else {
+    if(_el('svc-bundle')) _el('svc-bundle').value='';
+    populateServiceDropdown();
     _el('svc-name').value='';
     _el('svc-freq').value='monthly';
     _el('svc-lastdone').value='';
@@ -3350,11 +3403,11 @@ function renderMyWork(){
         html+=myTasks.map(t=>renderTaskRow(c.id,p.id,null,t,true)).join('');
       }
       if(mySubTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Project Tasks</div>`;
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Item Tasks</div>`;
         html+=mySubTasks.map(t=>renderTaskRow(c.id,p.id,t._spId,t,true)).join('');
       }
       if(mySubs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Projects</div>`;
+        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Items</div>`;
         html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,true)).join('');
       }
       if(mySvcs.length){
@@ -3831,7 +3884,7 @@ function calShowDay(dateStr){
       const soon=!done&&!over&&dateStr<=addDays(todayStr,7);
       const statusColor=done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
       const statusLabel=done?'Completed':over?'Overdue':soon?'Due soon':'Upcoming';
-      const typeLabel=ev.type==='service'?'↻ Recurring Service':'▣ Project';
+      const typeLabel=ev.type==='service'?'↻ Recurring Service':'▣ Bundle';
       return `<div style="display:flex;align-items:stretch;gap:0;border-radius:12px;border:1px solid var(--border);margin-bottom:10px;overflow:hidden;background:var(--bg);">
         <div style="width:5px;background:${ev.color};flex-shrink:0;"></div>
         <div style="flex:1;padding:12px 16px;min-width:0;">
