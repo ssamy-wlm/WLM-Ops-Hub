@@ -413,15 +413,6 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
           </select>
           <select class="form-select" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
             <option value="">All Bundle Types</option>
-            <option value="Web Design">Web Design</option>
-            <option value="Web Development">Web Development</option>
-            <option value="SEO">SEO</option>
-            <option value="Social Media Management">Social Media</option>
-            <option value="Paid Ads">Paid Ads</option>
-            <option value="Branding">Branding</option>
-            <option value="Content Creation">Content Creation</option>
-            <option value="Email Marketing">Email Marketing</option>
-            <option value="Video Production">Video Production</option>
           </select>
           <select class="form-select" id="filter-proj-status" onchange="filterClients()" style="flex:1;min-width:130px;max-width:160px;font-size:11px;padding:7px 10px;">
             <option value="">All Bundle Statuses</option>
@@ -704,13 +695,8 @@ body{font-family:'Nunito',sans-serif;background:var(--bg);color:var(--text);min-
       <input type="hidden" id="pf-proj-id">
       <div class="form-grid">
         <div class="form-group full"><label class="form-label">Bundle Name *</label><input class="form-input" id="pf-name" placeholder="e.g. Website Redesign"></div>
-        <div class="form-group"><label class="form-label">Type / Service</label>
-          <select class="form-select" id="pf-type">
-            <option>Web Design</option><option>Web Development</option><option>SEO</option>
-            <option>Social Media Management</option><option>Paid Ads</option><option>Branding</option>
-            <option>Content Creation</option><option>Email Marketing</option><option>Video Production</option>
-            <option>Graphic Design</option><option>Copywriting</option><option>Other</option>
-          </select>
+        <div class="form-group"><label class="form-label">Bundle Type</label>
+          <select class="form-select" id="pf-type"></select>
         </div>
         <div class="form-group"><label class="form-label">Billing / Frequency</label>
           <select class="form-select" id="pf-billing">
@@ -1557,6 +1543,26 @@ function refreshRecurringDueDates(){
 }
 function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 
+// Legacy/seeded services often carry a catalogId from an older catalog scheme that no
+// longer resolves (or, worse, now collides with an unrelated entry in the current
+// catalog) — match by exact service name first since names are stable, and only fall
+// back to catalogId when no name match exists.
+function findCatalogEntryForService(s){
+  const cat=getCatalog();
+  const byName=cat.find(e=>e.name.toLowerCase()===(s.name||'').toLowerCase());
+  if(byName) return byName;
+  return cat.find(e=>e.id===s.catalogId)||null;
+}
+
+function populatePfTypeOptions(selected){
+  const sel=_el('pf-type'); if(!sel) return;
+  const names=getBundleNames();
+  let opts=names.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(selected&&!names.includes(selected)) opts+=`<option value="${selected}">${selected}</option>`;
+  sel.innerHTML=opts;
+  sel.value=selected||names[0];
+}
+
 // ═══════════════════════════════════════════════════════
 //  CLOUD SYNC (shared store via /api/cloud-data, same backend as index.html)
 // ═══════════════════════════════════════════════════════
@@ -1661,7 +1667,7 @@ function calcClientOverallStats(c){
   const contrib=[...bundles.map(p=>p.progress||0), ...svcs.map(s=>s.lastDone?100:0)];
   const overallPct=contrib.length?Math.round(contrib.reduce((a,b)=>a+b,0)/contrib.length):0;
   const bundleNames=new Set();
-  svcs.forEach(s=>{ const cat=getCatalog().find(e=>e.id===s.catalogId); if(cat?.bundle) bundleNames.add(cat.bundle); });
+  svcs.forEach(s=>{ const cat=findCatalogEntryForService(s); if(cat?.bundle) bundleNames.add(cat.bundle); });
   return {overallPct, bundleCount:bundleNames.size, serviceCount:svcs.length, manualBundleCount:bundles.length};
 }
 
@@ -1980,11 +1986,12 @@ function populateServiceDropdown(){
     const cur=flt.value;
     flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
   }
-  // Populate project-type dropdown dynamically from live client data
+  // Bundle Types dropdown: always offer the canonical bundle taxonomy, plus any
+  // other type value (e.g. legacy "Recurring Service") actually present on a client.
   const ptSel=_el('filter-proj-type');
   if(ptSel){
     const cur=ptSel.value;
-    const typeSet=new Set(['Web Design','Web Development','SEO','Social Media Management','Paid Ads','Branding','Content Creation','Email Marketing','Video Production']);
+    const typeSet=new Set(getBundleNames());
     getClients().forEach(c=>(c.projects||[]).forEach(p=>{ if(p.type) typeSet.add(p.type); }));
     ptSel.innerHTML=`<option value="">All Bundle Types</option>`+[...typeSet].sort().map(t=>`<option value="${t}"${cur===t?' selected':''}>${t}</option>`).join('');
   }
@@ -2725,12 +2732,13 @@ function openProjectModal(clientId, projId){
   populateUserChecks('pf-user-checkboxes',roster,existingUsers);
   if(projId){
     const p=c.projects.find(x=>x.id===projId); if(!p) return;
-    _el('pf-name').value=p.name; _el('pf-type').value=p.type||'Web Design';
+    _el('pf-name').value=p.name; populatePfTypeOptions(p.type);
     _el('pf-billing').value=p.billing||'one-time'; _el('pf-status').value=p.status;
     _el('pf-priority').value=p.priority||'medium'; _el('pf-start').value=p.start||'';
     _el('pf-due').value=p.due||''; _el('pf-desc').value=p.desc||''; _el('pf-color').value=p.color||c.color||'#2D6BB6';
   } else {
     ['pf-name','pf-start','pf-due','pf-desc'].forEach(id=>_el(id).value='');
+    populatePfTypeOptions('');
     _el('pf-status').value='not-started'; _el('pf-priority').value='medium';
     _el('pf-billing').value='one-time'; _el('pf-color').value=c.color||'#2D6BB6';
   }
@@ -3080,10 +3088,10 @@ function openAddServiceModal(clientId,entryId){
   if(entryId){
     const svc=(c.services||[]).find(s=>s.id===entryId);
     if(svc){
-      const catEntry=getCatalog().find(s=>s.id===svc.catalogId);
+      const catEntry=findCatalogEntryForService(svc);
       if(_el('svc-bundle')) _el('svc-bundle').value=catEntry?.bundle||'';
       populateServiceDropdown();
-      _el('svc-name').value=svc.catalogId||'';
+      _el('svc-name').value=catEntry?.id||svc.catalogId||'';
       _el('svc-freq').value=svc.freq||'monthly';
       _el('svc-lastdone').value=svc.lastDone||'';
       _el('svc-due').value=svc.due||'';
