@@ -1330,10 +1330,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <!-- Client grid -->
-      <div id="client-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;"></div>
+      <div id="client-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;grid-auto-flow:dense;"></div>
 
-      <!-- Client detail panel (slides in) -->
-      <div id="client-detail-panel" style="display:none;margin-top:24px;">
+      <!-- Client detail panel: relocated under whichever card is clicked (see
+           openClientDetail) so it expands in place instead of at the page end.
+           grid-column:1/-1 makes it span the full row once it's a grid child. -->
+      <div id="client-detail-panel" style="display:none;margin-top:24px;grid-column:1/-1;">
         <div class="card" style="margin:0;">
           <div id="client-detail-content"></div>
         </div>
@@ -4184,6 +4186,11 @@ function renderClientGrid(list){
   list = [...list].sort((a,b)=>{ if(a.pinned&&!b.pinned) return -1; if(!a.pinned&&b.pinned) return 1; return 0; });
   const grid = document.getElementById('client-grid');
   if(!grid) return;
+  // The detail panel gets moved inside the grid (see openClientDetail) so it can
+  // expand directly under the clicked card — pull it back out before wiping the
+  // grid's contents, or this would delete the panel along with the old cards.
+  const detailPanel = document.getElementById('client-detail-panel');
+  if(detailPanel && detailPanel.parentNode===grid) grid.parentNode.insertBefore(detailPanel, grid.nextSibling);
   grid.innerHTML = '';
   if(!list.length){
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--text-light);font-size:14px;">No clients yet. Use the <a href="javascript:void(0)" onclick="switchAdminTab(document.querySelector(&quot;.admin-nav-item[onclick*=tracker]&quot;),&#39;tracker&#39;)" style="color:var(--text);">Full Tracker</a> or click <strong>+ New Client</strong> to add your first.</div>';
@@ -4215,7 +4222,8 @@ function renderClientGrid(list){
 
     const card = document.createElement('div');
     card.className = 'client-card'+(statusLabel==='inactive'||statusLabel==='paused'?' inactive-card':'');
-    card.onclick = () => openClientDetail(c.id);
+    card.dataset.clientId = c.id;
+    card.onclick = () => openClientDetail(c.id, card);
     card.innerHTML = `
       <div style="height:5px;background:${c.color||'#2D6BB6'};"></div>
       <div class="client-card-header">
@@ -4237,6 +4245,19 @@ function renderClientGrid(list){
       </div>`;
     grid.appendChild(card);
   });
+  // If a client's detail panel was open before this refresh, re-anchor it under
+  // its (newly rebuilt) card and refresh its contents with the latest data.
+  if(activeClientId && detailPanel && detailPanel.style.display!=='none'){
+    const openCard = [...grid.children].find(el=>el.dataset && el.dataset.clientId===activeClientId);
+    const openClientObj = list.find(x=>x.id===activeClientId);
+    if(openCard && openClientObj){
+      openCard.insertAdjacentElement('afterend', detailPanel);
+      renderClientDetail(openClientObj);
+    } else {
+      activeClientId = null;
+      detailPanel.style.display = 'none';
+    }
+  }
   updateClientStats();
 }
 
@@ -4407,15 +4428,25 @@ function renderClientFilterChips(){
 }
 
 // ── Client Detail Panel ──
-function openClientDetail(clientId){
+// cardEl is the clicked grid card; the shared panel gets relocated to sit
+// directly under it so the client "opens in place" instead of jumping to a
+// fixed panel after the whole grid.
+function openClientDetail(clientId, cardEl){
+  const panel = document.getElementById('client-detail-panel');
+  // Clicking an already-open client's card again collapses it back in place.
+  if(activeClientId===clientId && panel.style.display!=='none'){
+    activeClientId = null;
+    panel.style.display = 'none';
+    return;
+  }
   activeClientId = clientId;
   const c = _getClientDB().find(x=>x.id===clientId);
   if(!c) return;
   // Always refresh TEAM_ROSTER before rendering so assignee chips are populated
   TEAM_ROSTER = buildTeamRoster();
-  const panel = document.getElementById('client-detail-panel');
   panel.style.display = 'block';
-  panel.scrollIntoView({behavior:'smooth',block:'start'});
+  if(cardEl) cardEl.insertAdjacentElement('afterend', panel);
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
   renderClientDetail(c);
 }
 
@@ -4509,7 +4540,7 @@ function renderClientDetail(c){
       </div>
       <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}')" style="font-size:13px;">+ Service</button>
       <button class="btn btn-sm btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:13px;color:${c.status==='active'?'var(--green)':'var(--text-light)'};">${c.status==='active'?'✓ Active':'○ Inactive'}</button>
-      <button class="btn btn-sm btn-outline" onclick="document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
+      <button class="btn btn-sm btn-outline" onclick="activeClientId=null;document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
     </div>
     <div style="padding:20px 24px;">
       ${c.notes ? `<div style="padding:12px 16px;background:var(--bg);border-radius:10px;font-size:13px;color:var(--text-mid);margin-bottom:18px;">📝 ${c.notes}</div>` : ''}
