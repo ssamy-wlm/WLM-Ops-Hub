@@ -1658,13 +1658,15 @@ function recalcProgress(clients, clientId, projId){
 }
 
 // Overall completion % for a client: average across every manual Bundle's own
-// progress AND every recurring service (counted done/not-done via lastDone) —
-// e.g. 10 services, 2 ever completed once = 20%. Recurring-service mirrors
-// inside c.projects are excluded so they aren't double-counted at a stuck 0%.
+// progress AND every recurring service (counted done-for-the-current-cycle, not
+// "ever done") — a service whose due date has already passed counts as not done
+// even if it has a lastDone from a prior cycle. Recurring-service mirrors inside
+// c.projects are excluded so they aren't double-counted at a stuck 0%.
 function calcClientOverallStats(c){
   const bundles=(c.projects||[]).filter(p=>!p.isRecurringService);
   const svcs=c.services||[];
-  const contrib=[...bundles.map(p=>p.progress||0), ...svcs.map(s=>s.lastDone?100:0)];
+  const t=today();
+  const contrib=[...bundles.map(p=>p.progress||0), ...svcs.map(s=>(s.lastDone&&!(s.due&&s.due<t))?100:0)];
   const overallPct=contrib.length?Math.round(contrib.reduce((a,b)=>a+b,0)/contrib.length):0;
   const bundleNames=new Set();
   svcs.forEach(s=>{ const cat=findCatalogEntryForService(s); if(cat?.bundle) bundleNames.add(cat.bundle); });
@@ -2466,7 +2468,7 @@ function renderProjects(c){
 
   return `
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:11px;">
-      ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Bundle</button>
+      ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openProjectModal('${c.id}')">+ Add Bundle</button>
       <button class="btn btn-outline btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
     ${projs||'<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No bundles or services yet</div></div>'}`;
