@@ -4519,6 +4519,10 @@ function renderClientDetail(c){
     <div style="padding:20px 24px;">
       ${c.notes ? `<div style="padding:12px 16px;background:var(--bg);border-radius:10px;font-size:13px;color:var(--text-mid);margin-bottom:18px;">📝 ${c.notes}</div>` : ''}
       ${_renderServicesSection(c)}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:800;color:var(--text-dark);">📁 Bundles</div>
+        <button class="btn btn-sm btn-primary" onclick="openProjectModal('${c.id}')" style="font-size:11px;">+ Add Bundle</button>
+      </div>
       ${projectsHTML}
     </div>`;
 }
