@@ -1685,11 +1685,23 @@ function calcClientOverallStats(c){
   const bundles=(c.projects||[]).filter(p=>!p.isRecurringService);
   const svcs=c.services||[];
   const t=today();
-  const contrib=[...bundles.map(p=>p.progress||0), ...svcs.map(s=>(s.lastDone&&!(s.due&&s.due<t))?100:0)];
+  // Per-item breakdown of exactly what's counted toward overallPct, so the UI can
+  // show *why* a client is at a given percentage instead of just the number.
+  const bundleBreakdown=bundles.map(p=>({type:'bundle', name:p.name||'Bundle', score:p.progress||0}));
+  const svcBreakdown=svcs.map(s=>{
+    const isOverdue=!!(s.due&&s.due<t);
+    const done=!!(s.lastDone&&!isOverdue);
+    const detail=done?`Done ${s.lastDone}`
+      :isOverdue?`Overdue since ${s.due}${s.lastDone?' (last done '+s.lastDone+')':''}`
+      :s.due?`Due ${s.due} — not done yet`:'Not done yet';
+    return {type:'service', name:s.name||'Service', score:done?100:0, detail};
+  });
+  const breakdown=[...bundleBreakdown, ...svcBreakdown];
+  const contrib=breakdown.map(b=>b.score);
   const overallPct=contrib.length?Math.round(contrib.reduce((a,b)=>a+b,0)/contrib.length):0;
   const bundleNames=new Set();
   svcs.forEach(s=>{ const cat=findCatalogEntryForService(s); if(cat?.bundle) bundleNames.add(cat.bundle); });
-  return {overallPct, bundleCount:bundleNames.size, serviceCount:svcs.length, manualBundleCount:bundles.length};
+  return {overallPct, bundleCount:bundleNames.size, serviceCount:svcs.length, manualBundleCount:bundles.length, breakdown};
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1774,6 +1786,10 @@ function readNotif(id){
   renderNotifPanel();
   renderNotifPage();
 }
+function toggleReportBreakdown(clientId){
+  const el=_el('rpt-breakdown-'+clientId);
+  if(el) el.style.display = el.style.display==='none'?'block':'none';
+}
 function renderReports(){
   const el=_el('reports-body'); if(!el) return;
   const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1852,10 +1868,22 @@ function renderReports(){
               ${dueThisMonth?`<span style="font-size:10px;color:#d97706;">📅 ${dueThisMonth} due this month</span>`:''}
             </div>
           </div>
-          <div style="text-align:center;flex-shrink:0;">
+          <div style="text-align:center;flex-shrink:0;cursor:pointer;" onclick="toggleReportBreakdown('${c.id}')" title="Click to see what's counted in this percentage">
             <div style="font-size:22px;font-weight:900;color:${color};">${overallPct}%</div>
-            <div style="font-size:9px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Overall</div>
+            <div style="font-size:9px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Overall ▾</div>
           </div>
+        </div>
+
+        <div id="rpt-breakdown-${c.id}" style="display:none;background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">What's counted in ${overallPct}%</div>
+          ${stats.breakdown.length?stats.breakdown.map(b=>`
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
+              <div style="font-size:11px;color:var(--text-dark);display:flex;align-items:center;gap:6px;min-width:0;">
+                <span>${b.score>=100?'✅':'⬜'}</span>
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${b.type==='bundle'?'📁':'🔁'} ${b.name}</span>
+              </div>
+              <div style="font-size:10px;color:var(--text-light);text-align:right;flex-shrink:0;">${b.detail||(b.score+'%')}</div>
+            </div>`).join(''):'<div style="font-size:11px;color:var(--text-light);">No bundles or services yet — overall progress is 0%.</div>'}
         </div>
 
         <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;">
