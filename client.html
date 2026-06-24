@@ -1568,6 +1568,21 @@ function populatePfTypeOptions(selected){
 // ═══════════════════════════════════════════════════════
 const CLOUD_DATA_URL = '/api/cloud-data';
 
+// Dedupe-by-id union of a cloud array and a local array, newest first — mirrors
+// index.html's _mergeCloudArr so feed/activity entries round-trip both ways.
+function _mergeCloudArr(cloudArr, localArr, limit=200){
+  const combined=[...(Array.isArray(cloudArr)?cloudArr:[]), ...(Array.isArray(localArr)?localArr:[])];
+  const seen=new Set();
+  const sortKey=x=>{
+    const n=parseInt(String(x.id).replace(/\D/g,''),10);
+    if(!isNaN(n)) return n;
+    const t=new Date(x.time||x.ts||0).getTime();
+    return isNaN(t)?0:t;
+  };
+  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
+                 .sort((a,b)=>sortKey(b)-sortKey(a)).slice(0,limit);
+}
+
 let _cloudPushTimer=null;
 async function _doCloudPush(){
   try{
@@ -1580,6 +1595,10 @@ async function _doCloudPush(){
     const mergedClients=_mergeClientsLocalOntoCloud(cloudClients, localClients);
     cur.clients=mergedClients;
     cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
+    // Push our locally-logged activity (e.g. "Mark Done") up so index.html's
+    // admin Recent Activity feed sees updates from every user, not just admin.
+    const mergedFeed=_mergeCloudArr(cur.feed, db(CL_KEYS.liveFeed)||[], 100);
+    cur.feed=mergedFeed;
     await fetch(CLOUD_DATA_URL,{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
@@ -1589,6 +1608,7 @@ async function _doCloudPush(){
     // new known-cloud baseline, so the next push's dirty-check stays accurate.
     dbSave(CL_KEYS.clients, mergedClients);
     _setClientsCloudSnapshot(mergedClients);
+    dbSave(CL_KEYS.liveFeed, mergedFeed);
   }catch(e){}
 }
 function _scheduleCloudPush(){
