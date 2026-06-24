@@ -316,6 +316,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 .toast{position:fixed;bottom:28px;right:28px;background:var(--text-dark);color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;box-shadow:0 8px 24px rgba(30,50,80,.25);}
 .toast.show{transform:translateY(0);opacity:1;}
 
+/* Back to top */
+.scroll-top-btn{position:fixed;bottom:90px;right:28px;width:42px;height:42px;border-radius:50%;background:var(--btn);color:#fff;border:none;display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;cursor:pointer;box-shadow:0 6px 18px rgba(30,50,80,.25);opacity:0;visibility:hidden;transform:translateY(10px);transition:all .25s;z-index:998;}
+.scroll-top-btn.show{opacity:1;visibility:visible;transform:translateY(0);}
+.scroll-top-btn:hover{filter:brightness(1.08);}
+
 /* Section pages hidden by default */
 .page-section{display:none;}
 .page-section.active{display:block;}
@@ -9459,6 +9464,14 @@ async function rmExtractTranscript(){
     btn.textContent='Extract & Add Tasks';
   }
 }
+
+// ── Back to top ──
+window.addEventListener('scroll', ()=>{
+  const btn=document.getElementById('scrollTopBtn');
+  if(btn) btn.classList.toggle('show', window.scrollY>300);
+});
+function scrollToTop(){ window.scrollTo({top:0,behavior:'smooth'}); }
 </script>
+<button id="scrollTopBtn" class="scroll-top-btn" onclick="scrollToTop()" title="Back to top" aria-label="Back to top">↑</button>
 </body>
 </html>
