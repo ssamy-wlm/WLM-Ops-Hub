@@ -1306,7 +1306,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <!-- Stats bar -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px;">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;">
         <div class="card" style="padding:16px 20px;margin:0;">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Total Clients</div>
           <div style="font-size:28px;font-weight:800;color:var(--text-dark);margin-top:4px;" id="stat-total-clients">0</div>
@@ -1316,12 +1316,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:28px;font-weight:800;color:var(--green);margin-top:4px;" id="stat-active-clients">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Completed Bundles</div>
-          <div style="font-size:28px;font-weight:800;color:var(--text);margin-top:4px;" id="stat-completed-projects">0</div>
-        </div>
-        <div class="card" style="padding:16px 20px;margin:0;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Ongoing Bundles</div>
-          <div style="font-size:28px;font-weight:800;color:var(--accent);margin-top:4px;" id="stat-ongoing-projects">0</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Inactive</div>
+          <div style="font-size:28px;font-weight:800;color:var(--text-light);margin-top:4px;" id="stat-inactive-clients">0</div>
         </div>
         <div class="card" style="padding:16px 20px;margin:0;">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Overdue</div>
@@ -4301,8 +4297,7 @@ function computeProjectStats(clients){
 function updateClientStats(){
   const t = document.getElementById('stat-total-clients');
   const a = document.getElementById('stat-active-clients');
-  const cp= document.getElementById('stat-completed-projects');
-  const op= document.getElementById('stat-ongoing-projects');
+  const ia= document.getElementById('stat-inactive-clients');
   const od= document.getElementById('stat-overdue-projects');
   if(!t) return;
   const liveClients = _getClientDB();
@@ -4310,8 +4305,7 @@ function updateClientStats(){
 
   t.textContent = liveClients.length;
   a.textContent = liveClients.filter(c=>(c.status||'active')==='active').length;
-  if(cp) cp.textContent = stats.completed;
-  if(op) op.textContent = stats.ongoing;
+  if(ia) ia.textContent = liveClients.filter(c=>(c.status||'active')!=='active').length;
   if(od){ od.textContent = stats.overdue; od.style.color = stats.overdue>0?'var(--red)':'var(--text-light)'; }
 
   // ── Client notification badge in nav ──
