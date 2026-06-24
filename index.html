@@ -4483,14 +4483,14 @@ function renderClientDetail(c){
         <div style="font-size:28px;font-weight:800;color:${c.color};">${totalPct}%</div>
         <div style="font-size:11px;color:var(--text-light);">Overall progress</div>
       </div>
-      <button class="btn btn-primary" onclick="openProjectModal('${c.id}')">+ Add Project</button>
-      <button class="btn btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:13px;color:${c.status==='active'?'var(--green)':'var(--text-light)'};">${c.status==='active'?'✓ Active':'○ Inactive'}</button>
-      <button class="btn btn-outline" onclick="document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
+      <button class="btn btn-sm btn-outline" onclick="openSvcModal('${c.id}')" style="font-size:13px;">+ Service</button>
+      <button class="btn btn-sm btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:13px;color:${c.status==='active'?'var(--green)':'var(--text-light)'};">${c.status==='active'?'✓ Active':'○ Inactive'}</button>
+      <button class="btn btn-sm btn-outline" onclick="document.getElementById('client-detail-panel').style.display='none'" style="font-size:13px;">✕ Close</button>
     </div>
     <div style="padding:20px 24px;">
       ${c.notes ? `<div style="padding:12px 16px;background:var(--bg);border-radius:10px;font-size:13px;color:var(--text-mid);margin-bottom:18px;">📝 ${c.notes}</div>` : ''}
       ${_renderServicesSection(c)}
-      ${projectsHTML || '<div style="text-align:center;padding:40px;color:var(--text-light);">No projects yet — click <strong>+ Add Project</strong> to get started.</div>'}
+      ${projectsHTML}
     </div>`;
 }
 
@@ -8047,11 +8047,12 @@ function applyAdminRoleRestrictions(level, adminObj){
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
   updateRoadmapNavVisibility(level, adminObj);
 
-  // ── Creative Manager: Clients tab only (+ Messages). No Overview, Users, Reports,
-  //    Live Feed, Payroll, Business Setup. Full tracker edit rights in client.html. ──
+  // ── Creative Manager: Clients + Tracker tabs (+ Messages). No Overview, Users,
+  //    Reports, Live Feed, Payroll, Business Setup. Tracker access is required so
+  //    she can open her own "My Work" view inside client.html. ──
   if(level === CREATIVE_MANAGER_ROLE){
-    // Show tabs: clients, messages. Hide everything else.
-    const showOnly = ['clients','messages'];
+    // Show tabs: clients, tracker, messages. Hide everything else.
+    const showOnly = ['clients','tracker','messages'];
     document.querySelectorAll('.admin-nav-item').forEach(el=>{
       const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
       if(!m) return;
