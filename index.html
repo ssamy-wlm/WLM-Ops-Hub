@@ -3769,14 +3769,8 @@ function renderOrgChart(){
   inner.className='org-inner';
   inner.style.cssText='position:relative;width:900px;flex-shrink:0;';
   canvas.appendChild(inner);
-  // Draw SVG lines
-  svg.innerHTML = orgLinks.map(([a,b])=>{
-    const na=orgNodes.find(n=>n.id===a);
-    const nb=orgNodes.find(n=>n.id===b);
-    if(!na||!nb) return '';
-    const r=44;
-    return `<line x1="${na.x+r}" y1="${na.y+r}" x2="${nb.x+r}" y2="${nb.y+r}" stroke="#87ABD5" stroke-width="2" stroke-dasharray="none" opacity="0.6"/>`;
-  }).join('');
+  // Connector lines between org chart bubbles are permanently disabled (per request).
+  svg.innerHTML = '';
   // Move SVG inside inner container
   inner.appendChild(svg);
   // Draw bubbles
@@ -5401,7 +5395,7 @@ function _seedCoreTeam(){
     {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active', seeded:true},
     {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active', seeded:true},
     {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active', seeded:true},
-    {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
+    {id:'sherine', name:'Sherine Amin',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
     {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active', seeded:true},
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
@@ -5511,15 +5505,20 @@ function _restoreMisarchivedRealWorkers(){
 
 // Assmaa's pay rate and probation dates were lost when her record got wiped by
 // the archive/tombstone bug above — her real rate is $5/hr, and she started
-// (and her 2-month probation began) on 2026-04-30.
+// (and her 2-month probation began) on 2026-04-30. One-time: runs once to repair
+// the historical data loss, then never touches her record again, so any pay
+// rate or probation change the admin makes afterward is never overwritten.
 function _fixAssmaaPayRate(){
+  const DONE_KEY = 'wl_assmaa_payrate_fixed_v1';
+  if(localStorage.getItem(DONE_KEY)) return false;
   const liveUsers = dbGet(DB_KEYS.users)||[];
   const u = liveUsers.find(u=>u.id==='assmaa');
-  if(!u) return false;
+  if(!u){ return false; }
   let changed = false;
   if(u.payRate!==5){ u.payRate = 5; changed = true; }
   if(u.probationStart!=='2026-04-30'){ u.probationStart = '2026-04-30'; changed = true; }
   if(u.probationEnd!=='2026-06-30'){ u.probationEnd = '2026-06-30'; changed = true; }
+  localStorage.setItem(DONE_KEY,'1');
   if(!changed) return false;
   dbSet(DB_KEYS.users, liveUsers);
   if(typeof cloudAutoSync==='function') cloudAutoSync();
@@ -5542,6 +5541,56 @@ function _unhideRestoredYehia(){
   dbSet(DB_KEYS.users, liveUsers);
   if(typeof cloudAutoSync==='function') cloudAutoSync();
   console.log('[WLM] Un-hid restored Yehia Elaify account.');
+  return true;
+}
+
+// ── Corrective fix: recreate Sarah Ibrahim's account. Her original record was
+// lost from local/cloud storage before any current device had a copy, and no
+// trace of her account (email, pay rate, hire date) ever existed in git —
+// only her name, in unrelated business logic like the org chart exclusion
+// list. Recreated from the details confirmed directly with the admin: started
+// 2026-03-04, probation already finished, $8.50/hr regular rate, overtime
+// enabled at a flat $12.50/hr (not the standard 1.5× multiplier). One-time;
+// never re-runs once a "Sarah Ibrahim" record exists, so it can't clobber a
+// real edit made after recreation.
+function _recreateSarahIbrahim(){
+  const DONE_KEY = 'wl_sarah_ibrahim_recreated_v1';
+  if(localStorage.getItem(DONE_KEY)) return false;
+  const liveUsers = dbGet(DB_KEYS.users)||[];
+  if(liveUsers.some(u=>(u.name||'').trim().toLowerCase()==='sarah ibrahim')){
+    localStorage.setItem(DONE_KEY,'1');
+    return false;
+  }
+  const newUser = {
+    id: 'sarah_ibrahim',
+    name: 'Sarah Ibrahim',
+    email: 'sarah.samy.tawfik@gmail.com',
+    title: '',
+    role: 'member',
+    hours: '',
+    payRate: 8.5,
+    hireDate: '2026-03-04',
+    probationStart: '',
+    probationEnd: '',
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    firstLogin: null
+  };
+  liveUsers.unshift(newUser);
+  dbSet(DB_KEYS.users, liveUsers);
+
+  dbSet(DB_KEYS.deletedUserIds, (dbGet(DB_KEYS.deletedUserIds)||[]).filter(id=>id!==newUser.id));
+
+  const policy = dbGet(DB_KEYS.otPolicy)||{};
+  policy.userOTEnabled = policy.userOTEnabled||{};
+  policy.userOTRate    = policy.userOTRate||{};
+  policy.userOTEnabled[newUser.id] = true;
+  policy.userOTRate[newUser.id]    = 12.5;
+  dbSet(DB_KEYS.otPolicy, policy);
+
+  localStorage.setItem(DONE_KEY,'1');
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Recreated Sarah Ibrahim account.');
   return true;
 }
 
@@ -5635,11 +5684,23 @@ function _userHasAssignedWork(userId, userName){
 // pull — a cloud copy that predates this flag would otherwise overwrite the tag
 // back off on the next sync. When it actually tags something, push that to the
 // cloud immediately so other devices stop seeing the untagged record too.
+// Confirmed real, currently-employed people — verified directly with the admin.
+// Matched by name (not id) so this holds regardless of which record/id a person
+// ends up on after an edit, restore, or recreation. Never tagged `seeded:true`
+// and never re-hidden by the password/assigned-work heuristic below, no matter
+// what their password or assignment state is.
+const PROTECTED_REAL_NAMES = ['sarah ibrahim','emily rovillo','jacob joslin','david joslin','yehia elaify','sherine amin','assmaa fouad','mahmoud hossam'];
+
 function _tagSeededPlaceholderUsers(){
   const SEED_IDS = ['emily','jamil','jacob','david','yehia','sherine','carol','brian','aileen','neha','assmaa'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
+    if(PROTECTED_REAL_NAMES.includes((u.name||'').trim().toLowerCase())){
+      if(u.seeded===true){ delete u.seeded; changed = true; }
+      if(u.placeholderExempt!==true){ u.placeholderExempt = true; changed = true; }
+      return;
+    }
     // placeholderExempt is set by restoreArchivedUser() — an admin manually
     // restoring a record is proof it's a real account, even with no password/
     // assigned work yet, and must never be re-hidden by this heuristic again.
@@ -6682,6 +6743,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // placeholders now that both users AND client assignment data are fully synced.
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
+    if(typeof _recreateSarahIbrahim==='function') _recreateSarahIbrahim();
     if(typeof _removeDuplicateAssmaaRecord==='function') _removeDuplicateAssmaaRecord();
     if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
     if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
@@ -6791,6 +6853,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _restoreMisarchivedRealWorkers();
   // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
   _fixAssmaaPayRate();
+  // Recreate Sarah Ibrahim's account — lost from storage with no git trace (one-time)
+  _recreateSarahIbrahim();
   // Remove a duplicate-by-name "Assmaa Fouad" record if one was already created (idempotent)
   _removeDuplicateAssmaaRecord();
   // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
@@ -7368,21 +7432,26 @@ function initPayroll(){
       <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;text-align:right;">Pay</div>
     </div>`;
 
+  const userOTRate = otPolicy.userOTRate || {};
   container.innerHTML = headerHtml + allUsers.map((u,i)=>{
     const rate = parseFloat(u.payRate)||0;
     const isProbation = _isOnProbation(u);
     // OT enabled: from saved policy; default true unless on probation
     const otOn = otPolicy.userOTEnabled ? (otPolicy.userOTEnabled[u.id] !== undefined ? otPolicy.userOTEnabled[u.id] : !isProbation) : !isProbation;
-    const otRate15 = (rate * 1.5).toFixed(2);
+    // A custom per-user OT rate (set in the Overtime Policy panel) overrides the
+    // standard 1.5× multiplier — e.g. Sarah Ibrahim is paid a flat $12.50/hr for
+    // overtime instead of 1.5× her $8.50 regular rate.
+    const customOtRate = parseFloat(userOTRate[u.id])||0;
+    const otRateVal = (customOtRate || rate * 1.5).toFixed(2);
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const _pc=_payPalette[i%_payPalette.length];
     const probationBadge = isProbation ? `<span style="font-size:9px;background:#f59e0b22;color:#d97706;border:1px solid #d97706aa;border-radius:10px;padding:1px 6px;margin-left:6px;font-weight:700;vertical-align:middle;">Probation</span>` : '';
-    const otBadge = otOn ? `<span style="font-size:9px;background:#d9770618;color:#d97706;border:1px solid #d9770644;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">OT 1.5×</span>` : `<span style="font-size:9px;background:#6b728018;color:#6b7280;border:1px solid #6b728044;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">No OT</span>`;
-    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-enabled="${otOn}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+    const otBadge = otOn ? `<span style="font-size:9px;background:#d9770618;color:#d97706;border:1px solid #d9770644;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">OT ${customOtRate?'$'+otRateVal+'/hr':'1.5×'}</span>` : `<span style="font-size:9px;background:#6b728018;color:#6b7280;border:1px solid #6b728044;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;vertical-align:middle;">No OT</span>`;
+    return `<div class="payroll-row" data-uid="${u.id}" data-rate="${rate}" data-ot-enabled="${otOn}" data-ot-rate="${otRateVal}" style="display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
       <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${_pc}">${initials}</div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--text-dark);"><span class="pay-name">${u.name}</span>${probationBadge}${otBadge}</div>
-        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr reg${otOn?' · OT: $'+otRate15+'/hr':''} · ${u.title||u.role||''}</div>
+        <div style="font-size:11px;color:var(--text-light);">$${rate}/hr reg${otOn?' · OT: $'+otRateVal+'/hr':''} · ${u.title||u.role||''}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
         <input type="number" min="0" max="168" step="0.5" value="0" class="form-input pay-reg-hrs" style="width:80px;padding:7px 10px;font-size:13px;" onchange="calcPayroll()" oninput="calcPayroll()" data-uid="${u.id}" placeholder="0">
@@ -7401,18 +7470,22 @@ function initPayroll(){
 function initOTPolicyPanel(users){
   const policy = dbGet(DB_KEYS.otPolicy)||{};
   const userOTEnabled = policy.userOTEnabled || {};
+  const userOTRate = policy.userOTRate || {};
 
   const container = document.getElementById('ot-user-rates');
   if(!container) return;
   const activeUsers = (users||[]).filter(u=>u.status==='active'||!u.status);
   container.innerHTML = activeUsers.map(u=>{
     const rate = parseFloat(u.payRate)||0;
-    const otRate = (rate * 1.5).toFixed(2);
+    const otRate15 = (rate * 1.5).toFixed(2);
+    const customRate = userOTRate[u.id]||'';
     // Default: probation users OFF, everyone else ON (unless explicitly saved)
     const isProbation = _isOnProbation(u);
     let enabled = userOTEnabled[u.id];
     if(enabled === undefined) enabled = !isProbation; // default on for non-probation
     const toggleId = `ot-toggle-${u.id}`;
+    const rateInputId = `ot-rate-${u.id}`;
+    const effectiveRate = (parseFloat(customRate)||rate*1.5).toFixed(2);
     return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;min-width:0;">
         <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
@@ -7428,8 +7501,11 @@ function initOTPolicyPanel(users){
           <div style="font-size:11px;color:var(--text-light);">${u.title||u.role||''} · $${rate}/hr regular</div>
         </div>
       </label>
-      <div class="ot-rate-label" style="font-size:12px;font-weight:700;color:${enabled?'var(--gold,#d97706)':'var(--text-light)'};white-space:nowrap;">
-        ${enabled?`OT: $${otRate}/hr (1.5×)`:'OT disabled'}
+      <input type="number" min="0" step="0.01" id="${rateInputId}" data-uid="${u.id}" value="${customRate}" placeholder="${otRate15}" title="Custom OT $/hr — leave blank for the standard 1.5× rate"
+        style="width:72px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:8px;text-align:right;"
+        oninput="document.getElementById('${toggleId}').closest('div').parentElement.querySelector('.ot-rate-label').textContent = document.getElementById('${toggleId}').checked ? ('OT: $'+(parseFloat(this.value)||${rate}*1.5).toFixed(2)+'/hr'+(this.value?'':' (1.5×)')) : 'OT disabled'">
+      <div class="ot-rate-label" style="font-size:12px;font-weight:700;color:${enabled?'var(--gold,#d97706)':'var(--text-light)'};white-space:nowrap;min-width:120px;text-align:right;">
+        ${enabled?`OT: $${effectiveRate}/hr${customRate?'':' (1.5×)'}`:'OT disabled'}
       </div>
     </div>`;
   }).join('');
@@ -7441,21 +7517,27 @@ function initOTPolicyPanel(users){
       const track = document.getElementById('ot-track-'+uid);
       const thumb = document.getElementById('ot-thumb-'+uid);
       const label = cb.closest('div[style]').querySelector('.ot-rate-label');
+      const rateInput = document.getElementById('ot-rate-'+uid);
       const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===uid);
       const rate = parseFloat(u?.payRate)||0;
+      const customRate = parseFloat(rateInput?.value)||0;
       if(track){ track.style.background = cb.checked ? 'var(--gold,#d97706)' : '#ccc'; }
       if(thumb){ thumb.style.left = cb.checked ? '18px' : '2px'; }
-      if(label){ label.textContent = cb.checked ? `OT: $${(rate*1.5).toFixed(2)}/hr (1.5×)` : 'OT disabled'; label.style.color = cb.checked ? 'var(--gold,#d97706)' : 'var(--text-light)'; }
+      if(label){ label.textContent = cb.checked ? `OT: $${(customRate||rate*1.5).toFixed(2)}/hr${customRate?'':' (1.5×)'}` : 'OT disabled'; label.style.color = cb.checked ? 'var(--gold,#d97706)' : 'var(--text-light)'; }
     });
   });
 }
 
 function saveOTPolicyBtn(){
   const userOTEnabled = {};
+  const userOTRate = {};
   document.querySelectorAll('#ot-user-rates input[type="checkbox"][data-uid]').forEach(cb=>{
     userOTEnabled[cb.dataset.uid] = cb.checked;
   });
-  const policy = { userOTEnabled };
+  document.querySelectorAll('#ot-user-rates input[type="number"][data-uid]').forEach(inp=>{
+    if(inp.value) userOTRate[inp.dataset.uid] = parseFloat(inp.value);
+  });
+  const policy = { userOTEnabled, userOTRate };
   dbSet(DB_KEYS.otPolicy, policy);
   cloudAutoSync(true);
   initPayroll();
@@ -7470,6 +7552,10 @@ function calcPayroll(){
   rows.forEach(row=>{
     const rate   = parseFloat(row.dataset.rate)||0;
     const otOn   = row.dataset.otEnabled === 'true';
+    // A custom per-user OT rate (set in the Overtime Policy panel) overrides
+    // the standard 1.5× multiplier — e.g. Sarah Ibrahim is paid a flat
+    // $12.50/hr for overtime instead of 1.5× her regular rate.
+    const otRate = parseFloat(row.dataset.otRate) || (rate * 1.5);
     const uid    = row.dataset.uid;
     const name   = (row.querySelector('.pay-name')||{}).textContent?.trim() || uid;
     const hours  = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
@@ -7478,8 +7564,8 @@ function calcPayroll(){
     if(otOn && hours > 40){
       otHours = hours - 40;
       regPay  = 40 * rate;
-      otPay   = otHours * rate * 1.5;
-      otLines.push({name, otHours, rate, otPay});
+      otPay   = otHours * otRate;
+      otLines.push({name, otHours, otRate, otPay});
     } else {
       regPay = hours * rate;
     }
@@ -7489,7 +7575,7 @@ function calcPayroll(){
     totalOTPay += otPay;
 
     const noteText = otHours > 0
-      ? `40h reg + ${otHours.toFixed(1)}h OT @1.5×`
+      ? `40h reg + ${otHours.toFixed(1)}h OT @ $${otRate.toFixed(2)}/hr`
       : (hours > 0 ? hours+'h regular' : 'this week');
 
     const payEl  = document.getElementById('pay-'+uid);
@@ -7499,7 +7585,7 @@ function calcPayroll(){
     if(noteEl) noteEl.textContent = noteText;
     if(rateLbl){
       if(otOn && hours > 40){
-        rateLbl.textContent = `${hours}h (incl. ${otHours.toFixed(1)}h @1.5×)`;
+        rateLbl.textContent = `${hours}h (incl. ${otHours.toFixed(1)}h @ $${otRate.toFixed(2)}/hr)`;
         rateLbl.style.color = 'var(--gold,#d97706)';
       } else {
         rateLbl.textContent = '@ $'+rate+'/hr';
@@ -7518,7 +7604,7 @@ function calcPayroll(){
   if(breakdown && bdRows){
     const lines = otLines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12px;">
       <span style="color:var(--text-dark);font-weight:600;">${l.name}</span>
-      <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h OT × $${(l.rate*1.5).toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
+      <span style="color:var(--text-mid);">${l.otHours.toFixed(1)}h OT × $${l.otRate.toFixed(2)}/hr = <strong style="color:var(--gold,#d97706);">$${l.otPay.toFixed(2)}</strong></span>
     </div>`);
     if(lines.length){ bdRows.innerHTML = lines.join(''); breakdown.style.display='block'; }
     else breakdown.style.display='none';
@@ -7538,17 +7624,18 @@ function savePayrollWeek(){
     const u        = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
     const rate     = parseFloat(row.dataset.rate)||0;
     const otOn     = row.dataset.otEnabled === 'true';
+    const otRate   = parseFloat(row.dataset.otRate) || (rate * 1.5);
     const regHrs = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
     let regPay = 0, otPay = 0;
     if(otOn && regHrs > 40){
       regPay = 40 * rate;
-      otPay  = (regHrs - 40) * rate * 1.5;
+      otPay  = (regHrs - 40) * otRate;
     } else {
       regPay = regHrs * rate;
     }
     const pay = regPay + otPay;
     total += pay;
-    entries.push({userId:uid, name:u.name, hours:regHrs, rate, otEnabled:otOn, pay});
+    entries.push({userId:uid, name:u.name, hours:regHrs, rate, otEnabled:otOn, otRate, pay});
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
@@ -8557,8 +8644,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
 
-// ── Probation data migration — run once on load ──
+// ── Probation data migration — one-time historical fix, never repeats ──
+// Guarded by a localStorage flag so this only ever applies once per browser.
+// Without the guard it re-ran on every load forever, silently re-clearing or
+// re-filling these people's probation dates even after an admin manually
+// edited them afterward.
 (function _migrateProbation(){
+  const DONE_KEY = 'wl_probation_migration_v1';
+  if(localStorage.getItem(DONE_KEY)) return;
   const users = dbGet(DB_KEYS.users)||[];
   if(!users.length) return;
   let changed = false;
@@ -8581,6 +8674,7 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
       }
     }
   });
+  localStorage.setItem(DONE_KEY,'1');
   if(changed){
     dbSet(DB_KEYS.users, users);
     cloudAutoSync(true);
