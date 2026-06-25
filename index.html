@@ -3593,7 +3593,7 @@ function saveQuickLinks(){
 // will reset to the new defaults exactly once on next load.
 const ORG_LAYOUT_VERSION = 'v5_20260501';
 // Names permanently removed from the org chart — never re-added regardless of users DB or defaults
-const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','yehia elaify','yehia elafify','rania morsy','sarah ibrahim'];
+const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','rania morsy'];
 
 const orgColors = {
   ceo:      'linear-gradient(135deg,#1a3f6f,#2D6BB6)',   // dark navy  — David
@@ -5527,6 +5527,24 @@ function _fixAssmaaPayRate(){
   return true;
 }
 
+// ── Corrective fix: an admin restored Yehia Elaify from the archive, but
+// _tagSeededPlaceholderUsers() (which only treats a password or assigned
+// client work as proof of a real account) re-hid him again on the very next
+// page load, since neither was set on his record — the restore looked like
+// it did nothing. Idempotent; safe to re-run anytime. restoreArchivedUser()
+// now sets placeholderExempt on restore so this can't happen again to anyone.
+function _unhideRestoredYehia(){
+  const liveUsers = dbGet(DB_KEYS.users)||[];
+  const u = liveUsers.find(u=>u.id==='yehia');
+  if(!u || (u.seeded!==true && u.placeholderExempt===true)) return false;
+  delete u.seeded;
+  u.placeholderExempt = true;
+  dbSet(DB_KEYS.users, liveUsers);
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Un-hid restored Yehia Elaify account.');
+  return true;
+}
+
 // ── One-time/idempotent cleanup: remove the dead "abby" user-DB record.
 // _seedCoreTeam() used to seed a passwordless abby@weblightmedia.com entry in
 // DB_KEYS.users, but Abby's real, working login is the admin account seeded
@@ -5622,7 +5640,10 @@ function _tagSeededPlaceholderUsers(){
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
-    if(!SEED_IDS.includes(u.id) || u.password) return;
+    // placeholderExempt is set by restoreArchivedUser() — an admin manually
+    // restoring a record is proof it's a real account, even with no password/
+    // assigned work yet, and must never be re-hidden by this heuristic again.
+    if(!SEED_IDS.includes(u.id) || u.password || u.placeholderExempt===true) return;
     const isPlaceholder = !_userHasAssignedWork(u.id, u.name);
     if(isPlaceholder && u.seeded!==true){ u.seeded = true; changed = true; }
     if(!isPlaceholder && u.seeded===true){ delete u.seeded; changed = true; }
@@ -6711,6 +6732,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // Re-tag seed placeholders now that the fixups above have settled real
     // work onto the correct (non-placeholder) user records.
     if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
+    if(typeof _unhideRestoredYehia==='function') _unhideRestoredYehia();
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6783,6 +6805,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // every cloud pull too) — runs after the above so real assigned work is already in
   // place and never gets mistakenly tagged as an unconnected placeholder.
   _tagSeededPlaceholderUsers();
+  // Un-hide Yehia if the tag above just re-hid him after an admin restore (idempotent)
+  _unhideRestoredYehia();
   // Assign the BrightWheel Review Request Export to Abby Conklin (idempotent)
   _assignBrightwheelExportToAbby();
   // Render user table from DB
@@ -7011,6 +7035,14 @@ function restoreArchivedUser(uid){
   delete restored.eods;
   delete restored.blockers;
   delete restored.eodCount;
+  // A leftover seeded:true tag (from _tagSeededPlaceholderUsers mistakenly
+  // flagging a real account with no password/assigned work yet) would
+  // otherwise re-hide this person from the Users tab/Payroll/Time Off the
+  // moment the page reloads, making this restore look like it did nothing.
+  // placeholderExempt marks this as a human-confirmed real account so that
+  // heuristic can never re-tag it again.
+  delete restored.seeded;
+  restored.placeholderExempt = true;
   restored.archived   = false;
   restored.archivedAt = null;
   restored.status     = 'active';
