@@ -989,6 +989,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')">Business Setup</div>
       </div>
 
+      <!-- Weblight Media Library — external SOP/wiki app, opens in a new tab -->
+      <div class="admin-nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab">📚 Library</div>
+
       <!-- Messages — separated, sits right before Sign Out -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'messages')" id="admin-nav-messages" style="background:rgba(255,255,255,.1);border-radius:9px;">Messages<span class="admin-msg-nav-badge" id="admin-msg-badge" style="display:none;">0</span></div>
 
