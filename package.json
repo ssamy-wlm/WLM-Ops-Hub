@@ -1,6 +1,6 @@
 {
   "name": "weblight-ops-hub",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "WebLight Media Operations Hub — Admin + Team Portal",
   "private": true,
   "type": "module",
@@ -12,6 +12,8 @@
     "serve": "^14.2.6"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@vercel/blob": "^2.4.0",
+    "@vercel/postgres": "^0.10.0"
   }
 }
