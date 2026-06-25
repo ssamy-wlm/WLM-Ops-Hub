@@ -5395,7 +5395,7 @@ function _seedCoreTeam(){
     {id:'jacob',   name:'Jacob Joslin',   email:'jacob@weblightmedia.com',   title:'Director of Finance',           role:'partner', status:'active', seeded:true},
     {id:'david',   name:'David Joslin',   email:'david@weblightmedia.com',   title:'CEO & Founder',                 role:'admin',   status:'active', seeded:true},
     {id:'yehia',   name:'Yehia Elaify',   email:'yehia@weblightmedia.com',   title:'Sales & Marketing Specialist',  role:'member',  status:'active', seeded:true},
-    {id:'sherine', name:'Sherine Amind',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
+    {id:'sherine', name:'Sherine Amin',   email:'sherine@weblightmedia.com', title:'Social Media Specialist',       role:'member',  status:'active', seeded:true},
     {id:'carol',   name:'Carol Rucker',   email:'carol@weblightmedia.com',   title:'Writer',                        role:'member',  status:'active', seeded:true},
     {id:'brian',   name:'Brian Bynes',    email:'brian@weblightmedia.com',   title:'Programmer',                    role:'member',  status:'active', seeded:true},
     {id:'aileen',  name:'Aileen Casey',   email:'aileen@weblightmedia.com',  title:'Print Production',              role:'member',  status:'active', seeded:true},
@@ -5505,15 +5505,20 @@ function _restoreMisarchivedRealWorkers(){
 
 // Assmaa's pay rate and probation dates were lost when her record got wiped by
 // the archive/tombstone bug above — her real rate is $5/hr, and she started
-// (and her 2-month probation began) on 2026-04-30.
+// (and her 2-month probation began) on 2026-04-30. One-time: runs once to repair
+// the historical data loss, then never touches her record again, so any pay
+// rate or probation change the admin makes afterward is never overwritten.
 function _fixAssmaaPayRate(){
+  const DONE_KEY = 'wl_assmaa_payrate_fixed_v1';
+  if(localStorage.getItem(DONE_KEY)) return false;
   const liveUsers = dbGet(DB_KEYS.users)||[];
   const u = liveUsers.find(u=>u.id==='assmaa');
-  if(!u) return false;
+  if(!u){ return false; }
   let changed = false;
   if(u.payRate!==5){ u.payRate = 5; changed = true; }
   if(u.probationStart!=='2026-04-30'){ u.probationStart = '2026-04-30'; changed = true; }
   if(u.probationEnd!=='2026-06-30'){ u.probationEnd = '2026-06-30'; changed = true; }
+  localStorage.setItem(DONE_KEY,'1');
   if(!changed) return false;
   dbSet(DB_KEYS.users, liveUsers);
   if(typeof cloudAutoSync==='function') cloudAutoSync();
@@ -5679,11 +5684,23 @@ function _userHasAssignedWork(userId, userName){
 // pull — a cloud copy that predates this flag would otherwise overwrite the tag
 // back off on the next sync. When it actually tags something, push that to the
 // cloud immediately so other devices stop seeing the untagged record too.
+// Confirmed real, currently-employed people — verified directly with the admin.
+// Matched by name (not id) so this holds regardless of which record/id a person
+// ends up on after an edit, restore, or recreation. Never tagged `seeded:true`
+// and never re-hidden by the password/assigned-work heuristic below, no matter
+// what their password or assignment state is.
+const PROTECTED_REAL_NAMES = ['sarah ibrahim','emily rovillo','jacob joslin','david joslin','yehia elaify','sherine amin','assmaa fouad','mahmoud hossam'];
+
 function _tagSeededPlaceholderUsers(){
   const SEED_IDS = ['emily','jamil','jacob','david','yehia','sherine','carol','brian','aileen','neha','assmaa'];
   const allUsers = dbGet(DB_KEYS.users)||[];
   let changed = false;
   allUsers.forEach(u=>{
+    if(PROTECTED_REAL_NAMES.includes((u.name||'').trim().toLowerCase())){
+      if(u.seeded===true){ delete u.seeded; changed = true; }
+      if(u.placeholderExempt!==true){ u.placeholderExempt = true; changed = true; }
+      return;
+    }
     // placeholderExempt is set by restoreArchivedUser() — an admin manually
     // restoring a record is proof it's a real account, even with no password/
     // assigned work yet, and must never be re-hidden by this heuristic again.
@@ -8627,8 +8644,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
 
-// ── Probation data migration — run once on load ──
+// ── Probation data migration — one-time historical fix, never repeats ──
+// Guarded by a localStorage flag so this only ever applies once per browser.
+// Without the guard it re-ran on every load forever, silently re-clearing or
+// re-filling these people's probation dates even after an admin manually
+// edited them afterward.
 (function _migrateProbation(){
+  const DONE_KEY = 'wl_probation_migration_v1';
+  if(localStorage.getItem(DONE_KEY)) return;
   const users = dbGet(DB_KEYS.users)||[];
   if(!users.length) return;
   let changed = false;
@@ -8651,6 +8674,7 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
       }
     }
   });
+  localStorage.setItem(DONE_KEY,'1');
   if(changed){
     dbSet(DB_KEYS.users, users);
     cloudAutoSync(true);
