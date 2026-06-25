@@ -966,6 +966,34 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
   return Object.values(byId);
 }
 
+// ── Same dirty-tracking merge as above, kept fully separate (own key, own
+// functions — never reuses or modifies the clients merge from PR #41) for the
+// shared users/admins datasets. Password-change flows below used to push the
+// full local users/admins arrays verbatim as if local were authoritative,
+// which wiped out account edits made on other devices/tabs since this one's
+// last pull. These helpers only let a local record win if it actually
+// changed since the last cloud state this tab knew about.
+function _getUsersCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_users_cloud_snapshot')||'null'); }catch(e){ return null; } }
+function _setUsersCloudSnapshot(arr){ try{ localStorage.setItem('wl_users_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
+function _mergeUsersLocalOntoCloud(cloudUsers, localUsers){
+  const snapById = {};
+  (_getUsersCloudSnapshot()||[]).forEach(u=>{ if(u.id) snapById[u.id]=u; });
+  const byId = {};
+  (cloudUsers||[]).forEach(u=>{ if(u.id) byId[u.id]=u; });
+  (localUsers||[]).forEach(u=>{
+    if(!u.id) return;
+    const prevKnown = snapById[u.id];
+    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(u)) byId[u.id]=u;
+  });
+  return Object.values(byId);
+}
+function _mergeAdminsLocalOntoCloud(cloudAdmins, localAdmins){
+  const byEmail = {};
+  (cloudAdmins||[]).forEach(a=>{ if(a.email) byEmail[a.email.toLowerCase()]=a; });
+  (localAdmins||[]).forEach(a=>{ if(a.email) byEmail[a.email.toLowerCase()]=a; });
+  return Object.values(byEmail);
+}
+
 // Fetch latest data from the shared cloud store — pulls users AND all shared data
 async function cloudFetchUsers(){
   try{
@@ -974,7 +1002,7 @@ async function cloudFetchUsers(){
     const data = await res.json();
     const record = data?.record || {};
     const users = record.users;
-    if(Array.isArray(users) && users.length) dbSet(DB_KEYS.users, users);
+    if(Array.isArray(users) && users.length){ dbSet(DB_KEYS.users, users); _setUsersCloudSnapshot(users); }
     // Pull all shared data so users see latest announcement, coc, etc.
     if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
     if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
@@ -1148,18 +1176,25 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  // Push updated password to cloud so all devices see the updated password
+  // Push updated password to cloud so all devices see the updated password.
+  // Merge onto a freshly-fetched cloud record instead of pushing the full
+  // local users/admins arrays verbatim — a blind push here was one of the
+  // root causes of accounts disappearing (a stale local cache on this tab
+  // would silently wipe out account edits made elsewhere since its last pull).
   if(cloudIsConfigured() && btn){
     btn.textContent='Saving…'; btn.disabled=true;
-    const admins = dbGet(DB_KEYS.admins)||[];
+    const localAdmins = dbGet(DB_KEYS.admins)||[];
     try{
       const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
       const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
+      const mergedUsers = _mergeUsersLocalOntoCloud(cur.users, allUsers);
+      const mergedAdmins = _mergeAdminsLocalOntoCloud(cur.admins, localAdmins);
       await fetch(CLOUD_DATA_URL,{
         method:'PUT',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({...cur, users: allUsers, admins})
+        body: JSON.stringify({...cur, users: mergedUsers, admins: mergedAdmins})
       });
+      _setUsersCloudSnapshot(mergedUsers);
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
   }
@@ -2018,17 +2053,23 @@ async function changeUserPassword(){
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   showToast('Password updated ✓ — syncing…');
-  // Push to cloud (both users and admins)
+  // Push to cloud (both users and admins) — merge onto a freshly-fetched cloud
+  // record instead of pushing the full local arrays verbatim (see
+  // submitForcedPasswordChange() above for why a blind push here was one of
+  // the root causes of accounts disappearing).
   if(cloudIsConfigured()){
-    const admins=dbGet(DB_KEYS.admins)||[];
+    const localAdmins=dbGet(DB_KEYS.admins)||[];
     try{
       const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
       const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
+      const mergedUsers = _mergeUsersLocalOntoCloud(cur.users, all);
+      const mergedAdmins = _mergeAdminsLocalOntoCloud(cur.admins, localAdmins);
       await fetch(CLOUD_DATA_URL,{
         method:'PUT',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...cur, users:all, admins})
+        body:JSON.stringify({...cur, users:mergedUsers, admins:mergedAdmins})
       });
+      _setUsersCloudSnapshot(mergedUsers);
     }catch(e){}
   }
   // Refresh session timestamp

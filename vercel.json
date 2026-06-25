@@ -9,5 +9,11 @@
       "src": "/user",
       "dest": "/user.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/backup-cloud-data",
+      "schedule": "0 6 * * *"
+    }
   ]
 }

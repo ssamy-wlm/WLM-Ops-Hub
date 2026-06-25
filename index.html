@@ -1132,6 +1132,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="display:flex;gap:8px;">
             <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
             <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
+            <button class="btn btn-sm btn-outline" onclick="exportCloudDataBackup()">⬇ Export Backup (JSON)</button>
           </div>
         </div>
         <div class="card-body">
@@ -3993,6 +3994,29 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
   return Object.values(byId);
 }
 
+// ── Same dirty-tracking merge as above, kept fully separate (own key, own
+// functions — never reuses or modifies the clients merge from PR #41) for the
+// shared users dataset. Root cause of the recurring "accounts disappear" bug:
+// cloudPushAll used to push dbGet(DB_KEYS.users) verbatim as if local were
+// always authoritative, so any tab/device with a stale local cache wiped out
+// teammates' edits (or whole accounts) made elsewhere since its last pull.
+// This only lets a local user record win the merge if it actually changed
+// since the last cloud state this tab knew about.
+function _getUsersCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_users_cloud_snapshot')||'null'); }catch(e){ return null; } }
+function _setUsersCloudSnapshot(arr){ try{ localStorage.setItem('wl_users_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
+function _mergeUsersLocalOntoCloud(cloudUsers, localUsers){
+  const snapById = {};
+  (_getUsersCloudSnapshot()||[]).forEach(u=>{ if(u.id) snapById[u.id]=u; });
+  const byId = {};
+  (cloudUsers||[]).forEach(u=>{ if(u.id) byId[u.id]=u; });
+  (localUsers||[]).forEach(u=>{
+    if(!u.id) return;
+    const prevKnown = snapById[u.id];
+    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(u)) byId[u.id]=u;
+  });
+  return Object.values(byId);
+}
+
 // ── Service Catalog: Bundle → Service ──────────────────────────────
 // Mirrors client.html's BUNDLE_DEFS exactly (same ids/names/bundle fields)
 // since both files seed the shared 'wl_service_catalog' localStorage key.
@@ -6560,6 +6584,33 @@ function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
 // _retryReduced: internal flag — when a previous attempt failed because the
 // payload exceeded the size limit, retry once with trimmed history so critical
 // team/client data (users, admins, clients) still gets through.
+// Manual, on-demand backup: downloads the entire shared cloud record (users,
+// admins, clients, everything) as a JSON file straight to the admin's device —
+// independent of the app/server, so even a future mistake here can be
+// recovered from. Complements the automated daily snapshot (see
+// api/backup-cloud-data.js + vercel.json "crons").
+async function exportCloudDataBackup(){
+  try{
+    const res = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const record = data?.record || {};
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const blob = new Blob([JSON.stringify(record, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wlm-ops-hub-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('✅ Backup downloaded');
+  }catch(e){
+    showToast('❌ Backup export failed: '+e.message);
+  }
+}
+
 async function cloudPushAll(silent=false, _retryReduced=false){
   setCloudStatus('Syncing to cloud…','syncing');
   try {
@@ -6598,8 +6649,15 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
     const mergedClients = _mergeClientsLocalOntoCloud(cloudClients, localClients);
 
+    // Merge users the same dirty-tracked way as clients above (see
+    // _mergeUsersLocalOntoCloud): never blindly push the local users array as
+    // if it were authoritative — that wiped out other devices'/tabs' account
+    // edits whenever this tab's local cache was stale. cloudUsersFiltered is
+    // already tombstone-filtered above.
+    const mergedUsers = _mergeUsersLocalOntoCloud(cloudUsersFiltered, dbGet(DB_KEYS.users)||[]);
+
     const payload = {
-      users:        dbGet(DB_KEYS.users)||[],   // local is authoritative when pushing
+      users:        mergedUsers,
       admins:       mergedAdmins,
       clients:      mergedClients,
       orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
@@ -6649,6 +6707,7 @@ async function cloudPushAll(silent=false, _retryReduced=false){
     dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
     dbSet(DB_KEYS.timeOffLedger, payload.timeOffLedger);
     if(payload.clients){ _saveClientDB(payload.clients); _setClientsCloudSnapshot(payload.clients); }
+    _setUsersCloudSnapshot(payload.users);
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6718,6 +6777,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
         if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
       });
       dbSet(DB_KEYS.users, mergedUsers);
+      _setUsersCloudSnapshot(mergedUsers);
     }
     // Admins: same safe-merge — never overwrite local admins with empty cloud array.
     if(Array.isArray(r.admins) && r.admins.length > 0){
