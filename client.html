@@ -1553,6 +1553,21 @@ function findCatalogEntryForService(s){
   if(byName) return byName;
   return cat.find(e=>e.id===s.catalogId)||null;
 }
+// Real client data predates the granular catalog and tags services with coarse legacy names
+// (e.g. "GBP Optimization") instead of catalog item names. Map those to their bundle here.
+const WL_LEGACY_SERVICE_BUNDLE_MAP={
+  'social media management':'Social Media Management Bundle',
+  'review management':'Review Management Bundle',
+  'business listings':'Monthly Content Bundle',
+  'gbp optimization':'Monthly Content Bundle',
+  'blog content':'Monthly Content Bundle',
+  'ad spend management':'PPC Management Bundle',
+};
+function getBundleForService(s){
+  const cat=findCatalogEntryForService(s);
+  if(cat) return cat.bundle;
+  return WL_LEGACY_SERVICE_BUNDLE_MAP[(s.name||'').toLowerCase()]||null;
+}
 
 function populatePfTypeOptions(selected){
   const sel=_el('pf-type'); if(!sel) return;
@@ -2227,7 +2242,12 @@ function filterClients(){
     list=list.filter(c=>(c.projects||[]).some(p=>
       (p.type||'').toLowerCase()===pjTypeL ||
       (p.isRecurringService && (p.name||'').toLowerCase()===pjTypeL)
-    ));
+    ) ||
+      // most clients only have services, no formal project record — match via the
+      // service's catalog entry (or legacy name mapping) so bundle filtering finds them too
+      (c.services||[]).some(s=>(getBundleForService(s)||'').toLowerCase()===pjTypeL) ||
+      (c.recurringServices||[]).some(s=>(getBundleForService(s)||'').toLowerCase()===pjTypeL)
+    );
   }
 
   // project status — match any project with that status

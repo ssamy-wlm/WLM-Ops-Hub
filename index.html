@@ -4046,6 +4046,21 @@ function findCatalogEntryForService(s){
   if(byName) return byName;
   return cat.find(e=>e.id===s.catalogId)||null;
 }
+// Real client data predates the granular catalog and tags services with coarse legacy names
+// (e.g. "GBP Optimization") instead of catalog item names. Map those to their bundle here.
+const WL_LEGACY_SERVICE_BUNDLE_MAP={
+  'social media management':'Social Media Management Bundle',
+  'review management':'Review Management Bundle',
+  'business listings':'Monthly Content Bundle',
+  'gbp optimization':'Monthly Content Bundle',
+  'blog content':'Monthly Content Bundle',
+  'ad spend management':'PPC Management Bundle',
+};
+function getBundleForService(s){
+  const cat=findCatalogEntryForService(s);
+  if(cat) return cat.bundle;
+  return WL_LEGACY_SERVICE_BUNDLE_MAP[(s.name||'').toLowerCase()]||null;
+}
 function populatePfTypeOptions(selected){
   const sel=document.getElementById('pf-type'); if(!sel) return;
   const names=getBundleNames();
@@ -4346,8 +4361,13 @@ function filterClients(){
     const matchSvc = !svc || (c.services||[]).some(s=>(s.name||'').toLowerCase()===svc.toLowerCase()||s.catalogId===svc)
                            || (c.recurringServices||[]).some(s=>(s.name||'').toLowerCase()===svc.toLowerCase());
 
-    // project type filter — match any project with that type
-    const matchPjType = !pjType || (c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjType.toLowerCase());
+    // project type filter — match any project with that type, OR any service whose
+    // catalog entry belongs to that bundle (most clients only have services, no
+    // formal project record, so this is how bundle filtering actually finds them)
+    const pjTypeL = pjType.toLowerCase();
+    const matchPjType = !pjType || (c.projects||[]).some(p=>(p.type||'').toLowerCase()===pjTypeL)
+                                 || (c.services||[]).some(s=>(getBundleForService(s)||'').toLowerCase()===pjTypeL)
+                                 || (c.recurringServices||[]).some(s=>(getBundleForService(s)||'').toLowerCase()===pjTypeL);
 
     // project status filter — match any project with that status
     const matchPjSt = !pjSt || (c.projects||[]).some(p=>(p.status||'')=== pjSt);
