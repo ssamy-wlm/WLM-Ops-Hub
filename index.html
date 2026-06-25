@@ -7550,10 +7550,10 @@ function initOTPolicyPanel(users){
       <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1;min-width:0;">
         <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
           <input type="checkbox" id="${toggleId}" data-uid="${u.id}" ${enabled?'checked':''} style="opacity:0;width:0;height:0;position:absolute;"
-            onchange="document.getElementById('${toggleId}').closest('div').parentElement.querySelector('.ot-rate-label').style.color=this.checked?'var(--gold,#d97706)':'var(--text-light)'">
-          <span onclick="document.getElementById('${toggleId}').click()" style="position:absolute;inset:0;background:${enabled?'var(--gold,#d97706)':'#ccc'};border-radius:20px;transition:.2s;cursor:pointer;"
+            onchange="document.getElementById('ot-rate-label-${u.id}').style.color=this.checked?'var(--gold,#d97706)':'var(--text-light)'">
+          <span style="position:absolute;inset:0;background:${enabled?'var(--gold,#d97706)':'#ccc'};border-radius:20px;transition:.2s;cursor:pointer;"
             id="ot-track-${u.id}"></span>
-          <span onclick="document.getElementById('${toggleId}').click()" style="position:absolute;left:${enabled?'18':'2'}px;top:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;cursor:pointer;"
+          <span style="position:absolute;left:${enabled?'18':'2'}px;top:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;cursor:pointer;"
             id="ot-thumb-${u.id}"></span>
         </div>
         <div>
@@ -7563,8 +7563,8 @@ function initOTPolicyPanel(users){
       </label>
       <input type="number" min="0" step="0.01" id="${rateInputId}" data-uid="${u.id}" value="${customRate}" placeholder="${otRate15}" title="Custom OT $/hr — leave blank for the standard 1.5× rate"
         style="width:72px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:8px;text-align:right;"
-        oninput="document.getElementById('${toggleId}').closest('div').parentElement.querySelector('.ot-rate-label').textContent = document.getElementById('${toggleId}').checked ? ('OT: $'+(parseFloat(this.value)||${rate}*1.5).toFixed(2)+'/hr'+(this.value?'':' (1.5×)')) : 'OT disabled'">
-      <div class="ot-rate-label" style="font-size:12px;font-weight:700;color:${enabled?'var(--gold,#d97706)':'var(--text-light)'};white-space:nowrap;min-width:120px;text-align:right;">
+        oninput="document.getElementById('ot-rate-label-${u.id}').textContent = document.getElementById('${toggleId}').checked ? ('OT: $'+(parseFloat(this.value)||${rate}*1.5).toFixed(2)+'/hr'+(this.value?'':' (1.5×)')) : 'OT disabled'">
+      <div class="ot-rate-label" id="ot-rate-label-${u.id}" style="font-size:12px;font-weight:700;color:${enabled?'var(--gold,#d97706)':'var(--text-light)'};white-space:nowrap;min-width:120px;text-align:right;">
         ${enabled?`OT: $${effectiveRate}/hr${customRate?'':' (1.5×)'}`:'OT disabled'}
       </div>
     </div>`;
@@ -7576,7 +7576,7 @@ function initOTPolicyPanel(users){
     cb.addEventListener('change', ()=>{
       const track = document.getElementById('ot-track-'+uid);
       const thumb = document.getElementById('ot-thumb-'+uid);
-      const label = cb.closest('div[style]').querySelector('.ot-rate-label');
+      const label = document.getElementById('ot-rate-label-'+uid);
       const rateInput = document.getElementById('ot-rate-'+uid);
       const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===uid);
       const rate = parseFloat(u?.payRate)||0;
