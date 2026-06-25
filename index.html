@@ -3769,14 +3769,8 @@ function renderOrgChart(){
   inner.className='org-inner';
   inner.style.cssText='position:relative;width:900px;flex-shrink:0;';
   canvas.appendChild(inner);
-  // Draw SVG lines
-  svg.innerHTML = orgLinks.map(([a,b])=>{
-    const na=orgNodes.find(n=>n.id===a);
-    const nb=orgNodes.find(n=>n.id===b);
-    if(!na||!nb) return '';
-    const r=44;
-    return `<line x1="${na.x+r}" y1="${na.y+r}" x2="${nb.x+r}" y2="${nb.y+r}" stroke="#87ABD5" stroke-width="2" stroke-dasharray="none" opacity="0.6"/>`;
-  }).join('');
+  // Connector lines between org chart bubbles are permanently disabled (per request).
+  svg.innerHTML = '';
   // Move SVG inside inner container
   inner.appendChild(svg);
   // Draw bubbles
