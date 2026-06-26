@@ -5589,6 +5589,8 @@ function _recreateSarahIbrahim(){
     id: 'sarah_ibrahim',
     name: 'Sarah Ibrahim',
     email: 'sarah.samy.tawfik@gmail.com',
+    password: 'Welcome123!',
+    mustChangePassword: true,
     title: '',
     role: 'member',
     hours: '',
@@ -5615,6 +5617,31 @@ function _recreateSarahIbrahim(){
   localStorage.setItem(DONE_KEY,'1');
   if(typeof cloudAutoSync==='function') cloudAutoSync();
   console.log('[WLM] Recreated Sarah Ibrahim account.');
+  return true;
+}
+
+// ── Corrective fix: _recreateSarahIbrahim() above originally recreated her
+// account with no password at all, so she could never log in ("incorrect
+// email or password" forever, no matter what she typed). One-time backfill
+// of an initial password (forces a change on first login); never touches her
+// record again once a password exists, so it can't clobber a real admin-set
+// or self-changed password afterward.
+function _fixSarahIbrahimPassword(){
+  const DONE_KEY = 'wl_sarah_ibrahim_password_fixed_v1';
+  if(localStorage.getItem(DONE_KEY)) return false;
+  const liveUsers = dbGet(DB_KEYS.users)||[];
+  const u = liveUsers.find(u=>(u.name||'').trim().toLowerCase()==='sarah ibrahim');
+  if(!u){ return false; }
+  if(u.password){
+    localStorage.setItem(DONE_KEY,'1');
+    return false;
+  }
+  u.password = 'Welcome123!';
+  u.mustChangePassword = true;
+  dbSet(DB_KEYS.users, liveUsers);
+  localStorage.setItem(DONE_KEY,'1');
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  console.log('[WLM] Set initial password for Sarah Ibrahim.');
   return true;
 }
 
@@ -6804,6 +6831,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
     if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
     if(typeof _recreateSarahIbrahim==='function') _recreateSarahIbrahim();
+    if(typeof _fixSarahIbrahimPassword==='function') _fixSarahIbrahimPassword();
     if(typeof _removeDuplicateAssmaaRecord==='function') _removeDuplicateAssmaaRecord();
     if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
     if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
@@ -6915,6 +6943,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _fixAssmaaPayRate();
   // Recreate Sarah Ibrahim's account — lost from storage with no git trace (one-time)
   _recreateSarahIbrahim();
+  // Backfill a login password for Sarah Ibrahim's recreated account (one-time)
+  _fixSarahIbrahimPassword();
   // Remove a duplicate-by-name "Assmaa Fouad" record if one was already created (idempotent)
   _removeDuplicateAssmaaRecord();
   // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
