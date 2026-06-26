@@ -3,7 +3,7 @@
 // summary per task after a quiet window. Wired into /api/cloud-data.js only —
 // does not read or alter the PR #41 client-snapshot merge logic.
 
-import { put, get } from '@vercel/blob';
+import { dualGet, dualPut } from './_blob-dual.js';
 import { buildEmailHtml, sendResendEmail } from './_resend.js';
 
 const QUEUE_PATH = 'wlm-ops-hub/pending-task-notifications.json';
@@ -88,7 +88,7 @@ export function detectTaskChanges(oldRecord, newRecord) {
 
 async function readQueue() {
   try {
-    const blob = await get(QUEUE_PATH, { access: 'private', useCache: false });
+    const blob = await dualGet(QUEUE_PATH, { access: 'private', useCache: false });
     if (!blob) return {};
     const text = await new Response(blob.stream).text();
     return text ? JSON.parse(text) : {};
@@ -99,7 +99,7 @@ async function readQueue() {
 }
 
 async function writeQueue(queue) {
-  await put(QUEUE_PATH, JSON.stringify(queue), {
+  await dualPut(QUEUE_PATH, JSON.stringify(queue), {
     access: 'private', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true, cacheControlMaxAge: 0,
   });
 }
@@ -209,7 +209,7 @@ async function sendBatchEmails(record, batch) {
 export async function flushDueTaskNotifications(record) {
   let queue;
   try {
-    const blob = await get(QUEUE_PATH, { access: 'private', useCache: false });
+    const blob = await dualGet(QUEUE_PATH, { access: 'private', useCache: false });
     if (!blob) return;
     const text = await new Response(blob.stream).text();
     queue = text ? JSON.parse(text) : {};

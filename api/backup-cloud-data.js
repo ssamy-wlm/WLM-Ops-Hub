@@ -6,7 +6,7 @@
 // Vercel automatically sends `Authorization: Bearer <CRON_SECRET>` on
 // cron-triggered invocations once CRON_SECRET is set as an env var.
 
-import { put, get, list, del } from '@vercel/blob';
+import { dualGet, dualPut, dualList, dualDel, blobConfigured } from './_blob-dual.js';
 
 const LIVE_BLOB_PATH = 'wlm-ops-hub/cloud-data.json';
 const BACKUP_PREFIX = 'wlm-ops-hub/backups/';
@@ -25,12 +25,12 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!blobConfigured) {
     return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN is not configured on the server.' });
   }
 
   try {
-    const blob = await get(LIVE_BLOB_PATH, { access: 'private', useCache: false });
+    const blob = await dualGet(LIVE_BLOB_PATH, { access: 'private', useCache: false });
     if (!blob) {
       return res.status(200).json({ ok: true, skipped: 'no live blob to back up yet' });
     }
@@ -38,19 +38,21 @@ export default async function handler(req, res) {
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = `${BACKUP_PREFIX}cloud-data-${stamp}.json`;
-    await put(backupPath, text, {
+    await dualPut(backupPath, text, {
       access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
     });
 
     // Prune old backups beyond the retention window so blob storage doesn't
-    // grow unbounded — never touches the live blob, only files under BACKUP_PREFIX.
-    const { blobs } = await list({ prefix: BACKUP_PREFIX });
+    // grow unbounded — never touches the live blob, only files under
+    // BACKUP_PREFIX, and only ever lists/prunes the current (new) store, so
+    // backups already sitting in the old, full store are left untouched.
+    const { blobs } = await dualList({ prefix: BACKUP_PREFIX });
     const sorted = blobs.slice().sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
     const stale = sorted.slice(KEEP_BACKUPS);
     if (stale.length) {
-      await del(stale.map(b => b.url));
+      await dualDel(stale.map(b => b.url));
     }
 
     return res.status(200).json({ ok: true, backupPath, pruned: stale.length });

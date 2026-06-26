@@ -2,8 +2,8 @@
 // Requires BLOB_READ_WRITE_TOKEN (auto-set by Vercel when Blob storage is
 // enabled for this project — Vercel dashboard → Storage → Create → Blob).
 
-import { put, get } from '@vercel/blob';
 import { detectTaskChanges, enqueueTaskChanges, flushDueTaskNotifications } from './_task-notifications.js';
+import { dualGet, dualPut, blobConfigured } from './_blob-dual.js';
 
 const BLOB_PATH = 'wlm-ops-hub/cloud-data.json';
 
@@ -16,16 +16,16 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!blobConfigured) {
     return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN is not configured on the server. Enable Blob storage for this project in the Vercel dashboard (Storage → Create Database → Blob).' });
   }
 
   if (req.method === 'GET') {
     try {
-      // get() returns null on a missing blob instead of throwing, and (unlike a
-      // raw fetch of the blob URL) sends the auth token this store's private
-      // access level requires.
-      const blob = await get(BLOB_PATH, { access: 'private', useCache: false });
+      // dualGet() returns null on a missing blob instead of throwing, and
+      // (unlike a raw fetch of the blob URL) sends the auth token this
+      // store's private access level requires.
+      const blob = await dualGet(BLOB_PATH, { access: 'private', useCache: false });
       const record = blob ? (JSON.parse((await new Response(blob.stream).text()) || '{}')) : {};
       try {
         // Opportunistic flush: this endpoint is polled every ~20-30s from open
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 
       let oldRecord = {};
       try {
-        const blob = await get(BLOB_PATH, { access: 'private', useCache: false });
+        const blob = await dualGet(BLOB_PATH, { access: 'private', useCache: false });
         if (blob) {
           const text = await new Response(blob.stream).text();
           oldRecord = text ? JSON.parse(text) : {};
@@ -67,7 +67,7 @@ export default async function handler(req, res) {
         console.error('[cloud-data] task-change notification queueing failed:', err.message || err);
       }
 
-      await put(BLOB_PATH, JSON.stringify(record), {
+      await dualPut(BLOB_PATH, JSON.stringify(record), {
         access: 'private',
         contentType: 'application/json',
         addRandomSuffix: false,
