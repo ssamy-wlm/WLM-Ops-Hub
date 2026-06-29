@@ -21,8 +21,16 @@ export const blobConfigured = !!WRITE_TOKEN;
 
 export async function dualGet(path, opts = {}) {
   if (NEW_TOKEN) {
-    const blob = await blobGet(path, { ...opts, token: NEW_TOKEN });
-    if (blob) return blob;
+    try {
+      const blob = await blobGet(path, { ...opts, token: NEW_TOKEN });
+      if (blob) return blob;
+    } catch (err) {
+      // A broken/misconfigured second-store token must never block falling
+      // back to the old store — that would turn a bad V2 token into a full
+      // outage instead of the no-op this feature is supposed to be when V2
+      // isn't working.
+      console.error('[blob-dual] BLOB_READ_WRITE_TOKEN_V2 read failed, falling back to old store:', err.message || err);
+    }
   }
   if (OLD_TOKEN) return await blobGet(path, { ...opts, token: OLD_TOKEN });
   return null;
