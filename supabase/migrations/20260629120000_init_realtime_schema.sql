@@ -1,9 +1,12 @@
--- Run this once in the Supabase SQL editor (Project → SQL Editor → New query).
--- This is for a Supabase project, a separate Postgres instance from the
--- existing Vercel Postgres (POSTGRES_URL) and Vercel Blob (cloud-data.json)
--- stores in this app — it is not run via api/migrate-schema.js. Once this is
--- verified working, db/migrations/0001_core_pm_schema.sql and the Blob-based
--- client/task data become legacy and can be retired in a follow-up.
+-- Initial schema for the Supabase-backed realtime client/task sync.
+-- Lives in supabase/migrations/ (the location Supabase's GitHub integration
+-- watches) so it applies automatically once this lands on the branch
+-- Supabase is tracking, instead of being pasted into the SQL editor by hand.
+-- This is a separate Postgres project from the existing Vercel Postgres
+-- (POSTGRES_URL) and Vercel Blob (cloud-data.json) stores in this app.
+-- Idempotent throughout, since this exact schema was already partially
+-- applied by hand via the SQL editor before this migration-based workflow
+-- existed — every statement is safe to re-run.
 
 -- ── profiles ─────────────────────────────────────────────────────────────
 -- One row per Supabase auth user, created automatically by the trigger below
