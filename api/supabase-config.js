@@ -9,10 +9,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_ANON_KEY are not configured on the server. Set them in Vercel env vars (Project Settings → Environment Variables) from your Supabase project\'s API settings page.' });
+  const { NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY } = process.env;
+  if (!NEXT_PUBLIC_SUPABASE_URL || !NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return res.status(500).json({ error: 'NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not configured on the server. Set them in Vercel env vars (Project Settings → Environment Variables) from your Supabase project\'s API settings page.' });
   }
 
-  return res.status(200).json({ url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY });
+  return res.status(200).json({ url: NEXT_PUBLIC_SUPABASE_URL, anonKey: NEXT_PUBLIC_SUPABASE_ANON_KEY });
 }
