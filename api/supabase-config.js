@@ -1,7 +1,7 @@
 // Hands the Supabase URL + anon key to the browser at runtime, so they live
 // in Vercel env vars like every other config value in this app instead of
 // being hardcoded into a static file. Safe to expose to the browser: the
-// anon key only grants what the RLS policies in supabase/schema.sql allow.
+// anon key only grants what the RLS policies in supabase/migrations/ allow.
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
