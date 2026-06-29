@@ -75,20 +75,33 @@ alter table public.profiles enable row level security;
 alter table public.clients  enable row level security;
 alter table public.tasks    enable row level security;
 
+drop policy if exists "profiles viewable by authenticated users" on public.profiles;
 create policy "profiles viewable by authenticated users"
   on public.profiles for select to authenticated using (true);
 
+drop policy if exists "clients viewable by authenticated users" on public.clients;
 create policy "clients viewable by authenticated users"
   on public.clients for select to authenticated using (true);
+drop policy if exists "clients writable by authenticated users" on public.clients;
 create policy "clients writable by authenticated users"
   on public.clients for all to authenticated using (true) with check (true);
 
+drop policy if exists "tasks viewable by authenticated users" on public.tasks;
 create policy "tasks viewable by authenticated users"
   on public.tasks for select to authenticated using (true);
+drop policy if exists "tasks writable by authenticated users" on public.tasks;
 create policy "tasks writable by authenticated users"
   on public.tasks for all to authenticated using (true) with check (true);
 
 -- ── Realtime ─────────────────────────────────────────────────────────────
 -- Supabase only pushes change events for tables added to this publication.
-alter publication supabase_realtime add table public.clients;
-alter publication supabase_realtime add table public.tasks;
+-- ALTER PUBLICATION ... ADD TABLE has no IF NOT EXISTS form, so check first.
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'clients') then
+    alter publication supabase_realtime add table public.clients;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tasks') then
+    alter publication supabase_realtime add table public.tasks;
+  end if;
+end $$;
