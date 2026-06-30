@@ -1133,6 +1133,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
             <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" onclick="exportCloudDataBackup()">⬇ Export Backup (JSON)</button>
+            <button class="btn btn-sm btn-outline" onclick="downloadLocalData()" title="Download every wl_* key from this browser's localStorage. Reads ONLY local data — no cloud/Blob call — so it works even if Blob is removed.">⬇ Download Local Data</button>
           </div>
         </div>
         <div class="card-body">
@@ -6635,6 +6636,42 @@ async function exportCloudDataBackup(){
     showToast('✅ Backup downloaded');
   }catch(e){
     showToast('❌ Backup export failed: '+e.message);
+  }
+}
+
+// Admin-only: download every wl_* key from THIS browser's localStorage as one
+// JSON file. Reads ONLY localStorage — no cloud/Blob/Supabase call — so it
+// still works even if the Blob store is removed. Each value is kept as its raw
+// stored string for byte-exact fidelity (so the file can later be restored verbatim).
+function downloadLocalData(){
+  try{
+    const data = {};
+    for(let i=0; i<localStorage.length; i++){
+      const key = localStorage.key(i);
+      if(key && key.indexOf('wl_') === 0){
+        data[key] = localStorage.getItem(key);
+      }
+    }
+    const out = {
+      exportedAt: new Date().toISOString(),
+      source: 'localStorage',
+      origin: (location && location.origin) || '',
+      keyCount: Object.keys(data).length,
+      data,
+    };
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wlm-local-data-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    if(typeof showToast === 'function') showToast(`✅ Local data downloaded (${out.keyCount} keys)`);
+  }catch(e){
+    if(typeof showToast === 'function') showToast('❌ Local export failed: '+e.message);
   }
 }
 
