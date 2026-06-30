@@ -953,17 +953,65 @@ function _mergeTimeOffLedger(cloudArr, localArr){
 // clobber a teammate's freshly-synced edit to some other client.
 function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
 function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
-function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+// Session baseline (see index.html for full rationale): used ONLY when no
+// persistent cloud snapshot exists yet, so a brand-new browser can still tell
+// an in-session edit (keep) from stale cache (do NOT overwrite cloud).
+function _getSessionBaseline(key, current){
+  try{
+    const raw = sessionStorage.getItem(key);
+    if(raw != null) return JSON.parse(raw) || [];
+    sessionStorage.setItem(key, JSON.stringify(current || []));
+    return current || [];
+  }catch(e){ return current || []; }
+}
+function _mergeRecordsLocalOntoCloud(cloudArr, localArr, snap, sessionBaselineKey){
+  const haveSnap = Array.isArray(snap);
   const snapById = {};
-  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
+  (haveSnap ? snap : []).forEach(r=>{ if(r && r.id) snapById[r.id]=r; });
+  const baseById = {};
+  if(!haveSnap){
+    _getSessionBaseline(sessionBaselineKey, localArr).forEach(r=>{ if(r && r.id) baseById[r.id]=r; });
+  }
   const byId = {};
-  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
-  (localClients||[]).forEach(c=>{
-    if(!c.id) return;
-    const prevKnown = snapById[c.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  (cloudArr||[]).forEach(r=>{ if(r && r.id) byId[r.id]=r; });
+  (localArr||[]).forEach(r=>{
+    if(!r || !r.id) return;
+    if(haveSnap){
+      const prevKnown = snapById[r.id];
+      if(prevKnown === undefined){ if(!(r.id in byId)) byId[r.id]=r; }
+      else if(JSON.stringify(prevKnown) !== JSON.stringify(r)){ byId[r.id]=r; }
+    } else {
+      const base = baseById[r.id];
+      if(base === undefined){ if(!(r.id in byId)) byId[r.id]=r; }
+      else if(JSON.stringify(base) !== JSON.stringify(r)){ byId[r.id]=r; }
+    }
   });
   return Object.values(byId);
+}
+// Push guard: refuse to overwrite a fuller cloud dataset with an emptier one.
+// A dropped record is only allowed when there's a tombstone (deletedUserIds) or
+// archive behind it; an unexplained disappearance aborts the push.
+function _pushGuardOK(outgoing, cloud){
+  const tombstoned = new Set(Array.isArray(outgoing.deletedUserIds) ? outgoing.deletedUserIds : []);
+  const isArchived = x => !!(x && (x.archived || x.status === 'archived'));
+  const keyOf = x => (x && (x.id || x.email)) || null;
+  for(const k of ['users','admins','clients']){
+    const out = Array.isArray(outgoing[k]) ? outgoing[k] : [];
+    const cld = Array.isArray(cloud[k])    ? cloud[k]    : [];
+    if(!cld.length) continue;
+    if(out.length === 0){ console.error(`[WLM push-guard] ABORT: outgoing ${k} empty but cloud has ${cld.length}`); return false; }
+    const outKeys = new Set(out.map(keyOf).filter(Boolean));
+    for(const c of cld){
+      const key = keyOf(c);
+      if(!key || outKeys.has(key)) continue;
+      const explained = (k==='users' && (tombstoned.has(c.id) || isArchived(c))) || (k==='admins' && isArchived(c));
+      if(!explained){ console.error(`[WLM push-guard] ABORT: ${k} "${key}" disappeared with no tombstone/archive`); return false; }
+    }
+  }
+  return true;
+}
+function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+  return _mergeRecordsLocalOntoCloud(cloudClients, localClients, _getClientsCloudSnapshot(), 'wl_session_base_clients');
 }
 
 // ── Same dirty-tracking merge as above, kept fully separate (own key, own
@@ -976,16 +1024,7 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 function _getUsersCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_users_cloud_snapshot')||'null'); }catch(e){ return null; } }
 function _setUsersCloudSnapshot(arr){ try{ localStorage.setItem('wl_users_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
 function _mergeUsersLocalOntoCloud(cloudUsers, localUsers){
-  const snapById = {};
-  (_getUsersCloudSnapshot()||[]).forEach(u=>{ if(u.id) snapById[u.id]=u; });
-  const byId = {};
-  (cloudUsers||[]).forEach(u=>{ if(u.id) byId[u.id]=u; });
-  (localUsers||[]).forEach(u=>{
-    if(!u.id) return;
-    const prevKnown = snapById[u.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(u)) byId[u.id]=u;
-  });
-  return Object.values(byId);
+  return _mergeRecordsLocalOntoCloud(cloudUsers, localUsers, _getUsersCloudSnapshot(), 'wl_session_base_users');
 }
 function _mergeAdminsLocalOntoCloud(cloudAdmins, localAdmins){
   const byEmail = {};
@@ -1062,6 +1101,13 @@ async function cloudPushData(){
       timeOffLedger: _mergeTimeOffLedger(dbGet(DB_KEYS.timeOffLedger)||[], cloudRecord.timeOffLedger),
       clients:  mergedClients,
     };
+    // Safety: never overwrite a fuller cloud dataset with an emptier one. (Here
+    // users/admins ride straight from cloudRecord, so this only ever trips on a
+    // genuinely corrupt payload — fail safe rather than push it.)
+    if(!_pushGuardOK(payload, cloudRecord)){
+      console.warn('[WLM] user push aborted by guard — outgoing data would shrink the shared record.');
+      return;
+    }
     await fetch(CLOUD_DATA_URL, {
       method:'PUT',
       headers:{'Content-Type':'application/json'},

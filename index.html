@@ -1133,6 +1133,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
             <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" onclick="exportCloudDataBackup()">⬇ Export Backup (JSON)</button>
+            <button class="btn btn-sm btn-outline" onclick="restoreFromBackupFile()" title="Restore the shared data from a previously exported backup JSON file. Intentional, admin-confirmed overwrite.">⬆ Restore from Backup</button>
           </div>
         </div>
         <div class="card-body">
@@ -3981,17 +3982,57 @@ function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify
 // teammate's freshly-synced edit to some other client.
 function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
 function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
-function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+// Session baseline: a one-time-per-tab capture of what this browser loaded with,
+// used ONLY when there is no persistent cloud snapshot yet (a brand-new browser
+// that has never synced). It lets the merge still distinguish "I edited this
+// record this session" (keep it) from "stale cache I never touched" (do NOT let
+// it overwrite cloud). Captured lazily on first use — which is the login-time
+// pull, after any first-run seeding has settled.
+function _getSessionBaseline(key, current){
+  try{
+    const raw = sessionStorage.getItem(key);
+    if(raw != null) return JSON.parse(raw) || [];
+    sessionStorage.setItem(key, JSON.stringify(current || []));
+    return current || [];
+  }catch(e){ return current || []; }
+}
+function _mergeRecordsLocalOntoCloud(cloudArr, localArr, snap, sessionBaselineKey){
+  const haveSnap = Array.isArray(snap);
   const snapById = {};
-  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
+  (haveSnap ? snap : []).forEach(r=>{ if(r && r.id) snapById[r.id]=r; });
+  const baseById = {};
+  if(!haveSnap){
+    _getSessionBaseline(sessionBaselineKey, localArr).forEach(r=>{ if(r && r.id) baseById[r.id]=r; });
+  }
   const byId = {};
-  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
-  (localClients||[]).forEach(c=>{
-    if(!c.id) return;
-    const prevKnown = snapById[c.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  (cloudArr||[]).forEach(r=>{ if(r && r.id) byId[r.id]=r; });
+  (localArr||[]).forEach(r=>{
+    if(!r || !r.id) return;
+    if(haveSnap){
+      const prevKnown = snapById[r.id];
+      if(prevKnown === undefined){
+        // No baseline for this id in the last known cloud state → it's new
+        // locally. Add it, but NEVER overwrite an existing cloud record we
+        // can't prove we edited.
+        if(!(r.id in byId)) byId[r.id]=r;
+      } else if(JSON.stringify(prevKnown) !== JSON.stringify(r)){
+        byId[r.id]=r; // proven local edit since last sync → local wins (PR #41)
+      }
+    } else {
+      // No persistent snapshot yet: fall back to the session baseline.
+      const base = baseById[r.id];
+      if(base === undefined){
+        if(!(r.id in byId)) byId[r.id]=r;                       // appeared this session → add only if cloud lacks it
+      } else if(JSON.stringify(base) !== JSON.stringify(r)){
+        byId[r.id]=r;                                           // changed since load → keep my in-session edit
+      }
+      // else: untouched stale cache → keep cloud's version, never clobber
+    }
   });
   return Object.values(byId);
+}
+function _mergeClientsLocalOntoCloud(cloudClients, localClients){
+  return _mergeRecordsLocalOntoCloud(cloudClients, localClients, _getClientsCloudSnapshot(), 'wl_session_base_clients');
 }
 
 // ── Same dirty-tracking merge as above, kept fully separate (own key, own
@@ -4005,16 +4046,52 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 function _getUsersCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_users_cloud_snapshot')||'null'); }catch(e){ return null; } }
 function _setUsersCloudSnapshot(arr){ try{ localStorage.setItem('wl_users_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
 function _mergeUsersLocalOntoCloud(cloudUsers, localUsers){
-  const snapById = {};
-  (_getUsersCloudSnapshot()||[]).forEach(u=>{ if(u.id) snapById[u.id]=u; });
-  const byId = {};
-  (cloudUsers||[]).forEach(u=>{ if(u.id) byId[u.id]=u; });
-  (localUsers||[]).forEach(u=>{
-    if(!u.id) return;
-    const prevKnown = snapById[u.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(u)) byId[u.id]=u;
-  });
-  return Object.values(byId);
+  return _mergeRecordsLocalOntoCloud(cloudUsers, localUsers, _getUsersCloudSnapshot(), 'wl_session_base_users');
+}
+
+// ── Push guard: refuse to overwrite a fuller cloud dataset with an emptier one.
+// Returns true if the outgoing payload is safe to PUT. A record that has
+// vanished from the outgoing data vs cloud is only allowed through when there's
+// a tombstone (wl_deleted_user_ids, carried as payload.deletedUserIds) or an
+// archive flag behind it — i.e. a legitimate, intentional removal. An
+// unexplained disappearance (the stale-browser bug) aborts the push so the
+// caller can pull the fuller cloud copy instead of clobbering it.
+function _pushGuardOK(outgoing, cloud){
+  const tombstoned = new Set(Array.isArray(outgoing.deletedUserIds) ? outgoing.deletedUserIds : []);
+  const isArchived = x => !!(x && (x.archived || x.status === 'archived'));
+  const keyOf = x => (x && (x.id || x.email)) || null;
+  for(const k of ['users','admins','clients']){
+    const out = Array.isArray(outgoing[k]) ? outgoing[k] : [];
+    const cld = Array.isArray(cloud[k])    ? cloud[k]    : [];
+    if(!cld.length) continue;
+    if(out.length === 0){
+      console.error(`[WLM push-guard] ABORT: outgoing ${k} is empty but cloud has ${cld.length}`);
+      return false;
+    }
+    const outKeys = new Set(out.map(keyOf).filter(Boolean));
+    for(const c of cld){
+      const key = keyOf(c);
+      if(!key || outKeys.has(key)) continue; // still present → fine
+      const explained =
+        (k === 'users'  && (tombstoned.has(c.id) || isArchived(c))) ||
+        (k === 'admins' && isArchived(c));
+      if(!explained){
+        console.error(`[WLM push-guard] ABORT: ${k} "${key}" disappeared with no tombstone/archive behind it`);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Run a one-off corrective function at most once ever on this browser. The
+// person-specific data fixups were originally re-run on every load and after
+// every 30s cloud pull, which let them re-push stale states over fresh edits.
+// They've done their job in production, so they now run once and never again.
+function _once(key, fn){
+  try{ if(localStorage.getItem('wl_once_'+key)) return; }catch(e){}
+  try{ if(typeof fn === 'function') fn(); }
+  finally{ try{ localStorage.setItem('wl_once_'+key,'1'); }catch(e){} }
 }
 
 // ── Service Catalog: Bundle → Service ──────────────────────────────
@@ -4095,17 +4172,14 @@ const _SEED_COLORS=['#2D6BB6','#9333ea','#16a34a','#d97706','#0891b2','#e05555',
 
 function _seedDefaultData(){
   const SEED_VERSION = '7';
-  // Always refresh service catalog
+  // Always refresh service catalog (this is a static reference list, not user data)
   try{ localStorage.setItem('wl_service_catalog', JSON.stringify(WL_SERVICE_CATALOG)); }catch(e){}
 
-  // Always purge hard-deleted clients by code
-  const PURGED_CODES = ['Joe', 'Stepule'];
-  (()=>{
-    const live = _getClientDB();
-    const cleaned = live.filter(c => !PURGED_CODES.includes(c.code));
-    if(cleaned.length !== live.length) _saveClientDB(cleaned);
-  })();
-
+  // DATA-SAFETY: seeding may ONLY populate a genuinely empty / first-run store.
+  // If any client data already exists, never seed — never merge over, refresh,
+  // or delete existing clients/services/projects, and never purge by code. We
+  // still stamp the seed version so this stays a no-op on future loads.
+  if(_getClientDB().length){ try{ localStorage.setItem('wl_seed_version', SEED_VERSION); }catch(e){} return; }
   if(localStorage.getItem('wl_seed_version') === SEED_VERSION) return;
 
   const now = new Date().toISOString();
@@ -5234,7 +5308,7 @@ function saveProgress(){
 const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
-  if(tab==='clients'){ _seedDefaultData(); populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); _checkServiceAlerts(); }
+  if(tab==='clients'){ populateClientFilterDropdowns(); renderClientGrid(); updateClientStats(); _checkServiceAlerts(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
 };
@@ -5411,8 +5485,12 @@ function logActivity(type, userName, description, detail=''){
 // A blank/corrupt cloud bin can never permanently wipe all accounts this way.
 // Passwords are NOT stored here — admin must set them via the Users panel.
 function _seedCoreTeam(){
+  // DATA-SAFETY: true one-time-ever gate. This must never re-seed because a
+  // pull or merge transiently produced an empty users list — that used to
+  // resurrect passwordless placeholder accounts and push them over cloud.
+  if(localStorage.getItem('wl_core_team_seeded_v1')) return;
   const existing = dbGet(DB_KEYS.users)||[];
-  if(existing.length) return;
+  if(existing.length){ try{ localStorage.setItem('wl_core_team_seeded_v1','1'); }catch(e){} return; }
   const coreTeam = [
     {id:'emily',   name:'Emily Rovillo',  email:'emily@weblightmedia.com',   title:'Creative Manager',              role:'member',  status:'active', seeded:true},
     {id:'jamil',   name:'Jamil Ahmed',    email:'jamil@weblightmedia.com',   title:'Video Producer',                role:'member',  status:'active', seeded:true},
@@ -5427,7 +5505,8 @@ function _seedCoreTeam(){
     {id:'assmaa',  name:'Assmaa Fouad',   email:'assmaaf@weblightmedia.com', title:'Webmaster & Copywriting Expert', role:'member',  status:'active', payRate:5, seeded:true},
   ];
   dbSet(DB_KEYS.users, coreTeam);
-  console.warn('[WLM] ⚠️ wl_users_db was empty — core team re-seeded. Passwords must be reset via admin panel.');
+  try{ localStorage.setItem('wl_core_team_seeded_v1','1'); }catch(e){}
+  console.warn('[WLM] ⚠️ wl_users_db was empty — core team seeded once. Passwords must be reset via admin panel.');
 }
 
 // ── Seed static users into DB on first load ──
@@ -6638,6 +6717,83 @@ async function exportCloudDataBackup(){
   }
 }
 
+// Admin-only: restore data from a previously exported backup JSON file. This is
+// an INTENTIONAL, admin-confirmed overwrite, so it bypasses the push guard.
+// Two file shapes are accepted:
+//   1. A "Download Local Data" dump ({source:'localStorage', data:{wl_*:...}})
+//      → restores those keys into THIS browser's localStorage only.
+//   2. An "Export Backup (JSON)" cloud record (or a raw {record:{...}})
+//      → overwrites the SHARED cloud record for everyone, then makes local
+//        authoritative-equal to it so no stale local edit can merge back over it.
+function restoreFromBackupFile(){
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if(!file) return;
+    let parsed;
+    try{
+      parsed = JSON.parse(await file.text());
+    }catch(e){ showToast('❌ Could not read/parse that file: '+e.message); return; }
+
+    // ── Shape 1: local-data dump → restore this browser's localStorage keys ──
+    if(parsed && parsed.source === 'localStorage' && parsed.data && typeof parsed.data === 'object'){
+      const keys = Object.keys(parsed.data).filter(k=>k.indexOf('wl_')===0);
+      if(!keys.length){ showToast('❌ No wl_* keys found in that file'); return; }
+      if(!confirm(`Restore ${keys.length} local keys into THIS browser only?\n\nThis overwrites the matching wl_* keys in this browser's storage (not the shared cloud). The page will reload afterward.`)) return;
+      keys.forEach(k=>{ try{ localStorage.setItem(k, parsed.data[k]); }catch(e){} });
+      showToast(`✅ Restored ${keys.length} local keys. Reloading…`);
+      setTimeout(()=>location.reload(), 800);
+      return;
+    }
+
+    // ── Shape 2: shared cloud record → overwrite the cloud blob ──
+    const R = (parsed && parsed.record && typeof parsed.record==='object') ? parsed.record : parsed;
+    if(!R || typeof R !== 'object' || Array.isArray(R)){ showToast('❌ Unrecognized backup format'); return; }
+    const nU = Array.isArray(R.users)?R.users.length:0;
+    const nA = Array.isArray(R.admins)?R.admins.length:0;
+    const nC = Array.isArray(R.clients)?R.clients.length:0;
+    if(!confirm(`Restore the SHARED cloud data from this file?\n\nThis OVERWRITES the shared cloud record for everyone with:\n• ${nU} users\n• ${nA} admins\n• ${nC} clients\n\nThis is an intentional restore and deliberately bypasses the safety guard. Continue?`)) return;
+    try{
+      setCloudStatus('Restoring shared data from backup…','syncing');
+      const res = await fetch(CLOUD_DATA_URL, {
+        method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(R)
+      });
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      // Make local authoritative-equal to the restored cloud so the next live
+      // sync can't merge a stale local copy back over it.
+      if(Array.isArray(R.users)){ dbSet(DB_KEYS.users, R.users); _setUsersCloudSnapshot(R.users); }
+      if(Array.isArray(R.admins)) dbSet(DB_KEYS.admins, R.admins);
+      if(Array.isArray(R.clients)){ _saveClientDB(R.clients); _setClientsCloudSnapshot(R.clients); }
+      if(Array.isArray(R.goals)) dbSet(DB_KEYS.goals, R.goals);
+      if(Array.isArray(R.feed)) dbSet(DB_KEYS.feed, R.feed);
+      if(Array.isArray(R.messages)) dbSet(DB_KEYS.messages, R.messages);
+      if(Array.isArray(R.roadmapTasks)) dbSet(DB_KEYS.roadmapTasks, R.roadmapTasks);
+      if(Array.isArray(R.timeOffRequests)) dbSet(DB_KEYS.timeOffRequests, R.timeOffRequests);
+      if(Array.isArray(R.timeOffLedger)) dbSet(DB_KEYS.timeOffLedger, R.timeOffLedger);
+      if(Array.isArray(R.deletedUserIds)) dbSet(DB_KEYS.deletedUserIds, R.deletedUserIds);
+      if('announcement' in R) dbSet('wl_announcement', R.announcement);
+      if(R.coc) dbSet(DB_KEYS.coc, R.coc);
+      if(R.settings) dbSet(DB_KEYS.settings, R.settings);
+      if(R.orgNodes) dbSet(DB_KEYS.orgNodes, R.orgNodes);
+      if(R.orgLinks) dbSet(DB_KEYS.orgLinks, R.orgLinks);
+      if(R.orgExcluded) localStorage.setItem('wl_org_excluded_names', R.orgExcluded);
+      if(R.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', R.orgLayoutVersion);
+      if(R.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', R.primaryAdminPw);
+      if(R.otPolicy) dbSet(DB_KEYS.otPolicy, R.otPolicy);
+      try{ sessionStorage.removeItem('wl_session_base_clients'); sessionStorage.removeItem('wl_session_base_users'); }catch(e){}
+      setCloudStatus('✅ Restored from backup','ok');
+      showToast('✅ Shared data restored from backup. Reloading…');
+      setTimeout(()=>location.reload(), 1000);
+    }catch(e){
+      setCloudStatus('Restore failed: '+e.message,'error');
+      showToast('❌ Restore failed: '+e.message);
+    }
+  };
+  input.click();
+}
+
 async function cloudPushAll(silent=false, _retryReduced=false){
   setCloudStatus('Syncing to cloud…','syncing');
   try {
@@ -6705,6 +6861,16 @@ async function cloudPushAll(silent=false, _retryReduced=false){
       timeOffLedger: _mergeTimeOffLedger(cloudRecord.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]),
     };
     if(_retryReduced) payload.feed = _mergeCloudArr(cloudRecord.feed, dbGet(DB_KEYS.feed)||[], 30);
+
+    // Safety: never overwrite a fuller cloud dataset with an emptier one. If the
+    // outgoing payload would drop a user/admin/client that exists in cloud with
+    // no tombstone/archive behind it, abort and pull the fuller copy instead.
+    if(!_pushGuardOK(payload, cloudRecord)){
+      setCloudStatus('Push blocked (safety): pulling latest instead','error');
+      console.warn('[WLM Cloud] Push aborted by guard; pulling latest instead of overwriting cloud.');
+      await cloudPullAll(true);
+      return false;
+    }
 
     const body = JSON.stringify(payload);
     console.log('[WLM Cloud] Push payload size:', (body.length/1024).toFixed(1)+'KB');
@@ -6825,16 +6991,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
       _saveClientDB(mergedClients);
       _setClientsCloudSnapshot(mergedClients);
     }
-    // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa that an older
-    // cloud snapshot might otherwise keep reintroducing, then re-tag/un-tag seed
-    // placeholders now that both users AND client assignment data are fully synced.
-    if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
-    if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
-    if(typeof _recreateSarahIbrahim==='function') _recreateSarahIbrahim();
-    if(typeof _fixSarahIbrahimPassword==='function') _fixSarahIbrahimPassword();
-    if(typeof _removeDuplicateAssmaaRecord==='function') _removeDuplicateAssmaaRecord();
-    if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
-    if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
+    // DATA-SAFETY: the person-specific data fixups are NO LONGER run here on
+    // every pull (they ran on every 30s live-sync and could re-push stale
+    // states over fresh edits). They now run at most once ever, at load only
+    // (see the _once(...) calls in the load handler below).
     // Restore org chart exclusion list so deleted nodes stay deleted on any device
     if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
     if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
@@ -6867,22 +7027,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // can never look like "nothing to merge" and get treated as authoritative.
     dbSet(DB_KEYS.timeOffLedger, _mergeTimeOffLedger(r.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]));
 
-    // ── Safety net: if users DB is still empty after merge, re-seed core team ──
-    // Protects against a genuinely blank/corrupt cloud bin locking everyone out.
-    if(!(dbGet(DB_KEYS.users)||[]).length && typeof _seedCoreTeam === 'function'){
-      _seedCoreTeam();
-    }
-
-    // ── Re-apply idempotent client-data fixups every time the cloud-wins client
-    // overwrite above runs, so a stale cloud blob never silently undoes them.
-    // Each fixup pushes back to cloud itself if it actually changes anything.
-    if(typeof _reassignSocialMediaToSherine === 'function') _reassignSocialMediaToSherine();
-    if(typeof _seedAssmaaWorkload === 'function') _seedAssmaaWorkload();
-    if(typeof _assignBrightwheelExportToAbby === 'function') _assignBrightwheelExportToAbby();
-    // Re-tag seed placeholders now that the fixups above have settled real
-    // work onto the correct (non-placeholder) user records.
-    if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
-    if(typeof _unhideRestoredYehia==='function') _unhideRestoredYehia();
+    // DATA-SAFETY: the "re-seed core team if users empty after merge" net is
+    // REMOVED — a transient empty pull must never repopulate placeholder
+    // accounts (and then push them over cloud). Core-team seeding now happens
+    // at most once ever, only on a genuinely empty first-run store (see
+    // _seedCoreTeam's one-time gate). The client-data fixups are likewise no
+    // longer re-run on every pull.
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6931,38 +7081,27 @@ function startLiveSync(level){
 
 // Also init announcement status on admin load, seed users, and render user table
 document.addEventListener('DOMContentLoaded', ()=>{
-  // Seed static sample users into DB if not already present
+  // Seed static sample users into DB only on a genuinely empty first-run store
+  // (guarded inside _seedCoreTeam by a one-time-ever flag).
   seedStaticUsers();
-  // Remove duplicate clients created by an earlier (incorrect) SOP seed attempt
-  _removeSopSeedDuplicates();
-  // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
-  _cleanupPlaceholderSeedUsers();
-  // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa (idempotent)
-  _restoreMisarchivedRealWorkers();
-  // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
-  _fixAssmaaPayRate();
-  // Recreate Sarah Ibrahim's account — lost from storage with no git trace (one-time)
-  _recreateSarahIbrahim();
-  // Backfill a login password for Sarah Ibrahim's recreated account (one-time)
-  _fixSarahIbrahimPassword();
-  // Remove a duplicate-by-name "Assmaa Fouad" record if one was already created (idempotent)
-  _removeDuplicateAssmaaRecord();
-  // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
-  _removeDeadAbbySeedDuplicate();
-  // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
-  _resetAbbyAndEmilyFirstLoginPassword();
-  // Reassign all Social Media Management services/projects to Sherine (idempotent)
-  _reassignSocialMediaToSherine();
-  // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
-  _seedAssmaaWorkload();
-  // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after
-  // every cloud pull too) — runs after the above so real assigned work is already in
-  // place and never gets mistakenly tagged as an unconnected placeholder.
-  _tagSeededPlaceholderUsers();
-  // Un-hide Yehia if the tag above just re-hid him after an admin restore (idempotent)
-  _unhideRestoredYehia();
-  // Assign the BrightWheel Review Request Export to Abby Conklin (idempotent)
-  _assignBrightwheelExportToAbby();
+  // DATA-SAFETY: every person-specific one-off fixup below now runs AT MOST ONCE
+  // EVER on this browser (via _once), instead of on every login and every 30s
+  // sync. They have already done their job in production, so this stops them
+  // from re-pushing old states over fresh edits made on other devices.
+  _once('removeSopSeedDuplicates',        _removeSopSeedDuplicates);
+  _once('cleanupPlaceholderSeedUsers',    _cleanupPlaceholderSeedUsers);
+  _once('restoreMisarchivedRealWorkers',  _restoreMisarchivedRealWorkers);
+  _once('fixAssmaaPayRate',               _fixAssmaaPayRate);
+  _once('recreateSarahIbrahim',           _recreateSarahIbrahim);
+  _once('fixSarahIbrahimPassword',        _fixSarahIbrahimPassword);
+  _once('removeDuplicateAssmaaRecord',    _removeDuplicateAssmaaRecord);
+  _once('removeDeadAbbySeedDuplicate',    _removeDeadAbbySeedDuplicate);
+  _once('resetAbbyAndEmilyFirstLoginPassword', _resetAbbyAndEmilyFirstLoginPassword);
+  _once('reassignSocialMediaToSherine',   _reassignSocialMediaToSherine);
+  _once('seedAssmaaWorkload',             _seedAssmaaWorkload);
+  _once('assignBrightwheelExportToAbby',  _assignBrightwheelExportToAbby);
+  _once('tagSeededPlaceholderUsers',      _tagSeededPlaceholderUsers);
+  _once('unhideRestoredYehia',            _unhideRestoredYehia);
   // Render user table from DB
   renderUserTable();
   // Render admin accounts table from DB
@@ -8771,8 +8910,13 @@ document.addEventListener('DOMContentLoaded', ()=>{ _seedDefaultData(); });
   }
 })();
 
-// ── Restore missing admin accounts ──
+// ── Restore missing admin accounts (one-time-ever, see DATA-SAFETY note) ──
 (function _seedMissingAdmins(){
+  // DATA-SAFETY: run at most once ever. Previously ran on every load and
+  // re-pushed to cloud whenever it changed anything, which could re-introduce
+  // admin records after an intentional removal made on another device.
+  try{ if(localStorage.getItem('wl_once_seedMissingAdmins')) return; }catch(e){}
+  try{ localStorage.setItem('wl_once_seedMissingAdmins','1'); }catch(e){}
   const admins = dbGet(DB_KEYS.admins)||[];
   const emails = admins.map(a=>a.email);
   let changed = false;
@@ -9285,8 +9429,12 @@ function updateRoadmapNavVisibility(level, adminObj){
 
 // ── Seed tasks on first load ──
 function _seedRoadmapTasks(){
+  // DATA-SAFETY: run at most once ever, and only on a genuinely empty store —
+  // a transient empty roadmap list must never re-seed demo tasks.
+  try{ if(localStorage.getItem('wl_once_seedRoadmapTasks')) return; }catch(e){}
   const existing = dbGet(DB_KEYS.roadmapTasks);
-  if(existing && existing.length > 0) return;
+  if(existing && existing.length > 0){ try{ localStorage.setItem('wl_once_seedRoadmapTasks','1'); }catch(e){} return; }
+  try{ localStorage.setItem('wl_once_seedRoadmapTasks','1'); }catch(e){}
   const mk = (text, bucket, owner, dateStr, src) => ({
     id: 'rm_seed_' + Math.random().toString(36).slice(2, 10),
     text, bucket, owner,
