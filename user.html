@@ -904,175 +904,110 @@ function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); 
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
 function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(key,arr.slice(0,500)); }
 
-// ── Cloud sync target (shared store via /api/cloud-data, same backend as admin panel) ──
-const CLOUD_DATA_URL = '/api/cloud-data';
+// ── Cloud sync target: Supabase via /api/ops-state (read) + /api/ops-sync
+// (per-record write). The server is the single source of truth — this file
+// no longer merges conflicting local/cloud copies of anything; it just
+// displays whatever the server returns (already filtered to what a member is
+// allowed to see) and sends only the records that changed locally. ──
+const OPS_STATE_URL = '/api/ops-state';
+const OPS_SYNC_URL  = '/api/ops-sync';
+const OPS_AUTH_URL  = '/api/ops-auth';
 function cloudIsConfigured(){ return true; }
+function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
+function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token', token); else localStorage.removeItem('wl_ops_token'); }catch(e){} }
 
-// Merge two arrays by id, deduplicating, newest first. IDs aren't always numeric
-// (e.g. 'to_'+Date.now()) — pull the embedded timestamp out of the id, or fall back
-// to a time/ts/submittedAt field, so sorting never silently breaks.
-function _mergeCloudArr(cloudArr, localArr, limit=200){
-  const combined=[...(Array.isArray(cloudArr)?cloudArr:[]),...(Array.isArray(localArr)?localArr:[])];
-  const seen=new Set();
-  const sortKey = x => {
-    const n = parseInt(String(x.id).replace(/\D/g,''), 10);
-    if(!isNaN(n)) return n;
-    const t = new Date(x.time||x.ts||x.submittedAt||0).getTime();
-    return isNaN(t) ? 0 : t;
-  };
-  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
-                 .sort((a,b)=>sortKey(b)-sortKey(a)).slice(0,limit);
-}
-
-// Merge time-off requests so an approve/deny decision always wins over a stale 'pending' copy
-function _mergeTimeOff(primaryArr, secondaryArr){
-  const merged=_mergeCloudArr(primaryArr, secondaryArr, 1000);
-  const all=[...(Array.isArray(primaryArr)?primaryArr:[]),...(Array.isArray(secondaryArr)?secondaryArr:[])];
-  const decidedMap={};
-  all.forEach(r=>{ if(r.status==='approved'||r.status==='denied') decidedMap[String(r.id)]=r; });
-  merged.forEach(r=>{ const dv=decidedMap[String(r.id)]; if(dv){ r.status=dv.status; r.reviewedAt=r.reviewedAt||dv.reviewedAt; r.reviewedBy=r.reviewedBy||dv.reviewedBy; r.adminNote=r.adminNote||dv.adminNote; } });
-  return merged;
-}
-
-// Time-off LEDGER entries are permanent and immutable — write-once, never edited
-// or deleted after creation (corrections are new offsetting entries only). So
-// unlike _mergeClientsLocalOntoCloud below, merging the ledger only ever needs
-// a plain union-by-id: keep every entry either side has, with NO cap — unlike
-// _mergeCloudArr's `limit`, which would silently truncate history.
-function _mergeTimeOffLedger(cloudArr, localArr){
+function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
+function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+function _opsDirty(table, localArr){
+  if(!Array.isArray(localArr) || !localArr.length) return [];
+  let snap = null;
+  try{ const raw = localStorage.getItem(_opsSnapKey(table)); snap = raw!=null ? JSON.parse(raw) : null; }catch(e){ snap = null; }
+  if(snap === null) return localArr.slice();
   const byId = {};
-  (Array.isArray(cloudArr)?cloudArr:[]).forEach(e=>{ if(e && e.id) byId[e.id]=e; });
-  (Array.isArray(localArr)?localArr:[]).forEach(e=>{ if(e && e.id && !byId[e.id]) byId[e.id]=e; });
-  return Object.values(byId);
-}
-
-// ── Per-record dirty tracking for the shared clients dataset (see matching
-// copy in index.html/client.html for full rationale): only let a tab's local
-// copy of a client record win the merge if that record actually differs from
-// the last cloud state we knew about — never let a stale full-cache push
-// clobber a teammate's freshly-synced edit to some other client.
-function _getClientsCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_clients_cloud_snapshot')||'null'); }catch(e){ return null; } }
-function _setClientsCloudSnapshot(arr){ try{ localStorage.setItem('wl_clients_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
-function _mergeClientsLocalOntoCloud(cloudClients, localClients){
-  const snapById = {};
-  (_getClientsCloudSnapshot()||[]).forEach(c=>{ if(c.id) snapById[c.id]=c; });
-  const byId = {};
-  (cloudClients||[]).forEach(c=>{ if(c.id) byId[c.id]=c; });
-  (localClients||[]).forEach(c=>{
-    if(!c.id) return;
-    const prevKnown = snapById[c.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(c)) byId[c.id]=c;
+  snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
+  return localArr.filter(r=>{
+    if(!r || r.id==null) return false;
+    const prev = byId[r.id];
+    return !prev || JSON.stringify(prev)!==JSON.stringify(r);
   });
-  return Object.values(byId);
 }
 
-// ── Same dirty-tracking merge as above, kept fully separate (own key, own
-// functions — never reuses or modifies the clients merge from PR #41) for the
-// shared users/admins datasets. Password-change flows below used to push the
-// full local users/admins arrays verbatim as if local were authoritative,
-// which wiped out account edits made on other devices/tabs since this one's
-// last pull. These helpers only let a local record win if it actually
-// changed since the last cloud state this tab knew about.
-function _getUsersCloudSnapshot(){ try{ return JSON.parse(localStorage.getItem('wl_users_cloud_snapshot')||'null'); }catch(e){ return null; } }
-function _setUsersCloudSnapshot(arr){ try{ localStorage.setItem('wl_users_cloud_snapshot',JSON.stringify(arr||[])); }catch(e){} }
-function _mergeUsersLocalOntoCloud(cloudUsers, localUsers){
-  const snapById = {};
-  (_getUsersCloudSnapshot()||[]).forEach(u=>{ if(u.id) snapById[u.id]=u; });
-  const byId = {};
-  (cloudUsers||[]).forEach(u=>{ if(u.id) byId[u.id]=u; });
-  (localUsers||[]).forEach(u=>{
-    if(!u.id) return;
-    const prevKnown = snapById[u.id];
-    if(!prevKnown || JSON.stringify(prevKnown)!==JSON.stringify(u)) byId[u.id]=u;
-  });
-  return Object.values(byId);
-}
-function _mergeAdminsLocalOntoCloud(cloudAdmins, localAdmins){
-  const byEmail = {};
-  (cloudAdmins||[]).forEach(a=>{ if(a.email) byEmail[a.email.toLowerCase()]=a; });
-  (localAdmins||[]).forEach(a=>{ if(a.email) byEmail[a.email.toLowerCase()]=a; });
-  return Object.values(byEmail);
-}
-
-// Fetch latest data from the shared cloud store — pulls users AND all shared data
+// Fetch the current state from the server and adopt it as-is per table — no
+// client-side merging. Returns the users array for callers that need it.
 async function cloudFetchUsers(){
+  const token = _opsToken();
+  if(!token) return null;
   try{
-    const res = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     if(!res.ok) return null;
     const data = await res.json();
-    const record = data?.record || {};
-    const users = record.users;
-    if(Array.isArray(users) && users.length){ dbSet(DB_KEYS.users, users); _setUsersCloudSnapshot(users); }
-    // Pull all shared data so users see latest announcement, coc, etc.
-    if(record.goals)        dbSet(DB_KEYS.goals,     _mergeCloudArr(record.goals,    dbGet(DB_KEYS.goals)||[]));
-    if(record.announcement) dbSet(DB_KEYS.announcement, record.announcement);
-    if(record.coc)          dbSet(DB_KEYS.coc,       record.coc);
-    if(record.messages)     dbSet(DB_KEYS.messages, _mergeCloudArr(record.messages, dbGet(DB_KEYS.messages)||[], 500));
-    if(record.feed)         dbSet(DB_KEYS.feed,      _mergeCloudArr(record.feed,     dbGet(DB_KEYS.feed)||[], 100));
-    if(record.timeOffRequests) dbSet(DB_KEYS.timeOffRequests, _mergeTimeOff(record.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]));
-    // Ledger is permanent/append-only — always merge, even if cloud's copy is empty.
-    dbSet(DB_KEYS.timeOffLedger, _mergeTimeOffLedger(record.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]));
-    if(Array.isArray(record.clients)){
-      const local = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
-      // Only keep local's version of records we ourselves changed since our
-      // last known cloud state — otherwise take cloud's latest, so a stale
-      // local cache here can't clobber another teammate's just-synced edit.
-      const merged = _mergeClientsLocalOntoCloud(record.clients, local);
-      localStorage.setItem('wl_clients_db', JSON.stringify(merged));
-      _setClientsCloudSnapshot(merged);
+    const r = data?.record || {};
+    dbSet(DB_KEYS.users, r.users||[]);       _opsSetSnapshot('users', r.users||[]);
+    dbSet(DB_KEYS.goals, r.goals||[]);       _opsSetSnapshot('goals', r.goals||[]);
+    if('announcement' in r) dbSet(DB_KEYS.announcement, r.announcement);
+    if('coc' in r)          dbSet(DB_KEYS.coc, r.coc);
+    dbSet(DB_KEYS.messages, r.messages||[]); _opsSetSnapshot('messages', r.messages||[]);
+    dbSet(DB_KEYS.feed, r.feed||[]);         _opsSetSnapshot('feed', r.feed||[]);
+    dbSet(DB_KEYS.timeOffRequests, r.timeOffRequests||[]); _opsSetSnapshot('timeOffRequests', r.timeOffRequests||[]);
+    dbSet(DB_KEYS.timeOffLedger, r.timeOffLedger||[]);     _opsSetSnapshot('timeOffLedger', r.timeOffLedger||[]);
+    if(Array.isArray(r.clients)){
+      localStorage.setItem('wl_clients_db', JSON.stringify(r.clients));
+      _opsSetSnapshot('clients', r.clients);
     }
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
-    return Array.isArray(users) ? users : null;
+    return Array.isArray(r.users) ? r.users : null;
   }catch(e){ return null; }
 }
 
-// Debounced push — coalesces rapid saves (task done, progress update) into one cloud write
+// Debounced push — coalesces rapid saves (task done, progress update) into one write
 let _cloudPushTimer;
 function _scheduleCloudPush(){ clearTimeout(_cloudPushTimer); _cloudPushTimer = setTimeout(cloudPushData, 2000); }
 // Flush any pending debounced push immediately when the tab is closed/backgrounded/
 // navigated away from — otherwise a Mark Done click followed by closing the tab
-// within the 2s debounce window silently loses the change to cloud sync.
+// within the 2s debounce window silently loses the change.
 function _flushCloudPush(){
   if(_cloudPushTimer){ clearTimeout(_cloudPushTimer); _cloudPushTimer=null; cloudPushData(); }
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
 window.addEventListener('pagehide', _flushCloudPush);
 
-// Push user-generated data (EODs, goals, feed) to cloud using read-modify-write
+// Push ONLY the records that changed locally (EODs/goals/feed/clients/time-off).
+// The server enforces which of these a member may actually write (see
+// api/ops-sync.js) — e.g. a member's client edits are restricted server-side
+// to tasks assigned to them, regardless of what this payload contains.
 async function cloudPushData(){
+  const token = _opsToken();
+  if(!token) return;
   try {
-    const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
-    if(!r0.ok) return;
-    const d = await r0.json();
-    const cloudRecord = d?.record || {};
-    const localCl = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
-    const cloudCl = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
-    // Only let local win for records we ourselves dirtied since our last known
-    // cloud state — a blind "local wins for every id" merge let any push here
-    // (even one triggered by an unrelated EOD save) silently overwrite
-    // a teammate's just-synced edit to some other client's project/task.
-    const mergedClients = _mergeClientsLocalOntoCloud(cloudCl, localCl);
-    const payload = {
-      ...cloudRecord,
-      // local-first merge: local state wins so edits aren't overwritten by stale cloud copy
-      goals:    _mergeCloudArr(dbGet(DB_KEYS.goals)||[],    cloudRecord.goals),
-      feed:     _mergeCloudArr(dbGet(DB_KEYS.feed)||[],     cloudRecord.feed,     100),
-      messages: _mergeCloudArr(dbGet(DB_KEYS.messages)||[], cloudRecord.messages, 500),
-      timeOffRequests: _mergeTimeOff(dbGet(DB_KEYS.timeOffRequests)||[], cloudRecord.timeOffRequests),
-      timeOffLedger: _mergeTimeOffLedger(dbGet(DB_KEYS.timeOffLedger)||[], cloudRecord.timeOffLedger),
-      clients:  mergedClients,
-    };
-    await fetch(CLOUD_DATA_URL, {
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload)
+    const changes = {};
+    const clientsDirty = _opsDirty('clients', JSON.parse(localStorage.getItem('wl_clients_db')||'[]'));
+    if(clientsDirty.length) changes.clients = clientsDirty;
+    const goalsDirty = _opsDirty('goals', dbGet(DB_KEYS.goals)||[]);
+    if(goalsDirty.length) changes.goals = goalsDirty;
+    const feedDirty = _opsDirty('feed', dbGet(DB_KEYS.feed)||[]);
+    if(feedDirty.length) changes.feed = feedDirty;
+    const messagesDirty = _opsDirty('messages', dbGet(DB_KEYS.messages)||[]);
+    if(messagesDirty.length) changes.messages = messagesDirty;
+    const torDirty = _opsDirty('timeOffRequests', dbGet(DB_KEYS.timeOffRequests)||[]);
+    if(torDirty.length) changes.timeOffRequests = torDirty;
+
+    if(!Object.keys(changes).length) return; // nothing changed locally — nothing to send
+
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes})
     });
-    // Store merged data locally too, so this device reflects what was just pushed
-    dbSet(DB_KEYS.feed, payload.feed);
-    dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
-    dbSet(DB_KEYS.timeOffLedger, payload.timeOffLedger);
-    localStorage.setItem('wl_clients_db', JSON.stringify(mergedClients));
-    _setClientsCloudSnapshot(mergedClients);
+    if(!res.ok) return;
+    const body = await res.json().catch(()=>({}));
+    // Server REJECTS (not silently drops) an out-of-scope client edit with a
+    // clear reason — surface it, don't let it vanish silently on the refresh
+    // below (see api/ops-sync.js checkMemberClientWrite()).
+    if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
+      showToast(`❌ Not saved: ${body.rejected[0].reason}`);
+    }
+    // Refresh from the server so this device reflects exactly what was accepted.
+    await cloudFetchUsers();
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
   }catch(e){}
 }
@@ -1094,49 +1029,58 @@ let myGoals = [];
 const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com',password:'1234567'}];
 
 // ── LOGIN ──
+// Verifies credentials server-side against Supabase via /api/ops-auth, which
+// returns a signed session token (see lib/opsSession.js). That token — not
+// anything read from localStorage — is what /api/ops-state and /api/ops-sync
+// trust for this device's role.
 async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
   const btn   = document.querySelector('#loginScreen .btn-primary');
   if(!email||!pass){ errEl.style.display='block'; return; }
-
-  // Block admin accounts
-  if(ADMIN_CREDS.some(c=>c.email===email && c.password===pass)){
-    errEl.innerHTML='⚠️ Admin account — please use <a href="index.html" style="color:var(--text);">Admin Panel</a>';
-    errEl.style.display='block'; return;
-  }
-
-  // Show loading state
-  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
   errEl.style.display='none';
+  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
 
-  // 1. Always try to fetch latest user list from cloud (API key is always available)
-  let users = await cloudFetchUsers();
-  // 2. Fallback to local cache if cloud fetch failed
-  if(!Array.isArray(users)){
-    users = dbGet(DB_KEYS.users)||[];
-  }
-
-  // Restore button
-  if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
-
-  const found = users.find(u=>u.email.toLowerCase()===email && u.password===pass);
-  if(found){
-    errEl.style.display='none';
-    currentUser = found;
-    // ── Persist session across refreshes ──
-    try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,id:found.id,name:found.name,ts:Date.now()})); }catch(e){}
-    if(found.mustChangePassword){
-      showForcedPasswordChange();
-    } else {
-      showApp();
+  let authData;
+  try{
+    const res = await fetch(OPS_AUTH_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email, password:pass})});
+    authData = await res.json().catch(()=>({}));
+    if(!res.ok || !authData.token){
+      errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
+      errEl.style.display='block';
+      if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+      return;
     }
+  }catch(e){
+    errEl.innerHTML = 'Sign-in failed: '+e.message;
+    errEl.style.display='block';
+    if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
     return;
   }
 
-  errEl.innerHTML = '❌ Incorrect email or password. <span style="font-size:11px;">Need access? Contact your admin.</span>';
-  errEl.style.display='block';
+  // Block admin accounts from the team-member portal
+  if(authData.role === 'admin'){
+    _setOpsToken(null);
+    errEl.innerHTML='⚠️ Admin account — please use <a href="index.html" style="color:var(--text);">Admin Panel</a>';
+    errEl.style.display='block';
+    if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+    return;
+  }
+
+  _setOpsToken(authData.token);
+  await cloudFetchUsers();
+  if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+
+  const users = dbGet(DB_KEYS.users)||[];
+  const found = users.find(u=>u.id===authData.id) || {id:authData.id, name:authData.name, email:authData.email, title:authData.title, mustChangePassword:authData.mustChangePassword};
+  currentUser = found;
+  try{ localStorage.setItem('wl_user_session',JSON.stringify({email:found.email,id:found.id,name:found.name,ts:Date.now()})); }catch(e){}
+  if(found.mustChangePassword){
+    showForcedPasswordChange();
+  } else {
+    showApp();
+  }
 }
 
 function showForcedPasswordChange(){
@@ -1176,25 +1120,18 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  // Push updated password to cloud so all devices see the updated password.
-  // Merge onto a freshly-fetched cloud record instead of pushing the full
-  // local users/admins arrays verbatim — a blind push here was one of the
-  // root causes of accounts disappearing (a stale local cache on this tab
-  // would silently wipe out account edits made elsewhere since its last pull).
-  if(cloudIsConfigured() && btn){
+  // Push the new password via the narrow selfPasswordChange carve-out — every
+  // role may change their OWN password/mustChangePassword only; the server
+  // (api/ops-sync.js) enforces this is scoped to the caller's own row.
+  const token = _opsToken();
+  if(token && btn){
     btn.textContent='Saving…'; btn.disabled=true;
-    const localAdmins = dbGet(DB_KEYS.admins)||[];
     try{
-      const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
-      const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
-      const mergedUsers = _mergeUsersLocalOntoCloud(cur.users, allUsers);
-      const mergedAdmins = _mergeAdminsLocalOntoCloud(cur.admins, localAdmins);
-      await fetch(CLOUD_DATA_URL,{
-        method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({...cur, users: mergedUsers, admins: mergedAdmins})
+      await fetch(OPS_SYNC_URL,{
+        method:'POST',
+        headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+        body: JSON.stringify({changes:{selfPasswordChange:{password:np, mustChangePassword:false}}})
       });
-      _setUsersCloudSnapshot(mergedUsers);
     }catch(e){ /* non-critical, local already saved */ }
     if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
   }
@@ -1216,6 +1153,7 @@ function logout(){
   const name = currentUser?.name || 'User';
   logActivity('nav', name, 'Signed out', '');
   try{ localStorage.removeItem('wl_user_session'); }catch(e){}
+  _setOpsToken(null);
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');
@@ -2053,23 +1991,16 @@ async function changeUserPassword(){
   if(idx>-1){ all[idx].password=nw; dbSet(DB_KEYS.users,all); }
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   showToast('Password updated ✓ — syncing…');
-  // Push to cloud (both users and admins) — merge onto a freshly-fetched cloud
-  // record instead of pushing the full local arrays verbatim (see
-  // submitForcedPasswordChange() above for why a blind push here was one of
-  // the root causes of accounts disappearing).
-  if(cloudIsConfigured()){
-    const localAdmins=dbGet(DB_KEYS.admins)||[];
+  // Push via the narrow selfPasswordChange carve-out (see api/ops-sync.js) —
+  // every role may change only their OWN password, nothing else on the users table.
+  const _token = _opsToken();
+  if(_token){
     try{
-      const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
-      const cur = r0.ok ? ((await r0.json())?.record || {}) : {};
-      const mergedUsers = _mergeUsersLocalOntoCloud(cur.users, all);
-      const mergedAdmins = _mergeAdminsLocalOntoCloud(cur.admins, localAdmins);
-      await fetch(CLOUD_DATA_URL,{
-        method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...cur, users:mergedUsers, admins:mergedAdmins})
+      await fetch(OPS_SYNC_URL,{
+        method:'POST',
+        headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+_token},
+        body: JSON.stringify({changes:{selfPasswordChange:{password:nw}}})
       });
-      _setUsersCloudSnapshot(mergedUsers);
     }catch(e){}
   }
   // Refresh session timestamp

@@ -1130,11 +1130,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-sub">Sync data to the shared cloud store so team members can log in from any device</div>
           </div>
           <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm btn-outline" onclick="cloudPullAll()">↓ Pull All Data</button>
-            <button class="btn btn-sm btn-primary" onclick="cloudPushAll()">↑ Push All Data</button>
             <button class="btn btn-sm btn-outline" onclick="exportCloudDataBackup()">⬇ Export Backup (JSON)</button>
-            <button class="btn btn-sm btn-outline" onclick="downloadLocalData()" title="Download every wl_* key from this browser's localStorage. Reads ONLY local data — no cloud/Blob call — so it works even if Blob is removed.">⬇ Download Local Data</button>
+            <button class="btn btn-sm btn-outline" onclick="downloadLocalData()" title="Download every wl_* key from this browser's localStorage. Reads ONLY local data — no cloud call.">⬇ Download Local Data</button>
           </div>
+          <!-- Pull/Push buttons removed: sync is now fully automatic (load, 30s poll, debounced
+               push on change) against Supabase — there is nothing to manually trigger. -->
         </div>
         <div class="card-body">
           <div id="cloudSyncStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">☁️ Checking status…</div>
@@ -5932,81 +5932,61 @@ function _assignBrightwheelExportToAbby(){
   }
 }
 
-// Override the existing doLogin to log activity and check stored users
+// Override the existing doLogin: verifies credentials server-side against
+// Supabase via /api/ops-auth, which returns a SIGNED session token. That
+// token — not anything read from localStorage — is what /api/ops-state and
+// /api/ops-sync trust for the caller's role, so a browser can no longer grant
+// itself admin access by editing local storage.
 window.doLogin = async function(){
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
   const btn   = document.querySelector('#loginScreen .btn-primary');
   if(!email||!pass){ errEl.style.display='block'; return; }
+  errEl.style.display='none';
+  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
 
-  // ── Check hardcoded admin FIRST (no cloud needed) ──
-  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
-  const ADMIN_CREDS = [{email:'ssamy@weblightmedia.com', password:_primaryPw, name:'Sarah Samy'}];
-  const hardcodedAdmin = ADMIN_CREDS.find(c => c.email===email && c.password===pass);
-  if(hardcodedAdmin){
-    errEl.style.display='none';
-    // Pull latest cloud data before showing UI so all panels are up to date immediately
-    if(cloudIsConfigured()){
-      if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
-      await cloudPullAll(true);
+  let authData;
+  try{
+    const res = await fetch(OPS_AUTH_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password:pass}) });
+    authData = await res.json().catch(()=>({}));
+    if(!res.ok || !authData.token){
+      errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
+      errEl.style.display='block';
       if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
+      return;
     }
-    currentRole='admin';
-    currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy', title:'Operations Manager'};
-    logActivity('login','Admin (Sarah Samy)','Admin signed in','admin panel');
-    showAdminApp();
-    setTimeout(()=>_updateSidebarForAdmin(currentAdminInfo), 50);
-    startLiveSync('owner');
+  }catch(e){
+    errEl.innerHTML = 'Sign-in failed: '+e.message;
+    errEl.style.display='block';
+    if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
     return;
   }
 
-  // ── For all other logins, sync from cloud first ──
-  if(btn){ btn.textContent='Signing in…'; btn.disabled=true; }
-  errEl.style.display='none';
-  if(cloudIsConfigured()){ await cloudPullUsers(true); }
+  _setOpsToken(authData.token);
+  await cloudPullAll(true); // populate localStorage from Supabase before showing UI
   if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
 
-  // Dynamic admins (synced from cloud)
-  // If the pull failed or the local DB is still empty, do a direct fallback fetch
-  let storedAdmins = dbGet(DB_KEYS.admins)||[];
-  if(!storedAdmins.length && cloudIsConfigured()){
-    try{
-      const fb = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
-      if(fb.ok){
-        const fd = await fb.json();
-        const cloudAdmins = fd?.record?.admins || [];
-        if(cloudAdmins.length){ dbSet(DB_KEYS.admins, cloudAdmins); storedAdmins = cloudAdmins; }
-      }
-    }catch(e){}
-  }
-  const dynamicAdmin = storedAdmins.find(a => a.email.toLowerCase()===email && a.password===pass);
-  if(dynamicAdmin){
-    errEl.style.display='none';
+  if(authData.role === 'admin'){
+    const admins = dbGet(DB_KEYS.admins)||[];
+    const fullAdmin = admins.find(a=>a.id===authData.id) || {};
     currentRole='admin';
-    currentAdminInfo = {email: dynamicAdmin.email, name: dynamicAdmin.name||'Admin', title: dynamicAdmin.title||''};
-    logActivity('login',`Admin (${dynamicAdmin.name||'Admin'})`,'Admin signed in','admin panel');
-    // Store level so session restore can apply restrictions
-    try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:dynamicAdmin.level||'admin', adminId:dynamicAdmin.id, ts:Date.now()})); }catch(e){}
+    currentAdminInfo = {email: authData.email, name: fullAdmin.name||authData.name||'Admin', title: fullAdmin.title||authData.title||''};
+    logActivity('login',`Admin (${currentAdminInfo.name})`,'Admin signed in','admin panel');
+    try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:authData.level||fullAdmin.level||'admin', adminId:authData.id, ts:Date.now()})); }catch(e){}
     showAdminApp();
-    setTimeout(()=>_updateSidebarForAdmin(dynamicAdmin), 50);
-    setTimeout(()=>applyAdminRoleRestrictions(dynamicAdmin.level||'admin', dynamicAdmin), 100);
-    startLiveSync(dynamicAdmin.level||'admin');
+    setTimeout(()=>_updateSidebarForAdmin({...fullAdmin, name:currentAdminInfo.name, title:currentAdminInfo.title}), 50);
+    setTimeout(()=>applyAdminRoleRestrictions(authData.level||fullAdmin.level||'admin', fullAdmin), 100);
+    startLiveSync(authData.level||fullAdmin.level||'admin');
     return;
   }
-  // Stored users (synced from cloud)
+
   const storedUsers = dbGet(DB_KEYS.users)||[];
-  const storedUser = storedUsers.find(u => u.email.toLowerCase()===email && u.password===pass);
-  if(storedUser){
-    errEl.style.display='none';
-    currentRole='user';
-    currentUserData = storedUser;
-    logActivity('login', storedUser.name, 'User signed in', storedUser.title);
-    showUserApp();
-    return;
-  }
-  errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
-  errEl.style.display='block';
+  const storedUser = storedUsers.find(u=>u.id===authData.id) || {id:authData.id, name:authData.name, email:authData.email, title:authData.title};
+  currentRole='user';
+  currentUserData = storedUser;
+  logActivity('login', storedUser.name, 'User signed in', storedUser.title||'');
+  showUserApp();
 };
 
 // ── Helper: get the real logged-in user's name (never reads the static DOM placeholder) ──
@@ -6522,11 +6502,22 @@ window.switchAdminTab = function(el, tab){
 };
 
 // ═══════════════════════════════════════════════════════════
-// ☁️  CLOUD SYNC ENGINE  —  shared store via /api/cloud-data (Vercel Blob)
+// ☁️  CLOUD SYNC ENGINE  —  Supabase, via /api/ops-state (read) and
+//     /api/ops-sync (per-record write). Every table lives server-side; the
+//     browser never merges conflicting copies of shared data anymore — it
+//     just displays whatever Supabase has and sends only the records it
+//     actually changed. That is what makes "empty/stale browser overwrites
+//     everyone" structurally impossible now: a stale browser has nothing to
+//     send, and the server never deletes a row just because its id is absent
+//     from a payload (see api/ops-sync.js).
 // ═══════════════════════════════════════════════════════════
-const CLOUD_DATA_URL = '/api/cloud-data';
+const OPS_STATE_URL = '/api/ops-state';
+const OPS_SYNC_URL  = '/api/ops-sync';
+const OPS_AUTH_URL  = '/api/ops-auth';
 
 function cloudIsConfigured(){ return true; }
+function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
+function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token', token); else localStorage.removeItem('wl_ops_token'); }catch(e){} }
 
 function setCloudStatus(msg, type='idle'){
   const el = document.getElementById('cloudSyncStatus');
@@ -6542,84 +6533,42 @@ function updateCloudStatusUI(){
     const d = new Date(lastSync);
     setCloudStatus(`✅ Last synced: ${d.toLocaleString()}`, 'ok');
   } else {
-    setCloudStatus('☁️ Click "↑ Push All Data" to sync now.', 'idle');
+    setCloudStatus('☁️ Syncing automatically…', 'idle');
   }
 }
 
-// Merge two arrays by id, deduplicating and keeping newest, limited to `limit` items.
-// IDs aren't always numeric (e.g. 'lf'+Date.now(), 'to_'+Date.now()) — pull the embedded
-// timestamp out of the id, or fall back to a time/ts/submittedAt field, so sorting never
-// silently breaks (a NaN comparator gives unspecified order and can drop recent items).
-function _mergeCloudArr(cloudArr, localArr, limit=200){
-  const combined = [...(Array.isArray(cloudArr)?cloudArr:[]), ...(Array.isArray(localArr)?localArr:[])];
-  const seen = new Set();
-  const sortKey = x => {
-    const n = parseInt(String(x.id).replace(/\D/g,''), 10);
-    if(!isNaN(n)) return n;
-    const t = new Date(x.time||x.ts||x.submittedAt||0).getTime();
-    return isNaN(t) ? 0 : t;
-  };
-  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
-                 .sort((a,b)=>sortKey(b)-sortKey(a)).slice(0,limit);
-}
-
-// Merge time-off requests with "decision wins" — once any side records an approve/deny
-// decision, that decision (and admin note) stays, even if the other side still has 'pending'.
-function _mergeTimeOff(primaryArr, secondaryArr){
-  const merged = _mergeCloudArr(primaryArr, secondaryArr, 1000);
-  const all = [...(Array.isArray(primaryArr)?primaryArr:[]), ...(Array.isArray(secondaryArr)?secondaryArr:[])];
-  const decidedMap = {};
-  all.forEach(r=>{ if(r.status==='approved'||r.status==='denied') decidedMap[String(r.id)]=r; });
-  merged.forEach(r=>{
-    const dv = decidedMap[String(r.id)];
-    if(dv){ r.status=dv.status; r.reviewedAt=r.reviewedAt||dv.reviewedAt; r.reviewedBy=r.reviewedBy||dv.reviewedBy; r.adminNote=r.adminNote||dv.adminNote; }
-  });
-  return merged;
-}
-
-// Time-off LEDGER entries (distinct from the pending/approved/denied requests above)
-// are permanent and immutable — write-once, never edited or deleted after creation.
-// That means, unlike _mergeClientsLocalOntoCloud (which needs snapshot-diff dirty
-// tracking because the SAME client record gets mutated repeatedly by different
-// people), merging the ledger only ever needs a plain union-by-id: keep every
-// entry either side has, with NO cap — _mergeCloudArr's limit would silently
-// truncate history, which is exactly what this data must never do.
-function _mergeTimeOffLedger(cloudArr, localArr){
+// After every pull, remember exactly what the server sent for each table.
+// Before every push, only rows that differ from that snapshot are sent —
+// this is purely a bandwidth optimization; SAFETY comes from the server
+// never touching a row that isn't in the payload, not from this diff.
+function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
+function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+function _opsDirty(table, localArr){
+  if(!Array.isArray(localArr) || !localArr.length) return [];
+  let snap = null;
+  try{ const raw = localStorage.getItem(_opsSnapKey(table)); snap = raw!=null ? JSON.parse(raw) : null; }catch(e){ snap = null; }
+  if(snap === null) return localArr.slice(); // no snapshot yet — server-side upsert guards make this safe to send in full
   const byId = {};
-  (Array.isArray(cloudArr)?cloudArr:[]).forEach(e=>{ if(e && e.id) byId[e.id]=e; });
-  (Array.isArray(localArr)?localArr:[]).forEach(e=>{ if(e && e.id && !byId[e.id]) byId[e.id]=e; });
-  return Object.values(byId);
-}
-
-// Merge roadmap tasks by updated_at so the most recently changed version wins
-// This prevents live-sync from reverting archives, bucket moves, etc.
-function _mergeRoadmapArr(cloudArr, localArr, limit=1000){
-  const map = new Map();
-  (Array.isArray(cloudArr)?cloudArr:[]).forEach(t=>{ if(t?.id!=null) map.set(String(t.id), t); });
-  (Array.isArray(localArr)?localArr:[]).forEach(t=>{
-    if(t?.id==null){ return; }
-    const key = String(t.id);
-    const existing = map.get(key);
-    if(!existing){ map.set(key,t); return; }
-    const lt = new Date(t.updated_at||t.created_at||0).getTime();
-    const ct = new Date(existing.updated_at||existing.created_at||0).getTime();
-    if(lt >= ct) map.set(key, t); // local wins on tie (just edited)
+  snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
+  return localArr.filter(r=>{
+    if(!r || r.id==null) return false;
+    const prev = byId[r.id];
+    return !prev || JSON.stringify(prev)!==JSON.stringify(r);
   });
-  return [...map.values()].slice(0, limit);
 }
 
-// Push ALL data to the shared cloud store (read-modify-write to avoid overwriting others)
-// _retryReduced: internal flag — when a previous attempt failed because the
-// payload exceeded the size limit, retry once with trimmed history so critical
-// team/client data (users, admins, clients) still gets through.
-// Manual, on-demand backup: downloads the entire shared cloud record (users,
-// admins, clients, everything) as a JSON file straight to the admin's device —
-// independent of the app/server, so even a future mistake here can be
-// recovered from. Complements the automated daily snapshot (see
-// api/backup-cloud-data.js + vercel.json "crons").
+// Push ONLY the records that changed locally since the last pull.
+// Manual, on-demand backup: downloads the entire shared Supabase-backed record
+// (users, admins, clients, everything this session's role can see) as a JSON
+// file straight to the admin's device — independent of the app/server, so
+// even a future mistake here can be recovered from. Complements Supabase's
+// own automated backups (enable Point-in-Time Recovery / daily backups in the
+// Supabase dashboard — see Settings → Database → Backups).
 async function exportCloudDataBackup(){
   try{
-    const res = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+    const token = _opsToken();
+    if(!token) throw new Error('Not signed in');
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{Authorization:'Bearer '+token}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
     const record = data?.record || {};
@@ -6675,121 +6624,94 @@ function downloadLocalData(){
   }
 }
 
-async function cloudPushAll(silent=false, _retryReduced=false){
-  setCloudStatus('Syncing to cloud…','syncing');
+async function cloudPushAll(silent=false){
+  const token = _opsToken();
+  if(!token){ return false; } // not signed in yet — nothing to push
+  setCloudStatus('Syncing…','syncing');
   try {
-    // Pull latest first so we don't overwrite data from other team members
-    let cloudRecord = {};
-    try {
-      const r0 = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
-      if(r0.ok){ const d=await r0.json(); cloudRecord=d?.record||{}; }
-    } catch(e){}
+    const changes = {};
+    const usersDirty = _opsDirty('users', dbGet(DB_KEYS.users)||[]);
+    if(usersDirty.length) changes.users = usersDirty;
+    const adminsDirty = _opsDirty('admins', dbGet(DB_KEYS.admins)||[]);
+    if(adminsDirty.length) changes.admins = adminsDirty;
+    const clientsDirty = _opsDirty('clients', _getClientDB());
+    if(clientsDirty.length) changes.clients = clientsDirty;
+    const goalsDirty = _opsDirty('goals', dbGet(DB_KEYS.goals)||[]);
+    if(goalsDirty.length) changes.goals = goalsDirty;
+    const feedDirty = _opsDirty('feed', dbGet(DB_KEYS.feed)||[]);
+    if(feedDirty.length) changes.feed = feedDirty;
+    const messagesDirty = _opsDirty('messages', dbGet(DB_KEYS.messages)||[]);
+    if(messagesDirty.length) changes.messages = messagesDirty;
+    const roadmapDirty = _opsDirty('roadmapTasks', dbGet(DB_KEYS.roadmapTasks)||[]);
+    if(roadmapDirty.length) changes.roadmapTasks = roadmapDirty;
+    const torDirty = _opsDirty('timeOffRequests', dbGet(DB_KEYS.timeOffRequests)||[]);
+    if(torDirty.length) changes.timeOffRequests = torDirty;
+    const ledgerDirty = _opsDirty('timeOffLedger', dbGet(DB_KEYS.timeOffLedger)||[]);
+    if(ledgerDirty.length) changes.timeOffLedger = ledgerDirty;
+    const orgNodesDirty = _opsDirty('orgNodes', dbGet(DB_KEYS.orgNodes)||[]);
+    if(orgNodesDirty.length) changes.orgNodes = orgNodesDirty;
+    const orgLinksDirty = _opsDirty('orgLinks', dbGet(DB_KEYS.orgLinks)||[]);
+    if(orgLinksDirty.length) changes.orgLinks = orgLinksDirty;
 
-    const localDelUsers  = dbGet(DB_KEYS.deletedUserIds)||[];
-    const cloudDelUsers  = cloudRecord.deletedUserIds||[];
-    // assmaa/sherine are real working members that were mistakenly tombstoned once
-    // before — never let an old cloud copy of the tombstone list resurrect that.
-    const deletedUserIds = [...new Set([...localDelUsers, ...cloudDelUsers])].filter(id=>id!=='assmaa'&&id!=='sherine');
-    dbSet(DB_KEYS.deletedUserIds, deletedUserIds);
+    const settings = {};
+    const ann = dbGet('wl_announcement'); if(ann!==null && ann!==undefined) settings.announcement = ann;
+    const coc = dbGet(DB_KEYS.coc); if(coc) settings.coc = coc;
+    const appSettings = dbGet(DB_KEYS.settings); if(appSettings) settings.appSettings = appSettings;
+    const otPolicy = dbGet(DB_KEYS.otPolicy); if(otPolicy) settings.otPolicy = otPolicy;
+    const orgExcluded = localStorage.getItem('wl_org_excluded_names'); if(orgExcluded) settings.orgExcluded = orgExcluded;
+    const orgLayoutVersion = localStorage.getItem('wl_org_layout_ver'); if(orgLayoutVersion) settings.orgLayoutVersion = orgLayoutVersion;
+    const primaryAdminPw = localStorage.getItem('wl_primary_admin_pw'); if(primaryAdminPw) settings.primaryAdminPw = primaryAdminPw;
+    if(Object.keys(settings).length) changes.settings = settings;
 
-    // Filter deleted users from cloud before merging
-    const cloudUsersFiltered = (cloudRecord.users||[]).filter(u=>!deletedUserIds.includes(u.id));
+    // Tombstones: only send ids we haven't already told the server about, so
+    // we don't keep re-sending the same delete forever.
+    const allTombIds = dbGet(DB_KEYS.deletedUserIds)||[];
+    let alreadySent = [];
+    try{ alreadySent = JSON.parse(localStorage.getItem('wl_tombstones_sent')||'[]'); }catch(e){}
+    const newTombs = allTombIds.filter(id=>!alreadySent.includes(id));
+    const body = { changes };
+    if(newTombs.length) body.tombstones = { users: newTombs };
 
-    // Merge admins: union of cloud + local by email so neither side can wipe the other
-    const localAdmins = dbGet(DB_KEYS.admins)||[];
-    const cloudAdmins = cloudRecord.admins||[];
-    const mergedAdmins = [...cloudAdmins];
-    localAdmins.forEach(la=>{
-      const idx = mergedAdmins.findIndex(ca=>ca.email===la.email);
-      if(idx>-1) mergedAdmins[idx]=la; // local wins for updates
-      else mergedAdmins.push(la);       // new local admin added to cloud
-    });
+    if(!Object.keys(changes).length && !newTombs.length){
+      updateCloudStatusUI();
+      return true; // nothing changed locally — nothing to send
+    }
 
-    // Merge client DBs: only let local win for records we actually edited
-    // since our last known cloud state (see _mergeClientsLocalOntoCloud) —
-    // not a blind "local overwrites cloud for every id it has" merge, which
-    // let any unrelated push clobber other team members' edits.
-    const localClients = _getClientDB();
-    const cloudClients = Array.isArray(cloudRecord.clients) ? cloudRecord.clients : [];
-    const mergedClients = _mergeClientsLocalOntoCloud(cloudClients, localClients);
-
-    // Merge users the same dirty-tracked way as clients above (see
-    // _mergeUsersLocalOntoCloud): never blindly push the local users array as
-    // if it were authoritative — that wiped out other devices'/tabs' account
-    // edits whenever this tab's local cache was stale. cloudUsersFiltered is
-    // already tombstone-filtered above.
-    const mergedUsers = _mergeUsersLocalOntoCloud(cloudUsersFiltered, dbGet(DB_KEYS.users)||[]);
-
-    const payload = {
-      users:        mergedUsers,
-      admins:       mergedAdmins,
-      clients:      mergedClients,
-      orgExcluded:  localStorage.getItem('wl_org_excluded_names') || cloudRecord.orgExcluded || '[]',
-      goals:        _mergeCloudArr(cloudRecord.goals,    dbGet(DB_KEYS.goals)||[]),
-      feed:         _mergeCloudArr(cloudRecord.feed,     dbGet(DB_KEYS.feed)||[], 100),
-      announcement: dbGet('wl_announcement') || cloudRecord.announcement || null,
-      coc:          dbGet(DB_KEYS.coc) || cloudRecord.coc || null,
-      settings:     dbGet(DB_KEYS.settings) || cloudRecord.settings || null,
-      orgNodes:        dbGet(DB_KEYS.orgNodes) || cloudRecord.orgNodes || null,
-      orgLinks:        dbGet(DB_KEYS.orgLinks) || cloudRecord.orgLinks || null,
-      orgLayoutVersion: localStorage.getItem('wl_org_layout_ver') || cloudRecord.orgLayoutVersion || null,
-      primaryAdminPw: localStorage.getItem('wl_primary_admin_pw') || cloudRecord.primaryAdminPw || null,
-      otPolicy:     dbGet(DB_KEYS.otPolicy) || cloudRecord.otPolicy || null,
-      deletedUserIds,
-      messages:     _mergeCloudArr(cloudRecord.messages,     dbGet(DB_KEYS.messages)||[], _retryReduced ? 100 : 500),
-      roadmapTasks: _mergeRoadmapArr(cloudRecord.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[], _retryReduced ? 150 : 1000),
-      timeOffRequests: _mergeTimeOff(cloudRecord.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]),
-      timeOffLedger: _mergeTimeOffLedger(cloudRecord.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]),
-    };
-    if(_retryReduced) payload.feed = _mergeCloudArr(cloudRecord.feed, dbGet(DB_KEYS.feed)||[], 30);
-
-    const body = JSON.stringify(payload);
-    console.log('[WLM Cloud] Push payload size:', (body.length/1024).toFixed(1)+'KB');
-
-    const res = await fetch(CLOUD_DATA_URL, {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json'},
-      body
+    const res = await fetch(OPS_SYNC_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify(body)
     });
     if(!res.ok){
       let detail = '';
       try{ const errBody = await res.json(); if(errBody?.error) detail = ': '+errBody.error; }
       catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
-      // Payload over the size limit — retry once with trimmed history so the
-      // critical team/client data (users, admins, clients) still syncs.
-      if(!_retryReduced && (res.status===413 || /size|too large|payload/i.test(detail))){
-        return await cloudPushAll(silent, true);
-      }
       throw new Error(`HTTP ${res.status}${detail}`);
     }
+    if(newTombs.length){ try{ localStorage.setItem('wl_tombstones_sent', JSON.stringify([...alreadySent, ...newTombs])); }catch(e){} }
 
-    // Store merged data locally so admin sees merged state too
-    dbSet(DB_KEYS.users, payload.users);
-    dbSet(DB_KEYS.admins, payload.admins);
-    dbSet(DB_KEYS.goals, payload.goals);
-    dbSet(DB_KEYS.feed, payload.feed);
-    dbSet(DB_KEYS.timeOffRequests, payload.timeOffRequests);
-    dbSet(DB_KEYS.timeOffLedger, payload.timeOffLedger);
-    if(payload.clients){ _saveClientDB(payload.clients); _setClientsCloudSnapshot(payload.clients); }
-    _setUsersCloudSnapshot(payload.users);
-
-    const now = new Date().toISOString();
-    localStorage.setItem('wl_cloud_last_sync', now);
-    updateCloudStatusUI();
-    if(!silent) showToast('✅ All data synced to cloud');
+    // Refresh from the server so this device reflects exactly what's stored,
+    // including anything else that changed concurrently.
+    await cloudPullAll(true);
+    if(!silent) showToast('✅ Synced');
     return true;
   } catch(e){
     setCloudStatus('Sync failed: '+e.message,'error');
-    if(!silent) showToast('❌ Cloud sync failed: '+e.message);
+    if(!silent) showToast('❌ Sync failed: '+e.message);
     return false;
   }
 }
 
-// Pull ALL data from the shared cloud store and merge into localStorage
+// Pull the full current state from Supabase (already role-filtered server-side)
+// and adopt it as-is per table — no client-side merging. The server is the
+// single source of truth; a stale/empty browser simply displays whatever the
+// server has, it never overwrites it.
 async function cloudPullAll(silent=false, fromLiveSync=false){
-  setCloudStatus('Pulling from cloud…','syncing');
+  const token = _opsToken();
+  if(!token) return;
+  setCloudStatus('Syncing…','syncing');
   try {
-    const res = await fetch(CLOUD_DATA_URL, {cache:'no-store'});
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     if(!res.ok){
       let detail = '';
       try{ const errBody = await res.json(); if(errBody?.error) detail = ': '+errBody.error; }
@@ -6799,127 +6721,37 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     const data = await res.json();
     const r = data?.record || {};
 
-    // Merge tombstone lists (deleted IDs) — union of cloud + local
-    const pulledDelUsers = r.deletedUserIds||[];
-    // assmaa/sherine are real working members that were mistakenly tombstoned once
-    // before — never let an old cloud copy of the tombstone list resurrect that.
-    let   mergedDelUsers = [...new Set([...(dbGet(DB_KEYS.deletedUserIds)||[]), ...pulledDelUsers])].filter(id=>id!=='assmaa'&&id!=='sherine');
+    dbSet(DB_KEYS.users, r.users||[]);              _opsSetSnapshot('users', r.users||[]);
+    dbSet(DB_KEYS.admins, r.admins||[]);            _opsSetSnapshot('admins', r.admins||[]);
+    _saveClientDB(r.clients||[]);                   _opsSetSnapshot('clients', r.clients||[]);
+    dbSet(DB_KEYS.goals, r.goals||[]);               _opsSetSnapshot('goals', r.goals||[]);
+    dbSet(DB_KEYS.feed, r.feed||[]);                 _opsSetSnapshot('feed', r.feed||[]);
+    dbSet(DB_KEYS.messages, r.messages||[]);         _opsSetSnapshot('messages', r.messages||[]);
+    dbSet(DB_KEYS.roadmapTasks, r.roadmapTasks||[]); _opsSetSnapshot('roadmapTasks', r.roadmapTasks||[]);
+    dbSet(DB_KEYS.timeOffRequests, r.timeOffRequests||[]); _opsSetSnapshot('timeOffRequests', r.timeOffRequests||[]);
+    dbSet(DB_KEYS.timeOffLedger, r.timeOffLedger||[]);     _opsSetSnapshot('timeOffLedger', r.timeOffLedger||[]);
+    dbSet(DB_KEYS.orgNodes, r.orgNodes||[]);         _opsSetSnapshot('orgNodes', r.orgNodes||[]);
+    dbSet(DB_KEYS.orgLinks, r.orgLinks||[]);         _opsSetSnapshot('orgLinks', r.orgLinks||[]);
+    dbSet(DB_KEYS.deletedUserIds, r.deletedUserIds||[]);
 
-    // ── CRITICAL: if the cloud explicitly lists a user as ACTIVE (present in r.users,
-    // not archived), the admin has intentionally restored them on another device.
-    // Remove their ID from the local tombstone so the restore is honoured here too.
-    if(Array.isArray(r.users) && r.users.length > 0){
-      const cloudActiveIds = new Set(
-        r.users.filter(u=>u.id && !u.archived && (u.status==='active'||!u.status)).map(u=>u.id)
-      );
-      mergedDelUsers = mergedDelUsers.filter(id => !cloudActiveIds.has(id));
-    }
+    if('announcement' in r) dbSet('wl_announcement', r.announcement);
+    if('coc' in r)          dbSet(DB_KEYS.coc, r.coc);
+    if('settings' in r)     dbSet(DB_KEYS.settings, r.settings);
+    if('otPolicy' in r)     dbSet(DB_KEYS.otPolicy, r.otPolicy);
+    if(r.orgExcluded)       localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
+    if(r.orgLayoutVersion)  localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
+    if(r.primaryAdminPw)    localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
 
-    dbSet(DB_KEYS.deletedUserIds, mergedDelUsers);
-
-    // Users: merge cloud + local — cloud wins on conflicts but NEVER wipes local if
-    // cloud returns an empty array. Union by user ID preserves local-only accounts.
-    // IMPORTANT: if cloud says a user is active (no archived flag or archived=false),
-    // we honour that and clear any stale archived flag stored locally.
-    if(Array.isArray(r.users) && r.users.length > 0){
-      const localUsers = dbGet(DB_KEYS.users) || [];
-      const cloudById  = {};
-      r.users.forEach(u=>{ if(u.id) cloudById[u.id]=u; });
-      // Build merged list: cloud records first (cloud is authoritative), filtered by tombstone
-      const mergedUsers = r.users
-        .filter(u=>!mergedDelUsers.includes(u.id))
-        .map(u=>{
-          // If cloud record says active (no archived flag or explicitly false), un-archive
-          const cloudActive = !u.archived && (u.status === 'active' || !u.status);
-          if(cloudActive){
-            return Object.assign({}, u, { archived: false, archivedAt: null });
-          }
-          return u;
-        });
-      // Preserve any local-only accounts not in cloud and not tombstoned
-      localUsers.forEach(lu=>{
-        if(!mergedDelUsers.includes(lu.id) && !cloudById[lu.id]) mergedUsers.push(lu);
-      });
-      dbSet(DB_KEYS.users, mergedUsers);
-      _setUsersCloudSnapshot(mergedUsers);
-    }
-    // Admins: same safe-merge — never overwrite local admins with empty cloud array.
-    if(Array.isArray(r.admins) && r.admins.length > 0){
-      const localAdmins   = dbGet(DB_KEYS.admins) || [];
-      const cloudAByEmail = {};
-      r.admins.forEach(a=>{ if(a.email) cloudAByEmail[a.email.toLowerCase()]=a; });
-      const mergedAdmins = [...r.admins];
-      localAdmins.forEach(la=>{
-        if(la.email && !cloudAByEmail[la.email.toLowerCase()]) mergedAdmins.push(la);
-      });
-      dbSet(DB_KEYS.admins, mergedAdmins);
-    }
-    // Restore client data from cloud, but keep any of our own not-yet-pushed
-    // local edits to specific records (see _mergeClientsLocalOntoCloud) —
-    // don't just blindly overwrite with cloud's copy.
-    if(r.clients && Array.isArray(r.clients) && r.clients.length){
-      const mergedClients = _mergeClientsLocalOntoCloud(r.clients, _getClientDB());
-      _saveClientDB(mergedClients);
-      _setClientsCloudSnapshot(mergedClients);
-    }
-    // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa that an older
-    // cloud snapshot might otherwise keep reintroducing, then re-tag/un-tag seed
-    // placeholders now that both users AND client assignment data are fully synced.
-    if(typeof _restoreMisarchivedRealWorkers==='function') _restoreMisarchivedRealWorkers();
-    if(typeof _fixAssmaaPayRate==='function') _fixAssmaaPayRate();
-    if(typeof _recreateSarahIbrahim==='function') _recreateSarahIbrahim();
-    if(typeof _fixSarahIbrahimPassword==='function') _fixSarahIbrahimPassword();
-    if(typeof _removeDuplicateAssmaaRecord==='function') _removeDuplicateAssmaaRecord();
-    if(typeof _removeDeadAbbySeedDuplicate==='function') _removeDeadAbbySeedDuplicate();
-    if(typeof _resetAbbyAndEmilyFirstLoginPassword==='function') _resetAbbyAndEmilyFirstLoginPassword();
-    // Restore org chart exclusion list so deleted nodes stay deleted on any device
-    if(r.orgExcluded)  localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
-    if(r.goals)        dbSet(DB_KEYS.goals,    _mergeCloudArr(r.goals,    dbGet(DB_KEYS.goals)||[]));
-    if(r.feed)         dbSet(DB_KEYS.feed,     _mergeCloudArr(r.feed,     dbGet(DB_KEYS.feed)||[], 100));
-    if(r.announcement) dbSet('wl_announcement', r.announcement);
-    if(r.coc)          dbSet(DB_KEYS.coc,      r.coc);
-    if(r.settings)     dbSet(DB_KEYS.settings,  r.settings);
-    if(r.orgNodes)       dbSet(DB_KEYS.orgNodes,  r.orgNodes);
-    if(r.orgLinks)       dbSet(DB_KEYS.orgLinks,  r.orgLinks);
-    // Sync layout version from cloud; if cloud has none yet, preserve local version
-    if(r.orgLayoutVersion) localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
     // Only reload the org chart canvas on explicit pulls (login / manual).
     // Background live-sync updates localStorage silently so the user's current
     // editing session is never interrupted by a mid-edit canvas reset.
-    if(!fromLiveSync && (r.orgNodes || r.orgLinks)){
+    if(!fromLiveSync && (r.orgNodes?.length || r.orgLinks?.length)){
       if(typeof orgLoad === 'function') orgLoad();
-      // Auto-add any registered users not yet in the chart
       if(typeof _syncUsersToOrgChart === 'function' && _syncUsersToOrgChart()){
         if(typeof orgSave === 'function') orgSave();
       }
       if(document.getElementById('org-canvas') && typeof renderOrgChart === 'function') renderOrgChart();
     }
-    if(r.primaryAdminPw) localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
-    if(r.otPolicy)       dbSet(DB_KEYS.otPolicy,  r.otPolicy);
-    if(r.messages)       dbSet(DB_KEYS.messages,      _mergeCloudArr(r.messages,     dbGet(DB_KEYS.messages)||[], 500));
-    if(r.roadmapTasks)   dbSet(DB_KEYS.roadmapTasks, _mergeRoadmapArr(r.roadmapTasks, dbGet(DB_KEYS.roadmapTasks)||[]));
-    if(r.timeOffRequests) dbSet(DB_KEYS.timeOffRequests, _mergeTimeOff(r.timeOffRequests, dbGet(DB_KEYS.timeOffRequests)||[]));
-    // Ledger is permanent/append-only — always merge (union by id), never skip
-    // even if r.timeOffLedger is an empty array, so a stale empty cloud blob
-    // can never look like "nothing to merge" and get treated as authoritative.
-    dbSet(DB_KEYS.timeOffLedger, _mergeTimeOffLedger(r.timeOffLedger, dbGet(DB_KEYS.timeOffLedger)||[]));
-
-    // ── Safety net: if users DB is still empty after merge, re-seed core team ──
-    // Protects against a genuinely blank/corrupt cloud bin locking everyone out.
-    if(!(dbGet(DB_KEYS.users)||[]).length && typeof _seedCoreTeam === 'function'){
-      _seedCoreTeam();
-    }
-
-    // ── Re-apply idempotent client-data fixups every time the cloud-wins client
-    // overwrite above runs, so a stale cloud blob never silently undoes them.
-    // Each fixup pushes back to cloud itself if it actually changes anything.
-    if(typeof _reassignSocialMediaToSherine === 'function') _reassignSocialMediaToSherine();
-    if(typeof _seedAssmaaWorkload === 'function') _seedAssmaaWorkload();
-    if(typeof _assignBrightwheelExportToAbby === 'function') _assignBrightwheelExportToAbby();
-    // Re-tag seed placeholders now that the fixups above have settled real
-    // work onto the correct (non-placeholder) user records.
-    if(typeof _tagSeededPlaceholderUsers==='function') _tagSeededPlaceholderUsers();
-    if(typeof _unhideRestoredYehia==='function') _unhideRestoredYehia();
 
     const now = new Date().toISOString();
     localStorage.setItem('wl_cloud_last_sync', now);
@@ -6935,10 +6767,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshArchive === 'function') refreshArchive();
     if(typeof updateAdminMsgBadge === 'function') updateAdminMsgBadge();
     if(typeof _refreshAdminMessagesIfOpen === 'function') _refreshAdminMessagesIfOpen();
-    if(!silent) showToast('✅ All data pulled from cloud');
+    if(!silent) showToast('✅ Synced');
   } catch(e){
-    setCloudStatus('Pull failed: '+e.message,'error');
-    if(!silent) showToast('❌ Cloud pull failed: '+e.message);
+    setCloudStatus('Sync failed: '+e.message,'error');
+    if(!silent) showToast('❌ Sync failed: '+e.message);
   }
 }
 
@@ -6946,18 +6778,17 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
 
-// Auto-sync after every data write
+// Auto-sync after every data write (debounce is handled by callers)
 async function cloudAutoSync(){
   if(!cloudIsConfigured()) return;
   await cloudPushAll(true);
 }
 
-// Live sync — polls cloud every 45s for super/owner/admin roles so all devices stay in sync
+// Live sync — polls the server every 30s so all devices/roles stay in sync,
+// with no manual Pull/Push needed. Runs for both admins and members.
 let _liveSyncInterval = null;
 function startLiveSync(level){
   if(_liveSyncInterval) clearInterval(_liveSyncInterval);
-  const syncRoles = ['admin','super','owner','account_manager','production_manager','creative_manager'];
-  if(!syncRoles.includes(level)) return;
   _liveSyncInterval = setInterval(async ()=>{
     if(!cloudIsConfigured()) return;
     await cloudPullAll(true, true); // silent background sync — does NOT reset org chart canvas
@@ -8505,7 +8336,7 @@ window._renderAdminTableImpl = function(){
   // Remove previously injected dynamic rows only
   tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
 
-  const admins = dbGet(DB_KEYS.admins)||[];
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status!=='inactive');
   admins.forEach((a, i)=>{
     const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
     const info  = _getLevelInfo(a.level);
@@ -8593,17 +8424,21 @@ window._addAdminImpl = function(){
   setTimeout(()=>{ _sendAdminWelcomeEmail({ name:_n, email:_e, title:_t, password:_p, level:_l }); }, 600);
 };
 
-// ── Remove an admin ──
+// ── Deactivate an admin ── admins are never hard-deleted, same as clients —
+// active/inactive only (the server also has no delete-admin code path at
+// all, fail-closed — see api/ops-sync.js).
 window._removeAdminImpl = function(btn, adminId){
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
-  const displayName = a ? a.name : adminId;
-  if(!confirm(`Remove admin access for ${displayName}?\nThis cannot be undone.`)) return;
-  dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
+  if(!a) return;
+  const displayName = a.name;
+  if(!confirm(`Deactivate admin access for ${displayName}?\nThey can be reactivated later — this does not delete their account.`)) return;
+  a.status = 'inactive';
+  dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
   cloudAutoSync(true);
-  showToast(`${displayName} removed from admins`);
-  logActivity('admin','Admin','Removed admin: '+displayName,'');
+  showToast(`${displayName} deactivated`);
+  logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
 
 // ── Open Edit Admin Modal ──
