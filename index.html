@@ -1220,36 +1220,32 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📝 Progress Summaries</div>
           <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Auto-compiled from the production tracker — progress logs, tasks completed, and milestones</div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-blue" onclick="openWeeklySummaryModal()">📋 Weekly</button>
-          <button class="btn btn-primary" onclick="openMonthlySummaryModal()">📊 Monthly</button>
-          <button class="btn" style="background:var(--accent);color:#fff;" onclick="openYearlySummaryModal()">📅 Yearly</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-blue" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openWeeklySummaryModal()">📋 Weekly</button>
+          <button class="btn btn-primary" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openMonthlySummaryModal()">📊 Monthly</button>
+          <button class="btn" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;background:var(--accent);color:#fff;" onclick="openYearlySummaryModal()">📅 Yearly</button>
         </div>
-      </div>
-
-      <!-- Tabs -->
-      <div class="report-tabs" style="margin-bottom:22px;">
-        <div class="report-tab active" onclick="switchSummaryTab(this,'weekly')">Weekly</div>
-        <div class="report-tab" onclick="switchSummaryTab(this,'monthly')">Monthly</div>
-        <div class="report-tab" onclick="switchSummaryTab(this,'yearly')">Yearly</div>
       </div>
 
       <!-- Weekly summaries list -->
       <div id="sum-tab-weekly">
+        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Weekly Summaries</div>
         <div id="weekly-summaries-list">
           <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No weekly summaries yet. Click <strong>📋 Weekly</strong> to generate one.</div>
         </div>
       </div>
 
       <!-- Monthly reports list -->
-      <div id="sum-tab-monthly" style="display:none;">
+      <div id="sum-tab-monthly" style="margin-top:28px;">
+        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Monthly Reports</div>
         <div id="monthly-summaries-list">
           <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No monthly reports yet. Click <strong>📊 Monthly</strong> to generate one.</div>
         </div>
       </div>
 
       <!-- Yearly summaries list -->
-      <div id="sum-tab-yearly" style="display:none;">
+      <div id="sum-tab-yearly" style="margin-top:28px;">
+        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Yearly Summaries</div>
         <div id="yearly-summaries-list">
           <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No yearly summaries yet. Click <strong>📅 Yearly</strong> to generate one.</div>
         </div>
