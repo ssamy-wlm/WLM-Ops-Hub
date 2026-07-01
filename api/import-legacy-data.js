@@ -1,12 +1,16 @@
-// One-time bulk client importer (Phase 5 data recovery). Requires
-// MIGRATION_SECRET (same env var /api/migrate-schema.js uses — set it in
-// Vercel env vars; this endpoint refuses to run without it, fail closed).
+// One-time bulk client importer (Phase 5 data recovery). Gated on a signed
+// session token, same as every other ops-* endpoint — no separate secret to
+// configure or hand out. Restricted to tier 'super' (Super Admin/Owner only):
+// a 112-client bulk backfill is exactly the kind of high-blast-radius,
+// one-time operation that shouldn't be reachable by every admin level.
 //
 // Body: { clients: [...], dryRun?: boolean }
 // Each entry in `clients` is a full client record in the app's shape (id,
 // name, status, services/recurringServices, notes, etc.) — this endpoint
 // takes no client data of its own, so nothing about real clients ever lives
-// in this file or in git.
+// in this file or in git. The browser reads the roster from a local file the
+// admin picks and sends it in the request body; it's never stored server-side
+// outside of the ops_clients rows this creates.
 //
 // Safety model: INSERT ONLY, never UPDATE, never DELETE. A client already in
 // ops_clients — matched by normalized name, not by the incoming id, since a
@@ -17,6 +21,7 @@
 // already there. Re-running with the same input is a no-op the second time.
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
+import { requireSession, tierOf } from '../lib/opsSession.js';
 
 function normalizeName(name) {
   return String(name || '')
@@ -39,17 +44,16 @@ function validClient(row) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-migration-secret');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const expectedSecret = process.env.MIGRATION_SECRET;
-  if (!expectedSecret) {
-    return res.status(500).json({ error: 'MIGRATION_SECRET is not configured on the server. Set it in Vercel env vars before using this endpoint.' });
-  }
-  const providedSecret = req.headers['x-migration-secret'];
-  if (!providedSecret || providedSecret !== expectedSecret) {
-    return res.status(403).json({ error: 'Invalid or missing x-migration-secret header' });
+  let session;
+  try { session = requireSession(req); }
+  catch (err) { return res.status(500).json({ error: err.message }); }
+  if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
+  if (tierOf(session) !== 'super') {
+    return res.status(403).json({ error: 'Super Admin/Owner only' });
   }
 
   const { clients, dryRun } = req.body || {};
