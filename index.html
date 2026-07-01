@@ -8336,7 +8336,7 @@ window._renderAdminTableImpl = function(){
   // Remove previously injected dynamic rows only
   tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
 
-  const admins = dbGet(DB_KEYS.admins)||[];
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status!=='inactive');
   admins.forEach((a, i)=>{
     const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
     const info  = _getLevelInfo(a.level);
@@ -8424,17 +8424,21 @@ window._addAdminImpl = function(){
   setTimeout(()=>{ _sendAdminWelcomeEmail({ name:_n, email:_e, title:_t, password:_p, level:_l }); }, 600);
 };
 
-// ── Remove an admin ──
+// ── Deactivate an admin ── admins are never hard-deleted, same as clients —
+// active/inactive only (the server also has no delete-admin code path at
+// all, fail-closed — see api/ops-sync.js).
 window._removeAdminImpl = function(btn, adminId){
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
-  const displayName = a ? a.name : adminId;
-  if(!confirm(`Remove admin access for ${displayName}?\nThis cannot be undone.`)) return;
-  dbSet(DB_KEYS.admins, admins.filter(x=>x.id!==adminId));
+  if(!a) return;
+  const displayName = a.name;
+  if(!confirm(`Deactivate admin access for ${displayName}?\nThey can be reactivated later — this does not delete their account.`)) return;
+  a.status = 'inactive';
+  dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
   cloudAutoSync(true);
-  showToast(`${displayName} removed from admins`);
-  logActivity('admin','Admin','Removed admin: '+displayName,'');
+  showToast(`${displayName} deactivated`);
+  logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
 
 // ── Open Edit Admin Modal ──

@@ -38,6 +38,12 @@ export default async function handler(req, res) {
     // ── Dynamic admins ──
     const { data: admins } = await supabase.from('ops_admins').select('id, data');
     const adminRow = (admins || []).find(a => (a.data?.email || '').toLowerCase() === normEmail && a.data?.password === password);
+    if (adminRow && adminRow.data?.status === 'inactive') {
+      // Admins are never hard-deleted, only deactivated (see index.html
+      // _removeAdminImpl()) — a deactivated admin's credentials still exist
+      // but must not be able to sign in.
+      return res.status(401).json({ error: 'This admin account has been deactivated' });
+    }
     if (adminRow) {
       const a = adminRow.data;
       const token = signSession({ id: adminRow.id, role: 'admin', level: a.level || 'admin', name: a.name, email: a.email });

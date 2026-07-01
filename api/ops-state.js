@@ -1,13 +1,20 @@
 // Replaces GET /api/cloud-data. Assembles the shared record from the ops_*
 // Supabase tables and returns it in the same shape the app already consumes
 // (users/admins/clients/goals/... ), so the client-side rendering code barely
-// changes. The response is filtered by the caller's ROLE, taken from the
-// signed session token (never trusted from the request body/query) — a
-// member never receives payroll fields, admin accounts, business settings,
-// org chart, roadmap, or summaries data, even if the browser asked for it.
-
+// changes. The response is filtered by the caller's TIER (see
+// lib/opsSession.js tierOf()), taken from the signed session token (never
+// trusted from the request body/query):
+//   - 'super' (Super Admin/CEO — super/owner levels): sees everything,
+//     including payroll/pay rates, admin accounts, business settings, org
+//     chart, and roadmap.
+//   - 'manager' (every other admin level): team + client management —
+//     users/admins minus payroll fields, all time-off requests, summaries,
+//     archive/tombstones — but NOT payroll ledger, NOT business
+//     settings/org chart/roadmap.
+//   - 'member': clients (read-only visibility), own time-off only, minimal
+//     user/admin fields for display, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession } from '../lib/opsSession.js';
+import { requireSession, tierOf } from '../lib/opsSession.js';
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
 
@@ -23,7 +30,7 @@ export default async function handler(req, res) {
   catch (err) { return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
 
-  const isAdmin = session.role === 'admin';
+  const tier = tierOf(session); // 'super' | 'manager' | 'member'
   let supabase;
   try { supabase = getSupabaseAdmin(); }
   catch (err) { return res.status(500).json({ error: err.message }); }
@@ -84,15 +91,23 @@ export default async function handler(req, res) {
       primaryAdminPw: settingsMap.primaryAdminPw ?? null,
     };
 
-    if (!isAdmin) {
-      // Members: strip payroll fields, admin accounts, business settings, org
-      // chart, roadmap, and summaries. Time-off is scoped to their own records.
+    // Payroll/pay-rate fields: Super Admin/CEO only, for every non-super caller.
+    if (tier !== 'super') {
       record.users = record.users.map(u => { const { payRate, hours, ...rest } = u; return rest; });
+    }
+
+    if (tier === 'member') {
+      // Members: minimal admin/user display fields only. Time-off is scoped to
+      // their own records — matched by userName (time-off requests) / employeeId
+      // (ledger entries), the actual fields the app writes (see
+      // user.html submitTimeOffRequest() / index.html logTimeOffEntry()) — NOT
+      // userId, which never exists on either record shape.
       record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title }));
       record.roadmapTasks = [];
       record.summaries = [];
-      record.timeOffRequests = record.timeOffRequests.filter(r => r.userId === session.id);
-      record.timeOffLedger = record.timeOffLedger.filter(r => r.userId === session.id);
+      const myName = String(session.name || '').toLowerCase();
+      record.timeOffRequests = record.timeOffRequests.filter(r => String(r.userName || '').toLowerCase() === myName);
+      record.timeOffLedger = record.timeOffLedger.filter(r => r.employeeId === session.id);
       record.deletedUserIds = [];
       record.orgNodes = [];
       record.orgLinks = [];
@@ -103,7 +118,25 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
       // announcement, goals, feed, messages, clients stay visible to everyone.
+    } else if (tier === 'manager') {
+      // Every other admin level: team + client management (users minus payroll
+      // already applied above, all time-off requests, summaries, archive), but
+      // NOT the payroll ledger and NOT business settings/org chart/roadmap —
+      // those stay Super Admin/CEO exclusive.
+      record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title, level: a.level, status: a.status }));
+      record.roadmapTasks = [];
+      record.timeOffLedger = [];
+      record.orgNodes = [];
+      record.orgLinks = [];
+      record.coc = null;
+      record.settings = null;
+      record.otPolicy = null;
+      record.orgExcluded = '[]';
+      record.orgLayoutVersion = null;
+      record.primaryAdminPw = null;
+      // deletedUserIds, timeOffRequests, summaries stay full — team/client management.
     }
+    // tier === 'super': record is returned exactly as assembled above.
 
     return res.status(200).json({ record });
   } catch (err) {

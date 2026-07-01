@@ -15,14 +15,23 @@
 // signed session token, never from the request body.
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession } from '../lib/opsSession.js';
+import { requireSession, tierOf } from '../lib/opsSession.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
 // this endpoint intentionally no longer does. On-demand assignment emails
 // (api/send-assignment-email.js) are untouched and still work.
 
-const ADMIN_ONLY_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
+// Three access bands (see lib/opsSession.js tierOf() for the level mapping):
+//   'super'   — unrestricted.
+//   'manager' — every other admin level: team + client management, but NOT
+//               payroll/pay rates and NOT business settings/org chart/roadmap.
+//   'member'  — clients only, restricted to their own assigned items.
+// Dropped for members outright (never a legitimate member write); within the
+// isAdmin branch below, admins/roadmapTasks/orgNodes/orgLinks/timeOffLedger/
+// settings are further narrowed to tier === 'super' only.
+const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
+const PAYROLL_FIELDS = ['payRate', 'hours'];
 
 function hasContent(v) { return v !== undefined && v !== null && v !== ''; }
 
@@ -37,47 +46,93 @@ function validGeneric(row) {
   return row && typeof row === 'object' && hasContent(row.id);
 }
 
-function walkTasksAssignedTo(clientData, memberId) {
-  // Returns the set of task ids inside this client's projects/subprojects that
-  // are assigned to memberId — the ONLY items a member may write to.
-  const ids = new Set();
-  for (const p of clientData.projects || []) {
-    for (const t of p.tasks || []) if (t.assigneeId === memberId) ids.add(t.id);
-    for (const sp of p.subprojects || []) {
-      for (const t of sp.tasks || []) if (t.assigneeId === memberId) ids.add(t.id);
-    }
-  }
-  return ids;
+// Manager tier may edit users (team management) but never payroll/pay-rate
+// fields — those stay Super Admin/CEO exclusive. Preserves the CURRENT value
+// for any protected field rather than silently accepting whatever the payload
+// carried, so an unrelated title/role edit isn't blocked by a stale payRate
+// riding along in the same payload.
+function stripPayrollFields(incoming, current) {
+  const row = { ...incoming };
+  PAYROLL_FIELDS.forEach(f => { row[f] = current ? current[f] : undefined; });
+  return row;
 }
 
-// Builds a client record where every field is taken from the CURRENT db copy
-// except tasks assigned to this member, which may be taken from the incoming
-// payload. Everything else the member sent (client-level fields, project
-// metadata, other people's tasks) is discarded — the server enforces this,
-// it does not rely on the browser only showing assigned items.
-function applyMemberClientPatch(current, incoming, memberId) {
-  const assigned = walkTasksAssignedTo(current, memberId);
-  const merged = JSON.parse(JSON.stringify(current));
-  const incomingProjects = incoming.projects || [];
-  for (const mp of merged.projects || []) {
-    const ip = incomingProjects.find(x => x.id === mp.id);
-    if (!ip) continue;
-    mp.tasks = (mp.tasks || []).map(t => {
-      if (!assigned.has(t.id)) return t;
-      const it = (ip.tasks || []).find(x => x.id === t.id);
-      return it || t;
-    });
-    for (const msp of mp.subprojects || []) {
-      const isp = (ip.subprojects || []).find(x => x.id === msp.id);
-      if (!isp) continue;
-      msp.tasks = (msp.tasks || []).map(t => {
-        if (!assigned.has(t.id)) return t;
-        const it = (isp.tasks || []).find(x => x.id === t.id);
-        return it || t;
-      });
+// ── member client-write validation ──────────────────────────────────────────
+// A member may edit ONLY items they're assigned to: services[]/
+// recurringServices[] (matched by assigneeId/assigneeName/assignedUserIds —
+// the actual convention this app uses, see index.html ~5722-5723) and
+// projects whose progress/progressLog they're updating (userUpdateProgress())
+// via an assigned service, or whose tasks are assigned to them directly
+// (userMarkTaskDone()). ANY other change — to the client itself, to another
+// person's items — REJECTS THE WHOLE WRITE with a clear reason; nothing is
+// silently merged or dropped.
+function isAssignedToMember(item, memberId, memberName) {
+  if (!item) return false;
+  if (item.assigneeId === memberId) return true;
+  if (Array.isArray(item.assignedUserIds) && item.assignedUserIds.includes(memberId)) return true;
+  const assigneeName = String(item.assigneeName || item.assignee || '').trim().toLowerCase();
+  const nameLower = String(memberName || '').trim().toLowerCase();
+  return !!nameLower && assigneeName === nameLower;
+}
+
+function diffArrayById(oldArr, newArr) {
+  const oldById = new Map((oldArr || []).filter(x => x && x.id != null).map(x => [String(x.id), x]));
+  const newById = new Map((newArr || []).filter(x => x && x.id != null).map(x => [String(x.id), x]));
+  const changed = [];
+  for (const [id, item] of newById) {
+    const prev = oldById.get(id);
+    if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) changed.push({ id, prev, next: item });
+  }
+  for (const [id, item] of oldById) {
+    if (!newById.has(id)) changed.push({ id, prev: item, next: null });
+  }
+  return changed;
+}
+
+const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
+  'name', 'status', 'pinned', 'color', 'code', 'industry', 'accountManager',
+  'clientName', 'clientEmail', 'clientPhone', 'referredBy', 'notes',
+  'internalNotes', 'website', 'logo', 'brandColors', 'brandDetails', 'startDate',
+];
+
+// Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
+function checkMemberClientWrite(current, incoming, memberId, memberName) {
+  for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(incoming[key])) {
+      return { allowed: false, reason: `members cannot edit client.${key}` };
     }
   }
-  return merged;
+
+  for (const listKey of ['services', 'recurringServices']) {
+    for (const { id, prev, next } of diffArrayById(current[listKey], incoming[listKey])) {
+      const item = next || prev;
+      if (!isAssignedToMember(item, memberId, memberName)) {
+        return { allowed: false, reason: `not assigned to ${listKey} item ${id}` };
+      }
+    }
+  }
+
+  for (const { id, prev, next } of diffArrayById(current.projects, incoming.projects)) {
+    const project = next || prev;
+    const projectAssigned =
+      isAssignedToMember(project, memberId, memberName) ||
+      (Array.isArray(project?.users) && project.users.includes(memberId));
+    // A project with no explicit assignee (the common case — progress/
+    // progressLog updates via userUpdateProgress()) is touchable if it
+    // belongs to an already-assigned service, matched by name.
+    const belongsToAssignedService = (incoming.services || current.services || []).some(
+      s => s.name === project?.name && isAssignedToMember(s, memberId, memberName)
+    );
+    if (!projectAssigned && !belongsToAssignedService) {
+      return { allowed: false, reason: `not assigned to project ${id}` };
+    }
+    // Task-level assignment inside a project/subproject (userMarkTaskDone()) is
+    // always allowed once the project itself is touchable by this member —
+    // task.assigneeId narrows WHICH tasks display as theirs client-side, but
+    // the project-level assignment above is what actually gates the write.
+  }
+
+  return { allowed: true };
 }
 
 async function upsertRows(supabase, table, rows, warnings, statusCol) {
@@ -113,7 +168,8 @@ export default async function handler(req, res) {
   try { session = requireSession(req); }
   catch (err) { return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
-  const isAdmin = session.role === 'admin';
+  const tier = tierOf(session); // 'super' | 'manager' | 'member'
+  const isAdmin = tier !== 'member';
 
   let supabase;
   try { supabase = getSupabaseAdmin(); }
@@ -121,6 +177,7 @@ export default async function handler(req, res) {
 
   const { changes, tombstones, restoreUserIds } = req.body || {};
   const warnings = [];
+  const rejected = []; // clear, explicit rejections (member out-of-scope client edits) — always surfaced
   const applied = {};
 
   try {
@@ -128,9 +185,9 @@ export default async function handler(req, res) {
 
     // ── self password change: allowed for EVERY role, but strictly scoped to
     // the caller's OWN row and ONLY the password/mustChangePassword fields —
-    // this is the one carve-out into the otherwise admin-only users/admins
-    // tables, so a member can change their own login without gaining any
-    // other write access to the users table. ──
+    // this is the one carve-out into the otherwise restricted users/admins
+    // tables, so anyone can change their own login without gaining any other
+    // write access to that table. ──
     if (c.selfPasswordChange && typeof c.selfPasswordChange === 'object' && hasContent(c.selfPasswordChange.password)) {
       const table = isAdmin ? 'ops_admins' : 'ops_users';
       const { data: cur } = await supabase.from(table).select('data').eq('id', session.id).maybeSingle();
@@ -144,31 +201,59 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── admin-only tables: silently drop (not error) a member's attempt, so a
-    // stray field in a batched payload can't fail the whole sync ──
+    // ── admin tables: silently drop (not error) a member's attempt at any of
+    // these, so a stray field in a batched payload can't fail the whole sync.
+    // (Unlike the member-client-write path below, a member simply has no
+    // legitimate reason to ever send these, so there's no "reason" to surface.) ──
     for (const key of Object.keys(c)) {
-      if (!isAdmin && ADMIN_ONLY_TABLES.has(key) && Array.isArray(c[key]) && c[key].length) {
-        warnings.push(`${key}: dropped — admin-only table, caller role is member`);
+      if (!isAdmin && ADMIN_TABLES.has(key) && Array.isArray(c[key]) && c[key].length) {
+        warnings.push(`${key}: dropped — restricted table, caller role is member`);
       }
     }
 
     if (isAdmin) {
-      applied.users = await upsertRows(supabase, 'ops_users', (c.users || []).filter(validUserOrAdmin), warnings);
-      applied.admins = await upsertRows(supabase, 'ops_admins', (c.admins || []).filter(validUserOrAdmin), warnings);
-      applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
-      applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
-      applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);
-
-      if (Array.isArray(c.timeOffLedger) && c.timeOffLedger.length) {
-        applied.timeOffLedger = await insertNewOnly(supabase, 'ops_time_off_ledger', c.timeOffLedger.filter(validGeneric), warnings);
-      }
-      if (c.settings && typeof c.settings === 'object') {
-        for (const [key, value] of Object.entries(c.settings)) {
-          const { error } = await supabase.from('ops_settings').upsert({ key, data: value }, { onConflict: 'key' });
-          if (error) warnings.push(`settings.${key}: ${error.message}`);
+      // users: both tiers manage the team, but payroll/pay-rate fields are
+      // Super Admin/CEO exclusive — stripped (not rejected) for manager tier
+      // so an unrelated title/role edit isn't blocked by a stale field.
+      const usersIncoming = (c.users || []).filter(validUserOrAdmin);
+      if (usersIncoming.length) {
+        let toWrite = usersIncoming;
+        if (tier === 'manager') {
+          const ids = usersIncoming.map(r => r.id);
+          const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
+          const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+          toWrite = usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)));
         }
-        applied.settings = Object.keys(c.settings).length;
+        applied.users = await upsertRows(supabase, 'ops_users', toWrite, warnings);
       }
+
+      // admins/roadmap/org chart/business settings/payroll ledger: Super
+      // Admin/CEO exclusive — dropped for manager tier, same as for members.
+      if (tier === 'super') {
+        applied.admins = await upsertRows(supabase, 'ops_admins', (c.admins || []).filter(validUserOrAdmin), warnings);
+        applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
+        applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
+        applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);
+        if (Array.isArray(c.timeOffLedger) && c.timeOffLedger.length) {
+          applied.timeOffLedger = await insertNewOnly(supabase, 'ops_time_off_ledger', c.timeOffLedger.filter(validGeneric), warnings);
+        }
+        if (c.settings && typeof c.settings === 'object') {
+          for (const [key, value] of Object.entries(c.settings)) {
+            const { error } = await supabase.from('ops_settings').upsert({ key, data: value }, { onConflict: 'key' });
+            if (error) warnings.push(`settings.${key}: ${error.message}`);
+          }
+          applied.settings = Object.keys(c.settings).length;
+        }
+      } else {
+        for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'settings']) {
+          if (key === 'settings' ? c.settings : Array.isArray(c[key]) && c[key].length) {
+            warnings.push(`${key}: dropped — Super Admin/CEO only, caller is a manager-tier admin`);
+          }
+        }
+      }
+
+      // summaries/archive (tombstone+restore): team + client management —
+      // both admin tiers.
       if (Array.isArray(c.summaries) && c.summaries.length) {
         let n = 0;
         for (const s of c.summaries) {
@@ -197,9 +282,14 @@ export default async function handler(req, res) {
         if (error) warnings.push(`restoreUserIds: ${error.message}`);
         else applied.restoredUserIds = restoreUserIds.length;
       }
+      // NOTE: admins are never hard-deleted, same as clients — active/inactive
+      // only (fail-closed: there is no delete-admin code path at all here).
     }
 
-    // ── clients: allowed for both roles; members are field-restricted server-side ──
+    // ── clients: allowed for every role; members are restricted server-side
+    // to their assigned items. A member's out-of-scope edit REJECTS THE WHOLE
+    // CLIENT RECORD with a clear reason (see `rejected` in the response) —
+    // never a silent partial merge. ──
     if (Array.isArray(c.clients) && c.clients.length) {
       const incoming = c.clients.filter(validClient);
       if (isAdmin) {
@@ -210,17 +300,22 @@ export default async function handler(req, res) {
         if (error) { warnings.push(`clients: ${error.message}`); }
         else {
           const byId = new Map((currentRows || []).map(r => [r.id, r]));
-          const toWrite = [];
+          let n = 0;
           for (const inc of incoming) {
             const cur = byId.get(inc.id);
-            if (!cur) { warnings.push(`clients(${inc.id}): skipped — members cannot create new clients`); continue; }
-            const patched = applyMemberClientPatch(cur.data, inc, session.id);
-            toWrite.push({ id: cur.id, data: patched }); // status untouched — members cannot change active/inactive
-          }
-          let n = 0;
-          for (const row of toWrite) {
-            const { error: uErr } = await supabase.from('ops_clients').update({ data: row.data }).eq('id', row.id);
-            if (uErr) warnings.push(`clients(${row.id}): ${uErr.message}`); else n++;
+            if (!cur) {
+              rejected.push({ table: 'clients', id: inc.id, reason: 'members cannot create new clients' });
+              continue;
+            }
+            const check = checkMemberClientWrite(cur.data, inc, session.id, session.name);
+            if (!check.allowed) {
+              rejected.push({ table: 'clients', id: inc.id, reason: check.reason });
+              continue;
+            }
+            // status is never part of the check above (members can't touch it),
+            // but guard it here too — belt and suspenders against active/inactive drift.
+            const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...inc, status: cur.status } }).eq('id', inc.id);
+            if (uErr) warnings.push(`clients(${inc.id}): ${uErr.message}`); else n++;
           }
           applied.clients = n;
         }
@@ -233,13 +328,16 @@ export default async function handler(req, res) {
       applied.feed = await insertNewOnly(supabase, 'ops_feed', c.feed.filter(validGeneric), warnings);
     }
 
-    // ── time off requests: members may only create their own pending request,
-    // or edit their own request's non-status fields; only admins can set status ──
+    // ── time off requests: team management for both admin tiers (approve/
+    // deny included). Members may only create/edit their OWN pending
+    // request, matched by userName — the field the app actually writes (see
+    // user.html submitTimeOffRequest()); userId never exists on this record. ──
     if (Array.isArray(c.timeOffRequests) && c.timeOffRequests.length) {
       const incoming = c.timeOffRequests.filter(validGeneric);
       const ids = incoming.map(r => r.id);
       const { data: currentRows } = await supabase.from('ops_time_off_requests').select('id, data').in('id', ids);
       const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+      const myNameLower = String(session.name || '').toLowerCase();
       let n = 0;
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
@@ -249,12 +347,18 @@ export default async function handler(req, res) {
           continue;
         }
         if (!cur) {
-          if (inc.userId !== session.id) { warnings.push(`timeOffRequests(${inc.id}): skipped — members can only create their own request`); continue; }
+          if (String(inc.userName || '').toLowerCase() !== myNameLower) {
+            rejected.push({ table: 'timeOffRequests', id: inc.id, reason: 'members can only create their own request' });
+            continue;
+          }
           const row = { ...inc, status: 'pending', approvedBy: null, reviewedAt: null };
           const { error } = await supabase.from('ops_time_off_requests').insert({ id: inc.id, data: row });
           if (error) warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); else n++;
         } else {
-          if (cur.userId !== session.id) { warnings.push(`timeOffRequests(${inc.id}): skipped — not this member's request`); continue; }
+          if (String(cur.userName || '').toLowerCase() !== myNameLower) {
+            rejected.push({ table: 'timeOffRequests', id: inc.id, reason: "not this member's request" });
+            continue;
+          }
           const row = { ...inc, status: cur.status, approvedBy: cur.approvedBy, reviewedAt: cur.reviewedAt }; // status locked to admin
           const { error } = await supabase.from('ops_time_off_requests').update({ data: row }).eq('id', inc.id);
           if (error) warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); else n++;
@@ -263,8 +367,8 @@ export default async function handler(req, res) {
       applied.timeOffRequests = n;
     }
 
-    return res.status(200).json({ ok: true, applied, warnings });
+    return res.status(200).json({ ok: true, applied, warnings, rejected });
   } catch (err) {
-    return res.status(500).json({ error: err.message || 'Sync failed', warnings });
+    return res.status(500).json({ error: err.message || 'Sync failed', warnings, rejected });
   }
 }

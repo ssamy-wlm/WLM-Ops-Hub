@@ -1609,13 +1609,18 @@ async function _doCloudPush(){
     if(feedDirty.length) changes.feed=feedDirty;
     if(!Object.keys(changes).length) return;
 
-    await fetch(OPS_SYNC_URL,{
+    const res = await fetch(OPS_SYNC_URL,{
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
       body:JSON.stringify({changes})
     });
-    // Refresh from the server so this tab reflects exactly what was accepted
-    // (a member's out-of-scope client edits are dropped server-side).
+    // Server REJECTS (not silently drops) an out-of-scope client edit with a
+    // clear reason — surface it (see api/ops-sync.js checkMemberClientWrite()).
+    const body = res.ok ? await res.json().catch(()=>({})) : {};
+    if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
+      showToast(`Not saved: ${body.rejected[0].reason}`, 'error');
+    }
+    // Refresh from the server so this tab reflects exactly what was accepted.
     await _pullClientsFromCloud();
   }catch(e){}
 }

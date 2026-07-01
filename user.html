@@ -999,8 +999,14 @@ async function cloudPushData(){
       body: JSON.stringify({changes})
     });
     if(!res.ok) return;
-    // Refresh from the server so this device reflects exactly what was accepted
-    // (a member's out-of-scope edits are dropped server-side, not silently kept locally).
+    const body = await res.json().catch(()=>({}));
+    // Server REJECTS (not silently drops) an out-of-scope client edit with a
+    // clear reason — surface it, don't let it vanish silently on the refresh
+    // below (see api/ops-sync.js checkMemberClientWrite()).
+    if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
+      showToast(`❌ Not saved: ${body.rejected[0].reason}`);
+    }
+    // Refresh from the server so this device reflects exactly what was accepted.
     await cloudFetchUsers();
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
   }catch(e){}
