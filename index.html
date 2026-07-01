@@ -6539,6 +6539,27 @@ function updateCloudStatusUI(){
 // never touching a row that isn't in the payload, not from this diff.
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Never let an empty/missing result from the server blank out real local
+// data — this is exactly what happened when Supabase was empty right after
+// the Phase 4 cutover: every pull returned empty arrays and every browser's
+// cache got overwritten with nothing. Only adopt a table's server copy (and
+// advance its dirty-tracking snapshot) when the server actually returned at
+// least one row; an empty/missing result leaves local data AND its snapshot
+// untouched, so the next push still correctly re-offers what's stored
+// locally instead of concluding "nothing changed."
+function _applyServerArray(table, arr, saveFn){
+  if(!Array.isArray(arr) || !arr.length) return;
+  saveFn(arr);
+  _opsSetSnapshot(table, arr);
+}
+// Same principle for singleton settings — a value's key can be present in
+// the response with a null value (role-hidden for this caller, or simply no
+// row yet in ops_settings) just as easily as it can be genuinely present;
+// only null/undefined counts as "nothing to apply" here.
+function _applyServerValue(saveFn, value){
+  if(value === null || value === undefined) return;
+  saveFn(value);
+}
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
   let snap = null;
@@ -6717,24 +6738,30 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     const data = await res.json();
     const r = data?.record || {};
 
-    dbSet(DB_KEYS.users, r.users||[]);              _opsSetSnapshot('users', r.users||[]);
-    dbSet(DB_KEYS.admins, r.admins||[]);            _opsSetSnapshot('admins', r.admins||[]);
-    _saveClientDB(r.clients||[]);                   _opsSetSnapshot('clients', r.clients||[]);
-    dbSet(DB_KEYS.goals, r.goals||[]);               _opsSetSnapshot('goals', r.goals||[]);
-    dbSet(DB_KEYS.feed, r.feed||[]);                 _opsSetSnapshot('feed', r.feed||[]);
-    dbSet(DB_KEYS.messages, r.messages||[]);         _opsSetSnapshot('messages', r.messages||[]);
-    dbSet(DB_KEYS.roadmapTasks, r.roadmapTasks||[]); _opsSetSnapshot('roadmapTasks', r.roadmapTasks||[]);
-    dbSet(DB_KEYS.timeOffRequests, r.timeOffRequests||[]); _opsSetSnapshot('timeOffRequests', r.timeOffRequests||[]);
-    dbSet(DB_KEYS.timeOffLedger, r.timeOffLedger||[]);     _opsSetSnapshot('timeOffLedger', r.timeOffLedger||[]);
-    dbSet(DB_KEYS.orgNodes, r.orgNodes||[]);         _opsSetSnapshot('orgNodes', r.orgNodes||[]);
-    dbSet(DB_KEYS.orgLinks, r.orgLinks||[]);         _opsSetSnapshot('orgLinks', r.orgLinks||[]);
-    dbSet(DB_KEYS.deletedUserIds, r.deletedUserIds||[]);
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
+    _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr));
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr));
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr));
+    _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr));
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
+    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr));
+    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr));
+    // deletedUserIds isn't part of the dirty/snapshot system above (tombstones
+    // push separately, tracked via wl_tombstones_sent) but the same "empty
+    // result must never undo real local tombstones" rule applies — an empty
+    // pull here used to un-tombstone every archived user.
+    if(Array.isArray(r.deletedUserIds) && r.deletedUserIds.length) dbSet(DB_KEYS.deletedUserIds, r.deletedUserIds);
 
-    if('announcement' in r) dbSet('wl_announcement', r.announcement);
-    if('coc' in r)          dbSet(DB_KEYS.coc, r.coc);
-    if('settings' in r)     dbSet(DB_KEYS.settings, r.settings);
-    if('otPolicy' in r)     dbSet(DB_KEYS.otPolicy, r.otPolicy);
-    if(r.orgExcluded)       localStorage.setItem('wl_org_excluded_names', r.orgExcluded);
+    _applyServerValue(v=>dbSet('wl_announcement', v), r.announcement);
+    _applyServerValue(v=>dbSet(DB_KEYS.coc, v), r.coc);
+    _applyServerValue(v=>dbSet(DB_KEYS.settings, v), r.settings);
+    _applyServerValue(v=>dbSet(DB_KEYS.otPolicy, v), r.otPolicy);
+    // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
+    // so a plain truthy check doesn't catch it; parse and check length instead.
+    if(r.orgExcluded){ try{ if(JSON.parse(r.orgExcluded).length) localStorage.setItem('wl_org_excluded_names', r.orgExcluded); }catch(e){} }
     if(r.orgLayoutVersion)  localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
     if(r.primaryAdminPw)    localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
 

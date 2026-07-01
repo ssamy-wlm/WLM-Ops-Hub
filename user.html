@@ -931,6 +931,20 @@ function _opsDirty(table, localArr){
     return !prev || JSON.stringify(prev)!==JSON.stringify(r);
   });
 }
+// Never let an empty/missing result from the server blank out real local
+// data — see index.html's copy of this same fix for the full rationale
+// (this is exactly what happened when Supabase was empty right after the
+// Phase 4 cutover). Only adopt a table's server copy when it actually
+// returned at least one row.
+function _applyServerArray(table, arr, saveFn){
+  if(!Array.isArray(arr) || !arr.length) return;
+  saveFn(arr);
+  _opsSetSnapshot(table, arr);
+}
+function _applyServerValue(saveFn, value){
+  if(value === null || value === undefined) return;
+  saveFn(value);
+}
 
 // Fetch the current state from the server and adopt it as-is per table — no
 // client-side merging. Returns the users array for callers that need it.
@@ -942,20 +956,21 @@ async function cloudFetchUsers(){
     if(!res.ok) return null;
     const data = await res.json();
     const r = data?.record || {};
-    dbSet(DB_KEYS.users, r.users||[]);       _opsSetSnapshot('users', r.users||[]);
-    dbSet(DB_KEYS.goals, r.goals||[]);       _opsSetSnapshot('goals', r.goals||[]);
-    if('announcement' in r) dbSet(DB_KEYS.announcement, r.announcement);
-    if('coc' in r)          dbSet(DB_KEYS.coc, r.coc);
-    dbSet(DB_KEYS.messages, r.messages||[]); _opsSetSnapshot('messages', r.messages||[]);
-    dbSet(DB_KEYS.feed, r.feed||[]);         _opsSetSnapshot('feed', r.feed||[]);
-    dbSet(DB_KEYS.timeOffRequests, r.timeOffRequests||[]); _opsSetSnapshot('timeOffRequests', r.timeOffRequests||[]);
-    dbSet(DB_KEYS.timeOffLedger, r.timeOffLedger||[]);     _opsSetSnapshot('timeOffLedger', r.timeOffLedger||[]);
-    if(Array.isArray(r.clients)){
-      localStorage.setItem('wl_clients_db', JSON.stringify(r.clients));
-      _opsSetSnapshot('clients', r.clients);
-    }
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
+    _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
+    _applyServerValue(v=>dbSet(DB_KEYS.coc, v), r.coc);
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr));
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr));
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
+    _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)));
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
-    return Array.isArray(r.users) ? r.users : null;
+    // Return what's actually usable now — if the server's users array was
+    // empty and got skipped above, this is the untouched local copy, not an
+    // artificially empty result (callers like doLogin() check credentials
+    // against this return value directly).
+    return dbGet(DB_KEYS.users);
   }catch(e){ return null; }
 }
 

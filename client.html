@@ -1596,6 +1596,13 @@ function _opsDirty(table, localArr){
   const byId={}; snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
   return localArr.filter(r=>{ if(!r||r.id==null) return false; const prev=byId[r.id]; return !prev||JSON.stringify(prev)!==JSON.stringify(r); });
 }
+// Never let an empty/missing result from the server blank out real local
+// data — see index.html's copy of this same fix for the full rationale.
+function _applyServerArray(table, arr, saveFn){
+  if(!Array.isArray(arr) || !arr.length) return;
+  saveFn(arr);
+  _opsSetSnapshot(table, arr);
+}
 
 let _cloudPushTimer=null;
 async function _doCloudPush(){
@@ -1643,9 +1650,11 @@ async function _pullClientsFromCloud(){
     const r=await fetch(OPS_STATE_URL,{cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
-    dbSave(CL_KEYS.clients, rec.clients||[]);   _opsSetSnapshot('clients', rec.clients||[]);
-    dbSave(CL_KEYS.liveFeed, rec.feed||[]);     _opsSetSnapshot('feed', rec.feed||[]);
-    if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
+    _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr));
+    _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr));
+    // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
+    // so a plain truthy check doesn't catch it; parse and check length instead.
+    if(rec.orgExcluded){ try{ if(JSON.parse(rec.orgExcluded).length) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded); }catch(e){} }
   }catch(e){}
 }
 
