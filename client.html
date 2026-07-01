@@ -1579,51 +1579,44 @@ function populatePfTypeOptions(selected){
 }
 
 // ═══════════════════════════════════════════════════════
-//  CLOUD SYNC (shared store via /api/cloud-data, same backend as index.html)
+//  CLOUD SYNC — Supabase via /api/ops-state (read) + /api/ops-sync (per-record
+//  write). The server is the source of truth; this file adopts whatever it
+//  returns per table rather than merging conflicting local/cloud copies.
 // ═══════════════════════════════════════════════════════
-const CLOUD_DATA_URL = '/api/cloud-data';
-
-// Dedupe-by-id union of a cloud array and a local array, newest first — mirrors
-// index.html's _mergeCloudArr so feed/activity entries round-trip both ways.
-function _mergeCloudArr(cloudArr, localArr, limit=200){
-  const combined=[...(Array.isArray(cloudArr)?cloudArr:[]), ...(Array.isArray(localArr)?localArr:[])];
-  const seen=new Set();
-  const sortKey=x=>{
-    const n=parseInt(String(x.id).replace(/\D/g,''),10);
-    if(!isNaN(n)) return n;
-    const t=new Date(x.time||x.ts||0).getTime();
-    return isNaN(t)?0:t;
-  };
-  return combined.filter(x=>{ const k=x.id!=null?String(x.id):JSON.stringify(x); if(seen.has(k))return false; seen.add(k); return true; })
-                 .sort((a,b)=>sortKey(b)-sortKey(a)).slice(0,limit);
+const OPS_STATE_URL = '/api/ops-state';
+const OPS_SYNC_URL  = '/api/ops-sync';
+function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
+function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
+function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+function _opsDirty(table, localArr){
+  if(!Array.isArray(localArr) || !localArr.length) return [];
+  let snap=null;
+  try{ const raw=localStorage.getItem(_opsSnapKey(table)); snap = raw!=null ? JSON.parse(raw) : null; }catch(e){ snap=null; }
+  if(snap===null) return localArr.slice();
+  const byId={}; snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
+  return localArr.filter(r=>{ if(!r||r.id==null) return false; const prev=byId[r.id]; return !prev||JSON.stringify(prev)!==JSON.stringify(r); });
 }
 
 let _cloudPushTimer=null;
 async function _doCloudPush(){
+  const token=_opsToken();
+  if(!token) return;
   try{
-    const r0=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
-    const cur=r0.ok?((await r0.json())?.record||{}):{};
-    // Merge onto the freshest cloud copy, only letting OUR locally-dirty records
-    // win (see _mergeClientsLocalOntoCloud above) — not the whole local cache.
-    const cloudClients=Array.isArray(cur.clients)?cur.clients:[];
-    const localClients=getClients();
-    const mergedClients=_mergeClientsLocalOntoCloud(cloudClients, localClients);
-    cur.clients=mergedClients;
-    cur.orgExcluded=localStorage.getItem('wl_org_excluded_names')||'[]';
-    // Push our locally-logged activity (e.g. "Mark Done") up so index.html's
-    // admin Recent Activity feed sees updates from every user, not just admin.
-    const mergedFeed=_mergeCloudArr(cur.feed, db(CL_KEYS.liveFeed)||[], 100);
-    cur.feed=mergedFeed;
-    await fetch(CLOUD_DATA_URL,{
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(cur)
+    const changes={};
+    const clientsDirty=_opsDirty('clients', getClients());
+    if(clientsDirty.length) changes.clients=clientsDirty;
+    const feedDirty=_opsDirty('feed', db(CL_KEYS.liveFeed)||[]);
+    if(feedDirty.length) changes.feed=feedDirty;
+    if(!Object.keys(changes).length) return;
+
+    await fetch(OPS_SYNC_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body:JSON.stringify({changes})
     });
-    // Bring this tab's own cache up to the merged result and remember it as the
-    // new known-cloud baseline, so the next push's dirty-check stays accurate.
-    dbSave(CL_KEYS.clients, mergedClients);
-    _setClientsCloudSnapshot(mergedClients);
-    dbSave(CL_KEYS.liveFeed, mergedFeed);
+    // Refresh from the server so this tab reflects exactly what was accepted
+    // (a member's out-of-scope client edits are dropped server-side).
+    await _pullClientsFromCloud();
   }catch(e){}
 }
 function _scheduleCloudPush(){
@@ -1639,18 +1632,14 @@ function _flushCloudPush(){
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
 window.addEventListener('pagehide', _flushCloudPush);
 async function _pullClientsFromCloud(){
+  const token=_opsToken();
+  if(!token) return;
   try{
-    const r=await fetch(CLOUD_DATA_URL,{cache:'no-store'});
+    const r=await fetch(OPS_STATE_URL,{cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
-    if(rec.clients&&Array.isArray(rec.clients)&&rec.clients.length){
-      // Accept cloud's latest for everything except records we ourselves have
-      // dirtied locally and not yet pushed (see _mergeClientsLocalOntoCloud).
-      const localClients=getClients();
-      const merged=_mergeClientsLocalOntoCloud(rec.clients, localClients);
-      dbSave(CL_KEYS.clients, merged);
-      _setClientsCloudSnapshot(merged);
-    }
+    dbSave(CL_KEYS.clients, rec.clients||[]);   _opsSetSnapshot('clients', rec.clients||[]);
+    dbSave(CL_KEYS.liveFeed, rec.feed||[]);     _opsSetSnapshot('feed', rec.feed||[]);
     if(rec.orgExcluded) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded);
   }catch(e){}
 }
@@ -2795,15 +2784,9 @@ function saveClient(){
   showToast(editId?'Client updated ✓':'Client added ✓');
 }
 
-function deleteClient(id){
-  if(!confirm('Delete this client and all their data? This cannot be undone.')) return;
-  const clients=getClients().filter(c=>c.id!==id);
-  saveClients(clients);
-  if(_activeClientId===id){ _el('client-detail-panel').style.display='none'; _activeClientId=null; }
-  populateScheduleClientFilter();
-  renderClientGrid();
-  showToast('Client deleted');
-}
+// DATA-SAFETY: clients are never hard-deleted, only marked active/inactive —
+// kept for compatibility with existing "Delete" buttons/callers.
+function deleteClient(id){ toggleClientStatus(id); }
 
 function toggleClientStatus(id){
   const clients=getClients();
