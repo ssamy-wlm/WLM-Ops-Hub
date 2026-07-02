@@ -241,8 +241,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .admin-topbar-navrow{padding:10px 24px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);position:relative;}
 .admin-nav-hamburger{display:none;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
 .admin-nav-hamburger:hover{background:rgba(255,255,255,.18);}
-.header-logo-plate{background:#fff;border-radius:8px;padding:6px 12px;display:inline-flex;flex-shrink:0;}
-.header-logo-img{height:32px;width:auto;object-fit:contain;display:block;}
+.header-logo-img{height:40px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
 .admin-title{font-family:'Poppins',sans-serif;font-size:21px;font-weight:600;color:#fff;white-space:nowrap;}
 .admin-sub{font-size:12px;color:rgba(255,255,255,.7);margin-top:1px;}
 .admin-nav{display:flex;gap:6px;background:rgba(255,255,255,.1);border-radius:10px;padding:5px;flex-wrap:wrap;}
@@ -256,18 +255,22 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .admin-drop-trigger::after{content:' ▾';font-size:10px;opacity:.7;}
 /* Responsive nav — must come AFTER the base .admin-nav rules above so the
    media query actually wins the cascade at narrow widths (equal specificity,
-   later source order). */
+   later source order). isolation:isolate + a very high z-index guarantee this
+   panel paints above page content no matter what stacking context anything
+   in .admin-content ends up creating; the background is a solid hex (not an
+   rgba) so it can never look transparent regardless of what's behind it. */
 @media(max-width:768px){
   .admin-nav-hamburger{display:block;}
-  .admin-nav{display:none;flex-direction:column;align-items:stretch;position:absolute;top:100%;left:24px;right:24px;background:#1A3A6E;border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:8px;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.35);margin-top:6px;}
+  .admin-nav{display:none;flex-direction:column;align-items:stretch;gap:3px;position:absolute;top:100%;left:24px;right:24px;background:#1A3A6E;opacity:1;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:10px;z-index:9999;isolation:isolate;box-shadow:0 16px 40px rgba(0,0,0,.5);max-height:calc(100vh - 160px);overflow-y:auto;}
   .admin-nav.open{display:flex;}
-  .admin-nav-item{width:100%;text-align:left;}
-  .admin-nav-dropdown-menu{position:static;box-shadow:none;border:none;background:rgba(0,0,0,.15);margin-top:2px;}
+  .admin-nav-item{width:100%;text-align:left;padding:13px 16px;font-size:14.5px;border-radius:9px;}
+  .admin-nav-item.active{color:#fff;}
+  .admin-nav-item:active{background:var(--gold);color:#fff;}
+  .admin-nav-dropdown-menu{position:static;box-shadow:none;border:none;background:rgba(255,255,255,.08);margin-top:2px;}
   .admin-title{font-size:15px;}
   .admin-topbar-identity{padding:14px 12px;gap:8px;}
   .admin-signout-btn{padding:7px 10px;font-size:12px;}
-  .header-logo-img{height:24px;}
-  .header-logo-plate{padding:4px 8px;}
+  .header-logo-img{height:28px;}
 }
 .admin-content{padding:28px 32px;}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
@@ -992,15 +995,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   <div class="admin-topbar">
     <!-- Row 1: identity — wordmark + title centered via grid (so it stays truly centered
          regardless of what's in the right-hand cluster), Sign Out far right, at all widths.
-         The wordmark's own colors (navy blue + gold) need a light backdrop to read against this
-         row's Navy Deep background, hence the white plate — a dark-background-optimized lockup
-         would let this sit directly on navy once that asset is available. -->
+         Dark-background-optimized lockup sits bare on the Navy Deep row, no plate needed. -->
     <div class="admin-topbar-identity">
       <div></div>
       <div style="display:flex;align-items:center;gap:14px;justify-content:center;">
-        <div class="header-logo-plate">
-          <img class="header-logo-img" src="assets/weblight-wordmark-light.png" alt="WebLight Media">
-        </div>
+        <img class="header-logo-img" src="assets/logo_dark_background.jpg" alt="WebLight Media">
         <div class="admin-title">— Operations Hub</div>
       </div>
       <div style="display:flex;align-items:center;justify-content:flex-end;">

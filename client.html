@@ -71,8 +71,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .wlm-topbar-navrow{padding:10px 20px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);position:relative;}
 .wlm-nav-hamburger{display:none;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
 .wlm-nav-hamburger:hover{background:rgba(255,255,255,.18);}
-.header-logo-plate{background:#fff;border-radius:8px;padding:6px 12px;display:inline-flex;flex-shrink:0;}
-.header-logo-img{height:32px;width:auto;object-fit:contain;display:block;}
+.header-logo-img{height:40px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
 .wlm-nav-group{display:flex;gap:6px;background:rgba(255,255,255,.1);border-radius:10px;padding:5px;flex-wrap:wrap;justify-content:center;}
 .wlm-nav-group .nav-item{color:rgba(255,255,255,.75);margin-bottom:0;padding:7px 16px;text-decoration:none;}
 .wlm-nav-group .nav-item:hover{background:rgba(255,255,255,.12);color:#fff;}
@@ -84,13 +83,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
    media query actually wins the cascade at narrow widths. */
 @media(max-width:768px){
   .wlm-nav-hamburger{display:block;}
-  .wlm-nav-group{display:none;flex-direction:column;align-items:stretch;position:absolute;top:100%;left:20px;right:20px;background:#1A3A6E;border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:8px;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.35);margin-top:6px;}
+  .wlm-nav-group{display:none;flex-direction:column;align-items:stretch;gap:3px;position:absolute;top:100%;left:20px;right:20px;background:#1A3A6E;opacity:1;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:10px;z-index:9999;isolation:isolate;box-shadow:0 16px 40px rgba(0,0,0,.5);max-height:calc(100vh - 160px);overflow-y:auto;}
   .wlm-nav-group.open{display:flex;}
-  .wlm-nav-group .nav-item{width:100%;text-align:left;}
+  .wlm-nav-group .nav-item{width:100%;text-align:left;padding:13px 16px;font-size:14.5px;border-radius:9px;}
+  .wlm-nav-group .nav-item.active{color:#fff;}
+  .wlm-nav-group .nav-item:active{background:var(--gold);color:#fff;}
   .wlm-title{font-size:14px;}
   .wlm-topbar-identity{padding:12px 10px;gap:8px;}
-  .header-logo-img{height:22px;}
-  .header-logo-plate{padding:4px 8px;}
+  .header-logo-img{height:26px;}
   .header-account-info > div:last-child{display:none;}
   .header-right-cluster{gap:6px;}
   .header-right-cluster .nav-item{padding:6px 8px;font-size:11px;}
@@ -377,14 +377,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
      SIDEBAR
 ════════════════════════════════════════════ -->
 <div class="wlm-topbar">
-  <!-- Wordmark's navy/gold colors need a light backdrop against this row's Navy Deep
-       background — a dark-optimized lockup would drop the white plate once available. -->
+  <!-- Dark-background-optimized lockup sits bare on the Navy Deep row, no plate needed. -->
   <div class="wlm-topbar-identity">
     <div></div>
     <div style="display:flex;align-items:center;gap:14px;justify-content:center;">
-      <div class="header-logo-plate">
-        <img class="header-logo-img" src="assets/weblight-wordmark-light.png" alt="WebLight Media">
-      </div>
+      <img class="header-logo-img" src="assets/logo_dark_background.jpg" alt="WebLight Media">
       <div class="wlm-title">— Production Tracker</div>
     </div>
     <div class="header-right-cluster" style="display:flex;align-items:center;justify-content:flex-end;gap:12px;">

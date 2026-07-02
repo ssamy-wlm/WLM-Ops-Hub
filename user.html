@@ -97,9 +97,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    to keep in sync with the real nav. */
 @media(max-width:768px){
   .sidebar-hamburger{display:inline-flex;align-items:center;justify-content:center;}
-  .sidebar{transform:translateX(-100%);transition:transform .2s ease;z-index:210;}
+  .sidebar{transform:translateX(-100%);transition:transform .2s ease;opacity:1;isolation:isolate;z-index:9999;}
   .sidebar.open{transform:translateX(0);}
-  .sidebar.open ~ .sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;}
+  .sidebar.open ~ .sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998;}
+  .nav-item{padding:12px 14px;font-size:14.5px;}
 }
 .sidebar-logo{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
 .sidebar-logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--text),var(--accent));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Poppins',sans-serif;font-size:16px;font-weight:700;flex-shrink:0;}
@@ -351,6 +352,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   .topbar-title{font-size:15px;}
   .topbar{padding:12px 14px;}
   .main{margin-left:0;}
+  .nav-item.active{color:#fff;}
+  .nav-item:active{background:var(--gold);color:#fff;}
 }
 </style>
 </head>
