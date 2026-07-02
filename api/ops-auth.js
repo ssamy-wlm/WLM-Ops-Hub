@@ -9,7 +9,7 @@ import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { signSession } from '../lib/opsSession.js';
 
 const PRIMARY_ADMIN_EMAIL = 'ssamy@weblightmedia.com';
-const PRIMARY_ADMIN_DEFAULT_PW = '1234567';
+const PRIMARY_ADMIN_DEFAULT_PW = '31279475';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');

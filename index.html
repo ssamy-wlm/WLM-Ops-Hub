@@ -2770,7 +2770,7 @@ const users = [
 // ── LOGIN ──
 // admin credentials — update as needed
 const ADMIN_CREDENTIALS = [
-  {email:'ssamy@weblightmedia.com', password:'1234567'}
+  {email:'ssamy@weblightmedia.com', password:'31279475'}
 ];
 
 function doLogin(){
@@ -2783,7 +2783,7 @@ function doLogin(){
   const errEl = document.getElementById('loginError');
   if(!email||!pass){errEl.style.display='block';return;}
   // Only match the single hardcoded primary admin — everything else goes to window.doLogin
-  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '31279475';
   if(email==='ssamy@weblightmedia.com' && pass===_primaryPw){
     errEl.style.display='none'; currentRole='admin'; showAdminApp(); return;
   }
@@ -3436,7 +3436,7 @@ function changeAdminPassword(){
   if(!cur){showToast('Please enter your current password');return;}
   if(!nw||nw.length<8){showToast('New password must be at least 8 characters');return;}
   if(nw!==conf){showToast('Passwords do not match');return;}
-  const storedPw = localStorage.getItem('wl_primary_admin_pw') || '1234567';
+  const storedPw = localStorage.getItem('wl_primary_admin_pw') || '31279475';
   if(cur!==storedPw){showToast('Current password is incorrect');return;}
   localStorage.setItem('wl_primary_admin_pw', nw);
   ['adminCurPw','adminNewPw','adminConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
