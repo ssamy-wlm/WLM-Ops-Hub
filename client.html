@@ -66,17 +66,48 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .sb-link{flex:1;text-align:center;padding:5px 4px;border-radius:7px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;text-decoration:none;display:inline-block;}
 .sb-link:hover{background:var(--bg2);color:var(--text);}
 .wlm-topbar{background:#1A3A6E;color:#fff;display:flex;flex-direction:column;border-bottom:3px solid var(--gold);}
-.wlm-topbar-identity{padding:20px 32px 16px;display:flex;align-items:center;justify-content:center;}
+.wlm-topbar-identity{padding:14px 20px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;}
 .wlm-title{font-family:'Poppins',sans-serif;font-size:21px;font-weight:600;color:#fff;white-space:nowrap;}
-.wlm-topbar-navrow{padding:10px 32px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);}
+.wlm-topbar-navrow{padding:10px 20px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);position:relative;}
+.wlm-nav-hamburger{display:none;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
+.wlm-nav-hamburger:hover{background:rgba(255,255,255,.18);}
+.header-logo-img{height:40px;width:auto;object-fit:contain;display:block;flex-shrink:0;}
 .wlm-nav-group{display:flex;gap:6px;background:rgba(255,255,255,.1);border-radius:10px;padding:5px;flex-wrap:wrap;justify-content:center;}
 .wlm-nav-group .nav-item{color:rgba(255,255,255,.75);margin-bottom:0;padding:7px 16px;text-decoration:none;}
 .wlm-nav-group .nav-item:hover{background:rgba(255,255,255,.12);color:#fff;}
 .wlm-nav-group .nav-item.active{background:var(--gold);color:#1A3A6E;font-weight:800;border-left:none;padding-left:16px;}
 .wlm-nav-group .nav-item .ni{display:none;}
+.header-right-cluster .nav-item{color:rgba(255,255,255,.85);background:rgba(255,255,255,.1);border-radius:8px;}
+.header-right-cluster .nav-item:hover{color:#fff;background:rgba(255,255,255,.18);}
+/* Responsive nav — must come AFTER the base .wlm-nav-group rules above so the
+   media query actually wins the cascade at narrow widths. */
+@media(max-width:768px){
+  .wlm-nav-hamburger{display:block;}
+  .wlm-nav-group{display:none;flex-direction:column;align-items:stretch;gap:3px;position:absolute;top:100%;left:20px;right:20px;background:#1A3A6E;opacity:1;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:10px;z-index:9999;isolation:isolate;box-shadow:0 16px 40px rgba(0,0,0,.5);max-height:calc(100vh - 160px);overflow-y:auto;}
+  .wlm-nav-group.open{display:flex;}
+  .wlm-nav-group .nav-item{width:100%;text-align:left;padding:13px 16px;font-size:14.5px;border-radius:9px;}
+  .wlm-nav-group .nav-item.active{color:#fff;}
+  .wlm-nav-group .nav-item:active{background:var(--gold);color:#fff;}
+  .wlm-title{font-size:14px;}
+  .wlm-topbar-identity{padding:12px 10px;gap:8px;}
+  .header-logo-img{height:26px;}
+  .header-account-info > div:last-child{display:none;}
+  .header-right-cluster{gap:6px;}
+  .header-right-cluster .nav-item{padding:6px 8px;font-size:11px;}
+}
+/* Phone-width extra compaction — the identity row's logo+title+account
+   cluster needs more room back than the 768px nav breakpoint alone frees up. */
+@media(max-width:480px){
+  .wlm-topbar-identity{grid-template-columns:auto 1fr auto;}
+  .wlm-title{display:none;}
+  .header-right-cluster{gap:4px;}
+  .header-right-cluster .nav-item{padding:6px 8px;}
+  .header-right-cluster .nav-item .nav-link-text{display:none;}
+  .sb-avatar{width:24px;height:24px;font-size:9px;}
+}
 
 /* ── MAIN ── */
-.main{flex:1;min-height:100vh;display:flex;flex-direction:column;}
+.main{flex:1;min-width:0;min-height:100vh;display:flex;flex-direction:column;}
 .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 26px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40;}
 .topbar-left{display:flex;flex-direction:column;}
 .topbar-title{font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);}
@@ -346,17 +377,37 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
      SIDEBAR
 ════════════════════════════════════════════ -->
 <div class="wlm-topbar">
-  <!-- Wordmark's navy/gold colors need a light backdrop against this row's Navy Deep
-       background — a dark-optimized lockup would drop the white plate once available. -->
+  <!-- Dark-background-optimized lockup sits bare on the Navy Deep row, no plate needed. -->
   <div class="wlm-topbar-identity">
-    <div style="display:flex;align-items:center;gap:14px;">
-      <div style="background:#fff;border-radius:8px;padding:6px 12px;display:inline-flex;">
-        <img src="assets/weblight-wordmark-light.png" alt="WebLight Media" style="height:32px;width:auto;object-fit:contain;display:block;">
-      </div>
+    <div></div>
+    <div style="display:flex;align-items:center;gap:14px;justify-content:center;">
+      <img class="header-logo-img" src="assets/logo_dark_background.jpg" alt="WebLight Media">
       <div class="wlm-title">— Production Tracker</div>
+    </div>
+    <div class="header-right-cluster" style="display:flex;align-items:center;justify-content:flex-end;gap:12px;">
+      <div class="notif-wrap">
+        <div class="notif-btn" onclick="toggleNotifPanel()" title="Notifications">🔔<div class="notif-dot" id="notif-dot" style="display:none;"></div></div>
+        <div class="notif-panel" id="notif-panel">
+          <div class="notif-panel-head">
+            <span class="notif-panel-title">Notifications</span>
+            <button class="btn btn-xs btn-outline" onclick="markAllNotifsRead()">Mark all read</button>
+          </div>
+          <div id="notif-list"><div class="notif-empty">No notifications</div></div>
+        </div>
+      </div>
+      <div class="header-account-info" style="display:flex;align-items:center;gap:6px;">
+        <div class="sb-avatar" id="sb-avatar">?</div>
+        <div>
+          <div class="sb-name" id="sb-name" style="color:#fff;">Loading…</div>
+          <div class="sb-role" id="sb-role" style="color:rgba(255,255,255,.7);">—</div>
+        </div>
+      </div>
+      <a class="nav-item" href="index.html" target="_top" style="padding:7px 12px;">⚙️ <span class="nav-link-text">Admin</span></a>
+      <a class="nav-item" href="user.html" target="_top" style="padding:7px 12px;">👤 <span class="nav-link-text">Portal</span></a>
     </div>
   </div>
   <div class="wlm-topbar-navrow">
+    <button class="wlm-nav-hamburger" onclick="document.querySelector('.wlm-nav-group').classList.toggle('open')" aria-label="Toggle navigation menu">☰ Menu</button>
     <div class="wlm-nav-group">
       <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)"><span class="ni">🏢</span>All Clients</div>
       <div class="nav-item" id="nav-services-schedule" onclick="showPage('services-schedule',this)"><span class="ni">📅</span>Service Schedule<span class="nav-badge" id="schedule-badge" style="display:none;">0</span></div>
@@ -366,8 +417,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)"><span class="ni">🎯</span>Sales Funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
       <div class="nav-item" id="nav-notifications" onclick="showPage('notifications',this)"><span class="ni">🔔</span>Notifications<span class="nav-badge" id="notif-nav-badge" style="display:none;">0</span></div>
       <div class="nav-item" id="nav-library" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni">📚</span>Weblight Media Library</div>
-      <a class="nav-item" href="index.html" target="_top">⚙️ Admin</a>
-      <a class="nav-item" href="user.html" target="_top">👤 Portal</a>
     </div>
   </div>
 </div>
@@ -382,24 +431,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="topbar-sub" id="page-sub">All clients, projects, services and progress</div>
     </div>
     <div class="topbar-right">
-      <div class="notif-wrap">
-        <div class="notif-btn" onclick="toggleNotifPanel()" title="Notifications">🔔<div class="notif-dot" id="notif-dot" style="display:none;"></div></div>
-        <div class="notif-panel" id="notif-panel">
-          <div class="notif-panel-head">
-            <span class="notif-panel-title">Notifications</span>
-            <button class="btn btn-xs btn-outline" onclick="markAllNotifsRead()">Mark all read</button>
-          </div>
-          <div id="notif-list"><div class="notif-empty">No notifications</div></div>
-        </div>
-      </div>
       <div id="view-mode-badge" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);">—</div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <div class="sb-avatar" id="sb-avatar">?</div>
-        <div>
-          <div class="sb-name" id="sb-name">Loading…</div>
-          <div class="sb-role" id="sb-role">—</div>
-        </div>
-      </div>
     </div>
   </div>
 

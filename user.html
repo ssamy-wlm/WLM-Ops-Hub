@@ -50,12 +50,6 @@
   --border:rgba(255,255,255,0.15);--border-hover:rgba(255,255,255,0.3);
   --shadow:0 2px 12px rgba(0,0,0,0.35);--shadow-md:0 4px 24px rgba(0,0,0,0.45);
 }
-/* Sidebar logo swaps with theme: light-background wordmark (on its own white
-   plate, safe against any surface) for Light, dark-background wordmark
-   (designed to sit bare on navy, no plate) for Navy. */
-.sidebar-logo-navy-img{display:none;}
-[data-theme="navy"] .sidebar-logo-light-wrap{display:none;}
-[data-theme="navy"] .sidebar-logo-navy-img{display:inline-block;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 100%);color:var(--text);min-height:100vh;overflow-x:hidden;}
 
@@ -88,6 +82,19 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .app{display:none;min-height:100vh;}
 .app.visible{display:flex;}
 .sidebar{width:240px;min-height:100vh;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:50;box-shadow:2px 0 12px rgba(45,107,182,.06);}
+.sidebar-hamburger{display:none;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:16px;cursor:pointer;}
+.sidebar-hamburger:hover{background:var(--border);}
+.sidebar-backdrop{display:none;}
+/* Off-canvas sidebar — same nav content as wide screens, just hidden until the
+   hamburger opens it as an overlay, so there's no separate mobile-only markup
+   to keep in sync with the real nav. */
+@media(max-width:768px){
+  .sidebar-hamburger{display:inline-flex;align-items:center;justify-content:center;}
+  .sidebar{transform:translateX(-100%);transition:transform .2s ease;opacity:1;isolation:isolate;z-index:9999;}
+  .sidebar.open{transform:translateX(0);}
+  .sidebar.open ~ .sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998;}
+  .nav-item{padding:12px 14px;font-size:14.5px;}
+}
 .sidebar-logo{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
 .sidebar-logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--text),var(--accent));border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Poppins',sans-serif;font-size:16px;font-weight:700;flex-shrink:0;}
 .sidebar-logo-name{font-family:'Poppins',sans-serif;font-size:14px;color:var(--text-dark);line-height:1.2;}
@@ -121,12 +128,13 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .su-actions{display:flex;gap:4px;margin-top:8px;}
 .su-btn{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;}
 .su-btn:hover{background:var(--bg2);color:var(--text);}
-.main{margin-left:240px;flex:1;min-height:100vh;display:flex;flex-direction:column;}
+.main{margin-left:240px;flex:1;min-width:0;min-height:100vh;display:flex;flex-direction:column;}
 .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40;}
 .topbar::after{content:'';position:absolute;left:0;right:0;bottom:-3px;height:3px;background:linear-gradient(90deg,var(--gold),var(--accent),#7C5CFC,var(--green));}
 .topbar-title{font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);}
 .topbar-sub{font-size:12px;color:var(--text-light);margin-top:1px;}
 .topbar-right{display:flex;align-items:center;gap:12px;}
+.header-signout-btn{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:7px 14px;font-size:12px;}
 .notif-btn{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;position:relative;}
 .notif-dot{width:8px;height:8px;background:var(--red);border-radius:50%;position:absolute;top:6px;right:6px;border:2px solid var(--card);}
 .content{padding:28px 32px;flex:1;}
@@ -325,6 +333,21 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .msg-new-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;background:var(--btn);color:#1A3A6E;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px;width:100%;font-family:inherit;transition:background .15s;flex-shrink:0;}
 .msg-new-btn:hover{background:var(--btn-hover);}
 .msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
+/* ── Responsive top-row compaction — kept last so it wins over the base
+   rules for these classes defined earlier in the sheet. Account/notif/
+   Sign Out stay visible at every width per spec; only the descriptive
+   text and secondary Profile/Theme icons compact away. ── */
+@media(max-width:768px){
+  .header-account-info > div:last-child{display:none;}
+  .header-profile-theme-btn{display:none;}
+  .header-signout-btn{padding:6px 10px;font-size:11px;}
+  .topbar-right{gap:8px;}
+  .topbar-title{font-size:15px;}
+  .topbar{padding:12px 14px;}
+  .main{margin-left:0;}
+  .nav-item.active{color:#fff;}
+  .nav-item:active{background:var(--gold);color:#fff;}
+}
 </style>
 </head>
 <body>
@@ -388,10 +411,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   <!-- SIDEBAR -->
   <div class="sidebar">
     <div class="sidebar-logo" style="justify-content:center;padding:18px 16px;">
-      <div class="sidebar-logo-light-wrap" style="background:#fff;border-radius:8px;padding:9px 16px;display:inline-flex;">
-        <img src="assets/weblight-wordmark-light.png" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
-      </div>
-      <img class="sidebar-logo-navy-img" src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;">
+      <img src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
     </div>
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
@@ -409,31 +429,32 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div class="nav-item" onclick="showSection('messages',this)" id="nav-messages"><span class="ni" style="background:#FDEDED;">💬</span>Messages<span class="msg-nav-badge" id="msg-nav-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="showSection('timeoff',this)"><span class="ni" style="background:#F3E8FF;">🏖</span>Time Off</div>
     </div>
-    <div class="sidebar-user">
-      <div class="sidebar-user-card">
-        <div class="avatar" id="sidebarAvatar">?</div>
-        <div>
-          <div class="su-name" id="sidebarName">Loading…</div>
-          <div class="su-role" id="sidebarRole">Team Member</div>
-        </div>
-      </div>
-      <div class="su-actions">
-        <div class="su-btn" onclick="showSection('profile',document.querySelector('.nav-item'))">⚙️ Profile</div>
-        <div class="su-btn" onclick="openAppearanceModal()">🎨 Theme</div>
-        <div class="su-btn" onclick="logout()">↩ Out</div>
-      </div>
-    </div>
   </div>
+  <!-- Sidebar backdrop — narrow screens only, closes the sidebar on tap-outside -->
+  <div class="sidebar-backdrop" onclick="document.querySelector('.sidebar').classList.remove('open')"></div>
 
   <!-- MAIN CONTENT -->
   <div class="main">
     <div class="topbar">
-      <div>
-        <div class="topbar-title" id="pageTitle">Operations</div>
-        <div class="topbar-sub" id="pageSubtitle"></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="sidebar-hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open')" aria-label="Toggle navigation menu">☰</button>
+        <div>
+          <div class="topbar-title" id="pageTitle">Operations</div>
+          <div class="topbar-sub" id="pageSubtitle"></div>
+        </div>
       </div>
       <div class="topbar-right">
         <div class="notif-btn" id="notifBtn" onclick="checkAnnouncements();showSection('operations',document.querySelector('.nav-item[onclick*=operations]'))">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div></div>
+        <div class="header-account-info" style="display:flex;align-items:center;gap:6px;">
+          <div class="avatar" id="sidebarAvatar">?</div>
+          <div>
+            <div class="su-name" id="sidebarName" style="font-size:12px;">Loading…</div>
+            <div class="su-role" id="sidebarRole" style="font-size:9.5px;">Team Member</div>
+          </div>
+        </div>
+        <div class="su-btn header-profile-theme-btn" onclick="showSection('profile',document.querySelector('.nav-item'))" title="Profile" style="padding:5px 8px;flex:none;">⚙️</div>
+        <div class="su-btn header-profile-theme-btn" onclick="openAppearanceModal()" title="Theme" style="padding:5px 8px;flex:none;">🎨</div>
+        <button class="btn header-signout-btn" onclick="logout()">↩ Sign Out</button>
       </div>
     </div>
     <div class="content">
