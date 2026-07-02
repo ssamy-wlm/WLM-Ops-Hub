@@ -50,13 +50,6 @@
   --border:rgba(255,255,255,0.15);--border-hover:rgba(255,255,255,0.3);
   --shadow:0 2px 12px rgba(0,0,0,0.35);--shadow-md:0 4px 24px rgba(0,0,0,0.45);
 }
-/* Sidebar logo swaps with theme: light-background wordmark (on its own white
-   plate, safe against any surface) for Light, dark-background wordmark
-   (designed to sit bare on navy, no plate) for Navy. */
-.sidebar-logo-light-wrap{display:inline-flex;}
-.sidebar-logo-navy-img{display:none;}
-[data-theme="navy"] .sidebar-logo-light-wrap{display:none;}
-[data-theme="navy"] .sidebar-logo-navy-img{display:inline-block;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 100%);color:var(--text);min-height:100vh;overflow-x:hidden;}
 
@@ -418,10 +411,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   <!-- SIDEBAR -->
   <div class="sidebar">
     <div class="sidebar-logo" style="justify-content:center;padding:18px 16px;">
-      <div class="sidebar-logo-light-wrap" style="background:#fff;border-radius:8px;padding:9px 16px;">
-        <img src="assets/weblight-wordmark-light.png" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
-      </div>
-      <img class="sidebar-logo-navy-img" src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;">
+      <img src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
     </div>
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
