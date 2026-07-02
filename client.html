@@ -346,8 +346,15 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
      SIDEBAR
 ════════════════════════════════════════════ -->
 <div class="wlm-topbar">
+  <!-- Wordmark's navy/gold colors need a light backdrop against this row's Navy Deep
+       background — a dark-optimized lockup would drop the white plate once available. -->
   <div class="wlm-topbar-identity">
-    <div class="wlm-title">WebLight Media — Production Tracker</div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <div style="background:#fff;border-radius:8px;padding:6px 12px;display:inline-flex;">
+        <img src="assets/weblight-wordmark-light.png" alt="WebLight Media" style="height:32px;width:auto;object-fit:contain;display:block;">
+      </div>
+      <div class="wlm-title">— Production Tracker</div>
+    </div>
   </div>
   <div class="wlm-topbar-navrow">
     <div class="wlm-nav-group">
