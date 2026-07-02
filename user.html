@@ -39,17 +39,16 @@
   --cool-grey: #E0E4EC;
 
 }
-[data-theme="dark"] {
-  --bg:#0f1923;--bg2:#162030;--card:#1e2d3d;--sidebar:#1a2535;
-  --text:#5B84C4;--text-dark:#d0e6ff;--text-mid:#6a9fd8;--text-light:#4a6a8a;
-  --border:rgba(135,171,213,0.12);--border-hover:rgba(135,171,213,0.3);
-  --shadow:0 2px 12px rgba(0,0,0,0.3);--shadow-md:0 4px 24px rgba(0,0,0,0.4);
-}
+/* Navy theme — the only alternate theme; Dark was removed since it wasn't
+   on-brand and gave a third, unbranded look. --btn/--gold/--green/--red are
+   deliberately NOT overridden here: gold CTA and semantic colors stay
+   identical to the Light (root) theme, only the surface/text colors flip
+   for a dark ground, so the brand reads the same either way. */
 [data-theme="navy"] {
-  --bg:#1A3A6E;--bg2:#1f4a82;--card:#1e4080;--sidebar:#162f5e;
-  --text:#5B84C4;--text-dark:#d8eaff;--text-mid:#a0c4e8;--text-light:#6a9abf;
-  --border:rgba(135,171,213,0.15);--border-hover:rgba(135,171,213,0.35);
-  --shadow:0 2px 12px rgba(0,0,0,0.25);--shadow-md:0 4px 24px rgba(0,0,0,0.35);
+  --bg:#1A3A6E;--bg2:#234A82;--card:#20447A;--sidebar:#152F5C;
+  --text:#FFFFFF;--text-dark:#FFFFFF;--text-mid:#C9D9EF;--text-light:#93B0D9;
+  --border:rgba(255,255,255,0.15);--border-hover:rgba(255,255,255,0.3);
+  --shadow:0 2px 12px rgba(0,0,0,0.35);--shadow-md:0 4px 24px rgba(0,0,0,0.45);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 100%);color:var(--text);min-height:100vh;overflow-x:hidden;}
@@ -68,7 +67,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .form-input{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:'Poppins',sans-serif;font-size:14px;color:var(--text-dark);background:#fafcff;transition:border-color .2s;}
 .form-input:focus{outline:none;border-color:var(--text);background:#fff;}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:10px;font-family:'Poppins',sans-serif;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:all .2s;}
-.btn-primary{background:var(--btn);color:#1A3A6E;width:100%;justify-content:center;margin-top:8px;font-weight:800;}
+.btn-primary{background:var(--btn);color:#FFFFFF;width:100%;justify-content:center;margin-top:8px;font-weight:800;}
 .btn-primary:hover{background:var(--btn-hover);color:#fff;transform:translateY(-1px);}
 .btn-blue{background:var(--text);color:#fff;}
 .btn-blue:hover{background:var(--text-dark);}
@@ -889,9 +888,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
     </div>
     <div class="modal-body">
       <div class="section-divider" style="border:none;margin-top:0;padding-top:0">Theme</div>
-      <div class="appear-opt selected" onclick="selectTheme(this,'light')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#EAEFF5,#F0F0F0)"></div><div><div class="appear-opt-name">Light</div><div class="appear-opt-sub">Clean light theme (default)</div></div></div>
-      <div class="appear-opt" onclick="selectTheme(this,'navy')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#1A3A6E,#2E5DA6)"></div><div><div class="appear-opt-name">Navy Blue</div><div class="appear-opt-sub">Professional dark navy</div></div></div>
-      <div class="appear-opt" onclick="selectTheme(this,'dark')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#0f1923,#162030)"></div><div><div class="appear-opt-name">Dark</div><div class="appear-opt-sub">Dark mode for night work</div></div></div>
+      <div class="appear-opt selected" onclick="selectTheme(this,'light')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#F7F7F5,#E8F1FC)"></div><div><div class="appear-opt-name">Light</div><div class="appear-opt-sub">White background, navy &amp; gold accents (default)</div></div></div>
+      <div class="appear-opt" onclick="selectTheme(this,'navy')"><div class="appear-opt-preview" style="background:linear-gradient(135deg,#1A3A6E,#2E5DA6)"></div><div><div class="appear-opt-name">Navy</div><div class="appear-opt-sub">Navy background, same brand colors</div></div></div>
     </div>
     <div class="modal-footer">
       <div style="font-size:12px;color:var(--text-light);flex:1">Changes saved automatically</div>
@@ -1268,8 +1266,11 @@ function initApp(){
   renderRoadmap();
   // Render My Service Schedule on Operations page
   renderMyServiceSchedule();
-  // Load theme
-  const saved = localStorage.getItem('wl_theme');
+  // Load theme — 'dark' was removed (never on-brand); anyone who'd previously
+  // picked it gets migrated to 'light' rather than silently losing the
+  // attribute (there's no [data-theme="dark"] rule anymore to match it).
+  let saved = localStorage.getItem('wl_theme');
+  if(saved === 'dark'){ saved = 'light'; localStorage.setItem('wl_theme', saved); }
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
 }
 
