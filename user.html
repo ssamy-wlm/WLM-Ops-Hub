@@ -53,6 +53,7 @@
 /* Sidebar logo swaps with theme: light-background wordmark (on its own white
    plate, safe against any surface) for Light, dark-background wordmark
    (designed to sit bare on navy, no plate) for Navy. */
+.sidebar-logo-light-wrap{display:inline-flex;}
 .sidebar-logo-navy-img{display:none;}
 [data-theme="navy"] .sidebar-logo-light-wrap{display:none;}
 [data-theme="navy"] .sidebar-logo-navy-img{display:inline-block;}
@@ -414,7 +415,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   <!-- SIDEBAR -->
   <div class="sidebar">
     <div class="sidebar-logo" style="justify-content:center;padding:18px 16px;">
-      <div class="sidebar-logo-light-wrap" style="background:#fff;border-radius:8px;padding:9px 16px;display:inline-flex;">
+      <div class="sidebar-logo-light-wrap" style="background:#fff;border-radius:8px;padding:9px 16px;">
         <img src="assets/weblight-wordmark-light.png" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
       </div>
       <img class="sidebar-logo-navy-img" src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;">
