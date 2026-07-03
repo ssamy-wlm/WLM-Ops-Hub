@@ -1919,7 +1919,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header">
           <div><div class="card-title">🛠 Platforms & Tools</div><div class="card-sub">All apps your team uses — these populate the credentials section when creating users</div></div>
-          <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="auditPresetCredentials()" title="Read-only check — never shows any saved username/password value, only whether one exists">🔍 Check Preset Credentials</button>
+            <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
+          </div>
         </div>
         <div class="card-body">
           <div style="font-size:12px;color:var(--text-mid);margin-bottom:14px;line-height:1.5;">
@@ -3034,7 +3037,10 @@ function openEditUserModal(userIdOrName){
   document.getElementById('editUserModal').classList.add('open');
 }
 
-function saveEditUser(){
+// Same confirmed-save fix as addUser() above: the edited row is sent to the
+// server and awaited before the modal closes or localStorage changes, so a
+// failed sync can't silently look like a successful save that then reverts.
+async function saveEditUser(){
   const uid = document.getElementById('editUserModal').dataset.userId;
   const name  = document.getElementById('editName').value.trim();
   const email = document.getElementById('editEmail').value.trim().toLowerCase();
@@ -3048,30 +3054,68 @@ function saveEditUser(){
   if(pass && pass!==pass2){showToast('Passwords do not match');return;}
   const allUsers = dbGet(DB_KEYS.users)||[];
   const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
-  if(idx>-1){
-    allUsers[idx].name  = name;
-    allUsers[idx].email = email;
-    allUsers[idx].title = title;
-    allUsers[idx].resp  = resp;
-    allUsers[idx].role  = role;
-    if(pass){
-      allUsers[idx].password=pass;
-      const forceChange = document.getElementById('editForceChange')?.checked !== false;
-      allUsers[idx].mustChangePassword = forceChange;
-    }
-    dbSet(DB_KEYS.users, allUsers);
+  if(idx<0){ showToast('❌ Could not find that user to update'); return; }
+
+  const updated = { ...allUsers[idx], name, email, title, resp, role };
+  if(pass){
+    updated.password = pass;
+    updated.mustChangePassword = document.getElementById('editForceChange')?.checked !== false;
   }
+
+  const btn = document.querySelector('#editUserModal .btn-primary');
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{users:[updated]}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.users >= 1)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+  }catch(e){
+    showToast('❌ Save failed — changes were NOT saved: '+e.message);
+    if(btn){ btn.textContent='Save All Changes ✓'; btn.disabled=false; }
+    return; // modal stays open, edits stay in the form, nothing written locally
+  }
+  if(btn){ btn.textContent='Save All Changes ✓'; btn.disabled=false; }
+
+  allUsers[idx] = updated;
+  dbSet(DB_KEYS.users, allUsers);
+  _opsSetSnapshot('users', allUsers);
+
   renderUserTable();
   closeModal('editUserModal');
-  showToast('User updated — syncing to cloud…');
+  showToast('✅ User updated and saved');
   logActivity('admin','Admin','Updated user: '+name,'');
-  cloudAutoSync();
 }
 function openGoalModal(){document.getElementById('goalModal').classList.add('open');}
 function openAppearanceModal(){document.getElementById('appearanceModal').classList.add('open');}
 
 // ── ADD USER ──
-function addUser(){
+// ROOT CAUSE (fixed here): the form only marks First/Last/Email/Password/
+// Confirm as required (*), but this handler used to ALSO silently require Job
+// Title, with a generic "Please fill all required fields" toast that never
+// said which field — so filling everything with a visible * still failed with
+// no clue why. Title is now genuinely optional (matches the form), and any
+// real validation failure names the exact missing field(s).
+//
+// SECOND ROOT CAUSE (fixed here): this used to write the new user to
+// localStorage and declare success (close modal, "Account created ✓") BEFORE
+// the cloud push even ran — cloudAutoSync() fired fire-and-forget afterward,
+// silently (silent=true suppresses the failure toast). If that push failed
+// for any reason, the account only ever existed in this one browser's local
+// cache; the very next pull (30s live-sync, or the next login/refresh)
+// replaced local users with the server's list, which never had the new
+// account — so it looked like it saved, then vanished. Now the write is sent
+// to the server FIRST and awaited; the modal only closes and localStorage
+// only updates once the server confirms it actually applied the row. A
+// failed save shows a specific error, leaves the modal open, and leaves the
+// form filled in so nothing typed is lost.
+async function addUser(){
   const first=document.getElementById('newUserFirst').value.trim();
   const last=document.getElementById('newUserLast').value.trim();
   const email=document.getElementById('newUserEmail').value.trim().toLowerCase();
@@ -3085,20 +3129,26 @@ function addUser(){
   const managerId=document.getElementById('newUserManager')?.value||'';
   const probationStart=document.getElementById('newUserProbationStart')?.value||'';
   const probationEnd=document.getElementById('newUserProbationEnd')?.value||'';
-  if(!first||!last||!email||!title){showToast('Please fill all required fields');return;}
-  if(!pass){showToast('An initial password is required');return;}
+
+  const missing=[];
+  if(!first) missing.push('First Name');
+  if(!last) missing.push('Last Name');
+  if(!email) missing.push('Email Address');
+  if(!pass) missing.push('Initial Password');
+  if(!pass2) missing.push('Confirm Password');
+  if(missing.length){ showToast('Please fill in: '+missing.join(', ')); return; }
   if(pass.length<6){showToast('Password must be at least 6 characters');return;}
   if(pass!==pass2){showToast('Passwords do not match');return;}
   // Check for duplicate email
   const existing=dbGet(DB_KEYS.users)||[];
   if(existing.find(u=>u.email===email)){showToast('An account with that email already exists');return;}
-  // Build user object and save
+  // Build user object
   const fullName=first+' '+last;
   // If an unconnected seed placeholder already exists for this name (e.g. from the
   // org structure), connect to it in place — keep its original id so any tracker
   // assignments already pointing at that id stay valid — instead of duplicating it.
   const seededMatch = existing.find(u=>u.seeded===true && (u.name||'').trim().toLowerCase()===fullName.toLowerCase());
-  const newUser=seededMatch || {
+  const newUser=seededMatch ? {...seededMatch} : {
     id: 'u_'+Date.now(),
     status: 'active',
     createdAt: new Date().toISOString(),
@@ -3120,8 +3170,38 @@ function addUser(){
     status: 'active'
   });
   delete newUser.seeded;
+  // Fold platform credentials into this SAME write — previously they were
+  // attached to the local record 400ms later by a separate patch that never
+  // pushed to the server, so they existed only in the admin's own browser and
+  // were gone for anyone else (or this browser after its next real sync).
+  const credentials = collectNewUserCreds();
+  if(credentials && Object.keys(credentials).length) newUser.credentials = credentials;
+
+  const btn = document.querySelector('#addUserModal .btn-primary');
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{users:[newUser]}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.users >= 1)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+  }catch(e){
+    showToast('❌ Save failed — account was NOT created: '+e.message);
+    if(btn){ btn.textContent='Create Account →'; btn.disabled=false; }
+    return; // modal stays open, form stays filled in, nothing written locally
+  }
+  if(btn){ btn.textContent='Create Account →'; btn.disabled=false; }
+
+  // Confirmed saved on the server — now safe to reflect locally.
   if(!seededMatch) existing.push(newUser);
   dbSet(DB_KEYS.users, existing);
+  _opsSetSnapshot('users', existing); // this exact state is known-synced now
 
   // ── Auto-add to org chart ──
   // Reload from localStorage so in-memory state is current, then apply the
@@ -3157,10 +3237,10 @@ function addUser(){
 
   renderUserTable();
   closeModal('addUserModal');
-  showToast(`Account created for ${fullName} ✓`);
+  showToast(`✅ Account created for ${fullName} and saved`);
   ['newUserFirst','newUserLast','newUserEmail','newUserPass','newUserPass2','newUserTitle','newUserResp'].forEach(id=>document.getElementById(id).value='');
   logActivity('admin','Admin','Created user account: '+fullName, email);
-  cloudAutoSync();
+  cloudAutoSync(); // picks up the org-chart node/link change queued above; the user row itself is already confirmed saved
   // Show email preview so Sarah can forward credentials (delay ensures addUserModal is fully closed)
   setTimeout(()=>sendWelcomeEmail({ name: fullName, email, title, password: pass }), 600);
 }
@@ -7898,6 +7978,33 @@ function getPlatforms(){
   return dbGet(WL_PLATFORMS_KEY) || DEFAULT_PLATFORMS;
 }
 
+// Read-only, admin-only check: does any user currently have a saved value
+// under one of the PRESET platform ids (p1..p8)? NEVER reads or displays the
+// actual username/password — only whether one is present — so this is safe
+// to run without exposing any secret. Use this to confirm it's safe to clear
+// the preset platform list (see DEFAULT_PLATFORMS above) before doing so.
+function auditPresetCredentials(){
+  const presetIds = new Set(DEFAULT_PLATFORMS.map(p=>p.id));
+  const users = dbGet(DB_KEYS.users)||[];
+  const hits = [];
+  users.forEach(u=>{
+    const creds = u.credentials||{};
+    Object.keys(creds).forEach(pid=>{
+      if(!presetIds.has(pid)) return;
+      const c = creds[pid];
+      if(c && (c.username || c.password)){
+        hits.push({ user: u.name, email: u.email, platform: c.platform || pid, hasUsername: !!c.username, hasPassword: !!c.password });
+      }
+    });
+  });
+  console.table(hits.length ? hits : [{result:'none found'}]);
+  if(!hits.length){
+    alert('✅ Checked '+users.length+' user account(s): none have a saved value under any preset platform ('+DEFAULT_PLATFORMS.map(p=>p.name).join(', ')+').\n\nSafe to clear the presets.');
+  } else {
+    alert('⚠️ Found saved credentials under PRESET platforms for '+hits.length+' entr'+(hits.length===1?'y':'ies')+' — see the browser console (F12) for the table.\n\nUsers affected: '+[...new Set(hits.map(h=>h.user))].join(', ')+'\n\nDo NOT clear the presets yet. Tell Claude which of these are real so they can be moved to a named platform first.');
+  }
+}
+
 function renderPlatformsList(){
   const wrap = document.getElementById('platformsList');
   if(!wrap) return;
@@ -8249,30 +8356,10 @@ window.openAddUserModal = function(){
   if(pe) pe.value = fmt(end);
 };
 
-// ═══════════════════════════════════════════════════════════════════
-// addUser credential capture — saves platform credentials after user creation
-// ═══════════════════════════════════════════════════════════════════
-(function patchAddUserForCreds(){
-  const _orig = window.addUser;
-  window.addUser = function(){
-    // Capture platform credentials BEFORE original clears the form
-    const credentials = collectNewUserCreds();
-    const email = document.getElementById('newUserEmail')?.value.trim().toLowerCase()||'';
-    // Call the real addUser (which handles email preview internally at 600ms)
-    _orig.call(this);
-    // Attach credentials to the newly created user record (after user is saved)
-    if(email){
-      setTimeout(()=>{
-        const allUsers = dbGet(DB_KEYS.users)||[];
-        const created = allUsers.find(u=>u.email===email);
-        if(created && credentials && Object.keys(credentials).length){
-          created.credentials = credentials;
-          dbSet(DB_KEYS.users, allUsers);
-        }
-      }, 400);
-    }
-  };
-})();
+// NOTE: platform credential capture used to be patched in here as a separate,
+// un-synced 400ms-later local write (collectNewUserCreds() + a bare dbSet with
+// no cloud push). addUser() now folds credentials into its own single,
+// awaited, confirmed-by-the-server write — see addUser() above.
 
 // ═══════════════════════════════════════════════════════════════════
 // INIT platforms list on bizSettings tab open
