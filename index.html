@@ -6944,10 +6944,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeDeadAbbySeedDuplicate();
   // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
   _resetAbbyAndEmilyFirstLoginPassword();
-  // Reassign all Social Media Management services/projects to Sherine (idempotent)
-  _reassignSocialMediaToSherine();
-  // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
-  _seedAssmaaWorkload();
+  // _reassignSocialMediaToSherine() and _seedAssmaaWorkload() calls DISABLED
+  // (2026-07-03): these auto-applied reassignments to live data on every admin
+  // page load with no review step. Reassignment is now handled as a one-time,
+  // explicitly reviewed change instead of standing auto-seed logic. Function
+  // bodies left in place, unreferenced, as a record of exactly what they did —
+  // safe to delete once the reviewed reassignment supersedes them.
   // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after
   // every cloud pull too) — runs after the above so real assigned work is already in
   // place and never gets mistakenly tagged as an unconnected placeholder.
