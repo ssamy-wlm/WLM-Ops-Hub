@@ -1353,16 +1353,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div id="client-filter-chips" style="display:none;margin-top:8px;gap:6px;flex-wrap:wrap;"></div>
       </div>
 
-      <!-- Client Tracker integration notice -->
-      <div style="background:linear-gradient(90deg,rgba(45,107,182,.08),rgba(135,171,213,.06));border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:12px 18px;margin-bottom:18px;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:18px;flex-shrink:0;">📋</span>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">Full Client &amp; Production Tracker available</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Bundles, sub-items, tasks, recurring services, milestones, progress logs, sales funnel, service schedule and team assignments.</div>
-        </div>
-        <a href="javascript:void(0)" onclick="switchAdminTab(document.querySelector('.admin-nav-item[onclick*=tracker]'),'tracker')" class="btn btn-outline btn-sm" style="white-space:nowrap;flex-shrink:0;">Open Tracker →</a>
-      </div>
-
       <!-- Stats bar -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;">
         <div class="card" style="padding:16px 20px;margin:0;">
@@ -6954,10 +6944,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _removeDeadAbbySeedDuplicate();
   // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
   _resetAbbyAndEmilyFirstLoginPassword();
-  // Reassign all Social Media Management services/projects to Sherine (idempotent)
-  _reassignSocialMediaToSherine();
-  // Seed Assmaa Fouad's real workload across her assigned clients (idempotent)
-  _seedAssmaaWorkload();
+  // _reassignSocialMediaToSherine() and _seedAssmaaWorkload() calls DISABLED
+  // (2026-07-03): these auto-applied reassignments to live data on every admin
+  // page load with no review step. Reassignment is now handled as a one-time,
+  // explicitly reviewed change instead of standing auto-seed logic. Function
+  // bodies left in place, unreferenced, as a record of exactly what they did —
+  // safe to delete once the reviewed reassignment supersedes them.
   // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after
   // every cloud pull too) — runs after the above so real assigned work is already in
   // place and never gets mistakenly tagged as an unconnected placeholder.
