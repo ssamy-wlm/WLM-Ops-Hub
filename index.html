@@ -1919,10 +1919,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header">
           <div><div class="card-title">🛠 Platforms & Tools</div><div class="card-sub">All apps your team uses — these populate the credentials section when creating users</div></div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-outline btn-sm" onclick="auditPresetCredentials()" title="Read-only check — never shows any saved username/password value, only whether one exists">🔍 Check Preset Credentials</button>
-            <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
-          </div>
+          <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
         </div>
         <div class="card-body">
           <div style="font-size:12px;color:var(--text-mid);margin-bottom:14px;line-height:1.5;">
@@ -7963,46 +7960,18 @@ document.addEventListener('DOMContentLoaded', ()=>{
 // ═══════════════════════════════════════════════════════════════════
 const WL_PLATFORMS_KEY = 'wl_platforms';
 
-const DEFAULT_PLATFORMS = [
-  {id:'p1', name:'Google Workspace',   category:'Productivity',  url:'https://workspace.google.com'},
-  {id:'p2', name:'Sync CRM',           category:'CRM & Pipeline', url:''},
-  {id:'p3', name:'ScheduleDrop',        category:'Scheduling',    url:''},
-  {id:'p4', name:'Figma / Design',      category:'Design Software',url:'https://figma.com'},
-  {id:'p5', name:'Hubstaff',            category:'Time Tracking', url:'https://hubstaff.com'},
-  {id:'p6', name:'Slack',              category:'Communication',  url:'https://slack.com'},
-  {id:'p7', name:'Skool',              category:'Learning Platform',url:'https://skool.com'},
-  {id:'p8', name:'Delphi AI',          category:'AI Tools',       url:''},
-];
+// Intentionally empty — the admin adds every platform manually (Business
+// Setup -> Platforms & Tools -> + Add Platform). This used to be a hardcoded
+// list of preset apps (Google Workspace, Delphi AI, ScheduleDrop, etc.) that
+// silently reappeared on any browser/device that hadn't explicitly saved its
+// own (empty) platforms list — because wl_platforms is a local-only setting,
+// not synced to Supabase, "removing" the presets in the app only ever
+// affected the one browser that did it. This fallback being [] is what makes
+// the credentials section start empty on every device, not just one.
+const DEFAULT_PLATFORMS = [];
 
 function getPlatforms(){
   return dbGet(WL_PLATFORMS_KEY) || DEFAULT_PLATFORMS;
-}
-
-// Read-only, admin-only check: does any user currently have a saved value
-// under one of the PRESET platform ids (p1..p8)? NEVER reads or displays the
-// actual username/password — only whether one is present — so this is safe
-// to run without exposing any secret. Use this to confirm it's safe to clear
-// the preset platform list (see DEFAULT_PLATFORMS above) before doing so.
-function auditPresetCredentials(){
-  const presetIds = new Set(DEFAULT_PLATFORMS.map(p=>p.id));
-  const users = dbGet(DB_KEYS.users)||[];
-  const hits = [];
-  users.forEach(u=>{
-    const creds = u.credentials||{};
-    Object.keys(creds).forEach(pid=>{
-      if(!presetIds.has(pid)) return;
-      const c = creds[pid];
-      if(c && (c.username || c.password)){
-        hits.push({ user: u.name, email: u.email, platform: c.platform || pid, hasUsername: !!c.username, hasPassword: !!c.password });
-      }
-    });
-  });
-  console.table(hits.length ? hits : [{result:'none found'}]);
-  if(!hits.length){
-    alert('✅ Checked '+users.length+' user account(s): none have a saved value under any preset platform ('+DEFAULT_PLATFORMS.map(p=>p.name).join(', ')+').\n\nSafe to clear the presets.');
-  } else {
-    alert('⚠️ Found saved credentials under PRESET platforms for '+hits.length+' entr'+(hits.length===1?'y':'ies')+' — see the browser console (F12) for the table.\n\nUsers affected: '+[...new Set(hits.map(h=>h.user))].join(', ')+'\n\nDo NOT clear the presets yet. Tell Claude which of these are real so they can be moved to a named platform first.');
-  }
 }
 
 function renderPlatformsList(){
