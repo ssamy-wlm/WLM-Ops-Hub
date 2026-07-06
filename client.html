@@ -927,7 +927,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <button class="modal-close" onclick="closeModal('addServiceModal')">✕</button>
     </div>
     <div class="modal-body">
-      <input type="hidden" id="svc-client-id"><input type="hidden" id="svc-entry-id">
+      <input type="hidden" id="svc-client-id"><input type="hidden" id="svc-entry-id"><input type="hidden" id="svc-location-id">
       <div class="form-group"><label class="form-label">Bundle *</label>
         <select class="form-select" id="svc-bundle" onchange="onSvcBundleChange()"><option value="">— Select bundle —</option></select>
       </div>
@@ -1710,24 +1710,27 @@ function refreshRecurringDueDates(){
   const clients=getClients();
   let dirty=false;
   const todayStr=today();
+  const rollForward=(s)=>{
+    if(s.status==='on-hold' || s.status==='not-started') return;
+    // Assign a due date if missing
+    if(!s.due){
+      s.due=calcNextDue(s.freq, s.lastDone||todayStr);
+      dirty=true;
+      return;
+    }
+    // Roll forward any passed due dates
+    if(s.due < todayStr){
+      const newDue=calcNextDue(s.freq, s.lastDone||todayStr);
+      if(newDue!==s.due){ s.due=newDue; dirty=true; }
+    }
+    // Keep assigneeName in sync (ensure field always present)
+    if(!s.assigneeName && s.assignee){ s.assigneeName=s.assignee; dirty=true; }
+  };
   clients.forEach(c=>{
-    (c.services||[]).forEach(s=>{
-      if(s.status==='on-hold' || s.status==='not-started') return;
-      // Assign a due date if missing
-      if(!s.due){
-        s.due=calcNextDue(s.freq, s.lastDone||todayStr);
-        dirty=true;
-        return;
-      }
-      // Roll forward any passed due dates
-      if(s.due < todayStr){
-        const newDue=calcNextDue(s.freq, s.lastDone||todayStr);
-        if(newDue!==s.due){ s.due=newDue; dirty=true; }
-      }
-      // Keep assigneeName in sync (ensure field always present)
-      if(!s.assigneeName && s.assignee){ s.assigneeName=s.assignee; dirty=true; }
-    });
-    // Sync mirrored projects due dates from their linked service
+    (c.services||[]).forEach(rollForward);
+    (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(rollForward));
+    // Sync mirrored projects due dates from their linked service (client-level
+    // services only — franchise services have no Bundles-tab mirror)
     (c.projects||[]).forEach(p=>{
       if(!p.isRecurringService) return;
       const svc=(c.services||[]).find(s=>s.id===p.serviceId);
@@ -1758,6 +1761,16 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
   'blog content':'Monthly Content Bundle',
   'ad spend management':'PPC Management Bundle',
 };
+// Flattens a client's top-level services with every franchise's services into
+// one array for due-date/alert/calendar/my-work purposes, which don't care
+// about the visual nesting the Services tab renders — each entry carries
+// _locationId/_locationName (both '' for a top-level service) so callers can
+// route edits/mark-done back to the right list and label the franchise.
+function _allClientServices(c){
+  const top=(c.services||[]).map(s=>({...s,_locationId:'',_locationName:''}));
+  const fromLocs=(c.locations||[]).flatMap(loc=>(loc.services||[]).map(s=>({...s,_locationId:loc.id,_locationName:loc.name})));
+  return [...top,...fromLocs];
+}
 function getBundleForService(s){
   // A bundle resolved once at assignment time (see saveClientService()) and
   // stored directly on the client's own service record always wins — this is
@@ -2182,7 +2195,7 @@ function checkServiceAlerts(){
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   let dueCount=0;
   getClients().forEach(c=>{
-    (c.services||[]).forEach(svc=>{
+    _allClientServices(c).forEach(svc=>{
       if(!svc.due) return;
       if(svc.due<=in7s) dueCount++;
     });
@@ -2628,10 +2641,11 @@ function renderOverview(c){
     </div>`).join('');
 
   const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
-  const svcAlerts=(c.services||[]).map(svc=>{
+  const svcAlerts=_allClientServices(c).map(svc=>{
     const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
     const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
-    return `<div class="alert-item alert-${cls}"><div class="alert-icon">${icon}</div><div class="alert-body"><div class="alert-title">${svc.name}</div><div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div></div></div>`;
+    const locLabel=svc._locationName?` <span style="color:var(--text-light);">(${escHtmlClient(svc._locationName)})</span>`:'';
+    return `<div class="alert-item alert-${cls}"><div class="alert-icon">${icon}</div><div class="alert-body"><div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div><div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div></div></div>`;
   }).join('');
 
   return `
@@ -2819,38 +2833,70 @@ function renderTaskRow(clientId, projId, spId, t, canEdit){
 }
 
 // ── Services Tab ──
-function renderServices(c){
-  const svcs=c.services||[];
+// Shared row renderer for both a client's top-level services table and each
+// franchise's own services table — locationId is '' for top-level, or the
+// franchise's id, and is threaded through edit/remove/mark-done so a write
+// always lands back in the same list it came from.
+function _serviceRow(c, svc, locationId){
   const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
-  const rows=svcs.map(svc=>{
-    const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
-    const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
-    const days=daysUntil(svc.due);
-    const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
-    const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
-    return `
+  const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+  const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+  const days=daysUntil(svc.due);
+  const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
+  const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const locArg=locationId?`,'${locationId}'`:'';
+  return `
       <tr>
         <td><span style="font-size:13px;">${icon}</span></td>
-        <td><div style="font-weight:700;font-size:11px;">${svc.name}</div>${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${svc.notes}</div>`:''}</td>
+        <td><div style="font-weight:700;font-size:11px;">${escHtmlClient(svc.name)}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
-        <td>${svc.assigneeName?`<span class="user-chip">${svc.assigneeName}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
-        ${svcCanEdit?`<td>
-          <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}')">✏️</button>
-          ${SESSION.isAdmin?`<button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}')">✕</button>`:''}
+        <td>${svc.assigneeName?`<span class="user-chip">${escHtmlClient(svc.assigneeName)}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
+        ${svcCanEdit?`<td style="white-space:nowrap;">
+          <button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${svc.id}'${locArg})" title="Mark done today, roll due date forward">✅</button>
+          <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}'${locArg})">✏️</button>
+          ${SESSION.isAdmin?`<button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}'${locArg})">✕</button>`:''}
         </td>`:'<td></td>'}
       </tr>`;
-  }).join('');
+}
+function _serviceTable(c, svcs, locationId){
+  if(!svcs.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>';
+  return `<div style="overflow-x:auto;">
+    <table class="service-table">
+      <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
+      <tbody>${svcs.map(svc=>_serviceRow(c,svc,locationId)).join('')}</tbody>
+    </table>
+  </div>`;
+}
+function renderServices(c){
+  const locations=c.locations||[];
+  const franchiseHtml=locations.map(loc=>`
+    <div style="margin-top:22px;border-top:2px solid var(--border);padding-top:16px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px;flex-wrap:wrap;">
+        <span style="font-size:13px;">🏢</span>
+        ${SESSION.isAdmin
+          ?`<input class="form-input" style="flex:0 1 220px;font-weight:700;font-size:12px;padding:5px 9px;" value="${escHtmlClient(loc.name)}" onchange="renameFranchiseLocation('${c.id}','${loc.id}',this.value)">`
+          :`<div style="font-weight:700;font-size:13px;">${escHtmlClient(loc.name)}</div>`}
+        <span style="font-size:10px;color:var(--text-light);">Franchise</span>
+        <div style="flex:1;"></div>
+        ${SESSION.isAdmin?`
+          <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}',null,'${loc.id}')">+ Add Service</button>
+          <button class="btn btn-xs btn-danger" onclick="removeFranchiseLocation('${c.id}','${loc.id}')">✕ Remove Franchise</button>
+        `:''}
+      </div>
+      ${_serviceTable(c, loc.services||[], loc.id)}
+    </div>`).join('');
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
       ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
-    ${svcs.length?`<div style="overflow-x:auto;">
-      <table class="service-table">
-        <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`:'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>'}`;
+    ${_serviceTable(c, c.services||[], '')}
+    ${franchiseHtml}
+    ${SESSION.isAdmin?`
+      <div style="margin-top:22px;border-top:2px solid var(--border);padding-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input class="form-input" id="loc-new-name-${c.id}" style="flex:0 1 220px;font-size:12px;padding:6px 10px;" placeholder="New franchise name (e.g. Yonkers)">
+        <button class="btn btn-outline btn-sm" onclick="addFranchiseLocation('${c.id}')">🏢 Add Franchise</button>
+      </div>`:''}`;
 }
 
 // ── Brand & Notes Tab ──
@@ -3387,16 +3433,17 @@ function onSvcFreqChange(){
   else _updateDueHint(_el('svc-due')?.value);
 }
 
-function openAddServiceModal(clientId,entryId){
+function openAddServiceModal(clientId,entryId,locationId){
   const c=getClient(clientId); if(!c) return;
-  _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||'';
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||''; _el('svc-location-id').value=locationId||'';
   _el('svc-modal-title').textContent=entryId?'Edit Service':'Add Bundle Service';
-  _el('svc-modal-sub').textContent=c.name;
+  _el('svc-modal-sub').textContent=loc?`${c.name} — ${loc.name} (franchise)`:c.name;
   const roster=getRoster();
   const aEl=_el('svc-assignee');
   aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   if(entryId){
-    const svc=(c.services||[]).find(s=>s.id===entryId);
+    const svc=loc?(loc.services||[]).find(s=>s.id===entryId):(c.services||[]).find(s=>s.id===entryId);
     if(svc){
       const catEntry=findCatalogEntryForService(svc);
       if(_el('svc-bundle')) _el('svc-bundle').value=catEntry?.bundle||'';
@@ -3421,17 +3468,19 @@ function openAddServiceModal(clientId,entryId){
   }
   openModal('addServiceModal');
 }
-function editClientService(clientId,entryId){ openAddServiceModal(clientId,entryId); }
+function editClientService(clientId,entryId,locationId){ openAddServiceModal(clientId,entryId,locationId); }
 
 function saveClientService(){
-  const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value;
+  const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value, locationId=_el('svc-location-id').value;
   const catalogId=_el('svc-name').value;
   if(!catalogId){ showToast('Select a service','warn'); return; }
   const cat=getCatalog();
   const catEntry=cat.find(s=>s.id===catalogId);
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
-  if(!c.services) c.services=[];
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  if(locationId && !loc) return; // franchise was removed from under us — bail rather than write to the client
+  const targetList = loc ? (loc.services=loc.services||[]) : (c.services=c.services||[]);
   const roster=getRoster();
   const assigneeId=_el('svc-assignee').value;
   const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
@@ -3448,66 +3497,119 @@ function saveClientService(){
     assigneeId, assigneeName, notes:_el('svc-notes').value
   };
   if(entryId){
-    const idx=c.services.findIndex(s=>s.id===entryId);
+    const idx=targetList.findIndex(s=>s.id===entryId);
     if(idx>=0){
-      Object.assign(c.services[idx], data);
-      // Keep mirrored project in sync immediately
-      const proj=(c.projects||[]).find(p=>p.serviceId===entryId);
-      if(proj){ proj.due=due||''; proj.lastDone=lastDone; }
+      Object.assign(targetList[idx], data);
+      // Keep mirrored project in sync immediately (client-level services only —
+      // franchise services don't get a Bundles-tab mirror, see renderServices()).
+      if(!loc){
+        const proj=(c.projects||[]).find(p=>p.serviceId===entryId);
+        if(proj){ proj.due=due||''; proj.lastDone=lastDone; }
+      }
     }
   } else {
-    c.services.push({id:'sv'+uid(),...data});
+    targetList.push({id:'sv'+uid(),...data});
+    const forName=loc?`${c.name} — ${loc.name}`:c.name;
     if(assigneeId){
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`Service assigned: ${data.name}`,
-        body:`You're handling "${data.name}" (${freq}) for ${c.name}. Next due: ${due||'TBD'}.`,
+        body:`You're handling "${data.name}" (${freq}) for ${forName}. Next due: ${due||'TBD'}.`,
         forUser:assigneeId, fromUser:SESSION.name });
     }
     if(c.managerId && c.managerId!==assigneeId){
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
-        title:`New service added for ${c.name}`,
+        title:`New service added for ${forName}`,
         body:`"${data.name}" (${freq}) assigned to ${assigneeName||'someone'}. Next due: ${due||'TBD'}.`,
         forUser:c.managerId, fromUser:SESSION.name });
     }
   }
   saveClients(clients);
-  syncServicesToProjects(clientId); // keep Projects tab in sync
+  if(!loc) syncServicesToProjects(clientId); // keep Projects tab in sync (client-level only)
   closeModal('addServiceModal');
   renderClientDetail(clientId,'services');
   checkServiceAlerts();
   showToast('Service saved ✓');
 }
-function removeClientService(clientId,entryId){
+function removeClientService(clientId,entryId,locationId){
   if(!confirm('Remove this service?')) return;
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
-  c.services=(c.services||[]).filter(s=>s.id!==entryId);
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  if(locationId && !loc) return;
+  if(loc) loc.services=(loc.services||[]).filter(s=>s.id!==entryId);
+  else c.services=(c.services||[]).filter(s=>s.id!==entryId);
   saveClients(clients);
-  syncServicesToProjects(clientId); // remove mirrored project too
+  if(!loc) syncServicesToProjects(clientId); // remove mirrored project too (client-level only)
   renderClientDetail(clientId,'services');
   showToast('Service removed');
 }
 
 // ── Mark a recurring service as done today → roll next due date forward ──
-function markServiceDone(clientId, serviceId){
+function markServiceDone(clientId, serviceId, locationId){
   const c=getClient(clientId); if(!c) return;
-  const svc=(c.services||[]).find(s=>s.id===serviceId); if(!svc) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  const svc=loc?(loc.services||[]).find(s=>s.id===serviceId):(c.services||[]).find(s=>s.id===serviceId);
+  if(!svc) return;
   const dateEl=_el('svcdone-'+clientId+'-'+serviceId);
   const doneDate=(dateEl && dateEl.value) ? dateEl.value : today();
   svc.lastDone=doneDate;
   svc.due=calcNextDue(svc.freq, doneDate);
   updateClient(c);
-  syncServicesToProjects(clientId);
+  const forName=loc?`${c.name} — ${loc.name}`:c.name;
+  if(!loc) syncServicesToProjects(clientId); // franchise services have no Bundles-tab mirror
   pushNotif({ icon:'✅', color:'rgba(46,158,110,.1)',
     title:`Service done: ${svc.name}`,
-    body:`${SESSION.name} marked "${svc.name}" complete for ${c.name}. Next due: ${svc.due||'TBD'}.`,
+    body:`${SESSION.name} marked "${svc.name}" complete for ${forName}. Next due: ${svc.due||'TBD'}.`,
     forUser:'admin', fromUser:SESSION.name });
-  renderClientDetail(clientId,'projects');
+  renderClientDetail(clientId, loc?'services':'projects'); // franchise services have no Projects-tab mirror to show
   renderMyWork();
   // Push immediately (not debounced) — a discrete Mark Done click shouldn't risk
   // being lost to cloud sync if the tab closes before the debounce timer fires.
   if(typeof _flushCloudPush==='function') _flushCloudPush();
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
+}
+
+// ── Franchises / locations under a client (e.g. Servpro -> Yonkers) ──────
+// Each location holds its own independent services[] array, structurally
+// identical to a client's top-level services. A client may have both
+// top-level services AND franchise locations at the same time.
+function addFranchiseLocation(clientId){
+  const nameEl=_el('loc-new-name-'+clientId);
+  const name=(nameEl?.value||'').trim();
+  if(!name){ showToast('Franchise name required','warn'); return; }
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  if(!Array.isArray(c.locations)) c.locations=[];
+  if(c.locations.some(l=>l.name.toLowerCase()===name.toLowerCase())){ showToast('A franchise with that name already exists','warn'); return; }
+  c.locations.push({id:'loc'+uid(), name, services:[]});
+  saveClients(clients);
+  renderClientDetail(clientId,'services');
+  showToast('Franchise added ✓');
+}
+function renameFranchiseLocation(clientId, locId, newName){
+  const trimmed=(newName||'').trim();
+  if(!trimmed){ renderClientDetail(clientId,'services'); return; }
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const loc=(c.locations||[]).find(l=>l.id===locId); if(!loc) return;
+  loc.name=trimmed;
+  saveClients(clients);
+  renderClientDetail(clientId,'services');
+  showToast('Franchise renamed ✓');
+}
+function removeFranchiseLocation(clientId, locId){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const loc=(c.locations||[]).find(l=>l.id===locId); if(!loc) return;
+  const count=(loc.services||[]).length;
+  const msg=count>0
+    ? `Delete the "${loc.name}" franchise? Its ${count} service(s) will be deleted too — this cannot be undone.`
+    : `Delete the "${loc.name}" franchise?`;
+  if(!confirm(msg)) return;
+  c.locations=(c.locations||[]).filter(l=>l.id!==locId);
+  saveClients(clients);
+  renderClientDetail(clientId,'services');
+  showToast('Franchise removed');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3768,7 +3870,7 @@ function renderSchedule(){
   const monthly=[], yearly=[], other=[];
   getClients().forEach(c=>{
     if(clientFilter && c.id!==clientFilter) return;
-    (c.services||[]).forEach(svc=>{
+    _allClientServices(c).forEach(svc=>{
       const isOverdue=svc.due&&svc.due<t;
       const isSoon=svc.due&&!isOverdue&&svc.due<=in7s;
       if(filter==='overdue'&&!isOverdue) return;
@@ -3798,7 +3900,7 @@ function renderSchedule(){
       <div style="flex:1;padding:10px 12px;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
           <span style="font-size:12px;font-weight:700;color:var(--text-dark);">${svc.name}</span>
-          <span style="font-size:10px;color:var(--text-light);">→ ${c.name}${c.code?` <span style="font-size:9px;background:var(--bg2);padding:1px 5px;border-radius:4px;">${c.code}</span>`:''}
+          <span style="font-size:10px;color:var(--text-light);">→ ${c.name}${svc._locationName?' — '+svc._locationName:''}${c.code?` <span style="font-size:9px;background:var(--bg2);padding:1px 5px;border-radius:4px;">${c.code}</span>`:''}
           </span>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--text-mid);">
@@ -3807,7 +3909,7 @@ function renderSchedule(){
           ${svc.freqLabel&&svc.freqLabel!==svc.freq?`<span>🔁 ${svc.freqLabel}</span>`:''}
         </div>
       </div>
-      ${SESSION.isAdmin?`<div style="display:flex;align-items:center;padding-right:10px;"><button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}')">✏️</button></div>`:''}
+      ${SESSION.isAdmin?`<div style="display:flex;align-items:center;padding-right:10px;"><button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}'${svc._locationId?`,'${svc._locationId}'`:''})">✏️</button></div>`:''}
     </div>`;
   }
 
@@ -3901,6 +4003,34 @@ function renderMyWork(){
         }).join('');
       }
       html+=`</div></div>`;
+    });
+    // Franchise services — rendered once per franchise, not nested inside the
+    // projects loop above (a franchise service isn't tied to any one project).
+    (c.locations||[]).forEach(loc=>{
+      const mySvcs=(loc.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===SESSION.name);
+      if(!mySvcs.length) return;
+      found=true;
+      html+=`
+        <div class="card" style="margin-bottom:14px;">
+          <div class="card-header" style="padding-bottom:12px;">
+            <div><div class="card-title">${c.name} · ${loc.name} <span style="font-size:10px;color:var(--text-light);">(Franchise)</span></div></div>
+          </div>
+          <div class="card-body">
+            <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">My Recurring Services</div>
+            ${mySvcs.map(svc=>{
+              const cls=svc.due&&svc.due<t?'overdue':'ok';
+              const days=daysUntil(svc.due);
+              const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
+              return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
+                <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}</div>
+                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+                <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;">
+                <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}','${loc.id}')">✅ Mark Done</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
     });
   });
   if(!found){
@@ -4098,6 +4228,7 @@ function updateMyWorkBadge(){
       });
     });
     (c.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; });
+    (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; }));
   });
   const badge=_el('my-work-badge');
   if(badge){ badge.textContent=count; badge.style.display=count>0?'flex':'none'; }
@@ -4218,12 +4349,12 @@ function renderCalendar(){
   clients.forEach(c=>{
     const color=c.color||_hashClientColor(c.name);
     if(typeF!=='project'){
-      (c.services||[]).forEach(svc=>{
+      _allClientServices(c).forEach(svc=>{
         if(!svc.due) return;
         if(agentF && svc.assigneeId!==agentF) return;
-        addEv(svc.due,{type:'service',label:svc.name,client:c.name,color,
+        addEv(svc.due,{type:'service',label:svc._locationName?`${svc.name} (${svc._locationName})`:svc.name,client:c.name,color,
           status:svc.status,due:svc.due,agent:rosterMap[svc.assigneeId]||'',
-          freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id});
+          freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id,locId:svc._locationId||''});
       });
     }
     if(typeF!=='service'){

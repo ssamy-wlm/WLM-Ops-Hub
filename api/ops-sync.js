@@ -112,6 +112,26 @@ function checkMemberClientWrite(current, incoming, memberId, memberName) {
     }
   }
 
+  // Franchises/locations (e.g. Servpro -> Yonkers): each holds its own
+  // services[], diffed the same way as top-level services above. Members can
+  // never add/remove/rename a location itself — that's structural, admin-only,
+  // like the scalar keys above.
+  const curLocs = current.locations || [], incLocs = incoming.locations || [];
+  const locsStructurallyEqual = curLocs.length === incLocs.length
+    && curLocs.every((l, i) => l.id === incLocs[i]?.id && l.name === incLocs[i]?.name);
+  if (!locsStructurallyEqual) {
+    return { allowed: false, reason: 'members cannot add/remove/rename franchises (locations)' };
+  }
+  for (const loc of curLocs) {
+    const incLoc = incLocs.find(l => l.id === loc.id);
+    for (const { id, prev, next } of diffArrayById(loc.services, incLoc?.services)) {
+      const item = next || prev;
+      if (!isAssignedToMember(item, memberId, memberName)) {
+        return { allowed: false, reason: `not assigned to location ${loc.id} service ${id}` };
+      }
+    }
+  }
+
   for (const { id, prev, next } of diffArrayById(current.projects, incoming.projects)) {
     const project = next || prev;
     const projectAssigned =
