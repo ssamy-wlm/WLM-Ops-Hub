@@ -4126,7 +4126,12 @@ function init(){
   seedWLMClients();            // import Excel data on first load (fresh install only)
   backfillMissingServices();   // fill services into any client that has none (always runs)
   migrateClientNames();        // fix name mismatches in existing localStorage data
-  reassignSocialMediaToSherine(); // ensure all Social Media Management work is assigned to Sherine
+  // reassignSocialMediaToSherine() call DISABLED (2026-07-06): auto-applied a
+  // data change to every client on every page load with no review step, same
+  // issue as _reassignSocialMediaToSherine() in index.html (disabled earlier).
+  // Function body left in place, unreferenced, as a record of exactly what it
+  // did — safe to delete once reassignment is handled as a one-time,
+  // explicitly reviewed change instead.
   ensureServiceMirrors();      // build project mirrors for any client missing them
   refreshRecurringDueDates();  // assign/roll forward due dates
   detectSession();
