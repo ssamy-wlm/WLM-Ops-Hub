@@ -2,24 +2,24 @@
 // Gated on a signed session token like every other ops-* endpoint, restricted
 // to tier 'super' only — this is the highest-blast-radius operation in the
 // app: it deletes every existing client and replaces them with a freshly
-// mapped roster. Three actions, meant to be called in this exact order from
-// the admin UI:
+// mapped roster. No backup step (explicit decision) — the dry run is the
+// only safety net, so it reports everything: full delete/insert name lists,
+// every service on the sample clients, any bundle that doesn't match the
+// live catalog, and any client that would land with zero services. Two
+// actions, called in this order from the admin UI:
 //
-//   backup   — snapshot every current ops_clients row into ops_backups
-//              (durable, server-side) AND return the same data so the
-//              browser can also save it as a downloadable file. Read-only
-//              against ops_clients.
 //   dry-run  — body: { rows: [...] } (the parsed final CSV). Groups rows
-//              into client records, validates each row's bundle against the
-//              LIVE service catalog (ops_settings.serviceCatalog), and
-//              reports counts + a full name diff + sample records. Writes
-//              NOTHING. Returns a confirmToken bound to this exact row set
-//              and the most recent backup, valid for 30 minutes.
-//   commit   — body: { rows: [...], confirmToken, backupId }. Refuses to run
-//              unless a backup with that id still exists and the token
-//              matches a hash of these exact rows + that backup. Deletes
-//              every ops_clients row, then inserts the newly built roster.
-//              This is the only action that writes.
+//              into client records — a row with franchise_location set nests
+//              under client.locations[] instead of the client's top-level
+//              services — validates each row's bundle against the LIVE
+//              service catalog (ops_settings.serviceCatalog), and reports
+//              counts + a full name diff + every sample client's full
+//              service list. Writes NOTHING. Returns a confirmToken bound to
+//              this exact row set, valid for 30 minutes.
+//   commit   — body: { rows: [...], confirmToken }. Refuses to run unless
+//              the token matches a hash of these exact rows and hasn't
+//              expired. Deletes every ops_clients row, then inserts the
+//              newly built roster. This is the only action that writes.
 //
 // No real client data lives in this file — the admin's browser uploads the
 // CSV she was given and this endpoint only ever sees what's in the request
@@ -46,10 +46,33 @@ function validRow(r) {
   return r && typeof r === 'object' && r.client_name && String(r.client_name).trim();
 }
 
-// Groups flat CSV rows into full client records in the app's shape, and
-// checks each row's declared bundle against the live catalog — a bundle
-// name that doesn't exist in the live catalog is demoted to standalone
-// (bundle:null) rather than rejected, and reported back for review.
+function buildService(clientName, r, index, liveCatalogBundleNames, catalogMismatches, rowIndex) {
+  const serviceName = String(r.service_name || '').trim();
+  if (!serviceName) return null;
+  let bundle = String(r.bundle || '').trim() || null;
+  if (bundle && liveCatalogBundleNames && !liveCatalogBundleNames.has(bundle)) {
+    catalogMismatches.push({ row: rowIndex, client: clientName, service: serviceName, declaredBundle: bundle });
+    bundle = null;
+  }
+  const freq = r.frequency === 'yearly' ? 'yearly' : 'monthly';
+  return {
+    id: `svc_${slugify(clientName)}_${slugify(serviceName)}_${index}`,
+    name: serviceName,
+    bundle,
+    freq,
+    freqLabel: freqLabel(freq),
+    assignee: '', assigneeName: '', assigneeId: '',
+    lastDone: null, due: null, status: 'active',
+    platforms: '', notes: '',
+  };
+}
+
+// Groups flat CSV rows into full client records in the app's shape. A row
+// with franchise_location set nests its service under client.locations[]
+// (creating the franchise the first time it's seen) instead of the client's
+// own top-level services — this is what makes Servpro land as one parent
+// client with a nested "Yonkers" franchise rather than flat services tagged
+// with a location name.
 function buildClientsFromRows(rows, liveCatalogBundleNames) {
   const byClient = new Map();
   const catalogMismatches = [];
@@ -63,33 +86,37 @@ function buildClientsFromRows(rows, liveCatalogBundleNames) {
         name: clientName,
         status: 'active',
         services: [],
+        locations: [],
       });
     }
     const client = byClient.get(clientName);
-    const serviceName = String(r.service_name || '').trim();
-    if (!serviceName) return;
-    let bundle = String(r.bundle || '').trim() || null;
-    if (bundle && liveCatalogBundleNames && !liveCatalogBundleNames.has(bundle)) {
-      catalogMismatches.push({ row: i, client: clientName, service: serviceName, declaredBundle: bundle });
-      bundle = null;
-    }
-    const freq = r.frequency === 'yearly' ? 'yearly' : 'monthly';
-    const svc = {
-      id: `svc_${slugify(clientName)}_${slugify(serviceName)}_${client.services.length}`,
-      name: serviceName,
-      bundle,
-      freq,
-      freqLabel: freqLabel(freq),
-      assignee: '', assigneeName: '', assigneeId: '',
-      lastDone: null, due: null, status: 'active',
-      platforms: '', notes: '',
-    };
     const franchiseLocation = String(r.franchise_location || '').trim();
-    if (franchiseLocation) svc.franchiseLocation = franchiseLocation;
-    client.services.push(svc);
+
+    if (franchiseLocation) {
+      let loc = client.locations.find(l => l.name === franchiseLocation);
+      if (!loc) {
+        loc = { id: `loc_${slugify(clientName)}_${slugify(franchiseLocation)}`, name: franchiseLocation, services: [] };
+        client.locations.push(loc);
+      }
+      const svc = buildService(clientName, r, loc.services.length, liveCatalogBundleNames, catalogMismatches, i);
+      if (svc) loc.services.push(svc);
+    } else {
+      const svc = buildService(clientName, r, client.services.length, liveCatalogBundleNames, catalogMismatches, i);
+      if (svc) client.services.push(svc);
+    }
   });
 
-  return { clients: Array.from(byClient.values()), catalogMismatches };
+  // Drop the empty locations[] array on clients that never had a franchise
+  // row, so a plain client's shape stays exactly as it always has been.
+  const clients = Array.from(byClient.values()).map(c => {
+    if (!c.locations.length) { const { locations, ...rest } = c; return rest; }
+    return c;
+  });
+  return { clients, catalogMismatches };
+}
+
+function totalServiceCount(client) {
+  return (client.services?.length || 0) + (client.locations || []).reduce((n, l) => n + (l.services?.length || 0), 0);
 }
 
 function canonicalRowsString(rows) {
@@ -97,20 +124,18 @@ function canonicalRowsString(rows) {
   return JSON.stringify(rows.map(r => [r.client_name, r.service_name, r.bundle, r.frequency, r.franchise_location]));
 }
 
-function makeToken(rows, backupId, expiresAt) {
+function makeToken(rows, expiresAt) {
   const secret = process.env.SESSION_SECRET;
-  const payload = `${canonicalRowsString(rows)}|${backupId}|${expiresAt}`;
-  const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(`${canonicalRowsString(rows)}|${expiresAt}`).digest('base64url');
   return `${expiresAt}.${sig}`;
 }
 
-function verifyToken(token, rows, backupId) {
+function verifyToken(token, rows) {
   if (!token || typeof token !== 'string' || !token.includes('.')) return { ok: false, reason: 'malformed token' };
   const [expiresAtStr] = token.split('.');
   const expiresAt = Number(expiresAtStr);
   if (!expiresAt || Date.now() > expiresAt) return { ok: false, reason: 'token expired — run the dry run again' };
-  const expected = makeToken(rows, backupId, expiresAt);
-  if (expected !== token) return { ok: false, reason: 'token does not match these rows/backup — run the dry run again' };
+  if (makeToken(rows, expiresAt) !== token) return { ok: false, reason: 'token does not match these rows — run the dry run again' };
   return { ok: true };
 }
 
@@ -134,18 +159,6 @@ export default async function handler(req, res) {
   try { supabase = getSupabaseAdmin(); }
   catch (err) { return res.status(500).json({ error: err.message }); }
 
-  if (action === 'backup') {
-    const { data: rows, error } = await supabase.from('ops_clients').select('id, status, data');
-    if (error) return res.status(500).json({ error: `Failed to read ops_clients: ${error.message}` });
-    const backupId = `clients_backup_${Date.now()}`;
-    const snapshot = (rows || []).map(r => ({ id: r.id, status: r.status, ...r.data }));
-    const { error: insErr } = await supabase.from('ops_backups').insert({
-      id: backupId, kind: 'ops_clients_pre_migration', data: snapshot,
-    });
-    if (insErr) return res.status(500).json({ error: `Backup write failed — nothing else will proceed without this: ${insErr.message}` });
-    return res.status(200).json({ ok: true, backupId, count: snapshot.length, clients: snapshot });
-  }
-
   if (action === 'dry-run') {
     const { rows } = req.body || {};
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: '"rows" must be a non-empty array' });
@@ -160,12 +173,26 @@ export default async function handler(req, res) {
     if (error) return res.status(500).json({ error: `Failed to read current ops_clients: ${error.message}` });
     const currentNames = (currentRows || []).map(r => r?.data?.name || r.id);
 
-    const { data: latestBackup } = await supabase
-      .from('ops_backups').select('id, created_at').eq('kind', 'ops_clients_pre_migration')
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const zeroServiceClients = newClients.filter(c => totalServiceCount(c) === 0).map(c => c.name);
+    const expectedZeroService = new Set(['Coverli', 'JLN Contracting', 'WebLight Media']);
+    const unexpectedZeroServiceClients = zeroServiceClients.filter(n => !expectedZeroService.has(n));
+
+    const standaloneServices = [];
+    newClients.forEach(c => {
+      (c.services || []).forEach(s => { if (!s.bundle) standaloneServices.push({ client: c.name, service: s.name, freq: s.freq }); });
+      (c.locations || []).forEach(loc => (loc.services || []).forEach(s => {
+        if (!s.bundle) standaloneServices.push({ client: `${c.name} — ${loc.name}`, service: s.name, freq: s.freq });
+      }));
+    });
+
+    const pick = (name) => newClients.find(c => c.name === name);
+    const sampleClients = [
+      pick('Ace Auto Body'), pick('Servpro'), pick('WORK_SPACE'),
+      pick('Coverli'), pick('Leese Flooring Supplies Inc.'),
+    ].filter(Boolean);
 
     const expiresAt = Date.now() + TOKEN_TTL_MS;
-    const confirmToken = latestBackup ? makeToken(rows, latestBackup.id, expiresAt) : null;
+    const confirmToken = makeToken(rows, expiresAt);
 
     return res.status(200).json({
       ok: true, dryRun: true,
@@ -174,27 +201,22 @@ export default async function handler(req, res) {
       clientsToInsert: newClients.length,
       clientsToInsertNames: newClients.map(c => c.name),
       totalServiceRows: rows.length,
-      sampleClients: newClients.slice(0, 5),
+      sampleClients,
       catalogMismatches,
       liveCatalogFound: !!liveCatalogBundleNames,
-      backupId: latestBackup ? latestBackup.id : null,
-      backupAge: latestBackup ? Date.now() - new Date(latestBackup.created_at).getTime() : null,
+      zeroServiceClients,
+      unexpectedZeroServiceClients,
+      standaloneServices,
       confirmToken,
-      confirmTokenExpiresAt: latestBackup ? expiresAt : null,
-      warning: latestBackup ? null : 'No backup found yet — run the Backup step before Confirm will be allowed.',
+      confirmTokenExpiresAt: expiresAt,
     });
   }
 
   if (action === 'commit') {
-    const { rows, confirmToken, backupId } = req.body || {};
+    const { rows, confirmToken } = req.body || {};
     if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: '"rows" must be a non-empty array' });
-    if (!backupId) return res.status(400).json({ error: 'Missing backupId — run Backup and Dry Run first.' });
 
-    const { data: backupRow, error: backupErr } = await supabase.from('ops_backups').select('id').eq('id', backupId).eq('kind', 'ops_clients_pre_migration').maybeSingle();
-    if (backupErr) return res.status(500).json({ error: `Could not verify backup: ${backupErr.message}` });
-    if (!backupRow) return res.status(403).json({ error: 'That backup no longer exists — run Backup and Dry Run again before confirming.' });
-
-    const check = verifyToken(confirmToken, rows, backupId);
+    const check = verifyToken(confirmToken, rows);
     if (!check.ok) return res.status(403).json({ error: `Refusing to write: ${check.reason}` });
 
     const { data: catalogRow } = await supabase.from('ops_settings').select('data').eq('key', 'serviceCatalog').maybeSingle();
@@ -233,9 +255,8 @@ export default async function handler(req, res) {
       ok: deleteErrors.length === 0 && insertErrors.length === 0,
       deleted, inserted, deleteErrors, insertErrors,
       countBefore: existingIds.length, countAfter: finalCount,
-      backupIdUsed: backupId,
     });
   }
 
-  return res.status(400).json({ error: `Unknown action "${action}" — expected "backup", "dry-run", or "commit".` });
+  return res.status(400).json({ error: `Unknown action "${action}" — expected "dry-run" or "commit".` });
 }
