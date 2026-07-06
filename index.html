@@ -7067,8 +7067,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
   _tagSeededPlaceholderUsers();
   // Un-hide Yehia if the tag above just re-hid him after an admin restore (idempotent)
   _unhideRestoredYehia();
-  // Assign the BrightWheel Review Request Export to Abby Conklin (idempotent)
-  _assignBrightwheelExportToAbby();
+  // _assignBrightwheelExportToAbby() call DISABLED (2026-07-06): ran on every
+  // load with no guard, reassigning any service/project named "brightwheel
+  // review request" to Abby Conklin with no review step. Function body left
+  // in place, unreferenced, as a record of what it did.
   // Render user table from DB
   renderUserTable();
   // Render admin accounts table from DB
@@ -8831,7 +8833,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
 // Without the guard it re-ran on every load forever, silently re-clearing or
 // re-filling these people's probation dates even after an admin manually
 // edited them afterward.
-(function _migrateProbation(){
+// _migrateProbation() call DISABLED (2026-07-06): guarded only by a
+// browser-local flag (wl_probation_migration_v1), so it re-fires on any new
+// browser/device and force-writes/clears hardcoded probation dates on real
+// user records with no review step. Function body left in place, unreferenced,
+// as a record of what it did.
+function _migrateProbation(){
   const DONE_KEY = 'wl_probation_migration_v1';
   if(localStorage.getItem(DONE_KEY)) return;
   const users = dbGet(DB_KEYS.users)||[];
@@ -8861,10 +8868,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
     dbSet(DB_KEYS.users, users);
     cloudAutoSync(true);
   }
-})();
+}
 
-// ── Restore missing admin accounts ──
-(function _seedMissingAdmins(){
+// _seedMissingAdmins() call DISABLED (2026-07-06): ran unconditionally on
+// every load and could re-create admin accounts with a hardcoded shared
+// password, or rewrite an admin record's id, with no review step. Function
+// body left in place, unreferenced, as a record of what it did.
+function _seedMissingAdmins(){
   const admins = dbGet(DB_KEYS.admins)||[];
   const emails = admins.map(a=>a.email);
   let changed = false;
@@ -8923,13 +8933,17 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
     if(typeof cloudAutoSync==='function') cloudAutoSync(true);
   }
-})();
+}
 
 // ── Lock down access levels for restricted admins whose stored record predates
 // (or drifted from) the intended role. Emily (Creative Manager) should only see
 // Clients + Tracker — never Users/Payroll/Business Setup. Abby (Director of
 // Production) should see Clients/Tracker/Live Feed/Business Setup but never Payroll. ──
-(function _fixAdminAccessLevels(){
+// _fixAdminAccessLevels() call DISABLED (2026-07-06): ran unconditionally on
+// every load, force-writing hardcoded access levels onto real admin records
+// (and live-patching the current session) with no review step. Function body
+// left in place, unreferenced, as a record of what it did.
+function _fixAdminAccessLevels(){
   const admins = dbGet(DB_KEYS.admins)||[];
   let changed = false;
   const emilyAcct = admins.find(a=>(a.email||'').toLowerCase()==='erovillo@weblightmedia.com');
@@ -8958,7 +8972,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       }
     }catch(e){}
   }
-})();
+}
 
 // ── Reconcile dual-identity team members: anyone who exists in BOTH wl_users_db
 // (the canonical ID used by every service/project assignment) and wl_admins_db
@@ -8968,7 +8982,11 @@ document.addEventListener('DOMContentLoaded', ()=>{
 // their edit rights on their own assigned work — generalizes the Emily Rovillo
 // fix above to run for everyone, since the two records' names can drift (e.g. a
 // placeholder seed name that was never corrected to match someone's real account).
-(function _reconcileDualIdentityIds(){
+// _reconcileDualIdentityIds() call DISABLED (2026-07-06): ran unconditionally
+// on every load with no allowlist, re-IDing any admin record to match a user
+// record on a fuzzy first-name match — broadest blast radius of the sweep.
+// Function body left in place, unreferenced, as a record of what it did.
+function _reconcileDualIdentityIds(){
   const users  = dbGet(DB_KEYS.users)  || [];
   const admins = dbGet(DB_KEYS.admins) || [];
   const firstNameOf = n => (n||'').trim().split(/\s+/)[0].toLowerCase();
@@ -8996,7 +9014,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(typeof cloudAutoSync==='function') cloudAutoSync(true);
     console.log('[WLM] ✅ Reconciled dual-identity admin/user account IDs.');
   }
-})();
+}
 
 // ── Re-populate level select whenever modal opens ──
 const _origOpenAddAdminModal = window.openAddAdminModal;
