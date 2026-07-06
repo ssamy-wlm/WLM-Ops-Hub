@@ -7,8 +7,8 @@
 //
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
-// settings?, orgNodes?, orgLinks? }, tombstones?: { users?: [ids] },
-// restoreUserIds?: [ids] }
+// settings?, orgNodes?, orgLinks?, catalogSuggestions? },
+// tombstones?: { users?: [ids] }, restoreUserIds?: [ids] }
 //
 // Every array in `changes` is a list of ONLY the records that actually
 // changed (new or edited) — never the full dataset. Role comes from the
@@ -211,6 +211,15 @@ export default async function handler(req, res) {
       }
     }
 
+    // Service Catalog: any admin tier may edit (unlike the rest of `settings`,
+    // which stays Super Admin/CEO exclusive below) — members can only suggest
+    // (see catalogSuggestions further down), never write the catalog directly.
+    if (isAdmin && c.settings && typeof c.settings === 'object' && 'serviceCatalog' in c.settings) {
+      const { error } = await supabase.from('ops_settings').upsert({ key: 'serviceCatalog', data: c.settings.serviceCatalog }, { onConflict: 'key' });
+      if (error) warnings.push(`settings.serviceCatalog: ${error.message}`);
+      else applied.serviceCatalog = 1;
+    }
+
     if (isAdmin) {
       // users: both tiers manage the team, but payroll/pay-rate fields are
       // Super Admin/CEO exclusive — stripped (not rejected) for manager tier
@@ -238,15 +247,17 @@ export default async function handler(req, res) {
           applied.timeOffLedger = await insertNewOnly(supabase, 'ops_time_off_ledger', c.timeOffLedger.filter(validGeneric), warnings);
         }
         if (c.settings && typeof c.settings === 'object') {
-          for (const [key, value] of Object.entries(c.settings)) {
+          const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
+          for (const [key, value] of otherKeys) {
             const { error } = await supabase.from('ops_settings').upsert({ key, data: value }, { onConflict: 'key' });
             if (error) warnings.push(`settings.${key}: ${error.message}`);
           }
-          applied.settings = Object.keys(c.settings).length;
+          if (otherKeys.length) applied.settings = otherKeys.length;
         }
       } else {
         for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'settings']) {
-          if (key === 'settings' ? c.settings : Array.isArray(c[key]) && c[key].length) {
+          const hasOtherSettings = key === 'settings' && c.settings && Object.keys(c.settings).some(k => k !== 'serviceCatalog');
+          if (key === 'settings' ? hasOtherSettings : Array.isArray(c[key]) && c[key].length) {
             warnings.push(`${key}: dropped — Super Admin/CEO only, caller is a manager-tier admin`);
           }
         }
@@ -365,6 +376,46 @@ export default async function handler(req, res) {
         }
       }
       applied.timeOffRequests = n;
+    }
+
+    // ── catalog suggestions: any role (including members) may propose a new
+    // service or an edit to an existing one — identity/status are always
+    // server-forced, never trusted from the body. Only admins may act on an
+    // EXISTING suggestion (approve/reject/edit); a member touching one that
+    // already exists is rejected outright, same "no silent partial merge"
+    // rule as checkMemberClientWrite(). Approving a suggestion does not, by
+    // itself, change the live catalog — the admin's browser sends the updated
+    // serviceCatalog (via settings, above) in the same request that marks the
+    // suggestion approved. ──
+    if (Array.isArray(c.catalogSuggestions) && c.catalogSuggestions.length) {
+      const incoming = c.catalogSuggestions.filter(validGeneric);
+      const ids = incoming.map(r => r.id);
+      const { data: currentRows } = await supabase.from('ops_catalog_suggestions').select('id, data').in('id', ids);
+      const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+      let n = 0;
+      for (const inc of incoming) {
+        const cur = byId.get(inc.id);
+        if (!cur) {
+          const row = {
+            ...inc,
+            status: 'pending',
+            submittedBy: session.id,
+            submittedByName: session.name,
+            reviewedBy: null, reviewedByName: null, reviewedAt: null,
+          };
+          const { error } = await supabase.from('ops_catalog_suggestions').insert({ id: inc.id, data: row });
+          if (error) warnings.push(`catalogSuggestions(${inc.id}): ${error.message}`); else n++;
+          continue;
+        }
+        if (!isAdmin) {
+          rejected.push({ table: 'catalogSuggestions', id: inc.id, reason: 'members cannot edit an existing suggestion — only submit new ones' });
+          continue;
+        }
+        const row = { ...inc, reviewedBy: session.id, reviewedByName: session.name, reviewedAt: new Date().toISOString() };
+        const { error } = await supabase.from('ops_catalog_suggestions').update({ data: row }).eq('id', inc.id);
+        if (error) warnings.push(`catalogSuggestions(${inc.id}): ${error.message}`); else n++;
+      }
+      applied.catalogSuggestions = n;
     }
 
     return res.status(200).json({ ok: true, applied, warnings, rejected });

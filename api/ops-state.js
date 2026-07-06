@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const [
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ,
-      orgNodesQ, orgLinksQ,
+      orgNodesQ, orgLinksQ, catalogSuggestionsQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
@@ -55,9 +55,10 @@ export default async function handler(req, res) {
       supabase.from('ops_deleted_user_ids').select('user_id'),
       supabase.from('ops_org_nodes').select('id, data'),
       supabase.from('ops_org_links').select('id, data'),
+      supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
     ]);
 
-    const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ].find(q => q.error)?.error;
+    const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ, catalogSuggestionsQ].find(q => q.error)?.error;
     if (err) return res.status(500).json({ error: err.message });
 
     const deletedIds = new Set((deletedQ.data || []).map(r => r.user_id));
@@ -76,6 +77,7 @@ export default async function handler(req, res) {
     let summaries = (summariesQ.data || []).map(r => ({ clientId: r.client_id, kind: r.kind, periodKey: r.period_key, ...r.data }));
     let orgNodes = rows(orgNodesQ.data);
     let orgLinks = rows(orgLinksQ.data);
+    let catalogSuggestions = rows(catalogSuggestionsQ.data);
 
     const record = {
       users, admins, clients, goals, feed, messages, roadmapTasks,
@@ -89,6 +91,10 @@ export default async function handler(req, res) {
       orgExcluded: settingsMap.orgExcluded ?? '[]',
       orgLayoutVersion: settingsMap.orgLayoutVersion ?? null,
       primaryAdminPw: settingsMap.primaryAdminPw ?? null,
+      // Service Catalog: visible to every tier (members need it to see options
+      // and submit suggestions), unlike the other settings keys below.
+      serviceCatalog: settingsMap.serviceCatalog ?? null,
+      catalogSuggestions,
     };
 
     // Payroll/pay-rate fields: Super Admin/CEO only, for every non-super caller.
