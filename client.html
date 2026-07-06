@@ -598,13 +598,18 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
     <!-- ═══ PAGE: SERVICE CATALOG ═══ -->
     <div id="page-recurring-catalog" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
         <div>
           <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🔁 Service Catalog</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">All services offered — recurring and one-time</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Bundles and services offered — the source of truth for assigning work to clients</div>
         </div>
-        <button class="btn btn-primary btn-sm admin-only" id="catalog-add-btn" onclick="openServiceCatalogModal()">+ Add Service</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline btn-sm admin-only" id="catalog-manage-bundles-btn" onclick="openBundleManagerModal()">🗂 Manage Bundles</button>
+          <button class="btn btn-primary btn-sm admin-only" id="catalog-add-btn" onclick="openServiceCatalogModal()">+ Add Service</button>
+          <button class="btn btn-outline btn-sm member-only" id="catalog-suggest-btn" onclick="openSuggestServiceModal()">💡 Suggest a Service</button>
+        </div>
       </div>
+      <div id="catalog-approval-queue" class="admin-only"></div>
       <div id="catalog-list"></div>
     </div>
 
@@ -972,6 +977,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     <div class="modal-body">
       <input type="hidden" id="sc-id">
       <div class="form-group"><label class="form-label">Service Name *</label><input class="form-input" id="sc-name" placeholder="e.g. Social Media Management"></div>
+      <div class="form-group"><label class="form-label">Bundle</label>
+        <select class="form-select" id="sc-bundle"><option value="">— No Bundle (standalone) —</option></select>
+        <div style="font-size:10.5px;color:var(--text-light);margin-top:4px;">Optional — a standalone service with no bundle is valid.</div>
+      </div>
       <div class="form-group"><label class="form-label">Default Frequency</label>
         <select class="form-select" id="sc-freq">
           <option value="monthly">Monthly</option>
@@ -991,6 +1000,64 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   </div>
 </div>
 
+<!-- BUNDLE MANAGER MODAL -->
+<div id="bundleManagerModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">Manage Bundles</div></div>
+      <button class="modal-close" onclick="closeModal('bundleManagerModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="display:flex;gap:8px;">
+        <input class="form-input" id="bm-new-name" placeholder="New bundle name…" style="flex:1;">
+        <button class="btn btn-primary btn-sm" onclick="submitAddBundle()">+ Add</button>
+      </div>
+      <div id="bundle-manager-list" style="margin-top:6px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('bundleManagerModal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- SUGGEST SERVICE MODAL (members) -->
+<div id="suggestServiceModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">Suggest a Service</div></div>
+      <button class="modal-close" onclick="closeModal('suggestServiceModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Type</label>
+        <select class="form-select" id="ss-type" onchange="_toggleSuggestEditTarget()">
+          <option value="new">Suggest a new service</option>
+          <option value="edit">Suggest an edit to an existing service</option>
+        </select>
+      </div>
+      <div class="form-group" id="ss-edit-target-wrap" style="display:none;">
+        <label class="form-label">Existing Service</label>
+        <select class="form-select" id="ss-edit-target"></select>
+      </div>
+      <div class="form-group"><label class="form-label">Service Name *</label><input class="form-input" id="ss-name" placeholder="e.g. GBP Optimization"></div>
+      <div class="form-group"><label class="form-label">Bundle</label>
+        <select class="form-select" id="ss-bundle"><option value="">— No Bundle (standalone) —</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Frequency</label>
+        <select class="form-select" id="ss-freq">
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+          <option value="one-time">One-Time</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Note to the admin (optional)</label><textarea class="form-input" id="ss-note" rows="2" placeholder="Why this service/edit is needed…" style="resize:vertical;"></textarea></div>
+      <div style="font-size:10.5px;color:var(--text-light);">This goes to an admin approval queue — the catalog only changes once it's approved.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('suggestServiceModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCatalogSuggestion()">💡 Submit Suggestion</button>
+    </div>
+  </div>
+</div>
 
 <!-- NOTES / BRAND EDIT -->
 <div id="notesModal" class="modal-overlay">
@@ -1080,6 +1147,7 @@ const WLM_SEED_DATA=[{"id":"cl_mmnt_71505","name":"MMNT","industry":"Finance / A
 const CL_KEYS = {
   clients:        'wl_clients_db',
   serviceCatalog: 'wl_service_catalog',
+  catalogSuggestions: 'wl_catalog_suggestions',
   notifications:  'wl_client_notifications',
   funnel:         'wl_sales_funnel',
   users:          'wl_users_db',
@@ -1184,8 +1252,9 @@ function detectSession(){
   const vmBadge  = _el('view-mode-badge');
   if(vmBadge) vmBadge.textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin View':SESSION.isCEO?'👔 CEO View':'⚙️ Admin View') : '👤 User View';
 
-  // Hide admin-only UI for non-admins
+  // Hide admin-only UI for non-admins, and member-only UI for admins (inverse)
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
+  document.querySelectorAll('.member-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'none':''; });
   if(!SESSION.isAdmin){
     const nc=_el('nav-clients'); if(nc) nc.style.display='none';
     setTimeout(()=>{ if(typeof showPage==='function') showPage('my-work',_el('nav-my-work')); },0);
@@ -1197,6 +1266,7 @@ function detectSession(){
 // ═══════════════════════════════════════════════════════
 function _el(id){ return document.getElementById(id); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function escHtmlClient(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function timeAgo(ts){
   const d=Date.now()-ts;
@@ -1295,12 +1365,74 @@ const DEFAULT_CATALOG=(()=>{
   });
   return out;
 })();
-function getBundleNames(){ return BUNDLE_DEFS.map(b=>b.bundle); }
+// ── Service Catalog (bundles + services) — Supabase-backed, single source of
+// truth. Storage shape: { bundles:[{id,name}], services:[{id,name,bundle,freq,
+// desc,defaultAssignee}] }. `bundle` on a service is the bundle NAME (string,
+// matching the existing convention used everywhere else in this file —
+// getBundleForService, populateServiceOptionsForBundle, etc.) or null/''
+// for a standalone service with no bundle. Renaming a bundle bulk-updates
+// the name on every service that references it; deleting a bundle clears
+// the reference (its services become standalone) — it never deletes a
+// service. Editing this catalog never touches services already assigned to
+// a client: those are independent records with their own resolved
+// name/bundle/freq, written once at assignment time (see Job 1's model). ──
+function _defaultCatalogShape(){
+  return {
+    bundles: BUNDLE_DEFS.map((b,i)=>({id:'bundle'+i, name:b.bundle})),
+    services: DEFAULT_CATALOG,
+  };
+}
+function getFullCatalog(){
+  const stored=db(CL_KEYS.serviceCatalog);
+  if(stored && typeof stored==='object' && Array.isArray(stored.services) && Array.isArray(stored.bundles)) return stored;
+  if(Array.isArray(stored)){
+    // Legacy flat-array shape (pre-catalog-editor) — upgrade in place.
+    const names=[...new Set(stored.map(s=>s.bundle).filter(Boolean))];
+    return { bundles: names.map((n,i)=>({id:'bundle'+i, name:n})), services: stored };
+  }
+  return _defaultCatalogShape();
+}
+function getCatalog(){ return getFullCatalog().services; }
+function getCatalogBundles(){ return getFullCatalog().bundles; }
+function _markCatalogDirty(){ try{ localStorage.setItem('wl_catalog_dirty','1'); }catch(e){} _scheduleCloudPush(); }
+function saveFullCatalog(bundles, services){
+  dbSave(CL_KEYS.serviceCatalog, {bundles, services});
+  _markCatalogDirty();
+}
+function getBundleNames(){ return getCatalogBundles().map(b=>b.name); }
+function addBundle(name){
+  const {bundles, services}=getFullCatalog();
+  const trimmed=(name||'').trim();
+  if(!trimmed) return null;
+  if(bundles.some(b=>b.name.toLowerCase()===trimmed.toLowerCase())) return null;
+  const b={id:'bundle'+uid(), name:trimmed};
+  saveFullCatalog([...bundles,b], services);
+  return b;
+}
+function renameBundle(id,newName){
+  const {bundles, services}=getFullCatalog();
+  const b=bundles.find(x=>x.id===id); if(!b) return;
+  const oldName=b.name, trimmed=(newName||'').trim(); if(!trimmed) return;
+  b.name=trimmed;
+  services.forEach(s=>{ if(s.bundle===oldName) s.bundle=trimmed; });
+  saveFullCatalog(bundles, services);
+}
+function deleteBundle(id){
+  const {bundles, services}=getFullCatalog();
+  const b=bundles.find(x=>x.id===id); if(!b) return;
+  services.forEach(s=>{ if(s.bundle===b.name) s.bundle=null; });
+  saveFullCatalog(bundles.filter(x=>x.id!==id), services);
+}
 function ensureCatalog(){
-  const cat=db(CL_KEYS.serviceCatalog)||[];
-  // Reseed whenever the stored catalog predates the Bundle system (no `bundle` field yet)
-  if(!cat.length||!cat.some(s=>s.bundle)){
-    dbSave(CL_KEYS.serviceCatalog,DEFAULT_CATALOG);
+  const stored=db(CL_KEYS.serviceCatalog);
+  const looksCurrent = stored && typeof stored==='object' && Array.isArray(stored.services) && Array.isArray(stored.bundles) && stored.bundles.length;
+  if(!looksCurrent){
+    dbSave(CL_KEYS.serviceCatalog, getFullCatalog());
+    // Only push if we're seeding brand-new data (nothing local at all) — an
+    // existing-but-legacy-shaped catalog is upgraded locally and pushed the
+    // next time an admin actually edits it, not silently overwritten here
+    // for every admin whose browser happens to load the new code first.
+    if(!stored) _markCatalogDirty();
   }
 }
 
@@ -1605,7 +1737,6 @@ function refreshRecurringDueDates(){
   });
   if(dirty){ saveClients(clients); console.log('[WLM] Rolling due dates refreshed'); }
 }
-function getCatalog(){ return db(CL_KEYS.serviceCatalog)||DEFAULT_CATALOG; }
 
 // Legacy/seeded services often carry a catalogId from an older catalog scheme that no
 // longer resolves (or, worse, now collides with an unrelated entry in the current
@@ -1628,6 +1759,14 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
   'ad spend management':'PPC Management Bundle',
 };
 function getBundleForService(s){
+  // A bundle resolved once at assignment time (see saveClientService()) and
+  // stored directly on the client's own service record always wins — this is
+  // what makes catalog edits (renaming/deleting a bundle or service) never
+  // retroactively change an already-assigned client service. `undefined`
+  // means an older record that predates this field, so fall through to the
+  // live catalog lookup for backward compatibility; `null` is an explicit,
+  // already-resolved "no bundle" and must NOT fall through.
+  if('bundle' in s) return s.bundle;
   const cat=findCatalogEntryForService(s);
   if(cat) return cat.bundle;
   return WL_LEGACY_SERVICE_BUNDLE_MAP[(s.name||'').toLowerCase()]||null;
@@ -1678,6 +1817,11 @@ async function _doCloudPush(){
     if(clientsDirty.length) changes.clients=clientsDirty;
     const feedDirty=_opsDirty('feed', db(CL_KEYS.liveFeed)||[]);
     if(feedDirty.length) changes.feed=feedDirty;
+    if(localStorage.getItem('wl_catalog_dirty')==='1'){
+      changes.settings = { serviceCatalog: getFullCatalog() };
+    }
+    const suggestionsDirty=_opsDirty('catalogSuggestions', db(CL_KEYS.catalogSuggestions)||[]);
+    if(suggestionsDirty.length) changes.catalogSuggestions=suggestionsDirty;
     if(!Object.keys(changes).length) return;
 
     const res = await fetch(OPS_SYNC_URL,{
@@ -1690,6 +1834,9 @@ async function _doCloudPush(){
     const body = res.ok ? await res.json().catch(()=>({})) : {};
     if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
       showToast(`Not saved: ${body.rejected[0].reason}`, 'error');
+    }
+    if(changes.settings && changes.settings.serviceCatalog && res.ok && body.applied && body.applied.serviceCatalog){
+      localStorage.removeItem('wl_catalog_dirty');
     }
     // Refresh from the server so this tab reflects exactly what was accepted.
     await _pullClientsFromCloud();
@@ -1719,6 +1866,11 @@ async function _pullClientsFromCloud(){
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
     // so a plain truthy check doesn't catch it; parse and check length instead.
     if(rec.orgExcluded){ try{ if(JSON.parse(rec.orgExcluded).length) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded); }catch(e){} }
+    // Don't let the pull clobber an edit that hasn't successfully pushed yet.
+    if(rec.serviceCatalog && localStorage.getItem('wl_catalog_dirty')!=='1'){
+      dbSave(CL_KEYS.serviceCatalog, rec.serviceCatalog);
+    }
+    _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr));
   }catch(e){}
 }
 
@@ -3289,7 +3441,10 @@ function saveClientService(){
   let due=_el('svc-due').value;
   if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
   const data={
-    name:catEntry?.name||catalogId, catalogId, freq, due, lastDone,
+    // bundle is resolved from the catalog and frozen HERE, not re-derived on
+    // every render — so a later catalog edit (rename/delete a bundle or this
+    // service) never changes what's already assigned to this client.
+    name:catEntry?.name||catalogId, catalogId, bundle:catEntry?.bundle||null, freq, due, lastDone,
     assigneeId, assigneeName, notes:_el('svc-notes').value
   };
   if(entryId){
@@ -3393,25 +3548,31 @@ function saveNotes(){
 // ═══════════════════════════════════════════════════════
 function renderCatalog(){
   const el=_el('catalog-list'); if(!el) return;
-  const cat=getCatalog();
-  const groups={monthly:[],yearly:[],'one-time':[]};
-  cat.forEach(s=>(groups[s.freq]||groups['one-time']).push(s));
-  const labels={monthly:'🔁 Monthly Services',yearly:'📆 Yearly Services','one-time':'⚡ One-Time Services'};
-  let html='';
-  ['monthly','yearly','one-time'].forEach(freq=>{
-    if(!groups[freq].length) return;
-    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">${labels[freq]}</div>`;
-    html+=groups[freq].map(s=>`
+  const {bundles, services}=getFullCatalog();
+  const renderRow=s=>`
       <div style="display:flex;align-items:center;gap:11px;padding:9px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;margin-bottom:6px;">
         <span class="chip chip-${s.freq}">${s.freq}</span>
         <div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>${s.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:1px;">${s.desc}</div>`:''}</div>
         ${s.defaultAssignee?`<span class="user-chip">${getUser(s.defaultAssignee)?.name||s.defaultAssignee}</span>`:''}
         ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="editServiceCatalog('${s.id}')">✏️</button>
           <button class="btn btn-xs btn-danger" onclick="deleteServiceCatalog('${s.id}')">✕</button>`:''}
-      </div>`).join('');
+      </div>`;
+  let html='';
+  bundles.forEach(b=>{
+    const items=services.filter(s=>s.bundle===b.name);
+    if(!items.length) return;
+    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">📦 ${b.name}</div>`;
+    html+=items.map(renderRow).join('');
     html+='</div>';
   });
+  const standalone=services.filter(s=>!s.bundle);
+  if(standalone.length){
+    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-light);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">Standalone Services (no bundle)</div>`;
+    html+=standalone.map(renderRow).join('');
+    html+='</div>';
+  }
   el.innerHTML=html||'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No services in catalog</div></div>';
+  if(SESSION.isAdmin) renderCatalogApprovalQueue();
 }
 function openServiceCatalogModal(id){
   _el('sc-modal-title').textContent=id?'Edit Service':'Add Service';
@@ -3419,11 +3580,13 @@ function openServiceCatalogModal(id){
   const roster=getRoster();
   const daEl=_el('sc-default-assignee');
   daEl.innerHTML=`<option value="">— None —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  const bundleEl=_el('sc-bundle');
+  bundleEl.innerHTML=`<option value="">— No Bundle (standalone) —</option>`+getCatalogBundles().map(b=>`<option value="${b.name}">${b.name}</option>`).join('');
   if(id){
     const s=getCatalog().find(x=>x.id===id); if(!s) return;
-    _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||'';
+    _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||'';
   } else {
-    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value='';
+    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value=''; bundleEl.value='';
   }
   openModal('serviceCatalogModal');
 }
@@ -3432,11 +3595,11 @@ function saveServiceCatalog(){
   const name=_el('sc-name').value.trim();
   if(!name){ showToast('Service name required','warn'); return; }
   const id=_el('sc-id').value;
-  const cat=getCatalog();
-  const data={name,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
-  if(id){ const s=cat.find(x=>x.id===id); if(s) Object.assign(s,data); }
-  else cat.push({id:'svc'+uid(),...data});
-  dbSave(CL_KEYS.serviceCatalog,cat);
+  const {bundles, services}=getFullCatalog();
+  const data={name,bundle:_el('sc-bundle').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
+  if(id){ const s=services.find(x=>x.id===id); if(s) Object.assign(s,data); }
+  else services.push({id:'svc'+uid(),...data});
+  saveFullCatalog(bundles, services);
   closeModal('serviceCatalogModal');
   populateServiceDropdown();
   renderCatalog();
@@ -3444,10 +3607,151 @@ function saveServiceCatalog(){
 }
 function deleteServiceCatalog(id){
   if(!confirm('Remove this service from the catalog?')) return;
-  dbSave(CL_KEYS.serviceCatalog,getCatalog().filter(s=>s.id!==id));
+  const {bundles, services}=getFullCatalog();
+  saveFullCatalog(bundles, services.filter(s=>s.id!==id));
   populateServiceDropdown();
   renderCatalog();
   showToast('Service removed from catalog');
+}
+
+// ── Bundle Manager (admin) ──────────────────────────────────────────────
+function openBundleManagerModal(){
+  _el('bm-new-name').value='';
+  renderBundleManagerList();
+  openModal('bundleManagerModal');
+}
+function renderBundleManagerList(){
+  const el=_el('bundle-manager-list'); if(!el) return;
+  const {bundles, services}=getFullCatalog();
+  if(!bundles.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-title">No bundles yet</div></div>'; return; }
+  el.innerHTML=bundles.map(b=>{
+    const count=services.filter(s=>s.bundle===b.name).length;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+      <input class="form-input" style="flex:1;padding:6px 10px;font-size:12px;" value="${escHtmlClient(b.name)}" onchange="renameBundleFromInput('${b.id}',this.value)">
+      <span style="font-size:10.5px;color:var(--text-light);white-space:nowrap;">${count} service${count===1?'':'s'}</span>
+      <button class="btn btn-xs btn-danger" onclick="deleteBundleConfirm('${b.id}','${count}')">✕</button>
+    </div>`;
+  }).join('');
+}
+function submitAddBundle(){
+  const name=_el('bm-new-name').value.trim();
+  if(!name){ showToast('Bundle name required','warn'); return; }
+  const b=addBundle(name);
+  if(!b){ showToast('A bundle with that name already exists','warn'); return; }
+  _el('bm-new-name').value='';
+  renderBundleManagerList();
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Bundle added ✓');
+}
+function renameBundleFromInput(id,newName){
+  if(!newName.trim()){ renderBundleManagerList(); return; }
+  renameBundle(id,newName);
+  renderBundleManagerList();
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Bundle renamed ✓');
+}
+function deleteBundleConfirm(id,count){
+  const msg = Number(count)>0
+    ? `Delete this bundle? Its ${count} service(s) will become standalone (not deleted) — nothing already assigned to a client changes.`
+    : 'Delete this bundle?';
+  if(!confirm(msg)) return;
+  deleteBundle(id);
+  renderBundleManagerList();
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Bundle deleted');
+}
+
+// ── Suggest a Service (members) ─────────────────────────────────────────
+function _toggleSuggestEditTarget(){
+  const isEdit=_el('ss-type').value==='edit';
+  _el('ss-edit-target-wrap').style.display=isEdit?'':'none';
+  if(isEdit){
+    const services=getCatalog();
+    _el('ss-edit-target').innerHTML=services.map(s=>`<option value="${s.id}">${escHtmlClient(s.name)}${s.bundle?' — '+escHtmlClient(s.bundle):''}</option>`).join('');
+    _prefillSuggestFromTarget();
+  }
+}
+function _prefillSuggestFromTarget(){
+  const s=getCatalog().find(x=>x.id===_el('ss-edit-target').value);
+  if(!s) return;
+  _el('ss-name').value=s.name; _el('ss-bundle').value=s.bundle||''; _el('ss-freq').value=s.freq;
+}
+function openSuggestServiceModal(){
+  _el('ss-type').value='new';
+  _el('ss-edit-target-wrap').style.display='none';
+  _el('ss-name').value=''; _el('ss-freq').value='monthly'; _el('ss-note').value='';
+  _el('ss-bundle').innerHTML=`<option value="">— No Bundle (standalone) —</option>`+getCatalogBundles().map(b=>`<option value="${b.name}">${b.name}</option>`).join('');
+  _el('ss-bundle').value='';
+  openModal('suggestServiceModal');
+}
+function submitCatalogSuggestion(){
+  const name=_el('ss-name').value.trim();
+  if(!name){ showToast('Service name required','warn'); return; }
+  const isEdit=_el('ss-type').value==='edit';
+  if(isEdit && !_el('ss-edit-target').value){ showToast('Pick the service you\'re suggesting an edit to','warn'); return; }
+  const suggestion={
+    id:'sugg'+uid(),
+    type:isEdit?'edit':'new',
+    targetServiceId:isEdit?_el('ss-edit-target').value:null,
+    name, bundle:_el('ss-bundle').value||null, freq:_el('ss-freq').value,
+    note:_el('ss-note').value.trim(),
+  };
+  const list=db(CL_KEYS.catalogSuggestions)||[];
+  list.push(suggestion);
+  dbSave(CL_KEYS.catalogSuggestions,list);
+  _scheduleCloudPush();
+  closeModal('suggestServiceModal');
+  showToast('Suggestion submitted — an admin will review it ✓');
+}
+
+// ── Approval Queue (admin) ──────────────────────────────────────────────
+function renderCatalogApprovalQueue(){
+  const el=_el('catalog-approval-queue'); if(!el) return;
+  const pending=(db(CL_KEYS.catalogSuggestions)||[]).filter(s=>s.status==='pending'||!s.status);
+  if(!pending.length){ el.innerHTML=''; return; }
+  el.innerHTML=`<div style="margin-bottom:20px;">
+    <div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">📬 Pending Suggestions (${pending.length})</div>
+    ${pending.map(s=>`
+      <div style="display:flex;align-items:center;gap:11px;padding:9px 13px;background:var(--gold-light,#FFF4CC);border:1px solid var(--border);border-radius:9px;margin-bottom:6px;">
+        <span class="chip chip-${s.freq}">${s.freq}</span>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.type==='edit'?'Edit: ':'New: '}${escHtmlClient(s.name)}${s.bundle?` <span style="color:var(--text-light);font-weight:500;">· ${escHtmlClient(s.bundle)}</span>`:` <span style="color:var(--text-light);font-weight:500;">· no bundle</span>`}</div>
+          <div style="font-size:10px;color:var(--text-light);margin-top:1px;">Suggested by ${escHtmlClient(s.submittedByName||'a team member')}${s.note?' — '+escHtmlClient(s.note):''}</div>
+        </div>
+        <button class="btn btn-xs btn-primary" onclick="approveCatalogSuggestion('${s.id}')">✓ Approve</button>
+        <button class="btn btn-xs btn-outline" onclick="rejectCatalogSuggestion('${s.id}')">✕ Reject</button>
+      </div>`).join('')}
+  </div>`;
+}
+function approveCatalogSuggestion(id){
+  const list=db(CL_KEYS.catalogSuggestions)||[];
+  const s=list.find(x=>x.id===id); if(!s) return;
+  const {bundles, services}=getFullCatalog();
+  if(s.type==='edit' && s.targetServiceId){
+    const target=services.find(x=>x.id===s.targetServiceId);
+    if(target) Object.assign(target,{name:s.name,bundle:s.bundle||null,freq:s.freq});
+  } else {
+    services.push({id:'svc'+uid(),name:s.name,bundle:s.bundle||null,freq:s.freq,desc:'',defaultAssignee:''});
+  }
+  saveFullCatalog(bundles, services);
+  s.status='approved';
+  dbSave(CL_KEYS.catalogSuggestions,list);
+  _scheduleCloudPush();
+  populateServiceDropdown();
+  renderCatalog();
+  showToast('Suggestion approved — catalog updated ✓');
+}
+function rejectCatalogSuggestion(id){
+  const list=db(CL_KEYS.catalogSuggestions)||[];
+  const s=list.find(x=>x.id===id); if(!s) return;
+  s.status='rejected';
+  dbSave(CL_KEYS.catalogSuggestions,list);
+  _scheduleCloudPush();
+  renderCatalogApprovalQueue();
+  showToast('Suggestion rejected');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3803,16 +4107,20 @@ function updateMyWorkBadge(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
-  // Pull latest client data from cloud first (async — UI will render after)
+  // Pull latest client data (incl. the Service Catalog) from cloud first, THEN
+  // seed a local default catalog only if the pull didn't deliver a real one —
+  // seeding before the pull resolves would mark the local default "dirty" and
+  // block the real cloud catalog from applying (see the dirty-flag guard in
+  // _pullClientsFromCloud()).
   _pullClientsFromCloud().then(()=>{
+    ensureCatalog();
     populateDropdowns();
     renderClientGrid();
     populateScheduleClientFilter();
     renderMyWork();
     updateMyWorkBadge();
     _openDeepLinkFromUrl();
-  }).catch(()=>{});
-  ensureCatalog();
+  }).catch(()=>{ ensureCatalog(); });
   seedTeamMembers();           // populate wl_users_db with agents if empty
   purgeJoePlumber();           // permanently remove Joe the Plumber on every load
   seedWLMClients();            // import Excel data on first load (fresh install only)

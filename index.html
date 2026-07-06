@@ -4181,8 +4181,27 @@ const WL_SERVICE_CATALOG=(()=>{
   });
   return out;
 })();
-function getBundleNames(){ return WL_BUNDLE_DEFS.map(b=>b.bundle); }
-function getCatalog(){ return JSON.parse(localStorage.getItem('wl_service_catalog')||'null')||WL_SERVICE_CATALOG; }
+// Editable in client.html's Service Catalog page (Supabase-backed, synced via
+// settings.serviceCatalog) — that's the single source of truth now. This file
+// only reads it. Shape: { bundles:[{id,name}], services:[{id,name,bundle,
+// freq,desc,defaultAssignee}] }; falls back to the hardcoded defaults above
+// until the first cloud pull (or a legacy flat-array localStorage value) lands.
+function _defaultCatalogShape(){
+  return { bundles: WL_BUNDLE_DEFS.map((b,i)=>({id:'bundle'+i, name:b.bundle})), services: WL_SERVICE_CATALOG };
+}
+function getFullCatalog(){
+  let stored=null;
+  try{ stored=JSON.parse(localStorage.getItem('wl_service_catalog')||'null'); }catch(e){}
+  if(stored && typeof stored==='object' && Array.isArray(stored.services) && Array.isArray(stored.bundles)) return stored;
+  if(Array.isArray(stored)){
+    const names=[...new Set(stored.map(s=>s.bundle).filter(Boolean))];
+    return { bundles: names.map((n,i)=>({id:'bundle'+i, name:n})), services: stored };
+  }
+  return _defaultCatalogShape();
+}
+function getCatalog(){ return getFullCatalog().services; }
+function getCatalogBundles(){ return getFullCatalog().bundles; }
+function getBundleNames(){ return getCatalogBundles().map(b=>b.name); }
 // Legacy/seeded services often carry a catalogId from an older catalog scheme that no
 // longer resolves (or, worse, now collides with an unrelated entry) — match by exact
 // service name first since names are stable, and only fall back to catalogId otherwise.
@@ -4203,6 +4222,11 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
   'ad spend management':'PPC Management Bundle',
 };
 function getBundleForService(s){
+  // A bundle resolved at assignment time and stored directly on the client's
+  // service record (see client.html saveClientService()) always wins, so a
+  // later catalog edit never retroactively changes an already-assigned
+  // service. See the matching comment in client.html for the full rationale.
+  if(s && 'bundle' in s) return s.bundle;
   const cat=findCatalogEntryForService(s);
   if(cat) return cat.bundle;
   return WL_LEGACY_SERVICE_BUNDLE_MAP[(s.name||'').toLowerCase()]||null;
@@ -4458,11 +4482,8 @@ function populateClientFilterDropdowns(){
     (c.services||[]).forEach(s=>{ if(s.name) svcNames.add(s.name); });
     (c.recurringServices||[]).forEach(s=>{ if(s.name) svcNames.add(s.name); });
   });
-  // Also pull from service catalog stored in localStorage
-  try{
-    const cat = JSON.parse(localStorage.getItem('wl_service_catalog')||'[]');
-    cat.forEach(s=>{ if(s.name) svcNames.add(s.name); });
-  }catch(e){}
+  // Also pull from the Service Catalog (bundled + standalone services alike)
+  getCatalog().forEach(s=>{ if(s.name) svcNames.add(s.name); });
   const svcSel = document.getElementById('client-filter-service');
   if(svcSel){
     const cur = svcSel.value;
@@ -4958,8 +4979,8 @@ function openSvcModal(clientId, svcId){
   document.getElementById('svc-name').value=svc?svc.name:'';
   document.getElementById('svc-freq').value=svc?svc.frequency||'monthly':'monthly';
   document.getElementById('svc-start').value=svc?svc.startDate||new Date().toISOString().slice(0,10):new Date().toISOString().slice(0,10);
-  // Populate datalist from catalog
-  try{const cat=JSON.parse(localStorage.getItem('wl_service_catalog')||'[]');document.getElementById('svc-catalog-list').innerHTML=cat.map(s=>`<option value="${s.name}">`).join('');}catch(e){}
+  // Populate datalist from the Service Catalog (bundled + standalone services)
+  document.getElementById('svc-catalog-list').innerHTML=getCatalog().map(s=>`<option value="${s.name}">`).join('');
   document.getElementById('svc-notes').value=svc?svc.notes||'':'';
   _updateSvcNextDue();
   const cbWrap=document.getElementById('svc-user-checkboxes');
@@ -5016,10 +5037,17 @@ function _persistRecurringService(clientId,svcId,name,freq,startDate,notes,newUs
   // This ensures user.html My Work and client.html tracker both see admin-created services.
   if(!c.services) c.services=[];
   const existingSvcIdx = c.services.findIndex(s=>s.id===rsvcId||s.name===name);
+  // This modal has no bundle picker (free-text name + datalist only) — best-
+  // effort resolve by exact name match against the catalog and freeze it here,
+  // same as client.html's saveClientService(), so a later catalog edit can't
+  // retroactively change what's already assigned. No match just means no
+  // bundle (standalone), which is valid.
+  const matchedCatalogEntry = findCatalogEntryForService({name});
   const svcEntry = {
     id: rsvcId,
     catalogId: '',
     name,
+    bundle: matchedCatalogEntry ? matchedCatalogEntry.bundle : null,
     freq,
     freqLabel: freq.charAt(0).toUpperCase()+freq.slice(1),
     assignee: assigneeName,
@@ -6811,6 +6839,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(r.orgExcluded){ try{ if(JSON.parse(r.orgExcluded).length) localStorage.setItem('wl_org_excluded_names', r.orgExcluded); }catch(e){} }
     if(r.orgLayoutVersion)  localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
     if(r.primaryAdminPw)    localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
+    // Service Catalog is edited in client.html, not here — this file only
+    // reads it. Skip if a same-browser client.html tab has an unpushed local
+    // edit in flight (shared localStorage flag), so this pull can't clobber it.
+    if(r.serviceCatalog && localStorage.getItem('wl_catalog_dirty')!=='1'){
+      localStorage.setItem('wl_service_catalog', JSON.stringify(r.serviceCatalog));
+    }
 
     // Only reload the org chart canvas on explicit pulls (login / manual).
     // Background live-sync updates localStorage silently so the user's current
