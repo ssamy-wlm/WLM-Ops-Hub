@@ -87,6 +87,17 @@ function isAssignedToMember(item, memberId, memberName) {
   return !!nameLower && assigneeName === nameLower;
 }
 
+// A currently-non-empty list key that's entirely ABSENT from the incoming
+// payload is NOT the same as the member explicitly clearing it to [] — an
+// absent key collapses to [] downstream (diffArrayById's `oldArr || []`)
+// and reads as "every item removed," which gets authorized if the member
+// happens to be assigned to all of them. Catch it before that diff ever
+// runs, so an omitted key (a client bug, a partial payload) can never
+// silently wipe a list nobody meant to touch.
+function listKeyMissingButNonEmpty(current, incoming, key) {
+  return Array.isArray(current[key]) && current[key].length > 0 && !(key in incoming);
+}
+
 function diffArrayById(oldArr, newArr) {
   const oldById = new Map((oldArr || []).filter(x => x && x.id != null).map(x => [String(x.id), x]));
   const newById = new Map((newArr || []).filter(x => x && x.id != null).map(x => [String(x.id), x]));
@@ -108,7 +119,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 ];
 
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
-function checkMemberClientWrite(current, incoming, memberId, memberName) {
+export function checkMemberClientWrite(current, incoming, memberId, memberName) {
   for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
     if (JSON.stringify(current[key]) !== JSON.stringify(incoming[key])) {
       return { allowed: false, reason: `members cannot edit client.${key}` };
@@ -116,6 +127,9 @@ function checkMemberClientWrite(current, incoming, memberId, memberName) {
   }
 
   for (const listKey of ['services', 'recurringServices']) {
+    if (listKeyMissingButNonEmpty(current, incoming, listKey)) {
+      return { allowed: false, reason: `client.${listKey} is missing from the payload — refusing to treat that as "remove everything"` };
+    }
     for (const { id, prev, next } of diffArrayById(current[listKey], incoming[listKey])) {
       const item = next || prev;
       if (!isAssignedToMember(item, memberId, memberName)) {
@@ -136,6 +150,9 @@ function checkMemberClientWrite(current, incoming, memberId, memberName) {
   }
   for (const loc of curLocs) {
     const incLoc = incLocs.find(l => l.id === loc.id);
+    if (incLoc && listKeyMissingButNonEmpty(loc, incLoc, 'services')) {
+      return { allowed: false, reason: `location ${loc.id} services is missing from the payload — refusing to treat that as "remove everything"` };
+    }
     for (const { id, prev, next } of diffArrayById(loc.services, incLoc?.services)) {
       const item = next || prev;
       if (!isAssignedToMember(item, memberId, memberName)) {

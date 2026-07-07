@@ -1868,13 +1868,20 @@ async function _doCloudPush(){
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
       body:JSON.stringify({changes})
     });
+    if(!res.ok){
+      // Don't pull on a failed push — that would overwrite the local edit
+      // with stale pre-edit server state. Keep the local change as-is; it
+      // stays "dirty" (see _opsDirty above) and will retry on the next push.
+      if(typeof showToast==='function') showToast('Sync failed — your change is saved on this device and will retry', 'error');
+      return;
+    }
     // Server REJECTS (not silently drops) an out-of-scope client edit with a
     // clear reason — surface it (see api/ops-sync.js checkMemberClientWrite()).
-    const body = res.ok ? await res.json().catch(()=>({})) : {};
+    const body = await res.json().catch(()=>({}));
     if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
       showToast(`Not saved: ${body.rejected[0].reason}`, 'error');
     }
-    if(changes.settings && changes.settings.serviceCatalog && res.ok && body.applied && body.applied.serviceCatalog){
+    if(changes.settings && changes.settings.serviceCatalog && body.applied && body.applied.serviceCatalog){
       localStorage.removeItem('wl_catalog_dirty');
     }
     // Refresh from the server so this tab reflects exactly what was accepted.
