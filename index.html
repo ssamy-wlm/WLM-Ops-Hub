@@ -4218,7 +4218,13 @@ const WL_BUNDLE_DEFS=[
   {bundle:'Review Management Bundle', freq:'monthly', items:['Review Generation Grade_Us','Review Replies']},
   {bundle:'Branding Bundle', freq:'one-time', items:['Logo Design','Print Work']},
   {bundle:'Consulting Bundle', freq:'one-time', items:['Custom Website Programing','3rd party website integration']},
-  {bundle:'Social Media Management Bundle', freq:'monthly', items:['Facebook','Instagram','LinkedIn','TikTok','Pinterest','Graphics','Short form Video']},
+  // Facebook/Instagram/LinkedIn/TikTok/Pinterest consolidated into ONE
+  // "Social Media Management" service (platforms recorded via checkboxes in
+  // client.html's Add/Edit Service modal, not as separate catalog items).
+  // Graphics and Short form Video are deliverables, not platforms — they
+  // stay their own catalog items. Kept in sync with client.html's BUNDLE_DEFS
+  // (this file has no shared code with client.html, per CLAUDE.md rule #3).
+  {bundle:'Social Media Management Bundle', freq:'monthly', items:['Social Media Management','Graphics','Short form Video']},
 ];
 const WL_SERVICE_CATALOG=(()=>{
   let n=0; const out=[];

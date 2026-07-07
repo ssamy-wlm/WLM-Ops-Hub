@@ -957,7 +957,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="form-group"><label class="form-label">Assigned Member</label>
         <select class="form-select" id="svc-assignee"><option value="">— Unassigned —</option></select>
       </div>
-      <div class="form-group"><label class="form-label">Platforms / Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
+      <div class="form-group" id="svc-platforms-group" style="display:none;">
+        <label class="form-label">Platforms</label>
+        <div id="svc-platforms-checks" style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 0;"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('addServiceModal')">Cancel</button>
@@ -1353,8 +1357,19 @@ const BUNDLE_DEFS=[
   {bundle:'Review Management Bundle', freq:'monthly', items:['Review Generation Grade_Us','Review Replies']},
   {bundle:'Branding Bundle', freq:'one-time', items:['Logo Design','Print Work']},
   {bundle:'Consulting Bundle', freq:'one-time', items:['Custom Website Programing','3rd party website integration']},
-  {bundle:'Social Media Management Bundle', freq:'monthly', items:['Facebook','Instagram','LinkedIn','TikTok','Pinterest','Graphics','Short form Video']},
+  // Facebook/Instagram/LinkedIn/TikTok/Pinterest consolidated into ONE
+  // "Social Media Management" service — the specific platform(s) a client
+  // uses are recorded via the platforms checkbox field (see
+  // SOCIAL_MEDIA_PLATFORMS/svc-platforms-group), not as separate catalog
+  // items. Graphics and Short form Video are deliverables, not platforms —
+  // they stay their own catalog items.
+  {bundle:'Social Media Management Bundle', freq:'monthly', items:['Social Media Management','Graphics','Short form Video']},
 ];
+// The platform checkboxes shown on the Add/Edit Service modal specifically
+// for the "Social Media Management" catalog service (matched by name, case-
+// insensitive — see _isSocialMediaService()).
+const SOCIAL_MEDIA_PLATFORMS=['Facebook','Instagram','LinkedIn','TikTok','Pinterest'];
+function _isSocialMediaService(name){ return (name||'').trim().toLowerCase()==='social media management'; }
 const DEFAULT_CATALOG=(()=>{
   let n=0; const out=[];
   BUNDLE_DEFS.forEach(def=>{
@@ -2352,6 +2367,27 @@ function prefillServiceDefaults(){
   const cat=getCatalog();
   const svc=cat.find(s=>s.id===sel.value);
   if(svc && svc.defaultAssignee){ const el=_el('svc-assignee'); if(el) el.value=svc.defaultAssignee; }
+  _updateSvcPlatformsVisibility(svc?svc.name:'', []);
+}
+
+// Renders the platform checkboxes and shows/hides the group based on whether
+// the selected catalog service is "Social Media Management". `checked` is
+// the array of platform names to pre-check (used when editing an existing
+// service); pass [] for a brand-new service.
+function _updateSvcPlatformsVisibility(serviceName, checked){
+  const group=_el('svc-platforms-group');
+  const wrap=_el('svc-platforms-checks');
+  if(!group||!wrap) return;
+  if(!_isSocialMediaService(serviceName)){ group.style.display='none'; wrap.innerHTML=''; return; }
+  group.style.display='';
+  const checkedSet=new Set(checked||[]);
+  wrap.innerHTML=SOCIAL_MEDIA_PLATFORMS.map(p=>`
+    <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;cursor:pointer;">
+      <input type="checkbox" value="${p}" ${checkedSet.has(p)?'checked':''}> ${p}
+    </label>`).join('');
+}
+function _collectSvcPlatforms(){
+  return [...document.querySelectorAll('#svc-platforms-checks input[type=checkbox]:checked')].map(cb=>cb.value);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2886,7 +2922,7 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr${inactive?' style="opacity:.6;"':''}>
         <td><span style="font-size:13px;">${icon}</span></td>
-        <td><div style="font-weight:700;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:700;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${svc.assigneeName?`<span class="user-chip">${escHtmlClient(svc.assigneeName)}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
@@ -3504,6 +3540,7 @@ function openAddServiceModal(clientId,entryId,locationId){
       _el('svc-assignee').value=svc.assigneeId||'';
       _el('svc-notes').value=svc.notes||'';
       _updateDueHint(svc.due||'');
+      _updateSvcPlatformsVisibility(svc.name, svc.platforms||[]);
     }
   } else {
     if(_el('svc-bundle')) _el('svc-bundle').value='';
@@ -3514,6 +3551,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _el('svc-due').value=calcNextDue('monthly',today());
     _el('svc-notes').value='';
     _updateDueHint(_el('svc-due').value);
+    _updateSvcPlatformsVisibility('', []);
   }
   openModal('addServiceModal');
 }
@@ -3538,13 +3576,19 @@ function saveClientService(){
   // If lastDone is set and no due date given, auto-calculate it
   let due=_el('svc-due').value;
   if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
+  const svcName=catEntry?.name||catalogId;
   const data={
     // bundle is resolved from the catalog and frozen HERE, not re-derived on
     // every render — so a later catalog edit (rename/delete a bundle or this
     // service) never changes what's already assigned to this client.
-    name:catEntry?.name||catalogId, catalogId, bundle:catEntry?.bundle||null, freq, due, lastDone,
+    name:svcName, catalogId, bundle:catEntry?.bundle||null, freq, due, lastDone,
     assigneeId, assigneeName, notes:_el('svc-notes').value
   };
+  // Platforms only apply to the "Social Media Management" service — collected
+  // from the checkbox group (see _updateSvcPlatformsVisibility()), never from
+  // free text. Other services keep whatever platforms field they already had
+  // (or none) untouched.
+  if(_isSocialMediaService(svcName)) data.platforms=_collectSvcPlatforms();
   if(entryId){
     const idx=targetList.findIndex(s=>s.id===entryId);
     if(idx>=0){
