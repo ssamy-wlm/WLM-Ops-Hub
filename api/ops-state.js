@@ -110,9 +110,12 @@ export default async function handler(req, res) {
       notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true },
     };
 
-    // Payroll/pay-rate fields: Super Admin/CEO only, for every non-super caller.
+    // Payroll/pay-rate fields AND credentials: Super Admin/CEO only, for every
+    // non-super caller — admins already get this treatment below (id/name/
+    // title only); users were missing it, leaking every teammate's plaintext
+    // password to every tier via this response.
     if (tier !== 'super') {
-      record.users = record.users.map(u => { const { payRate, hours, ...rest } = u; return rest; });
+      record.users = record.users.map(u => { const { payRate, hours, password, mustChangePassword, ...rest } = u; return rest; });
     }
 
     if (tier === 'member') {

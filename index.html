@@ -5181,7 +5181,7 @@ function _emailUserAssignment(userId, title, body){
     if(!u || !u.email) return;
     fetch('/api/send-assignment-email', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+_opsToken()},
       body: JSON.stringify({
         to: u.email,
         name: (u.name||'').split(' ')[0],
@@ -5202,7 +5202,7 @@ async function sendTestAssignmentEmail(){
   try{
     const res = await fetch('/api/send-assignment-email', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+_opsToken()},
       body: JSON.stringify({
         to, name: 'there',
         title: 'Test notification from WebLight Ops Hub',
