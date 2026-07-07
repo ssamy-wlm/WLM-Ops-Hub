@@ -10,7 +10,6 @@ import { signSession } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 
 const PRIMARY_ADMIN_EMAIL = 'ssamy@weblightmedia.com';
-const PRIMARY_ADMIN_DEFAULT_PW = '31279475';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,10 +27,11 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'ops-auth', error: err }); return res.status(500).json({ error: err.message }); }
 
   try {
-    // ── Hardcoded primary admin (parity with the app's existing behavior) ──
+    // ── Primary admin — password lives only in ops_settings.primaryAdminPw
+    // (set via Settings), never in code. ──
     const { data: pwRow } = await supabase.from('ops_settings').select('data').eq('key', 'primaryAdminPw').maybeSingle();
-    const primaryPw = (pwRow && pwRow.data) || PRIMARY_ADMIN_DEFAULT_PW;
-    if (normEmail === PRIMARY_ADMIN_EMAIL && password === primaryPw) {
+    const primaryPw = pwRow && pwRow.data;
+    if (normEmail === PRIMARY_ADMIN_EMAIL && primaryPw && password === primaryPw) {
       const token = signSession({ id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
       return res.status(200).json({ token, role: 'admin', level: 'owner', id: 'primary-admin', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
     }
