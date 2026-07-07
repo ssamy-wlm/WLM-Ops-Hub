@@ -4351,7 +4351,9 @@ function renderClientGrid(list){
     // c.services[] = tracker services (source of truth from seed/client.html)
     // c.projects[] = mirrors of those services (isRecurringService:true) + manual projects
     // c.recurringServices[] = index.html-added services (admin panel)
-    const allSvcs = [...(c.services||[]), ...(c.recurringServices||[])];
+    // Cancelled/archived services (client.html's Cancel/Archive actions) are
+    // kept but excluded from counts, matching client.html's own behavior.
+    const allSvcs = [...(c.services||[]), ...(c.recurringServices||[])].filter(s=>s.status!=='cancelled'&&s.status!=='archived');
     const manualProjs = (c.projects||[]).filter(p=>!p.isRecurringService);
     const svcCount = allSvcs.length;
     const projCount = manualProjs.length;
@@ -4916,7 +4918,9 @@ function _renderServicesSection(c){
   // Exclude any service already present in c.recurringServices[] (prevents duplicates after promotion)
   const _adminSvcIds  = new Set((c.recurringServices||[]).map(s=>s.id));
   const _adminSvcNames= new Set((c.recurringServices||[]).map(s=>(s.name||'').toLowerCase()));
-  const trackerSvcs = (c.services||[]).filter(s=>!_adminSvcIds.has(s.id)&&!_adminSvcNames.has((s.name||'').toLowerCase()));
+  // Cancelled/archived services (client.html's Cancel/Archive actions) are kept
+  // but excluded here too, matching client.html's own behavior.
+  const trackerSvcs = (c.services||[]).filter(s=>!_adminSvcIds.has(s.id)&&!_adminSvcNames.has((s.name||'').toLowerCase())&&s.status!=='cancelled'&&s.status!=='archived');
   let trackerRows = '';
   if(trackerSvcs.length){
     trackerRows = trackerSvcs.map(s=>{
