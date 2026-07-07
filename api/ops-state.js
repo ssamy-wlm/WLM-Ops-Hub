@@ -15,6 +15,7 @@
 //     user/admin fields for display, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
+import { logError } from '../lib/errorLog.js';
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
 
@@ -27,13 +28,13 @@ export default async function handler(req, res) {
 
   let session;
   try { session = requireSession(req); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'ops-state', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
 
   const tier = tierOf(session); // 'super' | 'manager' | 'member'
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'ops-state', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   try {
     const [
@@ -60,7 +61,7 @@ export default async function handler(req, res) {
     ]);
 
     const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ].find(q => q.error)?.error;
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) { await logError({ endpoint: 'ops-state', error: err, session }); return res.status(500).json({ error: err.message }); }
 
     const deletedIds = new Set((deletedQ.data || []).map(r => r.user_id));
     const settingsMap = {};
@@ -160,6 +161,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ record });
   } catch (err) {
+    await logError({ endpoint: 'ops-state', error: err, session });
     return res.status(500).json({ error: err.message || 'Failed to read state' });
   }
 }

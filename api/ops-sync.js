@@ -27,6 +27,7 @@
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
+import { logError } from '../lib/errorLog.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
@@ -406,14 +407,14 @@ export default async function handler(req, res) {
 
   let session;
   try { session = requireSession(req); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'ops-sync', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   const tier = tierOf(session); // 'super' | 'manager' | 'member'
   const isAdmin = tier !== 'member';
 
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'ops-sync', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   const { changes, tombstones, restoreUserIds } = req.body || {};
   const warnings = [];
@@ -718,8 +719,15 @@ export default async function handler(req, res) {
       applied.notifications = n;
     }
 
+    // Every failed cloud write already lives in `warnings` (per-row, never
+    // thrown) — record them here too, once per request, so they surface to
+    // an admin instead of only ever showing up in a response nobody reads.
+    if (warnings.length) {
+      await logError({ endpoint: 'ops-sync', error: `${warnings.length} write warning(s)`, session, extra: { warnings, rejected } });
+    }
     return res.status(200).json({ ok: true, applied, warnings, rejected });
   } catch (err) {
+    await logError({ endpoint: 'ops-sync', error: err, session, extra: { warnings, rejected } });
     return res.status(500).json({ error: err.message || 'Sync failed', warnings, rejected });
   }
 }

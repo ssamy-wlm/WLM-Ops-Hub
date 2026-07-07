@@ -3,6 +3,8 @@
 // being hardcoded into a static file. Safe to expose to the browser: the
 // anon key only grants what the RLS policies in supabase/migrations/ allow.
 
+import { logError } from '../lib/errorLog.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method !== 'GET') {
@@ -15,7 +17,9 @@ export default async function handler(req, res) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
-    return res.status(500).json({ error: 'Supabase URL/anon key are not configured on the server. Set NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_URL / SUPABASE_ANON_KEY) in Vercel env vars (Project Settings → Environment Variables) from your Supabase project\'s API settings page.' });
+    const message = 'Supabase URL/anon key are not configured on the server. Set NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_URL / SUPABASE_ANON_KEY) in Vercel env vars (Project Settings → Environment Variables) from your Supabase project\'s API settings page.';
+    await logError({ endpoint: 'supabase-config', error: message });
+    return res.status(500).json({ error: message });
   }
 
   return res.status(200).json({ url, anonKey });

@@ -11,6 +11,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { db } from '@vercel/postgres';
+import { logError } from '../lib/errorLog.js';
 
 const MIGRATIONS_DIR = path.join(process.cwd(), 'db', 'migrations');
 
@@ -54,6 +55,7 @@ export default async function handler(req, res) {
   try {
     sqlText = readFileSync(filePath, 'utf8');
   } catch (err) {
+    await logError({ endpoint: 'migrate-schema', error: err, extra: { filename } });
     return res.status(404).json({ error: `Migration file not found: ${filename}` });
   }
 
@@ -62,6 +64,7 @@ export default async function handler(req, res) {
     await client.query(sqlText);
     return res.status(200).json({ ok: true, ran: filename });
   } catch (err) {
+    await logError({ endpoint: 'migrate-schema', error: err, extra: { filename } });
     return res.status(500).json({ error: err.message || 'Migration failed', ran: filename });
   } finally {
     client.release();
