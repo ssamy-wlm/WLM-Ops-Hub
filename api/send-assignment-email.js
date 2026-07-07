@@ -2,6 +2,7 @@
 // Requires RESEND_API_KEY (and optionally RESEND_FROM_EMAIL) set as Vercel env vars.
 
 import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
+import { logError } from '../lib/errorLog.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -34,6 +35,7 @@ export default async function handler(req, res) {
     const data = await sendResendEmail({ to, subject: title, html });
     return res.status(200).json({ ok: true, id: data?.id });
   } catch (err) {
+    await logError({ endpoint: 'send-assignment-email', error: err, extra: { to } });
     return res.status(500).json({ error: err.message || 'Failed to send email' });
   }
 }

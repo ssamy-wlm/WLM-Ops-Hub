@@ -28,6 +28,7 @@
 import crypto from 'crypto';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
+import { logError } from '../lib/errorLog.js';
 
 const TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -148,7 +149,7 @@ export default async function handler(req, res) {
 
   let session;
   try { session = requireSession(req); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'migrate-client-data', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   if (tierOf(session) !== 'super') {
     return res.status(403).json({ error: 'Super Admin/Owner only' });
@@ -157,7 +158,7 @@ export default async function handler(req, res) {
   const { action } = req.body || {};
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'migrate-client-data', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   if (action === 'dry-run') {
     const { rows } = req.body || {};
@@ -170,7 +171,7 @@ export default async function handler(req, res) {
     const { clients: newClients, catalogMismatches } = buildClientsFromRows(rows, liveCatalogBundleNames);
 
     const { data: currentRows, error } = await supabase.from('ops_clients').select('id, data');
-    if (error) return res.status(500).json({ error: `Failed to read current ops_clients: ${error.message}` });
+    if (error) { await logError({ endpoint: 'migrate-client-data', error, session, extra: { action: 'dry-run' } }); return res.status(500).json({ error: `Failed to read current ops_clients: ${error.message}` }); }
     const currentNames = (currentRows || []).map(r => r?.data?.name || r.id);
 
     const zeroServiceClients = newClients.filter(c => totalServiceCount(c) === 0).map(c => c.name);
@@ -225,7 +226,7 @@ export default async function handler(req, res) {
     const { clients: newClients } = buildClientsFromRows(rows, liveCatalogBundleNames);
 
     const { data: existingRows, error: fetchErr } = await supabase.from('ops_clients').select('id');
-    if (fetchErr) return res.status(500).json({ error: `Failed to read current ops_clients before delete: ${fetchErr.message}` });
+    if (fetchErr) { await logError({ endpoint: 'migrate-client-data', error: fetchErr, session, extra: { action: 'commit' } }); return res.status(500).json({ error: `Failed to read current ops_clients before delete: ${fetchErr.message}` }); }
     const existingIds = (existingRows || []).map(r => r.id);
 
     let deleted = 0;
@@ -247,6 +248,10 @@ export default async function handler(req, res) {
       const { error } = await supabase.from('ops_clients').insert(batch);
       if (error) insertErrors.push({ batchStart: i, error: error.message });
       else inserted += batch.length;
+    }
+
+    if (deleteErrors.length || insertErrors.length) {
+      await logError({ endpoint: 'migrate-client-data', error: `commit had ${deleteErrors.length} delete error(s) and ${insertErrors.length} insert error(s)`, session, extra: { deleteErrors, insertErrors } });
     }
 
     const { count: finalCount } = await supabase.from('ops_clients').select('id', { count: 'exact', head: true });

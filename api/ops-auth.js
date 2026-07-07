@@ -7,6 +7,7 @@
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { signSession } from '../lib/opsSession.js';
+import { logError } from '../lib/errorLog.js';
 
 const PRIMARY_ADMIN_EMAIL = 'ssamy@weblightmedia.com';
 const PRIMARY_ADMIN_DEFAULT_PW = '31279475';
@@ -24,7 +25,7 @@ export default async function handler(req, res) {
 
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'ops-auth', error: err }); return res.status(500).json({ error: err.message }); }
 
   try {
     // ── Hardcoded primary admin (parity with the app's existing behavior) ──
@@ -63,6 +64,7 @@ export default async function handler(req, res) {
 
     return res.status(401).json({ error: 'Invalid email or password' });
   } catch (err) {
+    await logError({ endpoint: 'ops-auth', error: err });
     return res.status(500).json({ error: err.message || 'Login failed' });
   }
 }

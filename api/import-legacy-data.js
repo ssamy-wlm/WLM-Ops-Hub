@@ -22,6 +22,7 @@
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
+import { logError } from '../lib/errorLog.js';
 
 function normalizeName(name) {
   return String(name || '')
@@ -50,7 +51,7 @@ export default async function handler(req, res) {
 
   let session;
   try { session = requireSession(req); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'import-legacy-data', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   if (tierOf(session) !== 'super') {
     return res.status(403).json({ error: 'Super Admin/Owner only' });
@@ -70,10 +71,10 @@ export default async function handler(req, res) {
 
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'import-legacy-data', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   const { data: existingRows, error: fetchErr } = await supabase.from('ops_clients').select('id, data');
-  if (fetchErr) return res.status(500).json({ error: `Failed to read existing clients: ${fetchErr.message}` });
+  if (fetchErr) { await logError({ endpoint: 'import-legacy-data', error: fetchErr, session }); return res.status(500).json({ error: `Failed to read existing clients: ${fetchErr.message}` }); }
 
   const existingNames = new Set((existingRows || []).map(r => normalizeName(r?.data?.name)));
 
@@ -111,6 +112,10 @@ export default async function handler(req, res) {
   }
 
   const { count: finalCount, error: countErr } = await supabase.from('ops_clients').select('id', { count: 'exact', head: true });
+
+  if (insertErrors.length) {
+    await logError({ endpoint: 'import-legacy-data', error: `import had ${insertErrors.length} insert error(s)`, session, extra: { insertErrors } });
+  }
 
   return res.status(200).json({
     ok: insertErrors.length === 0,

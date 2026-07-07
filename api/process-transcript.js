@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { logError } from '../lib/errorLog.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
 
@@ -58,6 +59,7 @@ export default async function handler(req, res) {
   }
 
   if (!process.env.ANTHROPIC_API_KEY) {
+    await logError({ endpoint: 'process-transcript', error: 'ANTHROPIC_API_KEY is not configured on the server.' });
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
   }
 
@@ -83,7 +85,8 @@ ${transcript.trim()}`;
     try {
       const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
       parsed = JSON.parse(cleaned);
-    } catch {
+    } catch (parseErr) {
+      await logError({ endpoint: 'process-transcript', error: parseErr, extra: { raw: raw.slice(0, 300) } });
       return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
     }
 
@@ -107,6 +110,7 @@ ${transcript.trim()}`;
     return res.status(200).json({ tasks: valid, summary, raw_count: tasks.length });
   } catch (err) {
     console.error('Anthropic API error:', err);
+    await logError({ endpoint: 'process-transcript', error: err });
     return res.status(500).json({ error: err.message || 'Anthropic API call failed' });
   }
 }

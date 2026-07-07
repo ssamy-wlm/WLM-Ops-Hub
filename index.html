@@ -2092,6 +2092,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div><!-- /rm-biz-wrap -->
 
+      <!-- ── ERROR LOG (read-only capture) — Super Admin/Owner only ── -->
+      <div class="card" id="errorLogCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🛑 Error Log</div>
+            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent first. Read-only — nothing here can be edited or deleted.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="loadErrorLog()">↻ Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="errorLogResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to load.</div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -2935,7 +2949,10 @@ function switchAdminTab(el, tab){
     if(trigger) trigger.classList.add('active');
   }
   if(tab==='messages')    renderAdminMessages();
-  if(tab==='bizSettings'){ loadRoadmap(); renderNotificationSettingsUI(); }
+  if(tab==='bizSettings'){
+    loadRoadmap(); renderNotificationSettingsUI();
+    if(_adminLevel==='super' || _adminLevel==='owner') loadErrorLog();
+  }
   if(tab==='tracker')     loadAdminTrackerFrame();
 }
 
@@ -7004,6 +7021,45 @@ function toggleNotificationSetting(key, checked){
   cloudAutoSync();
 }
 
+// ── Error log viewer (read-only capture, Super Admin/Owner only) ──
+// Fetches from /api/error-log, which only ever reads ops_error_log — this
+// function never writes anything, matching the read-only-by-design capture.
+async function loadErrorLog(){
+  const box = document.getElementById('errorLogResults'); if(!box) return;
+  box.textContent = 'Loading…';
+  try{
+    const token = _opsToken();
+    if(!token) throw new Error('Not signed in');
+    const res = await fetch('/api/error-log', {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    if(!entries.length){ box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">No errors logged. ✓</div>'; return; }
+    const esc = (s) => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const rows = entries.map(e => `
+      <tr>
+        <td style="white-space:nowrap;padding:8px 14px;color:var(--text-light);font-size:12px;">${esc(new Date(e.timestamp || e.createdAt).toLocaleString())}</td>
+        <td style="padding:8px 14px;font-weight:700;">${esc(e.endpoint)}</td>
+        <td style="padding:8px 14px;">${esc(e.error)}</td>
+        <td style="padding:8px 14px;color:var(--text-light);">${esc(e.userName || e.userId || '—')}</td>
+      </tr>`).join('');
+    box.innerHTML = `
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead><tr style="border-bottom:1px solid var(--border);text-align:left;">
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Time</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Endpoint</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Error</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">User</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }catch(err){
+    box.innerHTML = `<div style="padding:16px 4px;color:var(--red,#c0392b);">Failed to load error log: ${err.message}</div>`;
+  }
+}
+
 // Backward-compat aliases
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
@@ -8723,6 +8779,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // Client data migration (delete-and-replace) — Super Admin/Owner only.
   const migrateCard = document.getElementById('migrateClientDataCard');
   if(migrateCard) migrateCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+
+  // Error log viewer (read-only capture) — Super Admin/Owner only, same
+  // visibility as business settings/org chart/roadmap.
+  const errorLogCard = document.getElementById('errorLogCard');
+  if(errorLogCard) errorLogCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
   // ── Creative Manager: Clients + Tracker tabs (+ Messages). No Overview, Users,
   //    Reports, Live Feed, Payroll, Business Setup. Tracker access is required so
