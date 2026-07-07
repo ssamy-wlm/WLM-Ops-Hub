@@ -1,7 +1,7 @@
 // Sends an "assigned work" notification email via Resend (https://resend.com).
 // Requires RESEND_API_KEY (and optionally RESEND_FROM_EMAIL) set as Vercel env vars.
 
-import { buildEmailHtml, sendResendEmail } from './_resend.js';
+import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');

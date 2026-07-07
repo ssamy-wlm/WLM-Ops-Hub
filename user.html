@@ -940,6 +940,7 @@ const DB_KEYS = {
   messages:     'wl_messages_db',
   timeOffRequests: 'wl_timeoff_requests',
   timeOffLedger: 'wl_timeoff_ledger',
+  notifications: 'wl_ops_notifications',
 };
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
@@ -1006,6 +1007,8 @@ async function cloudFetchUsers(){
     _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
     _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
     _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)));
+    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr));
+    if(typeof updateAssignmentsBadge==='function') updateAssignmentsBadge();
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
     // Return what's actually usable now — if the server's users array was
     // empty and got skipped above, this is the untouched local copy, not an
@@ -1046,6 +1049,10 @@ async function cloudPushData(){
     if(messagesDirty.length) changes.messages = messagesDirty;
     const torDirty = _opsDirty('timeOffRequests', dbGet(DB_KEYS.timeOffRequests)||[]);
     if(torDirty.length) changes.timeOffRequests = torDirty;
+    // The only local mutation ever made to a synced notification is toggling
+    // `read` (see readOpsNotif()/markAllOpsNotifsRead() below) — push just that.
+    const notifsDirty = _opsDirty('notifications', dbGet(DB_KEYS.notifications)||[]);
+    if(notifsDirty.length) changes.notifications = notifsDirty.map(n=>({id:n.id, read:!!n.read}));
 
     if(!Object.keys(changes).length) return; // nothing changed locally — nothing to send
 
@@ -1650,6 +1657,7 @@ function userUpdateProgress(clientId, projId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
+const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬' };
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';
@@ -1658,8 +1666,16 @@ function _getAssignNotifs(){
     const userAlerts = (JSON.parse(localStorage.getItem(_ASSIGN_USER_KEY)||'[]')||[]).filter(n=>!n.userId||(n.userId===myId||n.userId===myName));
     // wl_client_notifications: general client module notifications
     const allNotifs  = JSON.parse(localStorage.getItem(_ASSIGN_NOTIF_KEY)||'[]')||[];
+    // Server-synced notifications (assignment/time-off decision/message) —
+    // created ONLY server-side in api/ops-sync.js, already scoped to this
+    // person by /api/ops-state; mapped to the same shape as the two legacy,
+    // local-only sources above so they render in the same banner/list.
+    const opsNotifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({
+      id:n.id, ts:new Date(n.createdAt).getTime(), read:!!n.read,
+      title:n.title, body:n.body, icon:NOTIF_TYPE_ICON_USER[n.type]||'🔔', _server:true,
+    }));
     // Merge, deduplicate by id
-    const combined = [...userAlerts, ...allNotifs];
+    const combined = [...userAlerts, ...allNotifs, ...opsNotifs];
     const seen = new Set();
     return combined.filter(n=>{ const k=n.id||JSON.stringify(n); if(seen.has(k))return false; seen.add(k); return true; })
                    .sort((a,b)=>b.ts-a.ts).slice(0,30);
@@ -1920,6 +1936,10 @@ function markAssignNotifRead(){
     // Mark wl_user_assignments read
     const ua=(JSON.parse(localStorage.getItem(_ASSIGN_USER_KEY)||'[]')||[]).map(n=>({...n,read:true}));
     localStorage.setItem(_ASSIGN_USER_KEY,JSON.stringify(ua));
+    // Mark server-synced notifications read too, and push just that change —
+    // same "current vs incoming, same request" write api/ops-sync.js expects.
+    const opsNotifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({...n,read:true}));
+    if(opsNotifs.length){ dbSet(DB_KEYS.notifications, opsNotifs); if(typeof _scheduleCloudPush==='function') _scheduleCloudPush(); }
   }catch(e){}
   loadMyAssignments();
 }
