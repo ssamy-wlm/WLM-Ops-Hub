@@ -12,6 +12,21 @@ At the start of every session: read this file first, in full, before
 touching anything else. Then ask the user **"What is today's task? Nothing
 else will be in scope."** and do not begin any work until they answer.
 
+## Working efficiently
+
+1. **Read only what's relevant.** Read specific sections/line ranges or grep
+   for the symbol in question — never re-read a whole file when a targeted
+   search answers the question.
+2. **Don't re-verify what's already confirmed this session.** If a fact,
+   file state, or check result was already established earlier in the same
+   session, use it — don't re-run the same read/check again "to be sure."
+3. **Keep progress narration brief.** One line per step while working. Save
+   full detail (what changed, what was verified, what's left) for the final
+   summary at the end of the task.
+4. **Signal task completion explicitly.** When a task is fully done, say:
+   "This task is complete — recommend starting a fresh session for the next
+   task."
+
 ## What this app is
 
 Three independent, single-file HTML+JS+CSS apps, each its own portal, with
