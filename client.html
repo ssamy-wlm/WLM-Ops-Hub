@@ -1767,10 +1767,16 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
 // about the visual nesting the Services tab renders — each entry carries
 // _locationId/_locationName (both '' for a top-level service) so callers can
 // route edits/mark-done back to the right list and label the franchise.
-function _allClientServices(c){
+// includeInactive=false (default) excludes cancelled/archived services from
+// every derived view (due-alerts, calendar, schedule, My Work) that walks
+// this helper — a service with no status field at all is legacy data and
+// counts as active, same as before this field existed.
+function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
+function _allClientServices(c, includeInactive){
   const top=(c.services||[]).map(s=>({...s,_locationId:'',_locationName:''}));
   const fromLocs=(c.locations||[]).flatMap(loc=>(loc.services||[]).map(s=>({...s,_locationId:loc.id,_locationName:loc.name})));
-  return [...top,...fromLocs];
+  const all=[...top,...fromLocs];
+  return includeInactive?all:all.filter(s=>!_isInactiveService(s));
 }
 function getBundleForService(s){
   // A bundle resolved once at assignment time (see saveClientService()) and
@@ -2869,32 +2875,43 @@ function renderTaskRow(clientId, projId, spId, t, canEdit){
 // always lands back in the same list it came from.
 function _serviceRow(c, svc, locationId){
   const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
-  const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
-  const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+  const inactive=_isInactiveService(svc);
+  const cls=inactive?'ok':svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+  const icon=inactive?(svc.status==='cancelled'?'🚫':'📦'):cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
   const days=daysUntil(svc.due);
   const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
   const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
   const locArg=locationId?`,'${locationId}'`:'';
+  const statusBadge=inactive?`<span class="chip" style="background:var(--bg2);color:var(--text-light);text-transform:capitalize;margin-left:6px;">${svc.status}</span>`:'';
   return `
-      <tr>
+      <tr${inactive?' style="opacity:.6;"':''}>
         <td><span style="font-size:13px;">${icon}</span></td>
-        <td><div style="font-weight:700;font-size:11px;">${escHtmlClient(svc.name)}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:700;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${svc.assigneeName?`<span class="user-chip">${escHtmlClient(svc.assigneeName)}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
-          <button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${svc.id}'${locArg})" title="Mark done today, roll due date forward">✅</button>
+          ${inactive
+            ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})">↩ Reactivate</button>`:''}`
+            :`<button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${svc.id}'${locArg})" title="Mark done today, roll due date forward">✅</button>
           <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}'${locArg})">✏️</button>
-          ${SESSION.isAdmin?`<button class="btn btn-xs btn-danger" onclick="removeClientService('${c.id}','${svc.id}'${locArg})">✕</button>`:''}
+          ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="cancelClientService('${c.id}','${svc.id}'${locArg})" title="Cancel — hides from alerts, kept, reversible">Cancel</button>
+          <button class="btn btn-xs btn-outline" onclick="archiveClientService('${c.id}','${svc.id}'${locArg})" title="Archive — hides from alerts, kept, reversible">Archive</button>`:''}`}
         </td>`:'<td></td>'}
       </tr>`;
 }
+let _showInactiveServices=false;
+function toggleShowInactiveServices(clientId){
+  _showInactiveServices=!_showInactiveServices;
+  renderClientDetail(clientId,'services');
+}
 function _serviceTable(c, svcs, locationId){
-  if(!svcs.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>';
+  const visible=_showInactiveServices?svcs:svcs.filter(s=>!_isInactiveService(s));
+  if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>';
   return `<div style="overflow-x:auto;">
     <table class="service-table">
       <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
-      <tbody>${svcs.map(svc=>_serviceRow(c,svc,locationId)).join('')}</tbody>
+      <tbody>${visible.map(svc=>_serviceRow(c,svc,locationId)).join('')}</tbody>
     </table>
   </div>`;
 }
@@ -2916,8 +2933,10 @@ function renderServices(c){
       </div>
       ${_serviceTable(c, loc.services||[], loc.id)}
     </div>`).join('');
+  const inactiveCount=_allClientServices(c,true).filter(_isInactiveService).length;
   return `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:11px;align-items:center;">
+      ${inactiveCount?`<button class="btn btn-outline btn-sm" onclick="toggleShowInactiveServices('${c.id}')">${_showInactiveServices?'Hide':'Show'} cancelled/archived (${inactiveCount})</button>`:''}
       ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
     ${_serviceTable(c, c.services||[], '')}
@@ -3538,7 +3557,7 @@ function saveClientService(){
       }
     }
   } else {
-    targetList.push({id:'sv'+uid(),...data});
+    targetList.push({id:'sv'+uid(),status:'active',...data});
     const forName=loc?`${c.name} — ${loc.name}`:c.name;
     if(assigneeId){
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
@@ -3560,6 +3579,9 @@ function saveClientService(){
   checkServiceAlerts();
   showToast('Service saved ✓');
 }
+// DATA-SAFETY: hard delete is never wired to a UI button — kept only as an
+// internal safety net (e.g. for a future admin tool), same as clients being
+// active/inactive-only. Cancel/Archive below are the actual UI actions.
 function removeClientService(clientId,entryId,locationId){
   if(!confirm('Remove this service?')) return;
   const clients=getClients();
@@ -3572,6 +3594,35 @@ function removeClientService(clientId,entryId,locationId){
   if(!loc) syncServicesToProjects(clientId); // remove mirrored project too (client-level only)
   renderClientDetail(clientId,'services');
   showToast('Service removed');
+}
+function _findClientService(clients,clientId,entryId,locationId){
+  const c=clients.find(x=>x.id===clientId); if(!c) return null;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  if(locationId && !loc) return null;
+  const list=loc?(loc.services||[]):(c.services||[]);
+  const svc=list.find(s=>s.id===entryId);
+  return svc?{c,svc}:null;
+}
+function _setServiceStatus(clientId,entryId,locationId,status,toastMsg){
+  const clients=getClients();
+  const found=_findClientService(clients,clientId,entryId,locationId);
+  if(!found) return;
+  found.svc.status=status;
+  saveClients(clients);
+  renderClientDetail(clientId,'services');
+  checkServiceAlerts();
+  showToast(toastMsg);
+}
+function cancelClientService(clientId,entryId,locationId){
+  if(!confirm('Cancel this service? It will be hidden from due-date alerts and the default list, but kept — you can reactivate it anytime.')) return;
+  _setServiceStatus(clientId,entryId,locationId,'cancelled','Service cancelled');
+}
+function archiveClientService(clientId,entryId,locationId){
+  if(!confirm('Archive this service? It will be hidden from due-date alerts and the default list, but kept — you can reactivate it anytime.')) return;
+  _setServiceStatus(clientId,entryId,locationId,'archived','Service archived');
+}
+function reactivateClientService(clientId,entryId,locationId){
+  _setServiceStatus(clientId,entryId,locationId,'active','Service reactivated');
 }
 
 // ── Mark a recurring service as done today → roll next due date forward ──
