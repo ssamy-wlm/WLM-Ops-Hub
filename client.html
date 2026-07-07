@@ -1149,6 +1149,7 @@ const CL_KEYS = {
   serviceCatalog: 'wl_service_catalog',
   catalogSuggestions: 'wl_catalog_suggestions',
   notifications:  'wl_client_notifications',
+  opsNotifications: 'wl_ops_notifications', // server-synced (assignment/time-off/message), separate from the local-only key above
   funnel:         'wl_sales_funnel',
   users:          'wl_users_db',
   admins:         'wl_admins_db',
@@ -1835,6 +1836,10 @@ async function _doCloudPush(){
     }
     const suggestionsDirty=_opsDirty('catalogSuggestions', db(CL_KEYS.catalogSuggestions)||[]);
     if(suggestionsDirty.length) changes.catalogSuggestions=suggestionsDirty;
+    // The only local mutation ever made to a synced notification is toggling
+    // `read` (see readNotif()/markAllNotifsRead() above) — push just that.
+    const notifsDirty=_opsDirty('notifications', getOpsNotifs());
+    if(notifsDirty.length) changes.notifications=notifsDirty.map(n=>({id:n.id, read:!!n.read}));
     if(!Object.keys(changes).length) return;
 
     const res = await fetch(OPS_SYNC_URL,{
@@ -1884,6 +1889,8 @@ async function _pullClientsFromCloud(){
       dbSave(CL_KEYS.serviceCatalog, rec.serviceCatalog);
     }
     _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr));
+    _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr));
+    if(typeof refreshNotifBadge==='function') refreshNotifBadge();
   }catch(e){}
 }
 
@@ -1980,16 +1987,33 @@ function pushNotif(notif){
   refreshNotifBadge();
 }
 
+// ── Server-synced notifications (assignment / time-off decision / message) —
+// created ONLY server-side in api/ops-sync.js, pulled here via the normal
+// _applyServerArray cloud-sync mechanism. Kept on its OWN key, never merged
+// into CL_KEYS.notifications' storage, so the pre-existing local-only alert
+// system above (service-due reminders, etc.) is untouched; the two are only
+// combined at RENDER time, in _allNotifs() below, into one visual list.
+const NOTIF_TYPE_ICON = { assignment:'📌', timeOff:'🗓️', message:'💬' };
+function getOpsNotifs(){ return db(CL_KEYS.opsNotifications)||[]; }
+function _allNotifs(){
+  const local = getNotifs().map(n=>({...n, _server:false}));
+  const server = getOpsNotifs().map(n=>({
+    id:n.id, ts:new Date(n.createdAt).getTime(), read:!!n.read,
+    title:n.title, body:n.body, icon:NOTIF_TYPE_ICON[n.type]||'🔔', _server:true,
+  }));
+  return [...local, ...server].sort((a,b)=>(b.ts||0)-(a.ts||0));
+}
 function refreshNotifBadge(){
-  const unread = getNotifs().filter(n=>!n.read).length;
+  const unread = _allNotifs().filter(n=>!n.read).length;
   const dot = _el('notif-dot');
   if(dot) dot.style.display = unread>0?'block':'none';
   const nb = _el('notif-nav-badge');
   if(nb){ nb.textContent=unread; nb.style.display=unread>0?'flex':'none'; }
 }
 function markAllNotifsRead(){
-  const notifs=getNotifs().map(n=>({...n,read:true}));
-  dbSave(CL_KEYS.notifications,notifs);
+  dbSave(CL_KEYS.notifications, getNotifs().map(n=>({...n,read:true})));
+  const server = getOpsNotifs();
+  if(server.length){ dbSave(CL_KEYS.opsNotifications, server.map(n=>({...n,read:true}))); _scheduleCloudPush(); }
   refreshNotifBadge();
   renderNotifPanel();
 }
@@ -1999,7 +2023,7 @@ function toggleNotifPanel(){
   if(p.classList.contains('open')) renderNotifPanel();
 }
 function renderNotifPanel(){
-  const notifs=getNotifs().slice(0,15);
+  const notifs=_allNotifs().slice(0,15);
   const el=_el('notif-list'); if(!el) return;
   if(!notifs.length){ el.innerHTML='<div class="notif-empty">No notifications</div>'; return; }
   el.innerHTML=notifs.map(n=>`
@@ -2014,7 +2038,7 @@ function renderNotifPanel(){
 }
 function renderNotifPage(){
   const el=_el('notif-page-list'); if(!el) return;
-  const notifs=getNotifs();
+  const notifs=_allNotifs();
   if(!notifs.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">🔔</div><div class="empty-state-title">No notifications yet</div></div>'; return; }
   el.innerHTML=notifs.map(n=>`
     <div class="log-item" style="margin-bottom:10px;${n.read?'':'border-left:3px solid var(--text);'}">
@@ -2027,9 +2051,15 @@ function renderNotifPage(){
     </div>`).join('');
 }
 function readNotif(id){
-  const notifs=getNotifs();
-  const n=notifs.find(x=>x.id===id); if(n) n.read=true;
-  dbSave(CL_KEYS.notifications,notifs);
+  if(String(id).startsWith('notif_')){
+    const server = getOpsNotifs();
+    const n = server.find(x=>x.id===id);
+    if(n){ n.read=true; dbSave(CL_KEYS.opsNotifications, server); _scheduleCloudPush(); }
+  } else {
+    const notifs=getNotifs();
+    const n=notifs.find(x=>x.id===id); if(n) n.read=true;
+    dbSave(CL_KEYS.notifications,notifs);
+  }
   refreshNotifBadge();
   renderNotifPanel();
   renderNotifPage();

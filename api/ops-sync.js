@@ -7,15 +7,26 @@
 //
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
-// settings?, orgNodes?, orgLinks?, catalogSuggestions? },
+// settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications? },
 // tombstones?: { users?: [ids] }, restoreUserIds?: [ids] }
 //
 // Every array in `changes` is a list of ONLY the records that actually
 // changed (new or edited) — never the full dataset. Role comes from the
 // signed session token, never from the request body.
+//
+// Notifications (assignment / time-off decision / new message) are NEVER
+// created via `changes.notifications` — the client can only mark its own
+// rows read there. Every notification row is created server-side, inside
+// the clients/timeOffRequests/messages write paths below, at the exact
+// moment the triggering write happens in THIS request (current row already
+// fetched vs. incoming row in the same request body) — never by a
+// page-load or scheduled scan diffing old vs new state over time. That
+// load-time whole-record diffing pattern is what corrupted data before and
+// is deliberately not used anywhere in this file.
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
+import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
@@ -153,6 +164,215 @@ function checkMemberClientWrite(current, incoming, memberId, memberName) {
   }
 
   return { allowed: true };
+}
+
+// ── Notifications ────────────────────────────────────────────────────────
+// Fired ONLY from inside the write paths below, at the exact moment a
+// relevant change is written in THIS request — never by a page-load or
+// scheduled scan comparing old vs new state across time. Each event compares
+// the "current" row already fetched for this same request against the
+// "incoming" row in the same request's body, which is the legitimate,
+// non-corrupting version of "diff old vs new": the diff only ever spans one
+// write, never a background reconciliation pass.
+let _notifSettingsCache; // per-request cache, avoids re-querying ops_settings per event
+async function getNotificationSettings(supabase) {
+  if (_notifSettingsCache) return _notifSettingsCache;
+  const { data } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
+  _notifSettingsCache = { assignment: true, timeOff: true, message: true, ...(data?.data || {}) };
+  return _notifSettingsCache;
+}
+
+function genNotifId() {
+  return `notif_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// Resolves "the affected person + their admin/manager": the assignee
+// themselves, plus — in order of preference — their configured manager
+// (users[].managerId), or any admin scoped to them (admins[].assignedUsers),
+// or, if neither is configured, every super/owner admin as a fallback so a
+// notification is never silently dropped for lack of a configured manager.
+export function resolveNotifyRecipients(userId, users, admins) {
+  // A service/task can be assigned to either a team member OR an admin —
+  // detect which so the primary recipient's own kind is stored correctly
+  // (personOf() below looks them up in the matching list).
+  const user = users.find(u => u.id === userId);
+  const primaryKind = user ? 'user' : (admins.some(a => a.id === userId) ? 'admin' : 'user');
+  const out = [{ id: userId, kind: primaryKind }];
+  if (user && user.managerId && user.managerId !== userId) {
+    const asAdmin = admins.find(a => a.id === user.managerId);
+    const asUser = users.find(u => u.id === user.managerId);
+    if (asAdmin) out.push({ id: user.managerId, kind: 'admin' });
+    else if (asUser) out.push({ id: user.managerId, kind: 'user' });
+  } else {
+    const scoped = admins.filter(a => Array.isArray(a.assignedUsers) && a.assignedUsers.includes(userId));
+    if (scoped.length) scoped.forEach(a => out.push({ id: a.id, kind: 'admin' }));
+    else admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  }
+  const seen = new Set();
+  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
+export function assigneeChanged(prev, next) {
+  const prevId = prev?.assigneeId || '';
+  const nextId = next?.assigneeId || '';
+  return nextId && nextId !== prevId;
+}
+
+// Walks one client's services (top-level + every franchise location's own
+// services) comparing current vs incoming, returning every service whose
+// assigneeId newly changed in THIS write.
+export function collectServiceAssignmentEvents(client, curClient, incClient) {
+  const events = [];
+  const scan = (curList, incList, locationName) => {
+    const curById = new Map((curList || []).filter(s => s?.id).map(s => [s.id, s]));
+    (incList || []).forEach(s => {
+      if (!s?.id) return;
+      const prev = curById.get(s.id);
+      if (assigneeChanged(prev, s)) {
+        events.push({
+          serviceId: s.id, serviceName: s.name, locationName,
+          assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
+        });
+      }
+    });
+  };
+  scan(curClient.services, incClient.services, null);
+  const curLocs = curClient.locations || [], incLocs = incClient.locations || [];
+  incLocs.forEach(loc => {
+    const curLoc = curLocs.find(l => l.id === loc.id);
+    scan(curLoc?.services, loc.services, loc.name);
+  });
+  return events;
+}
+
+// Same idea for project tasks (top-level tasks + subproject tasks).
+export function collectTaskAssignmentEvents(client, curClient, incClient) {
+  const events = [];
+  const curProjById = new Map((curClient.projects || []).filter(p => p?.id).map(p => [p.id, p]));
+  (incClient.projects || []).forEach(proj => {
+    const curProj = curProjById.get(proj.id);
+    const scanTasks = (curTasks, incTasks, subName) => {
+      const curById = new Map((curTasks || []).filter(t => t?.id).map(t => [t.id, t]));
+      (incTasks || []).forEach(t => {
+        if (!t?.id) return;
+        const prev = curById.get(t.id);
+        if (assigneeChanged(prev, t)) {
+          events.push({
+            taskId: t.id, taskName: t.name || t.text, projectName: proj.name, subName,
+            assigneeId: t.assigneeId, clientId: client.id, clientName: client.name,
+          });
+        }
+      });
+    };
+    scanTasks(curProj?.tasks, proj.tasks, null);
+    const curSubById = new Map((curProj?.subprojects || []).filter(sp => sp?.id).map(sp => [sp.id, sp]));
+    (proj.subprojects || []).forEach(sp => {
+      const curSub = curSubById.get(sp.id);
+      scanTasks(curSub?.tasks, sp.tasks, sp.name);
+    });
+  });
+  return events;
+}
+
+let _directoryCache; // per-request cache — users/admins are fetched at most once per request
+async function getDirectory(supabase) {
+  if (_directoryCache) return _directoryCache;
+  const [{ data: usersData }, { data: adminsData }] = await Promise.all([
+    supabase.from('ops_users').select('id, data'),
+    supabase.from('ops_admins').select('id, data'),
+  ]);
+  _directoryCache = {
+    users: (usersData || []).map(r => ({ id: r.id, ...r.data })),
+    admins: (adminsData || []).map(r => ({ id: r.id, ...r.data })),
+  };
+  return _directoryCache;
+}
+
+function personOf(id, kind, { users, admins }) {
+  return kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
+}
+
+async function fireAssignmentNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    resolveNotifyRecipients(ev.assigneeId, users, admins).forEach(r => {
+      const person = personOf(r.id, r.kind, { users, admins });
+      const isTask = !!ev.taskId;
+      const title = isTask ? `New task assigned: ${ev.taskName}` : `New service assigned: ${ev.serviceName}`;
+      const body = isTask
+        ? `${ev.clientName} — ${ev.projectName}${ev.subName ? ' / ' + ev.subName : ''}`
+        : `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`;
+      rows.push({
+        type: 'assignment', recipientId: r.id, recipientKind: r.kind,
+        recipientName: person?.name || '', recipientEmail: person?.email || '',
+        title, body, link: '',
+        context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null },
+      });
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+async function fireTimeOffNotification(supabase, request, warnings) {
+  const { users, admins } = await getDirectory(supabase);
+  const requester = users.find(u => String(u.name || '').toLowerCase() === String(request.userName || '').toLowerCase());
+  const recipients = requester
+    ? resolveNotifyRecipients(requester.id, users, admins)
+    : [];
+  if (!recipients.length) { warnings.push(`notifications: could not resolve user "${request.userName}" for time-off decision notification`); return; }
+  const decision = request.status === 'approved' ? 'approved' : 'denied';
+  const rows = recipients.map(r => {
+    const person = personOf(r.id, r.kind, { users, admins });
+    return {
+      type: 'timeOff', recipientId: r.id, recipientKind: r.kind,
+      recipientName: person?.name || '', recipientEmail: person?.email || '',
+      title: `Time-off request ${decision}`,
+      body: `${request.userName}'s request${request.startDate ? ` (${request.startDate}${request.endDate ? ' – ' + request.endDate : ''})` : ''} was ${decision}.`,
+      link: '', context: { requestId: request.id },
+    };
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+async function fireMessageNotification(supabase, message, warnings) {
+  const { users, admins } = await getDirectory(supabase);
+  const toEmail = String(message.to || '').toLowerCase();
+  const person = users.find(u => String(u.email || '').toLowerCase() === toEmail)
+    || admins.find(a => String(a.email || '').toLowerCase() === toEmail);
+  if (!person) { warnings.push(`notifications: could not resolve recipient "${message.to}" for message notification`); return; }
+  const kind = users.includes(person) ? 'user' : 'admin';
+  await insertNotifications(supabase, [{
+    type: 'message', recipientId: person.id, recipientKind: kind,
+    recipientName: person.name || '', recipientEmail: person.email || '',
+    title: `New message from ${message.fromName || message.from}`,
+    body: String(message.content || '').slice(0, 200),
+    link: '', context: { messageId: message.id },
+  }], warnings);
+}
+
+async function insertNotifications(supabase, rows, warnings) {
+  if (!rows.length) return;
+  const payload = rows.map(r => ({ id: genNotifId(), data: { ...r, read: false, createdAt: new Date().toISOString() } }));
+  const { error } = await supabase.from('ops_notifications').insert(payload);
+  if (error) { warnings.push(`notifications: ${error.message}`); return; }
+  // Email is dormant until RESEND_API_KEY is configured — attempt fires only
+  // then, and any failure is logged, never surfaced to the caller or allowed
+  // to affect the (already-succeeded) write this notification came from.
+  if (process.env.RESEND_API_KEY) {
+    for (const row of payload) {
+      try { await maybeEmailNotification(row.data); }
+      catch (e) { console.warn('[notifications] email send failed (non-fatal):', e.message); }
+    }
+  }
+}
+
+async function maybeEmailNotification(notif) {
+  const to = notif.recipientEmail;
+  if (!to) return;
+  const html = buildEmailHtml({ name: notif.recipientName || '', title: notif.title, body: notif.body, link: notif.link || '' });
+  await sendResendEmail({ to, subject: notif.title, html });
 }
 
 async function upsertRows(supabase, table, rows, warnings, statusCol) {
@@ -323,38 +543,71 @@ export default async function handler(req, res) {
     // never a silent partial merge. ──
     if (Array.isArray(c.clients) && c.clients.length) {
       const incoming = c.clients.filter(validClient);
+      const ids = incoming.map(r => r.id);
+      // Fetched for BOTH tiers now: the member-write check always needed it,
+      // and firing an assignment notification needs the same "current vs
+      // incoming, same request" comparison regardless of who's writing.
+      const { data: currentRows, error: curErr } = await supabase.from('ops_clients').select('id, status, data').in('id', ids);
+      if (curErr) warnings.push(`clients: ${curErr.message}`);
+      const byId = new Map((currentRows || []).map(r => [r.id, r]));
+      const notifSettings = await getNotificationSettings(supabase);
+      const assignmentEvents = [];
+
       if (isAdmin) {
         applied.clients = await upsertRows(supabase, 'ops_clients', incoming, warnings, true);
-      } else {
-        const ids = incoming.map(r => r.id);
-        const { data: currentRows, error } = await supabase.from('ops_clients').select('id, status, data').in('id', ids);
-        if (error) { warnings.push(`clients: ${error.message}`); }
-        else {
-          const byId = new Map((currentRows || []).map(r => [r.id, r]));
-          let n = 0;
+        if (notifSettings.assignment) {
           for (const inc of incoming) {
             const cur = byId.get(inc.id);
-            if (!cur) {
-              rejected.push({ table: 'clients', id: inc.id, reason: 'members cannot create new clients' });
-              continue;
-            }
-            const check = checkMemberClientWrite(cur.data, inc, session.id, session.name);
-            if (!check.allowed) {
-              rejected.push({ table: 'clients', id: inc.id, reason: check.reason });
-              continue;
-            }
-            // status is never part of the check above (members can't touch it),
-            // but guard it here too — belt and suspenders against active/inactive drift.
-            const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...inc, status: cur.status } }).eq('id', inc.id);
-            if (uErr) warnings.push(`clients(${inc.id}): ${uErr.message}`); else n++;
+            if (!cur) continue; // brand-new client (e.g. a bulk import) — nothing to diff against
+            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
+            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
           }
-          applied.clients = n;
         }
+      } else {
+        let n = 0;
+        for (const inc of incoming) {
+          const cur = byId.get(inc.id);
+          if (!cur) {
+            rejected.push({ table: 'clients', id: inc.id, reason: 'members cannot create new clients' });
+            continue;
+          }
+          const check = checkMemberClientWrite(cur.data, inc, session.id, session.name);
+          if (!check.allowed) {
+            rejected.push({ table: 'clients', id: inc.id, reason: check.reason });
+            continue;
+          }
+          // status is never part of the check above (members can't touch it),
+          // but guard it here too — belt and suspenders against active/inactive drift.
+          const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...inc, status: cur.status } }).eq('id', inc.id);
+          if (uErr) { warnings.push(`clients(${inc.id}): ${uErr.message}`); continue; }
+          n++;
+          if (notifSettings.assignment) {
+            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
+            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
+          }
+        }
+        applied.clients = n;
       }
+
+      await fireAssignmentNotifications(supabase, assignmentEvents, warnings);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);
-    applied.messages = await upsertRows(supabase, 'ops_messages', (c.messages || []).filter(validGeneric), warnings);
+    if (Array.isArray(c.messages) && c.messages.length) {
+      const incomingMsgs = c.messages.filter(validGeneric);
+      // Same "current vs incoming, same request" comparison as clients above —
+      // a message id not already in ops_messages is a brand-new message, and
+      // firing happens right here, not from any later scan.
+      const { data: existingMsgRows } = await supabase.from('ops_messages').select('id').in('id', incomingMsgs.map(m => m.id));
+      const existingIds = new Set((existingMsgRows || []).map(r => r.id));
+      applied.messages = await upsertRows(supabase, 'ops_messages', incomingMsgs, warnings);
+      const notifSettings = await getNotificationSettings(supabase);
+      if (notifSettings.message) {
+        for (const m of incomingMsgs) {
+          if (!existingIds.has(m.id)) await fireMessageNotification(supabase, m, warnings);
+        }
+      }
+    }
     if (Array.isArray(c.feed) && c.feed.length) {
       applied.feed = await insertNewOnly(supabase, 'ops_feed', c.feed.filter(validGeneric), warnings);
     }
@@ -369,12 +622,19 @@ export default async function handler(req, res) {
       const { data: currentRows } = await supabase.from('ops_time_off_requests').select('id, data').in('id', ids);
       const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
       const myNameLower = String(session.name || '').toLowerCase();
+      const notifSettings = await getNotificationSettings(supabase);
       let n = 0;
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
         if (isAdmin) {
           const { error } = await supabase.from('ops_time_off_requests').upsert({ id: inc.id, data: inc }, { onConflict: 'id' });
-          if (error) warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); else n++;
+          if (error) { warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); continue; }
+          n++;
+          // Fires exactly once, at the moment status actually transitions to a
+          // decision — never on the initial pending-request creation, and
+          // never re-fired if an admin re-saves the same already-decided status.
+          const isNewDecision = cur && cur.status !== inc.status && (inc.status === 'approved' || inc.status === 'denied');
+          if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, inc, warnings);
           continue;
         }
         if (!cur) {
@@ -436,6 +696,26 @@ export default async function handler(req, res) {
         if (error) warnings.push(`catalogSuggestions(${inc.id}): ${error.message}`); else n++;
       }
       applied.catalogSuggestions = n;
+    }
+
+    // ── notifications: every role may mark their OWN notifications read —
+    // the only field this path ever changes. Never a whole-list overwrite:
+    // each row is fetched and updated by its own id, and any row that isn't
+    // addressed to the caller is rejected outright rather than silently
+    // applied or dropped. ──
+    if (Array.isArray(c.notifications) && c.notifications.length) {
+      const incoming = c.notifications.filter(validGeneric);
+      const { data: currentRows } = await supabase.from('ops_notifications').select('id, data').in('id', incoming.map(r => r.id));
+      const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+      let n = 0;
+      for (const inc of incoming) {
+        const cur = byId.get(inc.id);
+        if (!cur) { rejected.push({ table: 'notifications', id: inc.id, reason: 'not found' }); continue; }
+        if (cur.recipientId !== session.id) { rejected.push({ table: 'notifications', id: inc.id, reason: 'not addressed to this caller' }); continue; }
+        const { error } = await supabase.from('ops_notifications').update({ data: { ...cur, read: !!inc.read } }).eq('id', inc.id);
+        if (error) warnings.push(`notifications(${inc.id}): ${error.message}`); else n++;
+      }
+      applied.notifications = n;
     }
 
     return res.status(200).json({ ok: true, applied, warnings, rejected });

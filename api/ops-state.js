@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const [
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ,
-      orgNodesQ, orgLinksQ, catalogSuggestionsQ,
+      orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
@@ -56,9 +56,10 @@ export default async function handler(req, res) {
       supabase.from('ops_org_nodes').select('id, data'),
       supabase.from('ops_org_links').select('id, data'),
       supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
+      supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
     ]);
 
-    const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ, catalogSuggestionsQ].find(q => q.error)?.error;
+    const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ].find(q => q.error)?.error;
     if (err) return res.status(500).json({ error: err.message });
 
     const deletedIds = new Set((deletedQ.data || []).map(r => r.user_id));
@@ -78,6 +79,10 @@ export default async function handler(req, res) {
     let orgNodes = rows(orgNodesQ.data);
     let orgLinks = rows(orgLinksQ.data);
     let catalogSuggestions = rows(catalogSuggestionsQ.data);
+    // Notifications are inherently personal — scoped to the caller's own id
+    // regardless of tier (unlike every other field below, which is scoped by
+    // tier). A super admin does not see anyone else's notifications either.
+    let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
 
     const record = {
       users, admins, clients, goals, feed, messages, roadmapTasks,
@@ -95,6 +100,13 @@ export default async function handler(req, res) {
       // and submit suggestions), unlike the other settings keys below.
       serviceCatalog: settingsMap.serviceCatalog ?? null,
       catalogSuggestions,
+      notifications,
+      // Notification on/off toggles: same Super Admin/CEO-only visibility as
+      // otPolicy/coc below — everyone still GETS notified server-side
+      // regardless (the toggle is read directly from ops_settings inside
+      // api/ops-sync.js, not from this tier-filtered response), this only
+      // controls who can see/change the toggle in the Settings UI.
+      notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true },
     };
 
     // Payroll/pay-rate fields: Super Admin/CEO only, for every non-super caller.
@@ -123,7 +135,8 @@ export default async function handler(req, res) {
       record.orgExcluded = '[]';
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
-      // announcement, goals, feed, messages, clients stay visible to everyone.
+      record.notificationSettings = null;
+      // announcement, goals, feed, messages, clients, notifications stay visible to everyone.
     } else if (tier === 'manager') {
       // Every other admin level: team + client management (users minus payroll
       // already applied above, all time-off requests, summaries, archive), but
@@ -140,6 +153,7 @@ export default async function handler(req, res) {
       record.orgExcluded = '[]';
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
+      record.notificationSettings = null;
       // deletedUserIds, timeOffRequests, summaries stay full — team/client management.
     }
     // tier === 'super': record is returned exactly as assembled above.
