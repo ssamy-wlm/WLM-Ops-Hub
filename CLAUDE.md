@@ -112,9 +112,18 @@ Don't relitigate them without an explicit decision from the user.
    server-side logic with no live Supabase access available, write a Node
    script that imports and exercises the real exported functions directly.
 
-10. **Branch + PR per feature, with a Vercel preview. Never merge without the
-    user's explicit test/confirmation** on that preview, unless told
-    otherwise for that specific change.
+10. **Branch + PR per feature, with a Vercel preview.** Two tiers of risk,
+    two different approval paths:
+    - **Low-risk — may merge straight to main:** docs-only changes,
+      read-only features (viewers, reports, logs), additive UI (a new card,
+      button, or panel that doesn't change existing behavior), styling/CSS.
+    - **Everything else requires plan → dry-run → the user's explicit
+      approval before merge:** anything touching data writes, migrations,
+      auth/login, sync (`api/ops-sync.js`/`api/ops-state.js`), or
+      role/permission logic. Never merge one of these without the user's
+      explicit test/confirmation on the Vercel preview, unless told
+      otherwise for that specific change.
+    When in doubt about which tier a change falls into, ask before merging.
 
 11. **No live Supabase/database access from this environment.** The Supabase
     MCP server requires an interactive OAuth approval step that a
