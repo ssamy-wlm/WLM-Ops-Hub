@@ -87,10 +87,15 @@ Don't relitigate them without an explicit decision from the user.
    Supabase directly.
 
 6. **Destructive or high-blast-radius operations need a typed confirmation
-   and a thorough dry run.** No auto-anything. See `api/migrate-client-data.js`
-   for the pattern: dry-run computes and reports full before/after diffs and
-   writes nothing; the actual write requires a token bound to the exact
-   reviewed data plus the user typing an exact confirmation phrase.
+   and a thorough dry run.** No auto-anything. The pattern: dry-run computes
+   and reports full before/after diffs and writes nothing; the actual write
+   requires a token bound to the exact reviewed data, checked **server-side**,
+   plus the user typing an exact confirmation phrase — also checked
+   server-side, not just gated in the UI. These tools are one-time-use by
+   nature: once the job they were built for is done and verified, remove the
+   tool (endpoint, UI card, JS functions) rather than leaving a standing
+   capability with no ongoing purpose — see the removal of the delete-and-
+   replace client migration tool and the duplicate-service cleanup tool below.
 
 7. **Never guess on ambiguous source data.** If a data mapping is unclear or
    garbled, flag it back to the user explicitly rather than inferring intent.
@@ -132,13 +137,19 @@ Don't relitigate them without an explicit decision from the user.
     "Export Backup (JSON)" button, which hits `/api/ops-state` fresh) or a
     SQL query pasted back — don't assume MCP DB access will work.
 
-## Current state (as of 2026-07-07)
+## Current state (as of 2026-07-08)
 
 **Client data:** 85 active clients live in production, generated from the
 authoritative CSV mapping and verified 100% match (client count, per-client
 service counts, every service name/bundle/frequency, the Servpro→Yonkers
 franchise nesting, and all known intentional duplicates/standalones) against
-a live export. See PR #74 for the migration tool and franchise feature.
+a live export. See PR #74 for the migration and franchise feature. The
+delete-and-replace migration tool (`api/migrate-client-data.js`) that
+performed this has since been removed — its one-time job was done and
+verified, and it deleted every client record on commit, so it wasn't kept
+around as a standing capability. A separate one-time duplicate-service
+cleanup (5 redundant service copies across 4 clients) also ran successfully
+and was removed the same way — see rule #6 above.
 
 **Auto-run-on-load functions — DISABLED, must never be re-enabled.** These
 ran unconditionally (or on a resettable browser-local flag) on every page
