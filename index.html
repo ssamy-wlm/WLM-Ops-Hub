@@ -4768,8 +4768,12 @@ function saveClient(){
   }
   _saveClientDB(live);
   closeModal('clientModal');
-  renderClientGrid();
-  updateClientStats();
+  // filterClients() re-renders respecting whatever filters are currently set
+  // (it's a no-op filter when none are active) — a bare renderClientGrid()
+  // here would show the full unfiltered list even though the filter
+  // dropdowns still show a selection, silently dropping the admin's place
+  // in a filtered workflow (e.g. assigning one service across many clients).
+  filterClients();
   if(activeClientId===editId && editId){ const uc=live.find(x=>x.id===editId); if(uc) renderClientDetail(uc); }
   showToast(editId?'Client updated ✓':'Client added ✓');
 }
@@ -4780,8 +4784,7 @@ function toggleClientStatus(id){
   c.status = c.status==='active' ? 'inactive' : 'active';
   c.updatedAt = new Date().toISOString();
   _saveClientDB(live);
-  renderClientGrid();
-  updateClientStats();
+  filterClients(); // preserves the active filter — see saveClient() for why
   if(activeClientId===id) renderClientDetail(c);
   showToast('Client marked '+c.status);
 }
@@ -4889,7 +4892,7 @@ function saveProject(){
       '📋');
   });
   closeModal('projectModal');
-  renderClientGrid();
+  filterClients(); // preserves the active filter — see saveClient() for why
   renderClientDetail(c);
   showToast(editId?'Bundle updated ✓':'Bundle added ✓');
 }
@@ -4900,7 +4903,7 @@ function archiveProject(clientId,projId){
   const p=(c.projects||[]).find(x=>x.id===projId);if(!p)return;
   p.status = p.status==='archived' ? 'on-hold' : 'archived';
   _saveClientDB(live);
-  renderClientGrid();
+  filterClients(); // preserves the active filter — see saveClient() for why
   renderClientDetail(c);
   showToast('Bundle '+p.status);
 }
@@ -5157,7 +5160,7 @@ function _persistRecurringService(clientId,svcId,name,freq,startDate,notes,newUs
   });
   // Re-fetch client from DB to get latest state before re-rendering
   const updated = _getClientDB().find(x=>x.id===clientId)||c;
-  renderClientGrid();
+  filterClients(); // preserves the active filter — see saveClient() for why
   renderClientDetail(updated);
   showToast(svcId?'Service updated ✓':'Service added ✓');
 }
@@ -5357,7 +5360,7 @@ function saveProgress(){
     localStorage.setItem('wl_live_feed',JSON.stringify(feed.slice(0,500)));
   }catch(e){}
   closeModal('progressModal');
-  renderClientGrid();
+  filterClients(); // preserves the active filter — see saveClient() for why
   renderClientDetail(c);
   showToast('Progress updated ✓');
 }
