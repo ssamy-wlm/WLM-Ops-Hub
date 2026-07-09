@@ -8,9 +8,9 @@
 //     including payroll/pay rates, admin accounts, business settings, org
 //     chart, and roadmap.
 //   - 'manager' (every other admin level): team + client management —
-//     users/admins minus payroll fields, all time-off requests, summaries,
-//     archive/tombstones — but NOT payroll ledger, NOT business
-//     settings/org chart/roadmap.
+//     full user records including payroll/pay-rate fields, all time-off
+//     requests, summaries, archive/tombstones — but NOT the payroll ledger,
+//     NOT business settings/org chart/roadmap.
 //   - 'member': clients (read-only visibility), own time-off only, minimal
 //     user/admin fields for display, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
@@ -120,21 +120,28 @@ export default async function handler(req, res) {
       notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true },
     };
 
-    // Payroll/pay-rate fields AND credentials: Super Admin/CEO only, for every
-    // non-super caller — admins already get this treatment below (id/name/
-    // title only); users were missing it, leaking every teammate's plaintext
-    // password to every tier via this response.
-    if (tier !== 'super') {
-      record.users = record.users.map(u => { const { payRate, hours, password, mustChangePassword, ...rest } = u; return rest; });
-    }
+    // Credentials (password/mustChangePassword): never leave this endpoint,
+    // for any tier — no admin UI ever needs a raw password, and stripping
+    // this doesn't affect what an admin can edit (saveEditUser() only ever
+    // sends a NEW password, never round-trips the existing hash).
+    record.users = record.users.map(u => { const { password, mustChangePassword, ...rest } = u; return rest; });
 
+    // Payroll/pay-rate fields (payRate, hours): member tier ONLY — every
+    // admin tier (manager and super) manages the team and needs to see and
+    // edit these, not just literal Super Admin/CEO. This used to also strip
+    // them for manager-tier admins, which meant a manager-tier admin's local
+    // cache never had a real payRate to begin with — the confirmed root
+    // cause of a real incident where saving an unrelated field on a user's
+    // record silently zeroed their payRate (see saveEditUser() fix,
+    // index.html). Applied to every OTHER user's record only, matching the
+    // member-tier-safe-fields carve-out below for the caller's own record.
     if (tier === 'member') {
       // Members: minimal admin/user display fields only for every OTHER
       // person — this used to only apply to admins; the users table carried
       // near-full records (phone, emergencyContact, probationStart/End,
       // personalEmail, resumeUrl, adminNotes, and even platform `credentials`
       // — plaintext third-party logins) to every tier, for every teammate.
-      // The caller's OWN record is left otherwise intact (minus the payroll/
+      // The caller's OWN record is left otherwise intact (minus the
       // credential fields already stripped above for everyone) — user.html's
       // Credentials tab and profile display legitimately need a person's own
       // phone/credentials/etc.; nobody else's business to see them, though.
@@ -167,8 +174,8 @@ export default async function handler(req, res) {
       record.notificationSettings = null;
       // announcement, goals, feed, messages, clients, notifications stay visible to everyone.
     } else if (tier === 'manager') {
-      // Every other admin level: team + client management (users minus payroll
-      // already applied above, all time-off requests, summaries, archive), but
+      // Every other admin level: team + client management (full user records
+      // including payroll, all time-off requests, summaries, archive), but
       // NOT the payroll ledger and NOT business settings/org chart/roadmap —
       // those stay Super Admin/CEO exclusive.
       record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title, level: a.level, status: a.status }));
