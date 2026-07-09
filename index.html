@@ -2889,6 +2889,9 @@ function logout(){
   document.getElementById('userApp').classList.remove('visible');
   document.getElementById('adminApp').classList.remove('visible');
   try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
+  // Clear the other portal's session key too, for clean identity-switching
+  // on a shared browser (same-origin storage is shared across all three pages).
+  try{ localStorage.removeItem('wl_user_session'); }catch(e){}
 }
 
 function initUserApp(){
@@ -6634,6 +6637,16 @@ function cloudIsConfigured(){ return true; }
 function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
 function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token', token); else localStorage.removeItem('wl_ops_token'); }catch(e){} }
 
+// Server-verified tier/level from the most recent successful cloudPullAll()
+// call — the ONLY source restoreAdminSession() trusts to decide whether to
+// reveal #adminApp. Never derived from a cached wl_admin_session; a stale or
+// mismatched cache must never grant admin UI on its own. _lastPullOk stays
+// false until a pull actually succeeds, so a network failure is
+// distinguishable from a confirmed non-admin tier (see restoreAdminSession()).
+let _lastViewerTier = null;
+let _lastViewerLevel = null;
+let _lastPullOk = false;
+
 function setCloudStatus(msg, type='idle'){
   const el = document.getElementById('cloudSyncStatus');
   if(!el) return;
@@ -6850,6 +6863,7 @@ async function cloudPushAll(silent=false){
 async function cloudPullAll(silent=false, fromLiveSync=false){
   const token = _opsToken();
   if(!token) return;
+  _lastPullOk = false;
   setCloudStatus('Syncing…','syncing');
   try {
     const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
@@ -6861,6 +6875,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     }
     const data = await res.json();
     const r = data?.record || {};
+    // Server-verified, set only once we actually have a response — see the
+    // module-level comment above _lastViewerTier for why restoreAdminSession()
+    // gates on this instead of anything cached.
+    _lastPullOk = true;
+    _lastViewerTier = r.viewerTier ?? null;
+    _lastViewerLevel = r.viewerLevel ?? null;
 
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
     _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
@@ -9211,8 +9231,28 @@ window.openAddAdminModal = function(){
       localStorage.removeItem('wl_admin_session'); return;
     }
     if(s.role === 'admin'){
-      localStorage.setItem('wl_admin_session', JSON.stringify({...s, ts:Date.now()}));
-      document.addEventListener('DOMContentLoaded', ()=>{
+      document.addEventListener('DOMContentLoaded', async ()=>{
+        // Never reveal #adminApp from the cached session alone — a stale or
+        // mismatched wl_admin_session (e.g. left over from a different login
+        // on this shared browser) must never grant admin UI on its own. Wait
+        // for a real, server-verified pull first.
+        const token = _opsToken();
+        if(!token){ localStorage.removeItem('wl_admin_session'); return; }
+        await cloudPullAll(true);
+        if(!_lastPullOk){
+          // Couldn't verify (network error, etc.) — fail closed: stay on the
+          // login screen. Don't clear the session for a transient failure;
+          // reloading will just retry.
+          return;
+        }
+        if(_lastViewerTier !== 'super' && _lastViewerTier !== 'manager'){
+          // Confirmed: the real, current session token is not an admin —
+          // the cached wl_admin_session doesn't match it. Never show admin UI.
+          localStorage.removeItem('wl_admin_session');
+          return;
+        }
+
+        localStorage.setItem('wl_admin_session', JSON.stringify({...s, ts:Date.now()}));
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
         document.getElementById('userApp').classList.remove('visible');
@@ -9224,7 +9264,8 @@ window.openAddAdminModal = function(){
             // Restore currentAdminInfo so _getCurrentUserName() works
             currentAdminInfo = {email: adminObj.email, name: adminObj.name||'Admin', title: adminObj.title||''};
             setTimeout(()=>{ if(typeof _updateSidebarForAdmin==='function') _updateSidebarForAdmin(adminObj); }, 80);
-            setTimeout(()=>applyAdminRoleRestrictions(s.level, adminObj), 150);
+            // Server-verified level from THIS load's pull, never the cached s.level.
+            setTimeout(()=>applyAdminRoleRestrictions(_lastViewerLevel||s.level, adminObj), 150);
           }
         } else if(!s.adminId){
           // Primary admin (Sarah Samy) — no adminId stored
@@ -9233,7 +9274,7 @@ window.openAddAdminModal = function(){
             setTimeout(()=>_updateSidebarForAdmin({name:'Sarah Samy', title:'Operations Manager'}), 80);
         }
         // Start live sync
-        if(typeof startLiveSync==='function') setTimeout(()=>startLiveSync(s.level||'owner'), 200);
+        if(typeof startLiveSync==='function') setTimeout(()=>startLiveSync(_lastViewerLevel||s.level||'owner'), 200);
       });
     }
   }catch(e){}

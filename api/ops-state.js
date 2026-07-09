@@ -86,6 +86,16 @@ export default async function handler(req, res) {
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
 
     const record = {
+      // Server-verified identity — the ONLY legitimate source of tier/role for
+      // every frontend's UI gating. Never derive admin capability from a
+      // client-cached session object (that's the whole bug this fixes): a
+      // stale/leftover localStorage key from a different login on the same
+      // browser must never grant anything. viewerLevel is the specific admin
+      // level string (e.g. 'super', 'owner', 'creative_manager') and is only
+      // ever present for admin-role sessions — always null for members, since
+      // signSession() never puts a level on a member token.
+      viewerTier: tier, // 'super' | 'manager' | 'member'
+      viewerLevel: session.level ?? null,
       users, admins, clients, goals, feed, messages, roadmapTasks,
       timeOffRequests, timeOffLedger, summaries,
       deletedUserIds: [...deletedIds],

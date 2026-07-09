@@ -1132,6 +1132,12 @@ async function doLogin(){
   }
 
   _setOpsToken(authData.token);
+  // Clear any stale admin session left in this browser's localStorage from a
+  // previous admin login (index.html) — same-origin storage is shared across
+  // all three pages, and client.html's tracker embed trusts wl_admin_session
+  // for display purposes. A member logging in here must never leave that
+  // residue behind for the tracker iframe to pick up.
+  try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
   await cloudFetchUsers();
   if(btn){ btn.textContent='Sign In →'; btn.disabled=false; }
 
@@ -1216,6 +1222,7 @@ function logout(){
   const name = currentUser?.name || 'User';
   logActivity('nav', name, 'Signed out', '');
   try{ localStorage.removeItem('wl_user_session'); }catch(e){}
+  try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
   _setOpsToken(null);
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
