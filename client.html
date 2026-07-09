@@ -385,23 +385,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="wlm-title">— Production Tracker</div>
     </div>
     <div class="header-right-cluster" style="display:flex;align-items:center;justify-content:flex-end;gap:12px;">
-      <div class="notif-wrap">
-        <div class="notif-btn" onclick="toggleNotifPanel()" title="Notifications">🔔<div class="notif-dot" id="notif-dot" style="display:none;"></div></div>
-        <div class="notif-panel" id="notif-panel">
-          <div class="notif-panel-head">
-            <span class="notif-panel-title">Notifications</span>
-            <button class="btn btn-xs btn-outline" onclick="markAllNotifsRead()">Mark all read</button>
-          </div>
-          <div id="notif-list"><div class="notif-empty">No notifications</div></div>
-        </div>
-      </div>
-      <div class="header-account-info" style="display:flex;align-items:center;gap:6px;">
-        <div class="sb-avatar" id="sb-avatar">?</div>
-        <div>
-          <div class="sb-name" id="sb-name" style="color:#fff;">Loading…</div>
-          <div class="sb-role" id="sb-role" style="color:rgba(255,255,255,.7);">—</div>
-        </div>
-      </div>
       <a class="nav-item admin-only" href="index.html" target="_top" style="padding:7px 12px;">⚙️ <span class="nav-link-text">Admin</span></a>
       <a class="nav-item admin-only" href="user.html" target="_top" style="padding:7px 12px;">👤 <span class="nav-link-text">Portal</span></a>
     </div>
@@ -409,14 +392,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   <div class="wlm-topbar-navrow admin-only">
     <button class="wlm-nav-hamburger" onclick="document.querySelector('.wlm-nav-group').classList.toggle('open')" aria-label="Toggle navigation menu">☰ Menu</button>
     <div class="wlm-nav-group">
-      <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)"><span class="ni">🏢</span>All Clients</div>
-      <div class="nav-item" id="nav-services-schedule" onclick="showPage('services-schedule',this)"><span class="ni">📅</span>Service Schedule<span class="nav-badge" id="schedule-badge" style="display:none;">0</span></div>
-      <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)"><span class="ni">✅</span>My Work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
-      <div class="nav-item" id="nav-reports" onclick="showPage('reports',this)"><span class="ni">📊</span>Progress Reports</div>
-      <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)"><span class="ni">🔁</span>Service Catalog</div>
-      <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)"><span class="ni">🎯</span>Sales Funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
-      <div class="nav-item" id="nav-notifications" onclick="showPage('notifications',this)"><span class="ni">🔔</span>Notifications<span class="nav-badge" id="notif-nav-badge" style="display:none;">0</span></div>
-      <div class="nav-item" id="nav-library" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni">📚</span>Weblight Media Library</div>
+      <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)">All Clients</div>
+      <div class="nav-item" id="nav-services-schedule" onclick="showPage('services-schedule',this)">Service Schedule<span class="nav-badge" id="schedule-badge" style="display:none;">0</span></div>
+      <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)">My Work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
+      <div class="nav-item" id="nav-reports" onclick="showPage('reports',this)">Progress Reports</div>
+      <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)">Service Catalog</div>
+      <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)">Sales Funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
+      <div class="nav-item" id="nav-notifications" onclick="showPage('notifications',this)">Notifications<span class="nav-badge" id="notif-nav-badge" style="display:none;">0</span></div>
+      <div class="nav-item" id="nav-library" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab">Weblight Media Library</div>
     </div>
   </div>
 </div>
@@ -517,20 +500,29 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
             <button id="sched-view-list" onclick="setScheduleView('list')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);">☰ List</button>
             <button id="sched-view-cal" onclick="setScheduleView('calendar')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(45,107,182,.1);">🗓️ Calendar</button>
           </div>
-          <!-- List filters (hidden in calendar view) -->
-          <div id="sched-list-filters" style="display:flex;gap:7px;">
-            <select class="form-select" id="schedule-filter" onchange="renderSchedule()" style="width:130px;font-size:11px;padding:7px 10px;">
-              <option value="">All</option>
-              <option value="overdue">Overdue</option>
-              <option value="soon">Due Soon (7d)</option>
-            </select>
-            <select class="form-select" id="schedule-client-filter" onchange="renderSchedule()" style="width:170px;font-size:11px;padding:7px 10px;">
-              <option value="">All Clients</option>
-            </select>
-          </div>
-          <!-- Calendar controls: navigation lives inside the calendar card itself -->
-          <div id="sched-cal-controls" style="display:none;"></div>
         </div>
+      </div>
+
+      <!-- Filters — one shared set, applies to BOTH List and Calendar views.
+           Every option is sourced from live data (clients / Service Catalog),
+           never a hardcoded roster — the old "Agents" dropdown listed stale
+           names that weren't real users and has been removed outright. -->
+      <div id="sched-filters" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+        <select class="form-select" id="schedule-filter" onchange="renderScheduleView()" style="width:140px;font-size:11px;padding:7px 10px;">
+          <option value="">All Due Dates</option>
+          <option value="overdue">Overdue</option>
+          <option value="soon">Due Soon (7d)</option>
+          <option value="upcoming">Upcoming</option>
+        </select>
+        <select class="form-select" id="schedule-client-filter" onchange="renderScheduleView()" style="width:160px;font-size:11px;padding:7px 10px;">
+          <option value="">All Clients</option>
+        </select>
+        <select class="form-select" id="schedule-bundle-filter" onchange="renderScheduleView()" style="width:160px;font-size:11px;padding:7px 10px;">
+          <option value="">All Bundles</option>
+        </select>
+        <select class="form-select" id="schedule-service-filter" onchange="renderScheduleView()" style="width:170px;font-size:11px;padding:7px 10px;">
+          <option value="">All Services</option>
+        </select>
       </div>
 
       <!-- List view -->
@@ -557,19 +549,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
                 <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2e9e6e;margin-right:3px;vertical-align:middle;"></span>Upcoming</span>
                 <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#aaa;margin-right:3px;vertical-align:middle;"></span>Done</span>
               </div>
-              <select class="form-select" id="cal-filter-agent" onchange="renderCalendar()" style="font-size:11px;padding:5px 9px;min-width:110px;">
-                <option value="">All Agents</option>
-                <option value="emily">Emily</option>
-                <option value="jacob">Jacob</option>
-                <option value="jamil">Jamil</option>
-                <option value="becky">Becky</option>
-                <option value="david">David</option>
-              </select>
-              <select class="form-select" id="cal-filter-type" onchange="renderCalendar()" style="font-size:11px;padding:5px 9px;min-width:130px;">
-                <option value="">All Types</option>
-                <option value="service">Recurring Services</option>
-                <option value="project">Bundles</option>
-              </select>
             </div>
           </div>
           <!-- Calendar grid (day headers + cells rendered by JS) -->
@@ -1198,7 +1177,7 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 // never here, never from a cached session object. This is the fix for the
 // live leak: a stale wl_admin_session left in localStorage from a previous
 // admin login on the same browser must never grant anything on its own.
-let SESSION = { role:'user', name:'Team Member', id:null, tier:'member', isAdmin:false };
+let SESSION = { role:'user', name:'', id:null, tier:'member', isAdmin:false };
 
 function detectSession(){
   try{
@@ -1238,11 +1217,6 @@ function detectSession(){
     }
   }catch(e){}
 
-  // Update sidebar card (identity/display only — no privilege decision here)
-  const init = (SESSION.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  const sbAvatar = _el('sb-avatar'); if(sbAvatar) sbAvatar.textContent = init;
-  const sbName   = _el('sb-name');   if(sbName)   sbName.textContent   = SESSION.name;
-
   // Fail closed immediately, synchronously, before any server round-trip —
   // _pullClientsFromCloud() (async, already in flight by the time this runs)
   // will call _applyViewerTier() again the moment the real tier is confirmed.
@@ -1264,8 +1238,6 @@ function _applyViewerTier(tier){
   SESSION.isAdmin = (validTier==='manager'||validTier==='super') && !_forceUserMode;
   SESSION._tierResolved = true;
 
-  const sbRole = _el('sb-role');
-  if(sbRole) sbRole.textContent = SESSION.isAdmin ? (validTier==='super'?'🌟 Super Admin':'⚙️ Admin') : '👤 Team Member';
   const vmBadge = _el('view-mode-badge');
   if(vmBadge) vmBadge.textContent = SESSION.isAdmin ? (validTier==='super'?'🌟 Super Admin View':'⚙️ Admin View') : '👤 User View';
 
@@ -2064,11 +2036,6 @@ function markAllNotifsRead(){
   refreshNotifBadge();
   renderNotifPanel();
 }
-function toggleNotifPanel(){
-  const p=_el('notif-panel');
-  p.classList.toggle('open');
-  if(p.classList.contains('open')) renderNotifPanel();
-}
 function renderNotifPanel(){
   const notifs=_allNotifs().slice(0,15);
   const el=_el('notif-list'); if(!el) return;
@@ -2302,7 +2269,6 @@ function showPage(name, el){
   const [title,sub]=PAGE_META[name]||['',''];
   _el('page-title').textContent=title;
   _el('page-sub').textContent=sub;
-  _el('notif-panel').classList.remove('open');
   if(name==='clients'){ populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
   if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
   if(name==='my-work'){ renderMyWork(); }
@@ -2384,6 +2350,21 @@ function onSvcBundleChange(){
 function populateScheduleClientFilter(){
   const sel=_el('schedule-client-filter'); if(!sel) return;
   sel.innerHTML=`<option value="">All Clients</option>`+getClients().map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  // Bundle/Service filters are sourced live from the Service Catalog (the
+  // source of truth) — kept in the same populate pass so every call site
+  // that refreshes the client filter also refreshes these.
+  const bundleSel=_el('schedule-bundle-filter');
+  if(bundleSel){
+    const prev=bundleSel.value;
+    bundleSel.innerHTML=`<option value="">All Bundles</option>`+getCatalogBundles().map(b=>`<option value="${escHtmlClient(b.name)}">${escHtmlClient(b.name)}</option>`).join('');
+    if(prev && [...bundleSel.options].some(o=>o.value===prev)) bundleSel.value=prev;
+  }
+  const serviceSel=_el('schedule-service-filter');
+  if(serviceSel){
+    const prev=serviceSel.value;
+    serviceSel.innerHTML=`<option value="">All Services</option>`+getCatalog().map(s=>`<option value="${escHtmlClient(s.name)}">${escHtmlClient(s.name)}</option>`).join('');
+    if(prev && [...serviceSel.options].some(o=>o.value===prev)) serviceSel.value=prev;
+  }
 }
 function prefillServiceDefaults(){
   const sel=_el('svc-name');
@@ -4012,23 +3993,52 @@ function rejectCatalogSuggestion(id){
 // ═══════════════════════════════════════════════════════
 //  SERVICE SCHEDULE PAGE
 // ═══════════════════════════════════════════════════════
+// Shared due-date bucketing — used by both the List and Calendar views so
+// "Overdue / Due Soon / Upcoming" means exactly the same thing in either.
+function _scheduleDueBucket(due, t){
+  if(!due) return 'none';
+  const in7=addDays(t,7);
+  if(due<t) return 'overdue';
+  if(due<=in7) return 'soon';
+  return 'upcoming';
+}
+function _passesDueFilter(due, filterValue, t){
+  if(!filterValue) return true;
+  return _scheduleDueBucket(due,t)===filterValue;
+}
+// Does this service belong to the given catalog bundle name? Recurring
+// services have a real catalog link (findCatalogEntryForService); one-time
+// projects/bundles don't yet carry a structured bundle reference (see
+// CLAUDE.md's "Deferred / known gaps" — bundle/service filters reading from
+// the catalog structure are ordered to come after the data restructure), so
+// a project is matched by its own name against the bundle name as a
+// best-effort bridge until that restructure lands.
+function _serviceMatchesBundle(svc, bundleName){
+  const cat=findCatalogEntryForService(svc);
+  return !!cat && cat.bundle===bundleName;
+}
+function _projectMatchesBundle(p, bundleName){
+  return (p.name||'').trim().toLowerCase()===bundleName.trim().toLowerCase();
+}
+
 function renderSchedule(){
   const el=_el('schedule-list'); if(!el) return;
   const filter=_el('schedule-filter')?.value||'';
   const clientFilter=_el('schedule-client-filter')?.value||'';
+  const bundleFilter=_el('schedule-bundle-filter')?.value||'';
+  const serviceFilter=_el('schedule-service-filter')?.value||'';
   const t=today();
-  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
 
   // Bucket into monthly, yearly, other — each sorted by due date
   const monthly=[], yearly=[], other=[];
   getClients().forEach(c=>{
     if(clientFilter && c.id!==clientFilter) return;
     _allClientServices(c).forEach(svc=>{
-      const isOverdue=svc.due&&svc.due<t;
-      const isSoon=svc.due&&!isOverdue&&svc.due<=in7s;
-      if(filter==='overdue'&&!isOverdue) return;
-      if(filter==='soon'&&!isSoon) return;
-      const cls=isOverdue?'overdue':isSoon?'soon':'ok';
+      if(serviceFilter && (svc.name||'').trim().toLowerCase()!==serviceFilter.trim().toLowerCase()) return;
+      if(bundleFilter && !_serviceMatchesBundle(svc,bundleFilter)) return;
+      if(!_passesDueFilter(svc.due, filter, t)) return;
+      const bucket=_scheduleDueBucket(svc.due, t);
+      const cls=bucket==='overdue'?'overdue':bucket==='soon'?'soon':'ok';
       const row={c,svc,cls};
       const f=(svc.freq||'').toLowerCase();
       if(f==='monthly'||f==='3x/week'||f==='weekly'||f==='bi-weekly'||f==='biweekly'||f==='quarterly') monthly.push(row);
@@ -4451,15 +4461,17 @@ function setScheduleView(v){
   const lw=_el('schedule-list-wrap'), cw=_el('schedule-cal-wrap');
   if(lw) lw.style.display=isCal?'none':'block';
   if(cw) cw.style.display=isCal?'block':'none';
-  // Toggle controls
-  const lf=_el('sched-list-filters'), cf=_el('sched-cal-controls');
-  if(lf) lf.style.display=isCal?'none':'flex';
-  if(cf) cf.style.display=isCal?'flex':'none';
   // Toggle button active style
   const lb=_el('sched-view-list'), cb=_el('sched-view-cal');
   if(lb){ lb.style.background=isCal?'transparent':'var(--card)'; lb.style.color=isCal?'var(--text-light)':'var(--text)'; lb.style.boxShadow=isCal?'none':'0 1px 4px rgba(45,107,182,.1)'; }
   if(cb){ cb.style.background=isCal?'var(--card)':'transparent'; cb.style.color=isCal?'var(--text)':'var(--text-light)'; cb.style.boxShadow=isCal?'0 1px 4px rgba(45,107,182,.1)':'none'; }
-  if(isCal) renderCalendar(); else renderSchedule();
+  renderScheduleView();
+}
+// The filter row above is shared between List and Calendar — this dispatches
+// to whichever is currently active, so one set of onchange handlers works
+// for both.
+function renderScheduleView(){
+  if(_scheduleView==='calendar') renderCalendar(); else renderSchedule();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4487,34 +4499,42 @@ function renderCalendar(){
   const label=_el('cal-month-label');
   if(label) label.textContent=MONTHS[month]+' '+year;
 
-  const agentF=(_el('cal-filter-agent')||{}).value||'';
-  const typeF=(_el('cal-filter-type')||{}).value||'';
+  // Same shared filter row the List view uses — Client/Bundle/Service/Due
+  // date all apply here too, so both views agree on what "narrowed down"
+  // means. A Service filter implies "recurring services only" (a one-time
+  // project isn't "a service"), matching the removed type dropdown's old
+  // service-only behavior.
+  const clientF=_el('schedule-client-filter')?.value||'';
+  const bundleF=_el('schedule-bundle-filter')?.value||'';
+  const serviceF=_el('schedule-service-filter')?.value||'';
+  const dueF=_el('schedule-filter')?.value||'';
 
   // Build event map keyed by YYYY-MM-DD
   const evMap={};
   function addEv(ds,ev){ if(!ds) return; (evMap[ds]=evMap[ds]||[]).push(ev); }
 
-  const clients=getClients();
+  const clients=getClients().filter(c=>!clientF||c.id===clientF);
   const roster=getRoster();
   const rosterMap={};
   roster.forEach(u=>rosterMap[u.id]=u.name);
 
   clients.forEach(c=>{
     const color=c.color||_hashClientColor(c.name);
-    if(typeF!=='project'){
-      _allClientServices(c).forEach(svc=>{
-        if(!svc.due) return;
-        if(agentF && svc.assigneeId!==agentF) return;
-        addEv(svc.due,{type:'service',label:svc._locationName?`${svc.name} (${svc._locationName})`:svc.name,client:c.name,color,
-          status:svc.status,due:svc.due,agent:rosterMap[svc.assigneeId]||'',
-          freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id,locId:svc._locationId||''});
-      });
-    }
-    if(typeF!=='service'){
+    _allClientServices(c).forEach(svc=>{
+      if(!svc.due) return;
+      if(serviceF && (svc.name||'').trim().toLowerCase()!==serviceF.trim().toLowerCase()) return;
+      if(bundleF && !_serviceMatchesBundle(svc,bundleF)) return;
+      if(!_passesDueFilter(svc.due, dueF, todayStr)) return;
+      addEv(svc.due,{type:'service',label:svc._locationName?`${svc.name} (${svc._locationName})`:svc.name,client:c.name,color,
+        status:svc.status,due:svc.due,agent:rosterMap[svc.assigneeId]||'',
+        freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id,locId:svc._locationId||''});
+    });
+    if(!serviceF){
       (c.projects||[]).filter(p=>!p.isRecurringService).forEach(p=>{
         if(!p.due) return;
+        if(bundleF && !_projectMatchesBundle(p,bundleF)) return;
+        if(!_passesDueFilter(p.due, dueF, todayStr)) return;
         const asgn=(p.users||[])[0]||'';
-        if(agentF && asgn!==agentF) return;
         addEv(p.due,{type:'project',label:p.name,client:c.name,color,
           status:p.status,due:p.due,agent:rosterMap[asgn]||'',
           freq:'',clientId:c.id,projId:p.id});
