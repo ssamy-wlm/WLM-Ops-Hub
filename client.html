@@ -380,7 +380,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   <!-- Dark-background-optimized lockup sits bare on the Navy Deep row, no plate needed. -->
   <div class="wlm-topbar-identity">
     <div></div>
-    <div style="display:flex;align-items:center;gap:14px;justify-content:center;">
+    <div class="admin-only" style="display:flex;align-items:center;gap:14px;justify-content:center;">
       <img class="header-logo-img" src="assets/logo_dark_background.jpg" alt="WebLight Media">
       <div class="wlm-title">— Production Tracker</div>
     </div>
@@ -402,11 +402,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <div class="sb-role" id="sb-role" style="color:rgba(255,255,255,.7);">—</div>
         </div>
       </div>
-      <a class="nav-item" href="index.html" target="_top" style="padding:7px 12px;">⚙️ <span class="nav-link-text">Admin</span></a>
-      <a class="nav-item" href="user.html" target="_top" style="padding:7px 12px;">👤 <span class="nav-link-text">Portal</span></a>
+      <a class="nav-item admin-only" href="index.html" target="_top" style="padding:7px 12px;">⚙️ <span class="nav-link-text">Admin</span></a>
+      <a class="nav-item admin-only" href="user.html" target="_top" style="padding:7px 12px;">👤 <span class="nav-link-text">Portal</span></a>
     </div>
   </div>
-  <div class="wlm-topbar-navrow">
+  <div class="wlm-topbar-navrow admin-only">
     <button class="wlm-nav-hamburger" onclick="document.querySelector('.wlm-nav-group').classList.toggle('open')" aria-label="Toggle navigation menu">☰ Menu</button>
     <div class="wlm-nav-group">
       <div class="nav-item active" id="nav-clients" onclick="showPage('clients',this)"><span class="ni">🏢</span>All Clients</div>
@@ -431,7 +431,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="topbar-sub" id="page-sub">All clients, projects, services and progress</div>
     </div>
     <div class="topbar-right">
-      <div id="view-mode-badge" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);">—</div>
+      <div id="view-mode-badge" class="admin-only" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);">—</div>
+      <div id="view-only-pill" class="member-only" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);white-space:nowrap;">👁 View only</div>
     </div>
   </div>
 
@@ -3052,6 +3053,8 @@ function toggleProjectBlock(header){
 function _openDeepLinkFromUrl(){
   try{
     const params=new URLSearchParams(window.location.search);
+    const page=params.get('page');
+    if(page) showPage(page,_el('nav-'+page));
     const clientId=params.get('openClient');
     if(!clientId) return;
     const projId=params.get('openProject');
