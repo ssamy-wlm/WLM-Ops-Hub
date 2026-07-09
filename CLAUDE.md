@@ -137,7 +137,7 @@ Don't relitigate them without an explicit decision from the user.
     "Export Backup (JSON)" button, which hits `/api/ops-state` fresh) or a
     SQL query pasted back — don't assume MCP DB access will work.
 
-## Current state (as of 2026-07-08)
+## Current state (as of 2026-07-09)
 
 **Client data:** 85 active clients live in production, generated from the
 authoritative CSV mapping and verified 100% match (client count, per-client
@@ -182,6 +182,38 @@ separate decision from the user:
   (2026-07-08T14:47:37.177480+00) and knocking Assmaa Fouad's payRate back
   down to a stale hardcoded 5 (real rate: 5.5).
 
+**User/admin data cleanup, admin-as-member bug (2026-07-09):** an admin
+opening the embedded tracker was seeing the member "View only" treatment.
+Investigated for a propagation/code bug first (see the cache-bust fix on
+PR #91) — confirmed via live data that this was actually bad data, not a
+code bug: Emily Rovillo and David Joslin each had a **duplicate row in
+`ops_users`** (Emily's duplicate carried `role:'member'`), which is how a
+real admin session could resolve identity to a member record. Removed
+directly against production: those 2 duplicate `ops_users` rows, 6 phantom
+placeholder rows (Aileen Casey, Brian Bynes, Carol Rucker, Jamil Ahmed,
+Neha, and a misspelled duplicate "Yehia Elaify" — all traced to the
+disabled `_seedCoreTeam()` seed batch documented above), and Emily's stray
+`ops_admins` record. The database now holds exactly **5 real users**
+(Sherine, Assmaa, Sarah, Michael, Yehia Elafify — note the corrected
+spelling, distinct from the removed misspelled duplicate) and **2 dynamic
+admins** (David — level `owner`; Abby — level `production_manager`), plus
+the separate primary-admin login (Sarah Samy, `super`/`owner` tier — not an
+`ops_admins` row at all, see the `PRIMARY_ADMIN_EMAIL` branch in
+`api/ops-auth.js`). No code fix was needed for the tier bug itself — a
+person's live `viewerTier` comes only from their signed session token
+(`tierOf(session)` in `lib/opsSession.js`, decoded from the token alone,
+never re-derived from a table lookup), so once a real admin token is
+issued a duplicate `ops_users` row can never downgrade it mid-session. The
+residual risk is narrower, at login time only: `api/ops-auth.js` already
+checks `ops_admins` before `ops_users` with an early return, so an admin
+whose typed credentials match their own admin record always gets an admin
+token regardless of any stray duplicate — the actual incident required the
+person's credentials to land on the duplicate `ops_users` row instead
+(mismatched/stale password against their real admin record). Preventing
+recurrence is a data-hygiene problem (catching a duplicate email/name
+across both tables before it causes a wrong login), not a code-ordering
+one — flagged for the user, not built here.
+
 **Franchise/location feature:** a client can hold `locations[]`, each with
 its own independent `services[]` (e.g. Servpro as the parent client with a
 nested "Yonkers" franchise). Built in `client.html` only — due dates,
@@ -215,10 +247,10 @@ by design (rule #8). Members can suggest; admins approve. See PR #70.
   "LinkedIn") with no way to visually distinguish Tim's personal profile from
   the CRN company page — flagged, not fixed, pending a decision on whether to
   add a distinguishing label.
-- Client cards showing bundle next to service, and bundle/service/frequency
-  filters reading from the catalog structure ("Jobs 2/3" from the original
-  catalog request) — explicitly ordered to come after the data restructure,
-  not yet started.
+- Client cards showing bundle next to service ("Jobs 2/3" from the original
+  catalog request) — still not started. The related Service Schedule
+  Bundle/Service/Due-date filters (reading live from the Service Catalog)
+  shipped in PR #90, replacing the old hardcoded "Agents" dropdown.
 - The pre-existing local-only notification system in `client.html` (service-
   due alerts, etc.) was left as-is, not migrated onto the new synced
   `ops_notifications` table — the two are merged only at render time.
