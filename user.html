@@ -120,6 +120,22 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .nav-item.active{background:var(--gold);color:#1A3A6E;border-left:none;font-weight:800;box-shadow:none;}
 .sidebar-user{border-top-color:rgba(255,255,255,.15);}
 .sidebar-user{padding:14px 16px;border-top:1px solid var(--border);}
+/* ── Member sidebar chrome — fixed navy/gold branding per the approved
+     mockup, independent of the light/dark theme toggle (this is app chrome,
+     not user content, so it doesn't follow the theme switch). Only the
+     sidebar; .content below keeps the app's normal theme tokens. ── */
+.sidebar{background:#152444;}
+.sidebar-logo{border-bottom-color:#26375c;}
+.sidebar-brand-mark{width:36px;height:36px;border-radius:9px;background:#f5b301;color:#152444;display:flex;align-items:center;justify-content:center;font-family:'Poppins',sans-serif;font-size:17px;font-weight:800;flex-shrink:0;}
+.sidebar-brand-name{font-family:'Poppins',sans-serif;font-size:13px;font-weight:700;color:#fff;line-height:1.3;}
+.sidebar-brand-sub{font-size:10.5px;color:#7c8bb0;letter-spacing:.03em;margin-top:2px;}
+.nav-group-label{color:#7c8bb0;}
+.nav-group-label::before{background:#7c8bb0;}
+.nav-item{color:#c7d0e6;}
+.nav-item:hover{background:rgba(255,255,255,.07);color:#fff;}
+.nav-item.active{background:#f5b301;color:#152444;border-left:none;font-weight:700;box-shadow:none;}
+.nav-item.active .ni{box-shadow:none;}
+.sidebar-user{border-top-color:#26375c;}
 .sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
 .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
 .avatar img{width:100%;height:100%;object-fit:cover;}
@@ -332,7 +348,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .msg-empty{text-align:center;padding:48px 20px;color:var(--text-light);font-size:13px;}
 .msg-new-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;background:var(--btn);color:#1A3A6E;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px;width:100%;font-family:inherit;transition:background .15s;flex-shrink:0;}
 .msg-new-btn:hover{background:var(--btn-hover);}
-.msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e05555;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
+.msg-nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#e24b4a;color:#fff;border-radius:8px;font-size:10px;font-weight:700;padding:0 4px;margin-left:6px;vertical-align:middle;}
 /* ── Responsive top-row compaction — kept last so it wins over the base
    rules for these classes defined earlier in the sheet. Account/notif/
    Sign Out stay visible at every width per spec; only the descriptive
@@ -410,19 +426,23 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 <div id="userApp" class="app">
   <!-- SIDEBAR -->
   <div class="sidebar">
-    <div class="sidebar-logo" style="justify-content:center;padding:18px 16px;">
-      <img src="assets/logo_dark_background.jpg" alt="WebLight Media" style="height:46px;width:auto;max-width:190px;object-fit:contain;display:block;">
+    <div class="sidebar-logo" style="padding:16px 16px;">
+      <div class="sidebar-brand-mark">W</div>
+      <div>
+        <div class="sidebar-brand-name">WebLight Media<br>Operations Hub</div>
+        <div class="sidebar-brand-sub">Employee interface</div>
+      </div>
     </div>
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni" style="background:rgba(37,99,168,.12);">🏠</span>Operations</div>
       <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni" style="background:var(--gold-light);">📋</span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
-      <div class="nav-item" onclick="showSection('tracker',this)"><span class="ni" style="background:#EDE7FE;">📅</span>Tracker</div>
+      <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni" style="background:#EDE7FE;">📅</span>Tracker</div>
+      <div class="nav-item" onclick="openTrackerPage('reports',this)"><span class="ni" style="background:#E0F0FF;">📊</span>Progress Reports</div>
+      <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni" style="background:#E7F5EE;">🔁</span>Service Catalog</div>
       <div class="nav-group-label">Resources</div>
-      <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni" style="background:#E0E7FF;">📚</span>Weblight Media Library</div>
+      <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni" style="background:#E0E7FF;">📚</span>Weblight media library</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni" style="background:#E0F7F4;">📋</span>Downtime Tasks</div>
-      <div class="nav-item" onclick="showSection('brandRights',this)"><span class="ni" style="background:#FCE7F3;">🎨</span>Brand Rights</div>
-      <div class="nav-item" onclick="showSection('decisionRights',this)"><span class="ni" style="background:#E8F8F0;">🛡️</span>Decision Rights</div>
       <div class="nav-item" onclick="showSection('goals',this)"><span class="ni" style="background:#FFF1E0;">🎯</span>Goals</div>
       <div class="nav-group-label">Team &amp; HR</div>
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni" style="background:#EAF1FB;">🔑</span>Credentials</div>
@@ -1230,6 +1250,10 @@ function logout(){
   currentUser = null;
 }
 
+function _employmentTypeLabel(user){
+  return String(user?.role||'').trim().toLowerCase()==='contractor' ? 'Contractor' : 'Employee';
+}
+
 function initApp(){
   const user = currentUser;
   if(!user) return;
@@ -1240,7 +1264,7 @@ function initApp(){
     const el=document.getElementById(id); if(el) el.textContent=initials;
   });
   document.getElementById('sidebarName').textContent = user.name||user.email;
-  document.getElementById('sidebarRole').textContent = user.title||'Team Member';
+  document.getElementById('sidebarRole').textContent = _employmentTypeLabel(user);
   document.getElementById('pulseName').textContent = user.name||user.email;
   document.getElementById('pulseRoleDisplay').textContent = user.title||'Team Member';
 
@@ -1983,7 +2007,15 @@ function openTrackerTo(clientId, projectId){
   if(projectId) params.set('openProject', projectId);
   const frame = document.getElementById('trackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
-  showSection('tracker', document.querySelector('.nav-item[onclick*=tracker]'));
+  showSection('tracker', document.getElementById('nav-tracker'));
+}
+function openTrackerPage(pageName, el){
+  const params = new URLSearchParams();
+  params.set('usermode','1');
+  if(pageName) params.set('page', pageName);
+  const frame = document.getElementById('trackerFrame');
+  if(frame) frame.src = 'client.html?' + params.toString();
+  showSection('tracker', el);
 }
 
 
@@ -2049,7 +2081,7 @@ function saveProfile(){
   const name=document.getElementById('profileName')?.value.trim();
   const title=document.getElementById('profileTitle')?.value.trim();
   if(name){ currentUser.name=name; updateProfileName(name); }
-  if(title){ currentUser.title=title; document.getElementById('sidebarRole').textContent=title; document.getElementById('pulseRoleDisplay').textContent=title; }
+  if(title){ currentUser.title=title; document.getElementById('pulseRoleDisplay').textContent=title; }
   // Update in stored users if registered
   const all=dbGet(DB_KEYS.users)||[];
   const idx=all.findIndex(u=>u.email===currentUser.email);
