@@ -3069,6 +3069,19 @@ function openEditUserModal(userIdOrName){
 // Same confirmed-save fix as addUser() above: the edited row is sent to the
 // server and awaited before the modal closes or localStorage changes, so a
 // failed sync can't silently look like a successful save that then reverts.
+//
+// Reads the current record fresh from the server (cloudPullAll) immediately
+// before merging, instead of the browser's local cache — a manager-tier
+// admin's cache never had payRate/hours to begin with (ops-state.js strips
+// them), and even for a super admin the cache can simply be stale. Every
+// personal-info field below preserves its existing value when the form
+// input is empty, instead of falling through to 0/'' — this is the confirmed
+// mechanism behind a real incident where saving an unrelated field edit
+// zeroed out a user's real payRate. (This function used to be split across
+// this function and a `window.saveEditUser` monkey-patch added later for the
+// Personal Info tab; folded back into one function so there's a single place
+// that owns "what does an empty field mean" instead of two functions
+// disagreeing about it.)
 async function saveEditUser(){
   const uid = document.getElementById('editUserModal').dataset.userId;
   const name  = document.getElementById('editName').value.trim();
@@ -3081,20 +3094,62 @@ async function saveEditUser(){
   if(!name||!email){showToast('Name and Email are required');return;}
   if(pass && pass.length<6){showToast('New password must be at least 6 characters');return;}
   if(pass && pass!==pass2){showToast('Passwords do not match');return;}
+
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
+
+  const btn = document.querySelector('#editUserModal .btn-primary');
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
+
+  await cloudPullAll(true);
+  if(!_lastPullOk){
+    showToast('❌ Could not verify the current record from the server — try again.');
+    if(btn){ btn.textContent='Save All Changes ✓'; btn.disabled=false; }
+    return;
+  }
+
   const allUsers = dbGet(DB_KEYS.users)||[];
   const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
-  if(idx<0){ showToast('❌ Could not find that user to update'); return; }
+  if(idx<0){
+    showToast('❌ Could not find that user to update');
+    if(btn){ btn.textContent='Save All Changes ✓'; btn.disabled=false; }
+    return;
+  }
+  const current = allUsers[idx];
 
-  const updated = { ...allUsers[idx], name, email, title, resp, role };
+  // Preserve the current value when the form field is empty — never fall
+  // through to 0/'' for a field the admin didn't actually touch.
+  const fromField = (id, currentVal) => {
+    const el = document.getElementById(id);
+    if(!el || el.value===''||el.value==null) return currentVal;
+    return el.value;
+  };
+  const fromNumberField = (id, currentVal) => {
+    const el = document.getElementById(id);
+    if(!el || el.value===''||el.value==null) return currentVal;
+    const n = parseFloat(el.value);
+    return Number.isNaN(n) ? currentVal : n;
+  };
+
+  const updated = {
+    ...current, name, email, title, resp, role,
+    phone:            fromField('editPhone', current.phone),
+    payRate:          fromNumberField('editPayRate', current.payRate),
+    personalEmail:    fromField('editPersonalEmail', current.personalEmail),
+    location:         fromField('editLocation', current.location),
+    portfolio:        fromField('editPortfolio', current.portfolio),
+    linkedin:         fromField('editLinkedin', current.linkedin),
+    resumeUrl:        fromField('editResumeUrl', current.resumeUrl),
+    emergencyContact: fromField('editEmergencyContact', current.emergencyContact),
+    probationStart:   fromField('editProbationStart', current.probationStart),
+    probationEnd:     fromField('editProbationEnd', current.probationEnd),
+    adminNotes:       fromField('editAdminNotes', current.adminNotes),
+  };
   if(pass){
     updated.password = pass;
     updated.mustChangePassword = document.getElementById('editForceChange')?.checked !== false;
   }
 
-  const btn = document.querySelector('#editUserModal .btn-primary');
-  const token = _opsToken();
-  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
-  if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
   try{
     const res = await fetch(OPS_SYNC_URL, {
       method:'POST',
@@ -3115,6 +3170,18 @@ async function saveEditUser(){
   allUsers[idx] = updated;
   dbSet(DB_KEYS.users, allUsers);
   _opsSetSnapshot('users', allUsers);
+
+  // Sync name/title changes into org chart
+  if(name || title){
+    orgLoad();
+    const orgNode = orgNodes.find(n => n.id===uid || n.name===current.name);
+    if(orgNode){
+      if(name)  orgNode.name  = name;
+      if(title) orgNode.title = title;
+      orgSave();
+      if(document.getElementById('org-canvas')) renderOrgChart();
+    }
+  }
 
   renderUserTable();
   closeModal('editUserModal');
@@ -8153,49 +8220,10 @@ function populateManagerDropdown(){
 }
 
 // ═══════════════════════════════════════════════════════════
-// PERSONAL INFO SAVE — extend saveEditUser
-// ═══════════════════════════════════════════════════════════
-const _origSaveEditUser = window.saveEditUser;
-window.saveEditUser = function(){
-  const uid = document.getElementById('editUserModal')?.dataset?.userId;
-  // Save personal info fields too
-  const allUsers = dbGet(DB_KEYS.users)||[];
-  const idx = allUsers.findIndex(u=>u.id===uid||u.name===uid);
-  if(idx>-1){
-    // Personal Info
-    allUsers[idx].phone           = document.getElementById('editPhone')?.value||allUsers[idx].phone||'';
-    allUsers[idx].payRate         = parseFloat(document.getElementById('editPayRate')?.value)||allUsers[idx].payRate||0;
-    allUsers[idx].personalEmail   = document.getElementById('editPersonalEmail')?.value||allUsers[idx].personalEmail||'';
-    allUsers[idx].location        = document.getElementById('editLocation')?.value||allUsers[idx].location||'';
-    allUsers[idx].portfolio       = document.getElementById('editPortfolio')?.value||allUsers[idx].portfolio||'';
-    allUsers[idx].linkedin        = document.getElementById('editLinkedin')?.value||allUsers[idx].linkedin||'';
-    allUsers[idx].resumeUrl       = document.getElementById('editResumeUrl')?.value||allUsers[idx].resumeUrl||'';
-    allUsers[idx].emergencyContact= document.getElementById('editEmergencyContact')?.value||allUsers[idx].emergencyContact||'';
-    allUsers[idx].probationStart  = document.getElementById('editProbationStart')?.value||'';
-    allUsers[idx].probationEnd    = document.getElementById('editProbationEnd')?.value||'';
-    allUsers[idx].adminNotes      = document.getElementById('editAdminNotes')?.value||allUsers[idx].adminNotes||'';
-    dbSet(DB_KEYS.users, allUsers);
-
-    // ── Sync name/title changes into org chart ──
-    const newName  = document.getElementById('editName')?.value.trim();
-    const newTitle = document.getElementById('editJobTitle')?.value.trim();
-    const oldName  = allUsers[idx].name;
-    if(newName || newTitle){
-      orgLoad();
-      // Match by stored id (if it was added via addUser) or by old name
-      const orgNode = orgNodes.find(n => n.id===uid || n.name===oldName);
-      if(orgNode){
-        if(newName)  orgNode.name  = newName;
-        if(newTitle) orgNode.title = newTitle;
-        orgSave();
-        if(document.getElementById('org-canvas')) renderOrgChart();
-      }
-    }
-  }
-  // Call original (handles name/email/role/password)
-  _origSaveEditUser();
-};
-
+// Personal Info tab fields (payRate, probation dates, phone, etc.) and the
+// org-chart name/title sync used to be handled by a `window.saveEditUser`
+// monkey-patch here — folded directly into saveEditUser() above (2026-07-09)
+// so there's one function, with one empty-field policy, instead of two.
 // ═══════════════════════════════════════════════════════════
 // INIT on DOM ready — populate dropdowns, refresh overview
 // ═══════════════════════════════════════════════════════════
