@@ -164,7 +164,23 @@ separate decision from the user:
 - `index.html`: `_assignBrightwheelExportToAbby()`, `_seedMissingAdmins()`,
   `_fixAdminAccessLevels()`, `_reconcileDualIdentityIds()`,
   `_migrateProbation()`, `_reassignSocialMediaToSherine()`,
-  `_seedAssmaaWorkload()`
+  `_seedAssmaaWorkload()`, `seedStaticUsers()` / `_seedCoreTeam()`,
+  `_cleanupPlaceholderSeedUsers()`, `_restoreMisarchivedRealWorkers()`,
+  `_fixAssmaaPayRate()`, `_recreateSarahIbrahim()`,
+  `_fixSarahIbrahimPassword()`, `_removeDuplicateAssmaaRecord()`,
+  `_removeDeadAbbySeedDuplicate()`, `_unhideRestoredYehia()` — this batch
+  (disabled 2026-07-09) is confirmed as the exact mechanism behind a real
+  production incident: on any browser/device with an empty or cleared local
+  cache, `seedStaticUsers()` re-seeded a stale 11-person hardcoded roster
+  (creating 4 people who were never actually hired and a duplicate Yehia
+  Elaify) before the first real cloud pull resolved, and one of the other
+  "one-time idempotent fix" functions in the same load — each guarded only by
+  a local `localStorage` flag or purely local record state, none checking the
+  server first — found that poisoned local array "changed" and pushed it to
+  the cloud via `cloudAutoSync()`, producing a single batch write across 8
+  real `ops_users` rows sharing one identical `updated_at`
+  (2026-07-08T14:47:37.177480+00) and knocking Assmaa Fouad's payRate back
+  down to a stale hardcoded 5 (real rate: 5.5).
 
 **Franchise/location feature:** a client can hold `locations[]`, each with
 its own independent `services[]` (e.g. Servpro as the parent client with a

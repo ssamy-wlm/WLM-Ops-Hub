@@ -7229,24 +7229,56 @@ async function confirmClientImport(){
 
 // Also init announcement status on admin load, seed users, and render user table
 document.addEventListener('DOMContentLoaded', ()=>{
-  // Seed static sample users into DB if not already present
-  seedStaticUsers();
+  // seedStaticUsers() / _seedCoreTeam() call DISABLED (2026-07-09): guarded
+  // only by `dbGet(DB_KEYS.users).length` — i.e. local browser storage, not
+  // the cloud. On any browser/device with an empty or cleared local cache,
+  // this fired before the first real cloud pull resolved and re-seeded a
+  // stale 11-person hardcoded roster (including 4 people never actually
+  // hired — Aileen Casey, Brian Bynes, Carol Rucker, Jamil Ahmed — plus a
+  // duplicate Yehia Elaify) straight into DB_KEYS.users. A later idempotent
+  // "fix" function in this same load then found that poisoned local array
+  // "changed" and pushed it to the cloud via cloudAutoSync() — creating the
+  // 2026-07-08 14:47:37 batch write across 8 real ops_users rows. Function
+  // body left in place, unreferenced, as a record of what it did.
   // Remove duplicate clients created by an earlier (incorrect) SOP seed attempt
   _removeSopSeedDuplicates();
-  // Archive placeholder/archived/duplicate seed user accounts (one-time, idempotent)
-  _cleanupPlaceholderSeedUsers();
-  // Undo any earlier mistaken archive+tombstone of Sherine/Assmaa (idempotent)
-  _restoreMisarchivedRealWorkers();
-  // Correct Assmaa's pay rate, lost in the same archive/tombstone bug (idempotent)
-  _fixAssmaaPayRate();
-  // Recreate Sarah Ibrahim's account — lost from storage with no git trace (one-time)
-  _recreateSarahIbrahim();
-  // Backfill a login password for Sarah Ibrahim's recreated account (one-time)
-  _fixSarahIbrahimPassword();
-  // Remove a duplicate-by-name "Assmaa Fouad" record if one was already created (idempotent)
-  _removeDuplicateAssmaaRecord();
-  // Remove the dead abby@weblightmedia.com duplicate user record (idempotent)
-  _removeDeadAbbySeedDuplicate();
+  // _cleanupPlaceholderSeedUsers() call DISABLED (2026-07-09): same class of
+  // bug as seedStaticUsers() above — guarded only by a local `localStorage`
+  // done-flag (`wl_placeholder_cleanup_v1_done`), which is gone on the exact
+  // same wiped/fresh browser that defeats that guard too. Function body left
+  // in place, unreferenced, as a record of what it did.
+  // _restoreMisarchivedRealWorkers() call DISABLED (2026-07-09): writes
+  // ops_users (restores archived records) and calls cloudAutoSync() based
+  // purely on local `DB_KEYS.deletedUserIds`/`DB_KEYS.users` state, with no
+  // server round-trip check first — the same load-time-diff-and-push pattern
+  // implicated in the 2026-07-08 batch write. Function body left in place,
+  // unreferenced, as a record of what it did.
+  // _fixAssmaaPayRate() call DISABLED (2026-07-09): guarded only by a local
+  // `localStorage` done-flag (`wl_assmaa_payrate_fixed_v1`), defeated by the
+  // same wiped/fresh browser as seedStaticUsers() above — and its hardcoded
+  // "correct" payRate of 5 is now itself stale (her real rate was later
+  // raised to 5.5), so on any browser without that flag it actively
+  // overwrites a legitimate later correction back down to 5. This is the
+  // confirmed mechanism behind Assmaa's payRate showing 5 instead of 5.5 in
+  // the 2026-07-08 14:47:37 batch. Function body left in place, unreferenced,
+  // as a record of what it did.
+  // _recreateSarahIbrahim() call DISABLED (2026-07-09): guarded only by a
+  // local `localStorage` done-flag (`wl_sarah_ibrahim_recreated_v1`), same
+  // defeat-by-empty-cache class as the others above. Function body left in
+  // place, unreferenced, as a record of what it did.
+  // _fixSarahIbrahimPassword() call DISABLED (2026-07-09): guarded only by a
+  // local `localStorage` done-flag (`wl_sarah_ibrahim_password_fixed_v1`),
+  // same class as the others above. Function body left in place,
+  // unreferenced, as a record of what it did.
+  // _removeDuplicateAssmaaRecord() call DISABLED (2026-07-09): writes
+  // ops_users and calls cloudAutoSync() based purely on local `DB_KEYS.users`
+  // state, no server round-trip check first — same load-time-diff-and-push
+  // pattern as the others above. Function body left in place, unreferenced,
+  // as a record of what it did.
+  // _removeDeadAbbySeedDuplicate() call DISABLED (2026-07-09): same class as
+  // _removeDuplicateAssmaaRecord() above — writes ops_users and calls
+  // cloudAutoSync() from a purely local diff, no server round-trip check
+  // first. Function body left in place, unreferenced, as a record of what it did.
   // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
   _resetAbbyAndEmilyFirstLoginPassword();
   // _reassignSocialMediaToSherine() and _seedAssmaaWorkload() calls DISABLED
@@ -7259,8 +7291,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // every cloud pull too) — runs after the above so real assigned work is already in
   // place and never gets mistakenly tagged as an unconnected placeholder.
   _tagSeededPlaceholderUsers();
-  // Un-hide Yehia if the tag above just re-hid him after an admin restore (idempotent)
-  _unhideRestoredYehia();
+  // _unhideRestoredYehia() call DISABLED (2026-07-09): writes ops_users and
+  // calls cloudAutoSync() purely from local record state (`u.seeded`/
+  // `u.placeholderExempt`), no server round-trip check first — same
+  // load-time-diff-and-push pattern implicated in the 2026-07-08 batch write
+  // (it fired on the freshly re-seeded Yehia record on that same load).
+  // Function body left in place, unreferenced, as a record of what it did.
   // _assignBrightwheelExportToAbby() call DISABLED (2026-07-06): ran on every
   // load with no guard, reassigning any service/project named "brightwheel
   // review request" to Abby Conklin with no review step. Function body left
