@@ -2913,9 +2913,13 @@ function showSection(id, el){
 }
 
 // ── TRACKER (embedded production tracker iframe) ──
+// Cache-busted so a browser tab left open across a deploy (or an aggressively
+// cached static asset) can never keep serving an old client.html into this
+// iframe indefinitely — the src==='about:blank' guard below only loads it
+// once per page session anyway, so this doesn't cause repeat reloads.
 function loadTrackerFrame(){
   const frame = document.getElementById('trackerFrame');
-  if(frame && frame.src==='about:blank') frame.src = 'client.html';
+  if(frame && frame.src==='about:blank') frame.src = 'client.html?v=' + Date.now();
 }
 
 // ── ADMIN TABS ──
@@ -2940,7 +2944,7 @@ function switchAdminTab(el, tab){
 
 function loadAdminTrackerFrame(){
   const frame = document.getElementById('adminTrackerFrame');
-  if(frame && frame.src==='about:blank') frame.src = 'client.html';
+  if(frame && frame.src==='about:blank') frame.src = 'client.html?v=' + Date.now();
 }
 
 // ── REPORT TABS ──
