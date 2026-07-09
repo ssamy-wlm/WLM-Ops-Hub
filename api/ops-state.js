@@ -86,6 +86,16 @@ export default async function handler(req, res) {
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
 
     const record = {
+      // Server-verified identity — the ONLY legitimate source of tier/role for
+      // every frontend's UI gating. Never derive admin capability from a
+      // client-cached session object (that's the whole bug this fixes): a
+      // stale/leftover localStorage key from a different login on the same
+      // browser must never grant anything. viewerLevel is the specific admin
+      // level string (e.g. 'super', 'owner', 'creative_manager') and is only
+      // ever present for admin-role sessions — always null for members, since
+      // signSession() never puts a level on a member token.
+      viewerTier: tier, // 'super' | 'manager' | 'member'
+      viewerLevel: session.level ?? null,
       users, admins, clients, goals, feed, messages, roadmapTasks,
       timeOffRequests, timeOffLedger, summaries,
       deletedUserIds: [...deletedIds],
@@ -119,11 +129,26 @@ export default async function handler(req, res) {
     }
 
     if (tier === 'member') {
-      // Members: minimal admin/user display fields only. Time-off is scoped to
-      // their own records — matched by userName (time-off requests) / employeeId
-      // (ledger entries), the actual fields the app writes (see
-      // user.html submitTimeOffRequest() / index.html logTimeOffEntry()) — NOT
-      // userId, which never exists on either record shape.
+      // Members: minimal admin/user display fields only for every OTHER
+      // person — this used to only apply to admins; the users table carried
+      // near-full records (phone, emergencyContact, probationStart/End,
+      // personalEmail, resumeUrl, adminNotes, and even platform `credentials`
+      // — plaintext third-party logins) to every tier, for every teammate.
+      // The caller's OWN record is left otherwise intact (minus the payroll/
+      // credential fields already stripped above for everyone) — user.html's
+      // Credentials tab and profile display legitimately need a person's own
+      // phone/credentials/etc.; nobody else's business to see them, though.
+      const MEMBER_SAFE_OTHER_USER_FIELDS = ['id', 'name', 'email', 'title', 'role', 'resp', 'status'];
+      record.users = record.users.map(u => {
+        if (u.id === session.id) return u;
+        const safe = {};
+        MEMBER_SAFE_OTHER_USER_FIELDS.forEach(f => { if (f in u) safe[f] = u[f]; });
+        return safe;
+      });
+      // Time-off is scoped to their own records — matched by userName (time-off
+      // requests) / employeeId (ledger entries), the actual fields the app
+      // writes (see user.html submitTimeOffRequest() / index.html
+      // logTimeOffEntry()) — NOT userId, which never exists on either record shape.
       record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title }));
       record.roadmapTasks = [];
       record.summaries = [];

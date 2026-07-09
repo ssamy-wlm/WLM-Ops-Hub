@@ -1192,21 +1192,18 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 // ═══════════════════════════════════════════════════════
 //  SESSION DETECTION
 // ═══════════════════════════════════════════════════════
-let SESSION = { role:'user', name:'Team Member', id:null, isAdmin:false, isCEO:false, isSuperAdmin:false };
+// isAdmin starts false (least privilege) and is the ONLY value any capability
+// gate in this file reads — it is set exclusively by _applyViewerTier(),
+// never here, never from a cached session object. This is the fix for the
+// live leak: a stale wl_admin_session left in localStorage from a previous
+// admin login on the same browser must never grant anything on its own.
+let SESSION = { role:'user', name:'Team Member', id:null, tier:'member', isAdmin:false };
 
 function detectSession(){
-  // ── Check URL param: ?usermode=1 forces non-admin view ──
-  const _urlParams = new URLSearchParams(window.location.search);
-  const _forceUserMode = _urlParams.get('usermode') === '1';
-
-  const _hasAdminSession = !!(db('wl_admin_session')?.role);
   try{
     const as = db('wl_admin_session');
     if(as && as.role){
-      SESSION.isAdmin = true;
-      SESSION.role    = as.role;
-      SESSION.isCEO   = (as.role==='ceo'||as.role==='CEO'||as.isCEO);
-      SESSION.isSuperAdmin = (as.role==='super-admin'||as.role==='superadmin'||as.isSuperAdmin);
+      SESSION.role = as.role;
       SESSION.id   = as.id||as.name||as.email;
       SESSION.name = as.name||'Admin';
       // Resolve full identity from adminId (dynamic admins store adminId, not id/name in session)
@@ -1240,29 +1237,46 @@ function detectSession(){
     }
   }catch(e){}
 
-  // usermode=1 only restricts users who aren't real admins
-  if(_forceUserMode && !_hasAdminSession){
-    SESSION.isAdmin = false;
-    SESSION.isCEO = false;
-    SESSION.isSuperAdmin = false;
-    SESSION.role = 'user';
-  }
-
-  // Update sidebar card
+  // Update sidebar card (identity/display only — no privilege decision here)
   const init = (SESSION.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const sbAvatar = _el('sb-avatar'); if(sbAvatar) sbAvatar.textContent = init;
   const sbName   = _el('sb-name');   if(sbName)   sbName.textContent   = SESSION.name;
-  const sbRole   = _el('sb-role');
-  if(sbRole) sbRole.textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin': SESSION.isCEO?'👔 CEO':'⚙️ Admin') : '👤 Team Member';
-  const vmBadge  = _el('view-mode-badge');
-  if(vmBadge) vmBadge.textContent = SESSION.isAdmin ? (SESSION.isSuperAdmin?'🌟 Super Admin View':SESSION.isCEO?'👔 CEO View':'⚙️ Admin View') : '👤 User View';
+
+  // Fail closed immediately, synchronously, before any server round-trip —
+  // _pullClientsFromCloud() (async, already in flight by the time this runs)
+  // will call _applyViewerTier() again the moment the real tier is confirmed.
+  _applyViewerTier('member');
+}
+
+// The ONLY function allowed to set SESSION.isAdmin. tier must come from
+// api/ops-state.js's record.viewerTier (server-derived from tierOf(session),
+// see lib/opsSession.js) — never from anything cached client-side.
+// ?usermode=1 (used when this page is embedded in user.html's Tracker iframe)
+// is an ADDITIONAL restriction on top of the real tier, never a substitute
+// for it — even a real manager/super session gets pinned to the read-only
+// view inside that embed.
+function _applyViewerTier(tier){
+  const validTier = (tier==='manager'||tier==='super') ? tier : 'member';
+  const wasResolved = SESSION._tierResolved;
+  SESSION.tier = validTier;
+  const _forceUserMode = new URLSearchParams(window.location.search).get('usermode') === '1';
+  SESSION.isAdmin = (validTier==='manager'||validTier==='super') && !_forceUserMode;
+  SESSION._tierResolved = true;
+
+  const sbRole = _el('sb-role');
+  if(sbRole) sbRole.textContent = SESSION.isAdmin ? (validTier==='super'?'🌟 Super Admin':'⚙️ Admin') : '👤 Team Member';
+  const vmBadge = _el('view-mode-badge');
+  if(vmBadge) vmBadge.textContent = SESSION.isAdmin ? (validTier==='super'?'🌟 Super Admin View':'⚙️ Admin View') : '👤 User View';
 
   // Hide admin-only UI for non-admins, and member-only UI for admins (inverse)
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
   document.querySelectorAll('.member-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'none':''; });
   if(!SESSION.isAdmin){
     const nc=_el('nav-clients'); if(nc) nc.style.display='none';
-    setTimeout(()=>{ if(typeof showPage==='function') showPage('my-work',_el('nav-my-work')); },0);
+    // Only force the initial landing page once, on first resolution — not on
+    // every 30s poll, which would otherwise yank a member back to My Work
+    // while they're reading Progress Reports or the Service Catalog.
+    if(!wasResolved) setTimeout(()=>{ if(typeof showPage==='function') showPage('my-work',_el('nav-my-work')); },0);
   }
 }
 
@@ -1907,6 +1921,10 @@ async function _pullClientsFromCloud(){
     const r=await fetch(OPS_STATE_URL,{cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     if(!r.ok) return;
     const rec=(await r.json())?.record||{};
+    // The ONLY point admin capability is ever granted from — server-verified,
+    // fresh on every pull (init, 30s poll, visibility change). Never derived
+    // from a cached localStorage session; see _applyViewerTier().
+    _applyViewerTier(rec.viewerTier);
     _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr));
     _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr));
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
