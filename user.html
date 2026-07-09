@@ -105,13 +105,17 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .nav-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text-mid);transition:all .15s;margin-bottom:3px;}
 .nav-item:hover{background:var(--bg);color:var(--text-dark);transform:translateX(2px);}
 .nav-item.active{background:linear-gradient(90deg,var(--gold-light),rgba(250,194,49,.05));color:var(--text-dark);border-left:3px solid var(--gold);font-weight:700;box-shadow:0 2px 10px rgba(250,194,49,.18);}
-.nav-item .ni{font-size:14px;flex-shrink:0;width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:var(--bg2);transition:transform .15s;}
+.nav-item .ni{flex-shrink:0;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;transition:transform .15s;}
+.nav-item .ni svg{width:100%;height:100%;display:block;}
 .nav-item:hover .ni{transform:scale(1.08);}
-.nav-item.active .ni{box-shadow:0 1px 4px rgba(0,0,0,.1);}
 /* ── Sidebar is now Navy Deep — override the light-background-oriented
-     defaults above just for legibility; icon chips and the user-card below
-     keep their own light backgrounds (nested light "islands"), so they're
-     untouched and already read fine against navy. ── */
+     defaults above just for legibility; the user-card below keeps its own
+     light background (a nested light "island"), so it's untouched and
+     already reads fine against navy. Nav icons are monochrome line icons
+     (stroke="currentColor") with no background chip — they inherit the
+     .nav-item's own text color, so they're automatically light on the navy
+     sidebar and dark navy on the active yellow item, no separate rule
+     needed here. ── */
 .sidebar-logo{border-bottom-color:rgba(255,255,255,.15);}
 .nav-group-label{color:rgba(255,255,255,.5);}
 .nav-group-label::before{background:rgba(255,255,255,.4);}
@@ -134,7 +138,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .nav-item{color:#c7d0e6;}
 .nav-item:hover{background:rgba(255,255,255,.07);color:#fff;}
 .nav-item.active{background:#f5b301;color:#152444;border-left:none;font-weight:700;box-shadow:none;}
-.nav-item.active .ni{box-shadow:none;}
 .sidebar-user{border-top-color:#26375c;}
 .sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
 .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
@@ -435,19 +438,19 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
     </div>
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
-      <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni" style="background:rgba(37,99,168,.12);">🏠</span>Operations</div>
-      <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni" style="background:var(--gold-light);">📋</span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
-      <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni" style="background:#EDE7FE;">📅</span>Tracker</div>
-      <div class="nav-item" onclick="openTrackerPage('reports',this)"><span class="ni" style="background:#E0F0FF;">📊</span>Progress Reports</div>
-      <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni" style="background:#E7F5EE;">🔁</span>Service Catalog</div>
+      <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span>Operations</div>
+      <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
+      <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
+      <div class="nav-item" onclick="openTrackerPage('reports',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>Progress Reports</div>
+      <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
       <div class="nav-group-label">Resources</div>
-      <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni" style="background:#E0E7FF;">📚</span>Weblight media library</div>
-      <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni" style="background:#E0F7F4;">📋</span>Downtime Tasks</div>
-      <div class="nav-item" onclick="showSection('goals',this)"><span class="ni" style="background:#FFF1E0;">🎯</span>Goals</div>
+      <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Weblight media library</div>
+      <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg></span>Downtime Tasks</div>
+      <div class="nav-item" onclick="showSection('goals',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/></svg></span>Goals</div>
       <div class="nav-group-label">Team &amp; HR</div>
-      <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni" style="background:#EAF1FB;">🔑</span>Credentials</div>
-      <div class="nav-item" onclick="showSection('messages',this)" id="nav-messages"><span class="ni" style="background:#FDEDED;">💬</span>Messages<span class="msg-nav-badge" id="msg-nav-badge" style="display:none;">0</span></div>
-      <div class="nav-item" onclick="showSection('timeoff',this)"><span class="ni" style="background:#F3E8FF;">🏖</span>Time Off</div>
+      <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5"/><line x1="21" y1="2" x2="12.8" y2="10.2"/><line x1="16" y1="7" x2="19" y2="10"/><line x1="13.5" y1="9.5" x2="16" y2="12"/></svg></span>Credentials</div>
+      <div class="nav-item" onclick="showSection('messages',this)" id="nav-messages"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span>Messages<span class="msg-nav-badge" id="msg-nav-badge" style="display:none;">0</span></div>
+      <div class="nav-item" onclick="showSection('timeoff',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>Time Off</div>
     </div>
   </div>
   <!-- Sidebar backdrop — narrow screens only, closes the sidebar on tap-outside -->
@@ -469,7 +472,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           <div class="avatar" id="sidebarAvatar">?</div>
           <div>
             <div class="su-name" id="sidebarName" style="font-size:12px;">Loading…</div>
-            <div class="su-role" id="sidebarRole" style="font-size:9.5px;">Team Member</div>
+            <div class="su-role" id="sidebarRole" style="font-size:9.5px;">Loading…</div>
           </div>
         </div>
         <div class="su-btn header-profile-theme-btn" onclick="showSection('profile',document.querySelector('.nav-item'))" title="Profile" style="padding:5px 8px;flex:none;">⚙️</div>
@@ -509,7 +512,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
                 <div class="avatar" id="pulseAvatar">?</div>
                 <div>
                   <div class="pulse-name" id="pulseName">Loading…</div>
-                  <div class="pulse-role" id="pulseRoleDisplay">Team Member</div>
+                  <div class="pulse-role" id="pulseRoleDisplay">Loading…</div>
                 </div>
                 <span class="status-badge badge-working" style="margin-left:auto">● Working</span>
               </div>
@@ -744,7 +747,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           <div class="card">
             <div class="card-header"><div class="card-title">Account Info</div></div>
             <div class="card-body">
-              <div class="cred-item"><div class="cred-name">Role</div><span id="accountRole" style="font-size:13px;color:var(--text-mid);">Team Member</span></div>
+              <div class="cred-item"><div class="cred-name">Role</div><span id="accountRole" style="font-size:13px;color:var(--text-mid);">Loading…</span></div>
               <div class="cred-item"><div class="cred-name">Assigned Business</div><span style="font-size:13px;color:var(--text-mid);">WebLight Media</span></div>
               <div class="cred-item"><div class="cred-name">Account Type</div><span id="accountType" style="font-size:13px;color:var(--text-mid);">Contractor</span></div>
               <div class="cred-item"><div class="cred-name">Email Verified</div><span class="cred-status cred-set">Verified</span></div>
@@ -1266,7 +1269,7 @@ function initApp(){
   document.getElementById('sidebarName').textContent = user.name||user.email;
   document.getElementById('sidebarRole').textContent = _employmentTypeLabel(user);
   document.getElementById('pulseName').textContent = user.name||user.email;
-  document.getElementById('pulseRoleDisplay').textContent = user.title||'Team Member';
+  document.getElementById('pulseRoleDisplay').textContent = user.title||_employmentTypeLabel(user);
 
   const pn = document.getElementById('profileName');
   const pt = document.getElementById('profileTitle');
@@ -1274,7 +1277,7 @@ function initApp(){
   if(pn) pn.value = user.name||'';
   if(pt) pt.value = user.title||'';
   if(pe) pe.value = user.email||'';
-  if(document.getElementById('accountRole')) document.getElementById('accountRole').textContent = user.role||'Team Member';
+  if(document.getElementById('accountRole')) document.getElementById('accountRole').textContent = user.role||'Employee';
   if(document.getElementById('accountType')) document.getElementById('accountType').textContent = user.role||'Contractor';
 
   // Shift date — set now and auto-update at midnight
