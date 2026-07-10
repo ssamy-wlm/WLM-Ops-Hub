@@ -120,11 +120,13 @@ export default async function handler(req, res) {
       notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true },
     };
 
-    // Credentials (password/mustChangePassword): never leave this endpoint,
-    // for any tier — no admin UI ever needs a raw password, and stripping
-    // this doesn't affect what an admin can edit (saveEditUser() only ever
-    // sends a NEW password, never round-trips the existing hash).
-    record.users = record.users.map(u => { const { password, mustChangePassword, ...rest } = u; return rest; });
+    // Password (plaintext credential): never leave this endpoint, for any
+    // tier — no admin UI ever needs it, and stripping it doesn't affect what
+    // an admin can edit (saveEditUser() only ever sends a NEW password,
+    // never round-trips the existing hash). mustChangePassword is NOT a
+    // credential — it's the non-sensitive status flag the admin UI's
+    // "awaiting first login" badge needs, so it stays in the response.
+    record.users = record.users.map(u => { const { password, ...rest } = u; return rest; });
 
     // Payroll/pay-rate fields (payRate, hours): member tier ONLY — every
     // admin tier (manager and super) manages the team and needs to see and
