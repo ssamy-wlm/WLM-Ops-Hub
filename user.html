@@ -1211,7 +1211,40 @@ async function submitForcedPasswordChange(){
   if(!np){err.textContent='Please enter a new password.';err.style.display='block';return;}
   if(np.length<8){err.textContent='Password must be at least 8 characters.';err.style.display='block';return;}
   if(np!==cp){err.textContent='Passwords do not match.';err.style.display='block';return;}
-  // Save new password to local DB and clear mustChangePassword flag
+
+  const token = _opsToken();
+  if(!token){ err.textContent='Not signed in — please refresh the page and log in again.'; err.style.display='block'; return; }
+
+  // Push the new password via the narrow selfPasswordChange carve-out — every
+  // role may change their OWN password/mustChangePassword only; the server
+  // (api/ops-sync.js) enforces this is scoped to the caller's own row.
+  // Server-confirmed FIRST, before anything local changes or the user moves
+  // past this screen — a rejected/failed save here must never look like a
+  // successful one (see the saveEditUser() confirmed-save pattern above).
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; err.style.display='none'; }
+  try{
+    const res = await fetch(OPS_SYNC_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{selfPasswordChange:{password:np, mustChangePassword:false}}})
+    });
+    const data = await res.json().catch(()=>({}));
+    // selfPasswordChange failures (e.g. own record not found, a DB write
+    // error) are reported as warnings, not an HTTP error status — the
+    // overall sync request still returns 200 — so applied.selfPasswordChange
+    // must be checked explicitly, not just res.ok.
+    if(!res.ok || !(data.applied && data.applied.selfPasswordChange >= 1)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+  }catch(e){
+    err.textContent = 'Could not save your new password: '+e.message+'. Please try again.';
+    err.style.display = 'block';
+    if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
+    return; // stay on this screen — nothing local changed, nothing to undo
+  }
+  if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
+
+  // Only now that the server has confirmed the write — mirror it locally.
   const allUsers = dbGet(DB_KEYS.users)||[];
   const idx = allUsers.findIndex(u=>u.id===currentUser.id||u.email===currentUser.email);
   if(idx>-1){
@@ -1219,21 +1252,6 @@ async function submitForcedPasswordChange(){
     allUsers[idx].mustChangePassword = false;
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
-  }
-  // Push the new password via the narrow selfPasswordChange carve-out — every
-  // role may change their OWN password/mustChangePassword only; the server
-  // (api/ops-sync.js) enforces this is scoped to the caller's own row.
-  const token = _opsToken();
-  if(token && btn){
-    btn.textContent='Saving…'; btn.disabled=true;
-    try{
-      await fetch(OPS_SYNC_URL,{
-        method:'POST',
-        headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-        body: JSON.stringify({changes:{selfPasswordChange:{password:np, mustChangePassword:false}}})
-      });
-    }catch(e){ /* non-critical, local already saved */ }
-    if(btn){ btn.textContent='Save & Continue to Dashboard →'; btn.disabled=false; }
   }
   logActivity('login', currentUser.name, 'User set new password (first login)', '');
   // Save session so refresh keeps user logged in
