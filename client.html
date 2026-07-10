@@ -153,7 +153,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
 /* ── STAT CARDS ── */
 .stat-row{display:grid;gap:12px;margin-bottom:18px;}
-.stat-card{background:var(--card);border-radius:13px;border:1px solid var(--border);padding:16px 18px;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s;}
+.stat-card{background:var(--card);border-radius:13px;border:1px solid var(--border);padding:16px 18px;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s;flex:1;}
 .stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
 .stat-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
 .stat-value{font-family:'Poppins',sans-serif;font-size:24px;color:var(--text-dark);}
@@ -188,7 +188,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .toolbar-left{flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .search-wrap{position:relative;}
 .search-wrap input{padding-left:30px;}
-.search-wrap .si{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--text-light);pointer-events:none;}
+.search-wrap .si{position:absolute;left:9px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:var(--text-light);pointer-events:none;display:flex;}
+.search-wrap .si svg{width:100%;height:100%;display:block;}
+/* display:inline-flex on the member view-only pill needs to survive the
+   .member-only toggle's `el.style.display=''` reset (that clears inline
+   display entirely, falling back to the tag's block default) — a CSS class
+   rule isn't affected by that reset, so the icon+text layout holds. */
+.view-only-pill{display:inline-flex;align-items:center;gap:6px;}
+.view-only-pill svg{flex-shrink:0;}
 
 /* ── CLIENT GRID ── */
 .client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;grid-auto-flow:dense;}
@@ -415,7 +422,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     </div>
     <div class="topbar-right">
       <div id="view-mode-badge" class="admin-only" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);">—</div>
-      <div id="view-only-pill" class="member-only" style="font-size:10px;font-weight:700;padding:4px 11px;border-radius:20px;background:rgba(45,107,182,.1);color:var(--text);white-space:nowrap;">👁 View only</div>
+      <div id="view-only-pill" class="member-only view-only-pill" style="font-size:11px;font-weight:600;padding:4px 11px;border-radius:20px;background:#e8f0fe;color:#3a6bd6;white-space:nowrap;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7"/><circle cx="12" cy="12" r="3"/></svg>
+        View only
+      </div>
     </div>
   </div>
 
@@ -423,10 +433,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
     <!-- ═══ PAGE: ALL CLIENTS ═══ -->
     <div id="page-clients" class="page-section active">
-      <div class="stat-row" style="grid-template-columns:repeat(4,1fr);">
+      <div class="stat-row" style="display:flex;">
         <div class="stat-card"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
         <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
-        <div class="stat-card"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
+        <div class="stat-card admin-only"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
         <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
       </div>
 
@@ -434,16 +444,17 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <!-- Row 1: search + actions -->
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <div class="search-wrap" style="flex:1;min-width:160px;max-width:240px;">
-            <span class="si">🔍</span>
+            <span class="si"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg></span>
             <input class="form-input" id="client-search" placeholder="Search clients, code, manager…" oninput="filterClients()" style="width:100%;font-size:11px;padding:7px 11px 7px 28px;">
           </div>
           <div class="admin-only" style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
             <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
           </div>
         </div>
-        <!-- Row 2: filters -->
+        <!-- Row 2: filters — members see only Service (a simplified, single-filter
+             row matching the approved mockup); the rest stay admin-only. -->
         <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:8px;">
-          <select class="form-select" id="filter-status" onchange="filterClients()" style="flex:1;min-width:110px;max-width:140px;font-size:11px;padding:7px 10px;">
+          <select class="form-select admin-only" id="filter-status" onchange="filterClients()" style="flex:1;min-width:110px;max-width:140px;font-size:11px;padding:7px 10px;">
             <option value="">All Statuses</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
@@ -452,26 +463,26 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <select class="form-select" id="filter-service" onchange="filterClients()" style="flex:1;min-width:130px;max-width:170px;font-size:11px;padding:7px 10px;">
             <option value="">All Services</option>
           </select>
-          <select class="form-select" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
+          <select class="form-select admin-only" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
             <option value="">All Bundle Types</option>
           </select>
-          <select class="form-select" id="filter-proj-status" onchange="filterClients()" style="flex:1;min-width:130px;max-width:160px;font-size:11px;padding:7px 10px;">
+          <select class="form-select admin-only" id="filter-proj-status" onchange="filterClients()" style="flex:1;min-width:130px;max-width:160px;font-size:11px;padding:7px 10px;">
             <option value="">All Bundle Statuses</option>
             <option value="not-started">Not Started</option>
             <option value="in-progress">In Progress</option>
             <option value="completed">Completed</option>
             <option value="on-hold">On Hold</option>
           </select>
-          <select class="form-select" id="filter-manager" onchange="filterClients()" style="flex:1;min-width:120px;max-width:155px;font-size:11px;padding:7px 10px;">
+          <select class="form-select admin-only" id="filter-manager" onchange="filterClients()" style="flex:1;min-width:120px;max-width:155px;font-size:11px;padding:7px 10px;">
             <option value="">All Managers</option>
           </select>
-          <select class="form-select" id="filter-sort" onchange="filterClients()" style="flex:1;min-width:120px;max-width:145px;font-size:11px;padding:7px 10px;">
+          <select class="form-select admin-only" id="filter-sort" onchange="filterClients()" style="flex:1;min-width:120px;max-width:145px;font-size:11px;padding:7px 10px;">
             <option value="name">Sort: Name</option>
             <option value="start">Sort: Start Date</option>
             <option value="progress">Sort: Progress</option>
             <option value="status">Sort: Status</option>
           </select>
-          <button onclick="clearClientFilters()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:11px;cursor:pointer;color:var(--text-light);white-space:nowrap;" title="Clear all filters">✕ Clear</button>
+          <button class="admin-only" onclick="clearClientFilters()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:11px;cursor:pointer;color:var(--text-light);white-space:nowrap;" title="Clear all filters">✕ Clear</button>
         </div>
         <!-- Active filter chips -->
         <div id="client-filter-chips" style="display:none;gap:5px;flex-wrap:wrap;margin-top:7px;"></div>
@@ -1232,7 +1243,6 @@ function detectSession(){
 // view inside that embed.
 function _applyViewerTier(tier){
   const validTier = (tier==='manager'||tier==='super') ? tier : 'member';
-  const wasResolved = SESSION._tierResolved;
   SESSION.tier = validTier;
   const _forceUserMode = new URLSearchParams(window.location.search).get('usermode') === '1';
   SESSION.isAdmin = (validTier==='manager'||validTier==='super') && !_forceUserMode;
@@ -1245,12 +1255,16 @@ function _applyViewerTier(tier){
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
   document.querySelectorAll('.member-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'none':''; });
   if(!SESSION.isAdmin){
+    // Redundant with .wlm-topbar-navrow already being admin-only, but kept as
+    // a defensive belt-and-suspenders hide.
     const nc=_el('nav-clients'); if(nc) nc.style.display='none';
-    // Only force the initial landing page once, on first resolution — not on
-    // every 30s poll, which would otherwise yank a member back to My Work
-    // while they're reading Progress Reports or the Service Catalog.
-    if(!wasResolved) setTimeout(()=>{ if(typeof showPage==='function') showPage('my-work',_el('nav-my-work')); },0);
   }
+  // Members land on the same default page admins do (page-clients, marked
+  // active in the static HTML) — the "Client & production tracker" read-only
+  // view, matching the approved mockup. A forced redirect to My Work used to
+  // fire here on every load (via a setTimeout queued before the real tier was
+  // even confirmed, so it ran regardless of outcome) — removed 2026-07-10;
+  // My Work is still one click away via its own always-visible nav item.
 }
 
 // ═══════════════════════════════════════════════════════
