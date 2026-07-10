@@ -65,33 +65,28 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .sb-links{display:flex;gap:5px;}
 .sb-link{flex:1;text-align:center;padding:5px 4px;border-radius:7px;font-size:10px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;text-decoration:none;display:inline-block;}
 .sb-link:hover{background:var(--bg2);color:var(--text);}
-.wlm-topbar{background:#152444;color:#fff;display:flex;flex-direction:column;border-bottom:3px solid var(--gold);}
-.wlm-topbar-identity{padding:14px 20px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;}
-.wlm-title{font-family:'Poppins',sans-serif;font-size:21px;font-weight:600;color:#fff;white-space:nowrap;}
-.wlm-topbar-navrow{padding:10px 20px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);position:relative;}
-.wlm-nav-hamburger{display:none;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
-.wlm-nav-hamburger:hover{background:rgba(255,255,255,.18);}
+/* The admin Hub shell (index.html) now supplies the page title ("Production
+   Tracker") and the only navy element (its left rail) — this strip is just
+   the tracker's own sub-nav tabs, sitting on the same light surface as the
+   rest of the content area, never navy. */
+.wlm-topbar{background:var(--card);border-bottom:1px solid var(--border);}
+.wlm-topbar-navrow{padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;position:relative;}
+.wlm-nav-hamburger{display:none;background:var(--bg);color:var(--text-dark);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
+.wlm-nav-hamburger:hover{background:var(--bg2);}
 .wlm-nav-group{display:flex;gap:4px;flex-wrap:wrap;justify-content:center;}
-.wlm-nav-group .nav-item{color:rgba(255,255,255,.72);margin-bottom:0;padding:8px 4px;text-decoration:none;border-bottom:2px solid transparent;border-radius:0;}
-.wlm-nav-group .nav-item:hover{color:#fff;background:none;}
-.wlm-nav-group .nav-item.active{color:#fff;font-weight:700;border-bottom:2px solid var(--gold);border-left:none;padding-left:4px;background:none;}
+.wlm-nav-group .nav-item{color:var(--text-mid);margin-bottom:0;padding:8px 4px;text-decoration:none;border-bottom:2px solid transparent;border-radius:0;}
+.wlm-nav-group .nav-item:hover{color:var(--text-dark);background:none;}
+.wlm-nav-group .nav-item.active{color:var(--text-dark);font-weight:500;border-bottom:2px solid var(--gold);border-left:none;padding-left:4px;background:none;}
 .wlm-nav-group .nav-item .ni{display:none;}
 /* Responsive nav — must come AFTER the base .wlm-nav-group rules above so the
    media query actually wins the cascade at narrow widths. */
 @media(max-width:768px){
   .wlm-nav-hamburger{display:block;}
-  .wlm-nav-group{display:none;flex-direction:column;align-items:stretch;gap:3px;position:absolute;top:100%;left:20px;right:20px;background:#152444;opacity:1;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:10px;z-index:9999;isolation:isolate;box-shadow:0 16px 40px rgba(0,0,0,.5);max-height:calc(100vh - 160px);overflow-y:auto;}
+  .wlm-nav-group{display:none;flex-direction:column;align-items:stretch;gap:3px;position:absolute;top:100%;left:20px;right:20px;background:var(--card);opacity:1;border:1px solid var(--border);border-radius:12px;padding:10px;z-index:9999;isolation:isolate;box-shadow:var(--shadow-md);max-height:calc(100vh - 160px);overflow-y:auto;}
   .wlm-nav-group.open{display:flex;}
   .wlm-nav-group .nav-item{width:100%;text-align:left;padding:13px 16px;font-size:14.5px;border-radius:9px;border-bottom:none;}
-  .wlm-nav-group .nav-item.active{color:#fff;background:rgba(245,179,1,.15);border-left:3px solid var(--gold);padding-left:13px;}
+  .wlm-nav-group .nav-item.active{color:var(--text-dark);background:rgba(245,179,1,.15);border-left:3px solid var(--gold);padding-left:13px;}
   .wlm-nav-group .nav-item:active{background:var(--gold);color:#152444;}
-  .wlm-title{font-size:14px;}
-  .wlm-topbar-identity{padding:12px 10px;gap:8px;}
-}
-/* Phone-width extra compaction. */
-@media(max-width:480px){
-  .wlm-topbar-identity{grid-template-columns:auto 1fr auto;}
-  .sb-avatar{width:24px;height:24px;font-size:9px;}
 }
 
 /* ── MAIN ── */
@@ -381,13 +376,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
        either; the Hub's own tabs are already one click away, always visible.
        Just the tracker's own title and its sub-nav tabs below (member view is
        untouched — see member-only elements elsewhere). -->
-  <div class="wlm-topbar-identity">
-    <div></div>
-    <div class="admin-only" style="display:flex;align-items:center;justify-content:center;">
-      <div class="wlm-title">Production Tracker</div>
-    </div>
-    <div></div>
-  </div>
   <div class="wlm-topbar-navrow admin-only">
     <button class="wlm-nav-hamburger" onclick="document.querySelector('.wlm-nav-group').classList.toggle('open')" aria-label="Toggle navigation menu">☰ Menu</button>
     <div class="wlm-nav-group">
