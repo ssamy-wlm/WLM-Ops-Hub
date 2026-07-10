@@ -8792,7 +8792,16 @@ function _updateNewLevelBadge(){
 }
 
 function _getLevelInfo(value){
-  return ADMIN_LEVELS.find(l=>l.value===value) || ADMIN_LEVELS[2];
+  // Every permission check elsewhere (RESTRICTED_ADMIN_ROLES.includes(level),
+  // level===CREATIVE_MANAGER_ROLE) requires an exact match against a specific
+  // restrictive value — so a level that's missing or doesn't match any known
+  // value already behaves as fully unrestricted today, same as 'admin'. The
+  // fallback here used to silently point at ADMIN_LEVELS[2] ('Creative
+  // Manager') — the most-restricted role in the list, and actively the wrong
+  // label for an admin whose real behavior is unrestricted. Match 'admin' as
+  // the truthful default instead.
+  const normalized = typeof value==='string' ? value.trim().toLowerCase() : value;
+  return ADMIN_LEVELS.find(l=>l.value===normalized) || ADMIN_LEVELS.find(l=>l.value==='admin');
 }
 
 // ── Rebuild the access level <select> options ──
