@@ -1264,11 +1264,15 @@ function _applyViewerTier(tier){
   // Hide admin-only UI for non-admins, and member-only UI for admins (inverse)
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
   document.querySelectorAll('.member-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'none':''; });
-  if(!SESSION.isAdmin){
-    // Redundant with .wlm-topbar-navrow already being admin-only, but kept as
-    // a defensive belt-and-suspenders hide.
-    const nc=_el('nav-clients'); if(nc) nc.style.display='none';
-  }
+  // A one-directional "hide #nav-clients for non-admins" used to live here,
+  // meant as a "redundant, defensive" extra on top of .wlm-topbar-navrow
+  // already being admin-only — but it had no reset counterpart. Since this
+  // function ALWAYS runs once synchronously as 'member' before the real tier
+  // is confirmed (the fail-closed pass below `showPage`/init call it with),
+  // that line hid #nav-clients on every single load, and the later
+  // real-tier-confirmed call for an actual admin never undid it — the tab
+  // stayed permanently invisible/unclickable. Removed; the parent row's
+  // admin-only toggle above already fully covers this.
   // Members land on the same default page admins do (page-clients, marked
   // active in the static HTML) — the "Client & production tracker" read-only
   // view, matching the approved mockup. A forced redirect to My Work used to
