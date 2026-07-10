@@ -978,8 +978,16 @@ const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
 const OPS_AUTH_URL  = '/api/ops-auth';
 function cloudIsConfigured(){ return true; }
-function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
-function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token', token); else localStorage.removeItem('wl_ops_token'); }catch(e){} }
+// Portal-scoped key (was the single shared 'wl_ops_token' for all three
+// pages) — that one key meant the most recently authenticated portal on this
+// origin silently overwrote every other open tab's session. See CLAUDE.md
+// for the full incident and the matching note in index.html.
+function _opsToken(){ try{ return localStorage.getItem('wl_ops_token_member'); }catch(e){ return null; } }
+function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token_member', token); else localStorage.removeItem('wl_ops_token_member'); }catch(e){} }
+// One-time cleanup of the old shared key from before the portal-scoped split
+// above — nothing reads it anymore, so it's just a dead credential sitting in
+// localStorage. Not a session restore, just removing a known-dead key.
+try{ localStorage.removeItem('wl_ops_token'); }catch(e){}
 
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
@@ -1246,7 +1254,11 @@ function logout(){
   logActivity('nav', name, 'Signed out', '');
   try{ localStorage.removeItem('wl_user_session'); }catch(e){}
   try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
+  // Clear this portal's own token, and the other portal's token too — logging
+  // out here must never leave a still-valid admin token sitting in
+  // localStorage for the next tab to pick up (see CLAUDE.md scoped-token note).
   _setOpsToken(null);
+  try{ localStorage.removeItem('wl_ops_token_admin'); }catch(e){}
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');
@@ -2707,6 +2719,11 @@ function markUserMessagesRead(){ if(_userOpenConvEmail) markConvRead(_userOpenCo
     if(!s.ts || (Date.now()-s.ts) > TTL){
       localStorage.removeItem('wl_user_session'); return;
     }
+    // No live token (e.g. this browser still only has the pre-migration
+    // shared key, or the token was cleared elsewhere) — never restore the
+    // app from cached data alone with nothing live backing it; fall through
+    // to a clean login screen instead.
+    if(!_opsToken()){ localStorage.removeItem('wl_user_session'); return; }
     // Restore from local DB (cloud pull happens async below)
     const allUsers = dbGet(DB_KEYS.users)||[];
     const found = allUsers.find(u=>u.email.toLowerCase()===s.email.toLowerCase());
