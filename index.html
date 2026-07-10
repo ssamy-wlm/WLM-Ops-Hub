@@ -8115,8 +8115,18 @@ window.openAddAdminModal = function(){
         document.getElementById('loginScreen').style.display='none';
         document.getElementById('adminApp').classList.add('visible');
         document.getElementById('userApp').classList.remove('visible');
-        // Re-apply role restrictions for non-primary admins + update sidebar
-        if(s.level && s.adminId && typeof applyAdminRoleRestrictions==='function'){
+        // Re-apply role restrictions for non-primary admins + update sidebar.
+        // doLogin() (see window.doLogin) always stores adminId:authData.id in
+        // wl_admin_session, including for the primary admin — whose id is the
+        // literal sentinel 'primary-admin', not a real ops_admins row. The old
+        // `!s.adminId` check below assumed the primary admin never had an
+        // adminId stored at all, so on a page reload it fell into the FIRST
+        // branch, looked for 'primary-admin' inside wl_admins_db (where it can
+        // never exist), found nothing, and silently skipped both the sidebar
+        // update AND the role-restriction reapply for her. Checking the
+        // sentinel explicitly fixes both.
+        const isPrimaryAdminSession = !s.adminId || s.adminId === 'primary-admin';
+        if(s.level && s.adminId && !isPrimaryAdminSession && typeof applyAdminRoleRestrictions==='function'){
           const admins = JSON.parse(localStorage.getItem('wl_admins_db')||'[]');
           const adminObj = admins.find(a=>a.id===s.adminId);
           if(adminObj){
@@ -8126,8 +8136,8 @@ window.openAddAdminModal = function(){
             // Server-verified level from THIS load's pull, never the cached s.level.
             setTimeout(()=>applyAdminRoleRestrictions(_lastViewerLevel||s.level, adminObj), 150);
           }
-        } else if(!s.adminId){
-          // Primary admin (Sarah Samy) — no adminId stored
+        } else if(isPrimaryAdminSession){
+          // Primary admin (Sarah Samy) — sentinel id 'primary-admin', never a real ops_admins row
           currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy', title:'Operations Manager'};
           if(typeof _updateSidebarForAdmin==='function')
             setTimeout(()=>_updateSidebarForAdmin({name:'Sarah Samy', title:'Operations Manager'}), 80);
