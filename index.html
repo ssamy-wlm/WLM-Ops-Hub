@@ -2949,7 +2949,23 @@ function switchAdminTab(el, tab){
 
 function loadAdminTrackerFrame(){
   const frame = document.getElementById('adminTrackerFrame');
-  if(frame && frame.src==='about:blank') frame.src = 'client.html?v=' + Date.now();
+  if(!frame) return;
+  if(frame.src==='about:blank'){ frame.src = 'client.html?v=' + Date.now(); return; }
+  // The iframe only ever gets that one src load per page session (see the
+  // guard above) — switching to other Hub tabs and back just hides/shows it,
+  // it never reloads. So without this, whatever internal tracker sub-page (or
+  // an expanded client detail panel) an admin last visited stays showing
+  // instead of the default "Client & production tracker" view every time
+  // this OUTER Tracker tab is re-selected. Reset it explicitly, every time.
+  try{
+    const win = frame.contentWindow;
+    if(win && typeof win.showPage==='function'){
+      win._activeClientId = null;
+      const detail = win.document.getElementById('client-detail-panel');
+      if(detail) detail.style.display='none';
+      win.showPage('clients', win.document.getElementById('nav-clients'));
+    }
+  }catch(e){}
 }
 
 // ── REPORT TABS ──
