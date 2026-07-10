@@ -675,6 +675,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <div class="form-group"><label class="form-label">Account Manager</label>
           <select class="form-select" id="cf-manager"><option value="">— Select —</option></select></div>
         <div class="form-group"><label class="form-label">Start Date</label><input class="form-input" type="date" id="cf-start"></div>
+        <div class="form-group"><label class="form-label">Contract End <span style="font-weight:400;color:var(--text-light);">(optional)</span></label><input class="form-input" type="date" id="cf-end"></div>
         <div class="form-group"><label class="form-label">Website</label><input class="form-input" id="cf-website" placeholder="https://"></div>
         <div class="form-group"><label class="form-label">Referred By</label><input class="form-input" id="cf-referred" placeholder="Name or source"></div>
         <div class="form-group"><label class="form-label">Initial Bundle</label><input class="form-input" id="cf-initial-project" placeholder="e.g. Website Redesign"></div>
@@ -3100,7 +3101,7 @@ function _openDeepLinkFromUrl(){
 function openClientModal(){
   _el('clientModalTitle').textContent='New Client';
   _el('cf-id').value='';
-  ['cf-name','cf-code','cf-website','cf-referred','cf-initial-project','cf-recurring-tags',
+  ['cf-name','cf-code','cf-end','cf-website','cf-referred','cf-initial-project','cf-recurring-tags',
    'cf-owner','cf-email','cf-phone','cf-industry','cf-logo','cf-brand','cf-notes'].forEach(id=>{
     const e=_el(id); if(e) e.value='';
   });
@@ -3122,6 +3123,7 @@ function editClient(id){
   _el('cf-code').value=c.code||'';
   _el('cf-status').value=c.status||'active';
   _el('cf-start').value=c.start||'';
+  _el('cf-end').value=c.end||'';
   _el('cf-website').value=c.website||'';
   _el('cf-referred').value=c.referredBy||'';
   _el('cf-initial-project').value=c.initialProject||'';
@@ -3150,8 +3152,14 @@ function saveClient(){
   const roster=getRoster();
   const managerId=_el('cf-manager').value;
   const managerName=roster.find(u=>u.id===managerId)?.name||'';
+  // Contract End is optional and never blank-overwrites an existing value —
+  // leaving it empty on an edit just skips the field entirely rather than
+  // clearing a date that was already set (there's no "remove end date"
+  // control here; that'd need its own explicit action, not an empty save).
+  const endVal=_el('cf-end').value;
   const data={
     name, code, status:_el('cf-status').value, start:_el('cf-start').value,
+    ...(endVal?{end:endVal}:{}),
     website:_el('cf-website').value, referredBy:_el('cf-referred').value,
     initialProject:_el('cf-initial-project').value, recurringTags:_el('cf-recurring-tags').value,
     ownerName:_el('cf-owner').value, ownerEmail:_el('cf-email').value, ownerPhone:_el('cf-phone').value,
