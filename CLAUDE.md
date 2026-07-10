@@ -77,7 +77,19 @@ Don't relitigate them without an explicit decision from the user.
    to `clients` is validated field-by-field server-side
    (`checkMemberClientWrite` in `api/ops-sync.js`) — an out-of-scope edit
    REJECTS the whole record with a clear reason, never a silent partial
-   merge.
+   merge. The session token itself is stored client-side under a
+   **portal-scoped** localStorage key — `wl_ops_token_admin` for
+   `index.html`, `wl_ops_token_member` for `user.html` — never a single
+   shared key across the three frontends. See the 2026-07-10 entry below for
+   why: one shared key let the most-recently-authenticated portal on the
+   origin silently overwrite every other open tab's session token, even one
+   that never re-logged in. `client.html` has no login of its own (it's
+   always embedded as an iframe in one of the other two) and reads whichever
+   scoped key matches its embedding parent, using the same `?usermode=1`
+   query param `_applyViewerTier()` already relies on to detect a user.html
+   embed. Logging out of either portal clears both scoped keys, not just its
+   own — an admin/member logout must never leave a still-valid token behind
+   for another tab to inherit.
 
 5. **Document-model Supabase schema convention.** Every `ops_*` table is
    `id text primary key, data jsonb not null` (+ `updated_at`/`created_at`,
@@ -137,7 +149,7 @@ Don't relitigate them without an explicit decision from the user.
     "Export Backup (JSON)" button, which hits `/api/ops-state` fresh) or a
     SQL query pasted back — don't assume MCP DB access will work.
 
-## Current state (as of 2026-07-09)
+## Current state (as of 2026-07-10)
 
 **Client data:** 85 active clients live in production, generated from the
 authoritative CSV mapping and verified 100% match (client count, per-client
@@ -213,6 +225,44 @@ person's credentials to land on the duplicate `ops_users` row instead
 recurrence is a data-hygiene problem (catching a duplicate email/name
 across both tables before it causes a wrong login), not a code-ordering
 one — flagged for the user, not built here.
+
+**Shared-token session collision, Access Level badge fallback (2026-07-10):**
+two related follow-on bugs surfaced after the admin-as-member cleanup above.
+(1) The Admin Accounts screen showed "Creative Manager" as the Access Level
+badge for admins whose real level didn't literally string-match one of the
+six canonical values (e.g. missing entirely) — `_getLevelInfo()`'s fallback
+silently defaulted to that specific, most-restricted role regardless of who
+hit it, even though every actual permission check elsewhere already treats a
+missing/unmatched level as fully unrestricted. Fixed the fallback to show
+"Admin" (matching that real behavior) and normalized the comparison
+(trim/lowercase) so incidental whitespace/casing no longer falls through
+either — display-only, no permission change. (2) A real Save-blocking bug:
+the Super Admin (owner) could open the Edit modal for an admin or user, but
+the save silently dropped with `"users: dropped — restricted table, caller
+role is member"` from `api/ops-sync.js`. Traced with live-driven Playwright
+reproductions of the actual `saveEditAdmin()`/`saveEditUser()` functions —
+confirmed `tierOf(session)` is computed exactly once in `ops-sync.js`, from
+the identical `requireSession`/`tierOf` used by `ops-state.js`, with no
+override anywhere in the file, so the server was not misresolving anything
+— it was correctly resolving *the token it was handed*. Root cause: all
+three frontends stored their session token under one shared, unscoped
+localStorage key (`wl_ops_token`). `index.html` and `user.html` are each
+independent login flows that unconditionally overwrite that key on success;
+`_opsToken()` re-reads it fresh from localStorage on every call, never
+cached from login. So if the same browser profile had a `user.html` tab
+where anyone logged in as a team member *after* an already-open `index.html`
+admin tab had loaded, the member's token silently clobbered the shared key —
+the admin tab's on-screen state (resolved from an earlier, pre-clobber pull)
+looked fine, but its next Save read the now-member token fresh and sent it,
+and the server correctly returned a member-tier drop for that token. Fixed
+by scoping the key per portal (see rule #4 above) — `client.html` (which has
+no login of its own) picks the right one via the existing `?usermode=1`
+embed signal. Logout in either portal now clears both scoped keys, and a
+one-time cleanup removes the old shared key so it can't linger as a dead
+credential; a browser with only the old key falls through to a clean login
+screen post-deploy rather than a stale or broken state, matching the
+existing fail-closed pattern `restoreAdminSession()` already used for a
+missing/invalid token.
 
 **Franchise/location feature:** a client can hold `locations[]`, each with
 its own independent `services[]` (e.g. Servpro as the parent client with a

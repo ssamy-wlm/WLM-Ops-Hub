@@ -2892,6 +2892,11 @@ function logout(){
   // Clear the other portal's session key too, for clean identity-switching
   // on a shared browser (same-origin storage is shared across all three pages).
   try{ localStorage.removeItem('wl_user_session'); }catch(e){}
+  // Clear this portal's own token, and the other portal's token too — logging
+  // out here must never leave a still-valid member token sitting in
+  // localStorage for the next tab to pick up (see CLAUDE.md scoped-token note).
+  _setOpsToken(null);
+  try{ localStorage.removeItem('wl_ops_token_member'); }catch(e){}
 }
 
 function initUserApp(){
@@ -6705,8 +6710,19 @@ const OPS_SYNC_URL  = '/api/ops-sync';
 const OPS_AUTH_URL  = '/api/ops-auth';
 
 function cloudIsConfigured(){ return true; }
-function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
-function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token', token); else localStorage.removeItem('wl_ops_token'); }catch(e){} }
+// Portal-scoped key (was the single shared 'wl_ops_token' for all three
+// pages) — that one key meant the most recently authenticated portal on this
+// origin silently overwrote every other open tab's session, even one that
+// never re-logged in: an admin tab's Save would read whatever token a
+// user.html login had last written and get "caller role is member" from
+// api/ops-sync.js — a real, correctly-computed tier for the wrong token, not
+// a resolution bug. See CLAUDE.md for the full incident.
+function _opsToken(){ try{ return localStorage.getItem('wl_ops_token_admin'); }catch(e){ return null; } }
+function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token_admin', token); else localStorage.removeItem('wl_ops_token_admin'); }catch(e){} }
+// One-time cleanup of the old shared key from before the portal-scoped split
+// above — nothing reads it anymore, so it's just a dead credential sitting in
+// localStorage. Not a session restore, just removing a known-dead key.
+try{ localStorage.removeItem('wl_ops_token'); }catch(e){}
 
 // Server-verified tier/level from the most recent successful cloudPullAll()
 // call — the ONLY source restoreAdminSession() trusts to decide whether to

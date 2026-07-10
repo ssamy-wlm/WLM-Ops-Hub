@@ -1824,7 +1824,20 @@ function populatePfTypeOptions(selected){
 // ═══════════════════════════════════════════════════════
 const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
-function _opsToken(){ try{ return localStorage.getItem('wl_ops_token'); }catch(e){ return null; } }
+// Portal-scoped key (was the single shared 'wl_ops_token' written by both
+// index.html and user.html's independent logins) — that one key meant the
+// most recently authenticated portal on this origin silently overwrote every
+// other open tab's session. This page never logs in on its own — it's always
+// embedded as an iframe in one of the two portals — so it reads whichever
+// scoped key belongs to its embedding parent, using the same ?usermode=1
+// signal _applyViewerTier() already uses below (set only when user.html
+// embeds it; index.html's embed carries no such param). See CLAUDE.md.
+function _opsToken(){
+  try{
+    const inUserPortal = new URLSearchParams(window.location.search).get('usermode') === '1';
+    return localStorage.getItem(inUserPortal ? 'wl_ops_token_member' : 'wl_ops_token_admin');
+  }catch(e){ return null; }
+}
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
 function _opsDirty(table, localArr){
