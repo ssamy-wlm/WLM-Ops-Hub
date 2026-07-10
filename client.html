@@ -71,8 +71,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .wlm-topbar-navrow{padding:10px 20px 14px;display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.15);position:relative;}
 .wlm-nav-hamburger{display:none;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;}
 .wlm-nav-hamburger:hover{background:rgba(255,255,255,.18);}
-.wlm-back-btn{display:inline-flex;align-items:center;gap:6px;color:rgba(255,255,255,.85);text-decoration:none;font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.25);transition:all .15s;}
-.wlm-back-btn:hover{color:#fff;background:rgba(255,255,255,.12);}
 .wlm-nav-group{display:flex;gap:4px;flex-wrap:wrap;justify-content:center;}
 .wlm-nav-group .nav-item{color:rgba(255,255,255,.72);margin-bottom:0;padding:8px 4px;text-decoration:none;border-bottom:2px solid transparent;border-radius:0;}
 .wlm-nav-group .nav-item:hover{color:#fff;background:none;}
@@ -90,13 +88,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   .wlm-title{font-size:14px;}
   .wlm-topbar-identity{padding:12px 10px;gap:8px;}
 }
-/* Phone-width extra compaction — the identity row's title+back-button
-   cluster needs more room back than the 768px nav breakpoint alone frees up. */
+/* Phone-width extra compaction. */
 @media(max-width:480px){
   .wlm-topbar-identity{grid-template-columns:auto 1fr auto;}
-  .wlm-title{display:none;}
-  .wlm-back-btn{padding:6px 8px;font-size:0;}
-  .wlm-back-btn svg{flex-shrink:0;}
   .sb-avatar{width:24px;height:24px;font-size:9px;}
 }
 
@@ -380,17 +374,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 <div class="wlm-topbar">
   <!-- Dark-background-optimized lockup sits bare on the Navy Deep row, no plate needed. -->
   <!-- Single-header rule: index.html already renders its own WebLight Media
-       logo + full Hub nav above this iframe for an admin viewer, so this row
-       must never repeat a logo or a second "brand" nav — just the tracker's
-       own title, a way back to the Hub, and the tracker's own sub-nav tabs
-       below (member view is untouched — see member-only elements elsewhere). -->
+       logo + full Hub nav above this iframe for an admin viewer, and that nav
+       is always visible right above this one (this is an embedded iframe on
+       the same page, not a separate page) — so this row never repeats a logo
+       or a second "brand" nav, and never needs its own way back to the Hub
+       either; the Hub's own tabs are already one click away, always visible.
+       Just the tracker's own title and its sub-nav tabs below (member view is
+       untouched — see member-only elements elsewhere). -->
   <div class="wlm-topbar-identity">
     <div></div>
-    <div class="admin-only" style="display:flex;align-items:center;gap:14px;justify-content:center;">
-      <a href="index.html" target="_top" class="wlm-back-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Back to Hub
-      </a>
+    <div class="admin-only" style="display:flex;align-items:center;justify-content:center;">
       <div class="wlm-title">Production Tracker</div>
     </div>
     <div></div>
