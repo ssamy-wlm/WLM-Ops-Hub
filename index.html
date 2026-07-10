@@ -398,7 +398,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 /* ══ CLIENT MODULE ══ */
 .cl-swatch{width:28px;height:28px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:border-color .15s,transform .15s;}
 .cl-swatch.sel{border-color:#fff;box-shadow:0 0 0 2px var(--text);transform:scale(1.15);}
-.client-card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s;position:relative;}
+.client-card{background:#fff;border:0.5px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s;position:relative;}
 .client-card:hover{box-shadow:0 6px 24px rgba(0,0,0,.10);transform:translateY(-2px);}
 .client-card-header{padding:18px 18px 12px;display:flex;align-items:flex-start;gap:12px;}
 .client-avatar{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;flex-shrink:0;}
@@ -2816,6 +2816,10 @@ function _hashClientColor(name){
   return palette[h%palette.length];
 }
 
+// Monochrome line icon (stroke:currentColor) for the client-card Edit button —
+// matches the clean tracker card style, never emoji.
+const ICON_EDIT_CLIENT = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
 // ── STATE ──
 let currentRole = 'admin';
 let currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy'};
@@ -4444,7 +4448,7 @@ function renderClientGrid(list){
     const statusLabel = c.status||'active';
     const statusChip = `<span class="status-chip chip-${statusLabel}">${statusLabel}</span>`;
     // Show service name badges (from tracker services first, then recurring)
-    const svcBadges = allSvcs.slice(0,3).map(s=>`<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:#2E5DA6;margin-right:3px;">${s.name}</span>`).join('');
+    const svcBadges = allSvcs.slice(0,3).map(s=>`<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:9px;font-weight:600;background:rgba(45,107,182,.1);color:#2E5DA6;margin-right:3px;">${s.name}</span>`).join('');
     const extraSvc = allSvcs.length > 3 ? `<span style="font-size:11px;color:var(--text-light);margin-left:4px;">+${allSvcs.length-3} more</span>` : '';
     // Fallback to manual project pills if no services
     const projPills = !svcBadges ? manualProjs.slice(0,3).map(p=>`<span class="proj-pill" style="background:${p.color||c.color||_hashClientColor(c.name)}">${p.name}</span>`).join('') : '';
@@ -4457,22 +4461,21 @@ function renderClientGrid(list){
     card.dataset.clientId = c.id;
     card.onclick = () => openClientDetail(c.id, card);
     card.innerHTML = `
-      <div style="height:5px;background:${c.color||_hashClientColor(c.name)};"></div>
       <div class="client-card-header">
         <div class="client-avatar" style="background:${c.color||_hashClientColor(c.name)};">${initials}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:800;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
+          <div style="font-size:14px;font-weight:500;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${c.name}${c.code?` <span style="font-size:9px;font-weight:600;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${c.accountManager||c.industry||'—'} ${statusChip}</div>
         </div>
         <div style="display:flex;gap:6px;" onclick="event.stopPropagation()">
-          <button class="btn btn-sm btn-outline" onclick="editClient('${c.id}')" style="font-size:11px;">✏️</button>
+          <button class="btn btn-sm btn-outline" onclick="editClient('${c.id}')" style="font-size:11px;" title="Edit">${ICON_EDIT_CLIENT}</button>
           <button class="btn btn-sm btn-outline" onclick="toggleClientStatus('${c.id}')" style="font-size:11px;color:${statusLabel==='active'?'var(--green)':'var(--text-light)'};" title="${statusLabel==='active'?'Set Inactive':'Set Active'}">${statusLabel==='active'?'✓ Active':'○ Inactive'}</button>
         </div>
       </div>
       <div class="client-card-body">
         <div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">${summaryLabel}</div>
         <div class="proj-bar-wrap"><div class="proj-bar-fill" style="width:${totalPct}%;background:${c.color||_hashClientColor(c.name)};"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);margin-bottom:8px;"><span>Overall progress</span><span style="font-weight:700;color:var(--text-dark);">${totalPct}%</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);margin-bottom:8px;"><span>Overall progress</span><span style="font-weight:600;color:var(--text-dark);">${totalPct}%</span></div>
         <div>${svcBadges}${extraSvc}${projPills}</div>
       </div>`;
     grid.appendChild(card);
