@@ -60,8 +60,31 @@ export default async function handler(req, res) {
       supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
     ]);
 
-    const err = [usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ, timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ, orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ].find(q => q.error)?.error;
-    if (err) { await logError({ endpoint: 'ops-state', error: err, session }); return res.status(500).json({ error: err.message }); }
+    // A single table's query failing (e.g. a column a newer deploy expects
+    // but a pending migration hasn't been applied for yet — see CLAUDE.md's
+    // ops_org_links.deleted_at outage) must never take down every OTHER
+    // table, and above all must never block tier/session resolution — that
+    // outage pinned every admin, including the primary admin, to the
+    // fail-closed member/view-only default because the whole endpoint
+    // 500'd over one missing column. Log the specific failure and degrade
+    // just that one section to empty/absent; everything else — and
+    // viewerTier/viewerLevel above, which don't depend on any of these
+    // queries at all — still resolves normally. Every consumer of `.data`
+    // below already falls back to `[]`/`{}` on null/undefined, so simply
+    // clearing a failed query's `.data` is enough; nothing else changes.
+    const namedQueries = [
+      ['users', usersQ], ['admins', adminsQ], ['clients', clientsQ], ['goals', goalsQ],
+      ['feed', feedQ], ['messages', messagesQ], ['roadmapTasks', roadmapQ],
+      ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['summaries', summariesQ],
+      ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
+      ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
+    ];
+    for (const [table, q] of namedQueries) {
+      if (q.error) {
+        await logError({ endpoint: 'ops-state', error: q.error, session, extra: { table } });
+        q.data = null;
+      }
+    }
 
     const deletedIds = new Set((deletedQ.data || []).map(r => r.user_id));
     const settingsMap = {};
