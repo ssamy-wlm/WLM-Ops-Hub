@@ -338,8 +338,42 @@ The corresponding stale rows already sitting in the live `ops_org_nodes`
 table were deliberately NOT touched by this PR — that is a separate,
 later, dry-run-approved step (rule #6), not bundled with the code fix.
 
+**Outage: `ops_org_links.deleted_at` migration shipped without being applied
+to prod (2026-07-13) — RESOLVED, migration now applied.** The org chart fix
+above added `supabase/migrations/20260713120000_org_links_deleted_at.sql`
+and a matching `.is('deleted_at', null)` filter on `ops_org_links` in
+`api/ops-state.js`. The migration was never run against the live Supabase
+project. Every `/api/ops-state` call queries `ops_org_nodes` and
+`ops_org_links` in the same `Promise.all` used to assemble the rest of the
+response; the missing column made the `ops_org_links` query error, and the
+handler treats any single query error in that batch as fatal — the whole
+endpoint 500'd for every caller, not just the org-chart section. Since
+`client.html`'s tier resolution (`_applyViewerTier`) only ever runs inside
+a *successful* `/api/ops-state` response, this meant **every session,
+including the primary admin (owner tier)**, stayed pinned to the
+fail-closed member/view-only default — surfaced as "the Tracker's client
+view is stuck read-only for admins," investigated at length across PRs
+#115/#116 (retry logic, then a viewerId diagnostic) before the real
+schema-lag cause was found. The column has since been applied directly to
+the live database; `/api/ops-state` now succeeds normally and tier
+resolution works as designed. This is the **second** outage from this
+exact root cause (a migration merging in the same PR as code that depends
+on it, without a step that guarantees it's actually applied before that
+code reaches production) — the first being `ops_notifications`. See the
+"pending Supabase migrations" gap below for the fix under consideration.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
+- **Pending Supabase migrations reaching prod before they're applied**: two
+  outages so far (`ops_notifications`, then `ops_org_links.deleted_at` —
+  see above) from a migration file merging in the same PR as code that
+  depends on its schema, with no step that guarantees the migration is
+  actually run against production before that code goes live. Options were
+  proposed to the user (2026-07-13) — a CI-run auto-apply step, a pre-merge
+  drift-check gate, an in-app schema-drift check surfaced in Business
+  Setup, hardening `api/ops-state.js` so one query's schema error can't
+  500 the whole batch, and/or a stricter merge-sequencing rule — no
+  decision made yet, flagged here so it isn't lost.
 - **Franchise permission-matching**: `index.html`'s member-permission logic
   and `user.html` don't yet look inside `client.locations[]` — a team member
   assigned only to a franchise service may not be recognized as "assigned to
