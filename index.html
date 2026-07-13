@@ -7440,7 +7440,7 @@ const ADMIN_LEVELS = [
   { value:'creative_manager',   label:'Creative Manager',   desc:'Clients & Tracker only — can edit services/projects & dates — no reports, payroll or settings', color:'#e07b39' },
   { value:'admin',              label:'Admin',              desc:'Full access to users, settings & reports',        color:'#2E5DA6' },
   { value:'super',              label:'Super Admin',        desc:'Full access including admin management',          color:'#9333ea' },
-  { value:'owner',              label:'Owner / Partner',    desc:'Unrestricted — same as primary account',         color:'#e05555' },
+  { value:'owner',              label:'Super Admin',        desc:'Unrestricted — same as primary account',         color:'#e05555' },
 ];
 
 const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
@@ -7454,13 +7454,16 @@ function applyAdminRoleRestrictions(level, adminObj){
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
   updateRoadmapNavVisibility(level, adminObj);
 
-  // Shell title-strip access-level badge (see _getLevelInfo() — its fallback
-  // for an unmatched/missing level already reads as fully unrestricted, so
-  // this never mislabels a real admin as something more restrictive).
+  // Shell title-strip person badge: job title if this admin has one set,
+  // else falls back to their access-level label (see _getLevelInfo() — its
+  // fallback for an unmatched/missing level already reads as fully
+  // unrestricted, so this never mislabels a real admin as something more
+  // restrictive). Badge color always tracks the access level, regardless
+  // of which text is shown.
   const levelBadge = document.getElementById('admin-level-badge');
   if(levelBadge && typeof _getLevelInfo==='function'){
     const info = _getLevelInfo(level);
-    levelBadge.textContent = info.label;
+    levelBadge.textContent = (adminObj && adminObj.title) ? adminObj.title : info.label;
     levelBadge.style.background = info.color+'22';
     levelBadge.style.color = info.color;
   }
@@ -8144,6 +8147,16 @@ window.openAddAdminModal = function(){
           currentAdminInfo = {email:'ssamy@weblightmedia.com', name:'Sarah Samy', title:'Operations Manager'};
           if(typeof _updateSidebarForAdmin==='function')
             setTimeout(()=>_updateSidebarForAdmin({name:'Sarah Samy', title:'Operations Manager'}), 80);
+          // Also reapply the person badge. The primary admin has no real
+          // title field anywhere (api/ops-auth.js never returns one for
+          // her) — 'Operations Manager' above is a client-side sidebar
+          // placeholder only, not a real record, so the badge intentionally
+          // gets no title here and correctly falls back to her access-level
+          // label, matching fresh login via window.doLogin (which also
+          // never threads a title through for her). 'owner' isn't in
+          // RESTRICTED_ADMIN_ROLES so this is a no-op for nav restrictions.
+          if(typeof applyAdminRoleRestrictions==='function')
+            setTimeout(()=>applyAdminRoleRestrictions(_lastViewerLevel||s.level||'owner', {}), 150);
         }
         // Start live sync
         if(typeof startLiveSync==='function') setTimeout(()=>startLiveSync(_lastViewerLevel||s.level||'owner'), 200);
