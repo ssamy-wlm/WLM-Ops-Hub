@@ -244,7 +244,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 #adminApp{flex-direction:row;height:100vh;overflow:hidden;}
 .admin-sidebar{width:224px;flex-shrink:0;background:#152444;display:flex;flex-direction:column;height:100vh;overflow-y:auto;}
 .admin-sidebar-top{display:flex;align-items:center;gap:11px;padding:20px 18px;border-bottom:1px solid #26375c;}
-.admin-sidebar-mark{width:34px;height:34px;border-radius:9px;background:var(--gold);color:#152444;display:flex;align-items:center;justify-content:center;font-family:'Poppins',sans-serif;font-weight:700;font-size:16px;flex-shrink:0;}
+.admin-sidebar-mark{width:34px;height:34px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.admin-sidebar-mark svg{width:22px;height:auto;display:block;}
 .admin-sidebar-brand-name{font-family:'Poppins',sans-serif;font-size:14px;color:#fff;line-height:1.3;}
 .admin-sidebar-brand-sub{font-size:11px;color:#c7d0e6;line-height:1.3;}
 .admin-nav{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:14px 12px;}
@@ -467,7 +468,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   <!-- SIDEBAR -->
   <div class="sidebar">
     <div class="sidebar-logo" style="padding:14px 16px 12px;display:flex;align-items:center;justify-content:center;">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="38" height="38" style="display:block;border-radius:8px;flex-shrink:0;"><rect width="100" height="100" fill="#2E5DA6"/><path d="M 18 56 C 22 14, 78 14, 82 56" fill="none" stroke="#F5B000" stroke-width="8.5" stroke-linecap="round"/><text x="50" y="74" font-family="Arial Black,Arial,sans-serif" font-size="52" font-weight="900" fill="white" text-anchor="middle">W</text><rect x="33" y="78" width="34" height="5.5" rx="2.75" fill="#F5B000"/><rect x="37" y="86.5" width="26" height="5.5" rx="2.75" fill="#F5B000"/><rect x="41" y="95" width="18" height="5.5" rx="2.75" fill="#F5B000"/></svg>
+      <svg viewBox="0 0 30 34" width="32" height="36" fill="none" aria-label="WebLight Media" role="img"><path d="M15 2 C8.4 2 3.5 6.9 3.5 13 c0 3.6 1.8 6.4 4.2 8.3 v2.2 h14.6 v-2.2 c2.4 -1.9 4.2 -4.7 4.2 -8.3 C26.5 6.9 21.6 2 15 2 Z" stroke="#f5b301" stroke-width="2.4" stroke-linejoin="round"/><path d="M9 27 h12 M10 30 h10 M12 33 h6" stroke="#f5b301" stroke-width="2.4" stroke-linecap="round"/></svg>
     </div>
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
@@ -1000,7 +1001,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
        the admin navigates. Replaces the old horizontal top-nav bar. -->
   <nav class="admin-sidebar" id="admin-sidebar">
     <div class="admin-sidebar-top">
-      <div class="admin-sidebar-mark">W</div>
+      <div class="admin-sidebar-mark"><svg viewBox="0 0 30 34" fill="none" aria-label="WebLight Media" role="img"><path d="M15 2 C8.4 2 3.5 6.9 3.5 13 c0 3.6 1.8 6.4 4.2 8.3 v2.2 h14.6 v-2.2 c2.4 -1.9 4.2 -4.7 4.2 -8.3 C26.5 6.9 21.6 2 15 2 Z" stroke="#f5b301" stroke-width="2.4" stroke-linejoin="round"/><path d="M9 27 h12 M10 30 h10 M12 33 h6" stroke="#f5b301" stroke-width="2.4" stroke-linecap="round"/></svg></div>
       <div>
         <div class="admin-sidebar-brand-name">WebLight Media</div>
         <div class="admin-sidebar-brand-sub">Operations Hub</div>
