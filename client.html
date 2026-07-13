@@ -1932,6 +1932,12 @@ async function _pullClientsFromCloud(){
     // fresh on every pull (init, 30s poll, visibility change). Never derived
     // from a cached localStorage session; see _applyViewerTier().
     _applyViewerTier(rec.viewerTier);
+    // Temporary diagnostic — see the matching comment in api/ops-state.js.
+    // Prints the caller's own resolved identity so a stuck view-only report
+    // can be confirmed/ruled out as a token-identity issue from the browser
+    // console, without needing live DB access. Remove alongside that field
+    // once the discrepancy is resolved.
+    console.log('[WLM Tracker] resolved viewer — id:', rec.viewerId, '| tier:', rec.viewerTier, '| level:', rec.viewerLevel);
     _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr));
     _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr));
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,

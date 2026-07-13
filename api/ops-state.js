@@ -96,6 +96,15 @@ export default async function handler(req, res) {
       // signSession() never puts a level on a member token.
       viewerTier: tier, // 'super' | 'manager' | 'member'
       viewerLevel: session.level ?? null,
+      // Temporary diagnostic (added while investigating a report that the
+      // primary admin sees view-only on the Tracker despite tierOf()
+      // resolving her sentinel token to 'super' in every test we can
+      // reproduce) — echoes the caller's OWN token id back, so the browser
+      // console can show definitively whether a given session actually
+      // resolved via the 'primary-admin' sentinel or via some other row.
+      // Harmless to expose: it's only ever the caller's own identity, never
+      // anyone else's. Remove once the discrepancy is resolved.
+      viewerId: session.id ?? null,
       users, admins, clients, goals, feed, messages, roadmapTasks,
       timeOffRequests, timeOffLedger, summaries,
       deletedUserIds: [...deletedIds],
