@@ -1911,12 +1911,22 @@ function _flushCloudPush(){
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
 window.addEventListener('pagehide', _flushCloudPush);
+// Returns true only if this call actually reached _applyViewerTier() with a
+// server-verified tier — false on any failure (no token yet, non-2xx
+// response, network error). Logged via console.warn rather than swallowed
+// silently: this is the ONLY code path that ever resolves real admin
+// capability here, and unlike the old standalone Clients tab (which read
+// the admin's already-resolved index.html session directly, no network
+// round trip needed), the merged Tracker view now depends entirely on this
+// one fetch succeeding — see _initialTierResolve() below, which retries
+// this specifically so a single transient failure can't leave an admin
+// stuck on the fail-closed member/view-only render until the next 30s poll.
 async function _pullClientsFromCloud(){
   const token=_opsToken();
-  if(!token) return;
+  if(!token){ console.warn('[WLM Tracker] No auth token found in this browser — cannot resolve viewer tier or pull client data.'); return false; }
   try{
     const r=await fetch(OPS_STATE_URL,{cache:'no-store', headers:{'Authorization':'Bearer '+token}});
-    if(!r.ok) return;
+    if(!r.ok){ console.warn('[WLM Tracker] /api/ops-state returned HTTP '+r.status+' — tier not resolved this attempt.'); return false; }
     const rec=(await r.json())?.record||{};
     // The ONLY point admin capability is ever granted from — server-verified,
     // fresh on every pull (init, 30s poll, visibility change). Never derived
@@ -1934,7 +1944,25 @@ async function _pullClientsFromCloud(){
     _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr));
     _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr));
     if(typeof refreshNotifBadge==='function') refreshNotifBadge();
-  }catch(e){}
+    return true;
+  }catch(e){ console.warn('[WLM Tracker] Cloud pull failed —', e.message); return false; }
+}
+
+// The first tier resolution on load is the one that matters most — a failure
+// here (cold Vercel function, a transient network blip) used to mean the
+// admin stayed on the synchronous fail-closed member/view-only render for a
+// full 30 seconds (the background poll interval) with zero indication
+// anything was wrong. Retries a few times, quickly, before falling back to
+// that same 30s poll as the last resort. Does not change what gets rendered
+// on success — only how persistently it retries on failure.
+async function _initialTierResolve(){
+  const MAX_ATTEMPTS = 5, RETRY_DELAY_MS = 2500;
+  for(let attempt=1; attempt<=MAX_ATTEMPTS; attempt++){
+    if(await _pullClientsFromCloud()) return true;
+    if(attempt<MAX_ATTEMPTS) await new Promise(r=>setTimeout(r, RETRY_DELAY_MS));
+  }
+  console.warn('[WLM Tracker] Could not resolve viewer tier after '+MAX_ATTEMPTS+' attempts — staying on the fail-closed view-only render until the next successful background sync (every 30s).');
+  return false;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4451,8 +4479,10 @@ function init(){
   // seed a local default catalog only if the pull didn't deliver a real one —
   // seeding before the pull resolves would mark the local default "dirty" and
   // block the real cloud catalog from applying (see the dirty-flag guard in
-  // _pullClientsFromCloud()).
-  _pullClientsFromCloud().then(()=>{
+  // _pullClientsFromCloud()). Uses the retrying wrapper (_initialTierResolve)
+  // rather than a single unretried attempt, since this is also the only call
+  // that can promote an admin out of the fail-closed member/view-only render.
+  _initialTierResolve().then(()=>{
     ensureCatalog();
     populateDropdowns();
     renderClientGrid();
