@@ -1838,6 +1838,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── SCHEMA DRIFT CHECK (read-only, never applies anything) — Super Admin/Owner only ── -->
+      <div class="card" id="schemaDriftCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🗄️ Pending Migrations <span id="schemaDriftBadge" style="display:none;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;margin-left:6px;vertical-align:middle;"></span></div>
+            <div class="card-sub">Checks whether the tables/columns this app's server code depends on actually exist in the live Supabase project. Read-only — never applies or changes anything.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="loadSchemaDrift()">↻ Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="schemaDriftResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to check.</div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -2700,7 +2714,7 @@ function switchAdminTab(el, tab){
   if(tab==='messages')    renderAdminMessages();
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
-    if(_adminLevel==='super' || _adminLevel==='owner') loadErrorLog();
+    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); }
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
 }
@@ -5961,6 +5975,61 @@ async function loadErrorLog(){
   }
 }
 
+// ── Schema drift check (read-only, Super Admin/Owner only) ──
+// Fetches from /api/schema-drift, which only ever reads whether expected
+// tables/columns exist — never applies or changes anything. See CLAUDE.md
+// rule #12 and the ops_org_links.deleted_at outage this exists to catch
+// earlier next time, instead of via a live outage.
+async function loadSchemaDrift(){
+  const box = document.getElementById('schemaDriftResults'); if(!box) return;
+  const badge = document.getElementById('schemaDriftBadge');
+  box.textContent = 'Checking…';
+  if(badge) badge.style.display = 'none';
+  try{
+    const token = _opsToken();
+    if(!token) throw new Error('Not signed in');
+    const res = await fetch('/api/schema-drift', {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    const missingTables = Array.isArray(data.missingTables) ? data.missingTables : [];
+    const missingColumns = Array.isArray(data.missingColumns) ? data.missingColumns : [];
+    const pending = (data.pending ?? (missingTables.length + missingColumns.length));
+    if(badge){
+      badge.style.display = 'inline-block';
+      badge.textContent = pending>0 ? (pending+' pending') : 'Up to date';
+      badge.style.background = pending>0 ? '#fde8e8' : '#e8f8f0';
+      badge.style.color = pending>0 ? 'var(--red,#c0392b)' : 'var(--green,#1e8a5f)';
+    }
+    if(!pending){ box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">✓ Everything this app queries is present in the live database.</div>'; return; }
+    const esc = (s) => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const rows = [
+      ...missingTables.map(t => ({ what: t.table, kind: 'table', migration: t.migration, error: t.error })),
+      ...missingColumns.map(c => ({ what: `${c.table}.${c.column}`, kind: 'column', migration: c.migration, error: c.error })),
+    ].map(r => `
+      <tr>
+        <td style="padding:8px 14px;font-weight:700;">${esc(r.what)}</td>
+        <td style="padding:8px 14px;color:var(--text-light);">${esc(r.kind)}</td>
+        <td style="padding:8px 14px;">${esc(r.migration)}</td>
+        <td style="padding:8px 14px;color:var(--text-light);">${esc(r.error)}</td>
+      </tr>`).join('');
+    box.innerHTML = `
+      <div style="padding:12px 20px 0;color:var(--red,#c0392b);font-weight:600;">⚠️ Run these migrations against the live Supabase project before merging/relying on the code that needs them.</div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;">
+          <thead><tr style="border-bottom:1px solid var(--border);text-align:left;">
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Missing</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Kind</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Migration file</th>
+            <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Error</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }catch(err){
+    box.innerHTML = `<div style="padding:16px 4px;color:var(--red,#c0392b);">Failed to check schema drift: ${err.message}</div>`;
+  }
+}
+
 // Backward-compat aliases
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
@@ -7545,6 +7614,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // visibility as business settings/org chart/roadmap.
   const errorLogCard = document.getElementById('errorLogCard');
   if(errorLogCard) errorLogCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+
+  // Schema drift check (read-only, never applies anything) — same
+  // Super Admin/Owner-only visibility as the error log above.
+  const schemaDriftCard = document.getElementById('schemaDriftCard');
+  if(schemaDriftCard) schemaDriftCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
   // ── Creative Manager: Tracker (+ Messages) only. No Overview, Users,
   //    Reports, Live Feed, Payroll, Business Setup. Tracker access is required so
