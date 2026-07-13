@@ -149,6 +149,19 @@ Don't relitigate them without an explicit decision from the user.
     "Export Backup (JSON)" button, which hits `/api/ops-state` fresh) or a
     SQL query pasted back — don't assume MCP DB access will work.
 
+12. **A PR adding a file under `supabase/migrations/` may not be merged
+    until that migration is confirmed applied against the live Supabase
+    project.** There is no CI step that applies migrations automatically —
+    per rule #6 and rule #11, nothing here auto-applies schema changes, and
+    this agent has no live DB access to do it either. This means the
+    sequencing is manual and must be deliberate: apply the migration
+    yourself (Supabase SQL editor/dashboard) as part of reviewing the PR,
+    *before* clicking merge — not after. Two outages so far
+    (`ops_notifications`, then `ops_org_links.deleted_at`, both documented
+    below) came from exactly this step being skipped. The Business Setup
+    schema-drift check (see below, once built) is the fast way to confirm
+    there's nothing pending before you merge.
+
 ## Current state (as of 2026-07-10)
 
 **Client data:** 85 active clients live in production, generated from the
