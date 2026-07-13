@@ -3082,36 +3082,12 @@ async function addUser(){
   dbSet(DB_KEYS.users, existing);
   _opsSetSnapshot('users', existing); // this exact state is known-synced now
 
-  // ── Auto-add to org chart ──
-  // Reload from localStorage so in-memory state is current, then apply the
-  // layout migration before adding the new node (avoids pushing stale data).
-  orgLoad();
-  const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
-  if(!alreadyInOrg){
-    // If this person is already in the canonical chart defaults, use their correct title/level/position
-    const defNode = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
-    const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
-    const nodeLevel = defNode ? defNode.level : (levelMap[role] || 'member');
-    const nodeTitle = defNode ? defNode.title : (title || 'Team Member');
-    // Place below deepest row (or at canonical position if in defaults)
-    const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 480;
-    const memberCount = orgNodes.filter(n=>n.level==='member').length;
-    let nx = defNode ? defNode.x : 60 + (memberCount % 6) * 140;
-    let ny = defNode ? defNode.y : maxY + 140;
-    if(!defNode && managerId){
-      const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
-      if(mgrNode){ nx = Math.max(0, mgrNode.x + (Math.random()*160-80)); ny = mgrNode.y + 150; }
-    }
-    const newNodeId = defNode ? defNode.id : 'u_node_'+Date.now();
-    orgNodes.push({id:newNodeId, name:fullName, title:nodeTitle, photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
-    if(managerId){
-      const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
-      if(mgrNode && !orgLinks.find(l=>(l[0]===mgrNode.id&&l[1]===newNodeId)||(l[0]===newNodeId&&l[1]===mgrNode.id))){
-        orgLinks.push([mgrNode.id, newNodeId]);
-      }
-    }
-    orgSave(); // saves to localStorage + pushes to cloud via cloudAutoSync
-    if(document.getElementById('org-canvas')) renderOrgChart();
+  // ── Add to org chart — deliberate, confirm-prompted, never automatic ──
+  // No background/event-triggered write to org data (see CLAUDE.md rule #2
+  // and the 2026-07-13 org-chart fix). Skipping this leaves the person off
+  // the chart permanently — there is no retry or later re-prompt.
+  if(confirm(`Add ${fullName} to the company structure chart?`)){
+    _orgAddPerson(fullName, {title, role, managerId});
   }
 
   renderUserTable();
@@ -3615,6 +3591,14 @@ const orgColors = {
 };
 
 // ── Default org chart data  (matches screenshot v5_20260501) ──
+// 2026-07-13: removed 10 phantom/placeholder entries that were never real
+// hires — Mo Money, Sally Smooth, Viral Vera, Art Agent, Carol Rucker,
+// Brian Bynes, Aileen Casey, Neha, Jamil Ahmed (same root cause as the
+// ops_users seed placeholders documented in CLAUDE.md's disabled-functions
+// list) — plus corrected "Yehia Elaify" to the real spelling "Yehia
+// Elafify". This is a CODE-only cleanup; the corresponding stale rows still
+// sitting in the live ops_org_nodes table are a separate, later, dry-run
+// approved step — see CLAUDE.md.
 const ORG_NODES_DEFAULT = [
   // Row 1 — CEO
   {id:'david',    name:'David Joslin',   title:'CEO & Founder',                          photo:null, level:'ceo',      x:406, y:20,  fixed:true},
@@ -3623,18 +3607,8 @@ const ORG_NODES_DEFAULT = [
   {id:'sarah',    name:'Sarah Samy',     title:'HR / Director of Systems & Operations',  photo:null, level:'manager',  x:406, y:200},
   {id:'jacob',    name:'Jacob Joslin',   title:'Director of Finance',                    photo:null, level:'partner',  x:700, y:200},
   // Row 3 Left — under Abby
-  {id:'yehia',    name:'Yehia Elaify',   title:'Sales & Marketing Specialist',           photo:null, level:'member',   x:20,  y:390},
+  {id:'yehia',    name:'Yehia Elafify',  title:'Sales & Marketing Specialist',           photo:null, level:'member',   x:20,  y:390},
   {id:'sherine',  name:'Sherine Magdy',   title:'Social Media Specialist',                photo:null, level:'member',   x:160, y:390},
-  {id:'mo',       name:'Mo Money',       title:'Sales & Account Manager',                photo:null, level:'member',   x:20,  y:560},
-  {id:'sally',    name:'Sally Smooth',   title:'Operations Manager',                     photo:null, level:'member',   x:160, y:560},
-  {id:'viral',    name:'Viral Vera',     title:'Video Specialist',                        photo:null, level:'member',   x:20,  y:730},
-  {id:'artAgent', name:'Art Agent',      title:'AI Specialist',                           photo:null, level:'member',   x:160, y:730},
-  // Row 3 Center — under Sarah
-  {id:'carol',    name:'Carol Rucker',   title:'Writer',                                  photo:null, level:'member',   x:340, y:390},
-  {id:'brian',    name:'Brian Bynes',    title:'Programmer',                              photo:null, level:'member',   x:460, y:390},
-  {id:'aileen',   name:'Aileen Casey',   title:'Print Production',                        photo:null, level:'member',   x:580, y:390},
-  {id:'neha',     name:'Neha',           title:'Web Developer',                           photo:null, level:'member',   x:400, y:560},
-  {id:'jamil',    name:'Jamil Ahmed',    title:'Video Producer',                          photo:null, level:'member',   x:520, y:560},
   // Row 3 Right — under Jacob
   {id:'emily',    name:'Emily Rovillo',  title:'Creative Manager',                        photo:null, level:'member',   x:670, y:390},
   {id:'mostafa',  name:'Mostafa Jamal',  title:'Ads and SEO Specialist',                  photo:null, level:'member',   x:790, y:390},
@@ -3642,14 +3616,40 @@ const ORG_NODES_DEFAULT = [
 ];
 const ORG_LINKS_DEFAULT = [
   ['david','abby'],   ['david','sarah'],   ['david','jacob'],
-  ['abby','yehia'],   ['abby','sherine'],  ['abby','mo'],    ['abby','sally'], ['abby','viral'], ['abby','artAgent'],
-  ['sarah','carol'],  ['sarah','brian'],   ['sarah','aileen'], ['sarah','neha'], ['sarah','jamil'],
+  ['abby','yehia'],   ['abby','sherine'],
   ['jacob','emily'],  ['jacob','mostafa'], ['jacob','assmaa']
 ];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──
 let orgNodes = [];
 let orgLinks = [];
+
+// Links are stored as {id, from, to} objects (id synthesized "<from>_<to>",
+// matching the ops_org_links schema comment) so each link has a stable id —
+// required for the sync engine's dirty-check (_opsDirty requires r.id) and
+// for tombstoning a specific link. Older saved data (and ORG_LINKS_DEFAULT,
+// kept as plain pairs for readability) used bare [from,to] arrays with no
+// id at all, which is why links have never actually synced to the cloud —
+// this migrates either shape to the object shape on load.
+function _orgLinkId(a,b){ return a+'_'+b; }
+function _mkOrgLink(a,b){ return {id:_orgLinkId(a,b), from:a, to:b}; }
+function _migrateOrgLinks(arr){
+  if(!Array.isArray(arr)) return [];
+  return arr.map(l=>{
+    if(Array.isArray(l) && l.length>=2) return _mkOrgLink(l[0], l[1]);
+    if(l && typeof l==='object' && l.from!=null && l.to!=null) return l.id ? l : _mkOrgLink(l.from, l.to);
+    return null;
+  }).filter(Boolean);
+}
+
+function _orgTombstoneNode(id){
+  const arr = dbGet(DB_KEYS.deletedOrgNodeIds)||[];
+  if(!arr.includes(id)){ arr.push(id); dbSet(DB_KEYS.deletedOrgNodeIds, arr); }
+}
+function _orgTombstoneLink(id){
+  const arr = dbGet(DB_KEYS.deletedOrgLinkIds)||[];
+  if(!arr.includes(id)){ arr.push(id); dbSet(DB_KEYS.deletedOrgLinkIds, arr); }
+}
 
 function orgSave(){
   const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
@@ -3663,6 +3663,12 @@ function orgSave(){
   if(typeof cloudAutoSync === 'function') cloudAutoSync(true);
 }
 
+// Pure read — loads whatever is in localStorage (or the canonical defaults
+// on first load / a layout-version bump) with no reconciliation against
+// ORG_NODES_DEFAULT or the users list. A person is only ever added to the
+// chart by a deliberate, explicit action (see _orgAddPerson below) — never
+// re-derived here on every load, tab switch, or cloud pull. See CLAUDE.md
+// rule #2 and the 2026-07-13 disabled-functions entry.
 function orgLoad(){
   const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
   const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
@@ -3673,22 +3679,11 @@ function orgLoad(){
     if(savedNodes && savedNodes.length && savedVer === ORG_LAYOUT_VERSION){
       // Layout version matches — use saved positions (preserves dragged positions)
       orgNodes = savedNodes;
-      orgLinks = savedLinks && Array.isArray(savedLinks) ? savedLinks : JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
-      // Merge in any new default nodes added after the last save
-      let mergeChanged = false;
-      const _savedExcluded = _orgGetExcluded();
-      ORG_NODES_DEFAULT.forEach(def=>{
-        const nm = (def.name||'').toLowerCase();
-        if(ORG_PERMANENTLY_EXCLUDED.some(x=>nm.includes(x))) return;
-        if(_savedExcluded.includes(nm)) return;
-        if(!orgNodes.find(n=>n.id===def.id)){ orgNodes.push(JSON.parse(JSON.stringify(def))); mergeChanged=true; }
-      });
-      if(mergeChanged) try{ localStorage.setItem(nk, JSON.stringify(orgNodes)); }catch(e){}
+      orgLinks = _migrateOrgLinks(savedLinks && Array.isArray(savedLinks) ? savedLinks : ORG_LINKS_DEFAULT);
     } else {
       // Version mismatch or first load — reset to canonical default layout.
-      // _syncUsersToOrgChart() will re-add any registered team members afterward.
       orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-      orgLinks = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+      orgLinks = _migrateOrgLinks(ORG_LINKS_DEFAULT);
       try{
         localStorage.setItem(nk, JSON.stringify(orgNodes));
         localStorage.setItem(lk, JSON.stringify(orgLinks));
@@ -3697,16 +3692,25 @@ function orgLoad(){
     }
   } catch(e){
     orgNodes = JSON.parse(JSON.stringify(ORG_NODES_DEFAULT));
-    orgLinks  = JSON.parse(JSON.stringify(ORG_LINKS_DEFAULT));
+    orgLinks  = _migrateOrgLinks(ORG_LINKS_DEFAULT);
   }
 }
 
 let orgDragging = null, orgDragOffset = {x:0,y:0};
 let orgIdCounter = 200;
 
-// Ensure every registered user account appears in the org chart.
-// Called after orgLoad() so both admins always see the full team,
-// regardless of which admin originally added the user account.
+// DISABLED 2026-07-13 — never call this. It used to run after every
+// orgLoad() (page load, Business Setup tab switch, every cloud pull) and
+// silently re-add/re-derive org-chart nodes by comparing the live users
+// list against current chart state on every single call — exactly the
+// forbidden "diff old-vs-new on load/timer" pattern (CLAUDE.md rule #2).
+// This is why deleted org-chart people kept reappearing: nothing ever
+// tombstoned them, so every subsequent load/tab-switch/pull silently
+// re-derived and re-added them from the users list. Left in place,
+// unreferenced, as a documented record — see CLAUDE.md's disabled-
+// functions list. Adding a person to the chart is now only ever a
+// deliberate action via _orgAddPerson(), triggered by an explicit
+// confirm() prompt at user/admin creation time — never automatic.
 function _syncUsersToOrgChart(){
   if(typeof DB_KEYS === 'undefined') return false;
   const users = (dbGet(DB_KEYS.users)||[]).filter(u=>!u.archived && (u.status==='active'||!u.status));
@@ -3751,12 +3755,46 @@ function _syncUsersToOrgChart(){
   return added > 0;
 }
 
+// Add ONE named person to the chart, right now — the only path that ever
+// writes a new org-chart node. Always the direct result of a deliberate
+// action (a confirm() prompt shown once at user/admin creation — see
+// addUser() and window._addAdminImpl — or the manual "+ Add" panel via
+// addOrgBubble()), never a background/event-triggered scan. No-op if the
+// name is already on the chart.
+function _orgAddPerson(fullName, {title, role, managerId} = {}){
+  orgLoad();
+  const alreadyInOrg = orgNodes.find(n=>n.name.toLowerCase()===fullName.toLowerCase());
+  if(alreadyInOrg) return;
+  // If this person is already in the canonical chart defaults, use their correct title/level/position
+  const defNode = ORG_NODES_DEFAULT.find(d=>d.name.toLowerCase()===fullName.toLowerCase());
+  const levelMap = {Admin:'director', Manager:'manager', Employee:'member', Contractor:'member'};
+  const nodeLevel = defNode ? defNode.level : (levelMap[role] || 'member');
+  const nodeTitle = defNode ? defNode.title : (title || 'Team Member');
+  // Place below deepest row (or at canonical position if in defaults)
+  const maxY = orgNodes.length ? Math.max(...orgNodes.map(n=>n.y)) : 480;
+  const memberCount = orgNodes.filter(n=>n.level==='member').length;
+  let nx = defNode ? defNode.x : 60 + (memberCount % 6) * 140;
+  let ny = defNode ? defNode.y : maxY + 140;
+  if(!defNode && managerId){
+    const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
+    if(mgrNode){ nx = Math.max(0, mgrNode.x + (Math.random()*160-80)); ny = mgrNode.y + 150; }
+  }
+  const newNodeId = defNode ? defNode.id : 'u_node_'+Date.now();
+  orgNodes.push({id:newNodeId, name:fullName, title:nodeTitle, photo:null, level:nodeLevel, x:Math.max(0,nx), y:Math.max(0,ny)});
+  if(managerId){
+    const mgrNode = orgNodes.find(n=>n.id===managerId||n.name===managerId);
+    if(mgrNode && !orgLinks.find(l=>(l.from===mgrNode.id&&l.to===newNodeId)||(l.from===newNodeId&&l.to===mgrNode.id))){
+      orgLinks.push(_mkOrgLink(mgrNode.id, newNodeId));
+    }
+  }
+  orgSave(); // saves to localStorage + pushes to cloud via cloudAutoSync
+  if(document.getElementById('org-canvas')) renderOrgChart();
+}
+
 function initOrgChart(){
   const canvas = document.getElementById('org-canvas');
   if(!canvas) return;
   orgLoad();
-  // Add any registered users not yet in the chart, then sync to cloud
-  if(_syncUsersToOrgChart()) orgSave();
   renderOrgChart();
   // Only add listeners once
   if(!canvas._orgListeners){
@@ -3943,6 +3981,11 @@ function saveOrgEdit(){
   } else doSave(null);
 }
 
+// DISABLED/unreferenced since 2026-07-13 — superseded by the real
+// node/link tombstone mechanism (_orgTombstoneNode/_orgTombstoneLink
+// above, synced to the server). This local-only exclusion list only ever
+// worked around the _syncUsersToOrgChart() reconciliation, which is itself
+// disabled now — left in place as a documented record, not deleted.
 const ORG_EXCLUDED_KEY = 'wl_org_excluded_names';
 function _orgGetExcluded(){ try{ return JSON.parse(localStorage.getItem(ORG_EXCLUDED_KEY)||'[]'); }catch(e){ return []; } }
 function _orgAddExcluded(name){ const ex=_orgGetExcluded(); const n=name.trim().toLowerCase(); if(!ex.includes(n)){ ex.push(n); try{ localStorage.setItem(ORG_EXCLUDED_KEY,JSON.stringify(ex)); }catch(e){} } }
@@ -3952,10 +3995,15 @@ function deleteOrgBubble(){
   const node=orgNodes.find(n=>n.id===id);
   if(node?.fixed){showToast('CEO position is fixed and cannot be removed');return;}
   if(!confirm('Remove this member from the org chart?')) return;
-  // Remember this name so _syncUsersToOrgChart won't re-add them on refresh
-  if(node?.name) _orgAddExcluded(node.name);
+  // Tombstone the node and every link connected to it — a real delete,
+  // synced to the server (see cloudPushAll/api/ops-sync.js), not just a
+  // local-only exclusion list. This is the ONLY thing a node delete
+  // touches: the node itself and its own links, nothing cascades further.
+  const removedLinks = orgLinks.filter(l=>l.from===id||l.to===id);
   orgNodes=orgNodes.filter(n=>n.id!==id);
-  orgLinks=orgLinks.filter(l=>l[0]!==id&&l[1]!==id);
+  orgLinks=orgLinks.filter(l=>l.from!==id&&l.to!==id);
+  _orgTombstoneNode(id);
+  removedLinks.forEach(l=>_orgTombstoneLink(l.id));
   orgSave();
   renderOrgChart();
   document.getElementById('org-edit-panel').style.display='none';
@@ -4300,6 +4348,8 @@ const DB_KEYS = {
   admins:        'wl_admins_db',
   otPolicy:      'wl_ot_policy',
   deletedUserIds:'wl_deleted_user_ids',
+  deletedOrgNodeIds:'wl_deleted_org_node_ids',
+  deletedOrgLinkIds:'wl_deleted_org_link_ids',
   messages:      'wl_messages_db',
   roadmapTasks:  'wl_roadmap_tasks',
   timeOffRequests: 'wl_timeoff_requests',
@@ -5643,10 +5693,28 @@ async function cloudPushAll(silent=false){
     let alreadySent = [];
     try{ alreadySent = JSON.parse(localStorage.getItem('wl_tombstones_sent')||'[]'); }catch(e){}
     const newTombs = allTombIds.filter(id=>!alreadySent.includes(id));
-    const body = { changes };
-    if(newTombs.length) body.tombstones = { users: newTombs };
 
-    if(!Object.keys(changes).length && !newTombs.length){
+    // Org node/link tombstones use the same already-sent dedup pattern, but
+    // tracked under their own keys so an id collision between a user id and
+    // an org node/link id can never cross-contaminate the "already sent" sets.
+    const allOrgNodeTombIds = dbGet(DB_KEYS.deletedOrgNodeIds)||[];
+    let orgNodeAlreadySent = [];
+    try{ orgNodeAlreadySent = JSON.parse(localStorage.getItem('wl_org_node_tombstones_sent')||'[]'); }catch(e){}
+    const newOrgNodeTombs = allOrgNodeTombIds.filter(id=>!orgNodeAlreadySent.includes(id));
+
+    const allOrgLinkTombIds = dbGet(DB_KEYS.deletedOrgLinkIds)||[];
+    let orgLinkAlreadySent = [];
+    try{ orgLinkAlreadySent = JSON.parse(localStorage.getItem('wl_org_link_tombstones_sent')||'[]'); }catch(e){}
+    const newOrgLinkTombs = allOrgLinkTombIds.filter(id=>!orgLinkAlreadySent.includes(id));
+
+    const body = { changes };
+    const tombstones = {};
+    if(newTombs.length) tombstones.users = newTombs;
+    if(newOrgNodeTombs.length) tombstones.orgNodes = newOrgNodeTombs;
+    if(newOrgLinkTombs.length) tombstones.orgLinks = newOrgLinkTombs;
+    if(Object.keys(tombstones).length) body.tombstones = tombstones;
+
+    if(!Object.keys(changes).length && !newTombs.length && !newOrgNodeTombs.length && !newOrgLinkTombs.length){
       updateCloudStatusUI();
       return true; // nothing changed locally — nothing to send
     }
@@ -5663,6 +5731,8 @@ async function cloudPushAll(silent=false){
       throw new Error(`HTTP ${res.status}${detail}`);
     }
     if(newTombs.length){ try{ localStorage.setItem('wl_tombstones_sent', JSON.stringify([...alreadySent, ...newTombs])); }catch(e){} }
+    if(newOrgNodeTombs.length){ try{ localStorage.setItem('wl_org_node_tombstones_sent', JSON.stringify([...orgNodeAlreadySent, ...newOrgNodeTombs])); }catch(e){} }
+    if(newOrgLinkTombs.length){ try{ localStorage.setItem('wl_org_link_tombstones_sent', JSON.stringify([...orgLinkAlreadySent, ...newOrgLinkTombs])); }catch(e){} }
 
     // Refresh from the server so this device reflects exactly what's stored,
     // including anything else that changed concurrently.
@@ -5741,12 +5811,11 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 
     // Only reload the org chart canvas on explicit pulls (login / manual).
     // Background live-sync updates localStorage silently so the user's current
-    // editing session is never interrupted by a mid-edit canvas reset.
+    // editing session is never interrupted by a mid-edit canvas reset. Pure
+    // read — no reconciliation against users or ORG_NODES_DEFAULT (see
+    // orgLoad()/CLAUDE.md rule #2).
     if(!fromLiveSync && (r.orgNodes?.length || r.orgLinks?.length)){
       if(typeof orgLoad === 'function') orgLoad();
-      if(typeof _syncUsersToOrgChart === 'function' && _syncUsersToOrgChart()){
-        if(typeof orgSave === 'function') orgSave();
-      }
       if(document.getElementById('org-canvas') && typeof renderOrgChart === 'function') renderOrgChart();
     }
 
@@ -7705,6 +7774,13 @@ window._addAdminImpl = function(){
 
   showToast(`Admin account created for ${name} ✓`);
   logActivity('admin','Admin','New admin account: '+name+' ('+_getLevelInfo(level).label+')', email);
+
+  // ── Add to org chart — deliberate, confirm-prompted, never automatic ──
+  // Same one-time prompt as addUser(); skipping leaves them off the chart
+  // permanently, no retry or later re-prompt (see CLAUDE.md rule #2).
+  if(typeof _orgAddPerson==='function' && confirm(`Add ${name} to the company structure chart?`)){
+    _orgAddPerson(name, {title, role:'Admin'});
+  }
 
   // ── Show email preview after modal fully closes ──
   const _n=name, _e=email, _t=title, _p=pass, _l=level;

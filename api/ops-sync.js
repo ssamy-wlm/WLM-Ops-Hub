@@ -8,7 +8,14 @@
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
 // settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications? },
-// tombstones?: { users?: [ids] }, restoreUserIds?: [ids] }
+// tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids] },
+// restoreUserIds?: [ids] }
+//
+// orgNodes/orgLinks tombstones set `deleted_at` on the targeted row(s) in
+// place (ops_org_nodes/ops_org_links) rather than a separate exclusion
+// table — those tables already carry/gain a `deleted_at` column for this
+// exact purpose (see the migration adding it to ops_org_links). ops-state.js
+// filters both on `deleted_at is null`. Never a hard SQL DELETE.
 //
 // Every array in `changes` is a list of ONLY the records that actually
 // changed (new or edited) — never the full dataset. Role comes from the
@@ -501,6 +508,25 @@ export default async function handler(req, res) {
         applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
         applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
         applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);
+        // Org chart delete: soft-delete via `deleted_at`, same tier gate as
+        // the upserts above — never a hard SQL DELETE. A node delete only
+        // ever touches the node row and the specific link rows the client
+        // says are connected to it (removedLinks in deleteOrgBubble()) —
+        // there is no cascade computed server-side.
+        if (tombstones && Array.isArray(tombstones.orgNodes) && tombstones.orgNodes.length) {
+          const { error } = await supabase.from('ops_org_nodes')
+            .update({ deleted_at: new Date().toISOString() })
+            .in('id', tombstones.orgNodes);
+          if (error) warnings.push(`deletedOrgNodeIds: ${error.message}`);
+          else applied.deletedOrgNodeIds = tombstones.orgNodes.length;
+        }
+        if (tombstones && Array.isArray(tombstones.orgLinks) && tombstones.orgLinks.length) {
+          const { error } = await supabase.from('ops_org_links')
+            .update({ deleted_at: new Date().toISOString() })
+            .in('id', tombstones.orgLinks);
+          if (error) warnings.push(`deletedOrgLinkIds: ${error.message}`);
+          else applied.deletedOrgLinkIds = tombstones.orgLinks.length;
+        }
         if (Array.isArray(c.timeOffLedger) && c.timeOffLedger.length) {
           applied.timeOffLedger = await insertNewOnly(supabase, 'ops_time_off_ledger', c.timeOffLedger.filter(validGeneric), warnings);
         }

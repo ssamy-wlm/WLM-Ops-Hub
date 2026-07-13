@@ -54,8 +54,8 @@ export default async function handler(req, res) {
       supabase.from('ops_summaries').select('client_id, kind, period_key, data'),
       supabase.from('ops_settings').select('key, data'),
       supabase.from('ops_deleted_user_ids').select('user_id'),
-      supabase.from('ops_org_nodes').select('id, data'),
-      supabase.from('ops_org_links').select('id, data'),
+      supabase.from('ops_org_nodes').select('id, data').is('deleted_at', null),
+      supabase.from('ops_org_links').select('id, data').is('deleted_at', null),
       supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
       supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
     ]);

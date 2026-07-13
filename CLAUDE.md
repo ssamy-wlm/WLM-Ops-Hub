@@ -194,6 +194,25 @@ separate decision from the user:
   (2026-07-08T14:47:37.177480+00) and knocking Assmaa Fouad's payRate back
   down to a stale hardcoded 5 (real rate: 5.5).
 
+- `index.html`: `_syncUsersToOrgChart()` (disabled 2026-07-13) — ran after
+  every `orgLoad()` (page load, every Business Setup tab switch, every cloud
+  pull) and silently re-added/re-derived org-chart nodes by diffing the live
+  `ops_users` list against current chart state on every call — the same
+  forbidden load/timer diff pattern as the batch above, just in the org
+  chart instead of `ops_users` directly. `orgLoad()` itself also carried a
+  second copy of the same pattern — an id-based merge loop that re-added any
+  `ORG_NODES_DEFAULT` entry missing from saved state on every load — also
+  removed. This is why deleted org-chart people (Mo Money, Sally Smooth,
+  Viral Vera, Art Agent, and others) kept reappearing: nothing ever
+  tombstoned them, so the next load/tab-switch/pull always silently
+  re-derived and re-added them. A person is now only ever added to the chart
+  by a deliberate action — `_orgAddPerson()`, called from a one-time
+  `confirm()` prompt at user/admin creation time, or the existing manual
+  "+ Add" panel — never automatically. Real delete/tombstone support was
+  added alongside this (see the entry below); `_orgGetExcluded()` /
+  `_orgAddExcluded()` are also unreferenced now, superseded by the real
+  tombstone mechanism.
+
 **User/admin data cleanup, admin-as-member bug (2026-07-09):** an admin
 opening the embedded tracker was seeing the member "View only" treatment.
 Investigated for a propagation/code bug first (see the cache-bust fix on
@@ -285,6 +304,39 @@ the codebase), fails silently/logged otherwise. See PR #75.
 **Service Catalog:** admin-editable bundles/services, Supabase-backed, single
 source of truth (replaced the old hardcoded `BUNDLE_DEFS`). Non-retroactive
 by design (rule #8). Members can suggest; admins approve. See PR #70.
+
+**Org chart real delete + link sync fix (2026-07-13):** fixes deleted
+org-chart people reappearing (root cause: the auto-reconciliation disabled
+above, plus deletes never actually persisting anywhere). Three changes,
+one PR: (1) killed the auto-reconciliation everywhere it fired — see the
+disabled-functions entry above; (2) real soft-delete for org nodes/links,
+reusing `ops_org_nodes.deleted_at` (already present in the schema but never
+used until now) and a new matching column on `ops_org_links` — a node
+delete tombstones the node itself and only the specific link rows already
+connected to it (computed client-side in `deleteOrgBubble()` before
+removal), never a cascade; `api/ops-state.js` filters both tables on
+`deleted_at is null`, `api/ops-sync.js` sets it via
+`tombstones.orgNodes`/`tombstones.orgLinks`, gated to `tier === 'super'`
+same as the existing org-chart upserts — never a hard SQL DELETE; (3) a
+second, independent bug found during this work: `orgLinks` were stored as
+bare `[from,to]` array pairs with no `.id`, and the sync engine's
+dirty-check (`_opsDirty`) requires every row to have an `.id` to ever be
+considered for push — so links have never actually synced to the cloud.
+Fixed by migrating link storage to `{id, from, to}` objects (id synthesized
+`"<from>_<to>"`, matching the pre-existing `ops_org_links` schema comment),
+migrated on load via `_migrateOrgLinks()`. Adding a person to the chart is
+now a deliberate action only: creating a user or admin shows a one-time
+`confirm()` — "Add [Name] to the company structure chart?" — the org-chart
+write happens only on explicit confirmation, via the new `_orgAddPerson()`
+helper; skipping it leaves that person off the chart permanently, no retry.
+`ORG_NODES_DEFAULT` also shrank from 18 to 9 real people in this same PR —
+CODE only: Mo Money, Sally Smooth, Viral Vera, Art Agent, Carol Rucker,
+Brian Bynes, Aileen Casey, Neha, and Jamil Ahmed (the same phantom-seed
+placeholders documented in the 2026-07-09 entry below, same root cause) were
+removed, and "Yehia Elaify" corrected to the real spelling "Yehia Elafify".
+The corresponding stale rows already sitting in the live `ops_org_nodes`
+table were deliberately NOT touched by this PR — that is a separate,
+later, dry-run-approved step (rule #6), not bundled with the code fix.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
