@@ -992,6 +992,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <input class="form-input" id="bm-new-name" placeholder="New bundle name…" style="flex:1;">
         <button class="btn btn-primary btn-sm" onclick="submitAddBundle()">+ Add</button>
       </div>
+      <div style="font-size:10.5px;color:var(--text-light);margin:2px 0 10px;">Click a bundle to view/edit its services. Changes here apply to the catalog and new assignments only — existing client services are unchanged.</div>
       <div id="bundle-manager-list" style="margin-top:6px;"></div>
     </div>
     <div class="modal-footer">
@@ -3890,7 +3891,11 @@ function renderCatalog(){
   el.innerHTML=html||'<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No services in catalog</div></div>';
   if(SESSION.isAdmin) renderCatalogApprovalQueue();
 }
-function openServiceCatalogModal(id){
+// presetBundleId: only applied when adding a new service (id is falsy) —
+// looked up by id (never a raw name) so this is safe to call from an
+// inline onclick with no quoting/escaping risk from a bundle name
+// containing an apostrophe or other special character.
+function openServiceCatalogModal(id, presetBundleId){
   _el('sc-modal-title').textContent=id?'Edit Service':'Add Service';
   _el('sc-id').value=id||'';
   const roster=getRoster();
@@ -3902,7 +3907,9 @@ function openServiceCatalogModal(id){
     const s=getCatalog().find(x=>x.id===id); if(!s) return;
     _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||'';
   } else {
-    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value=''; bundleEl.value='';
+    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value='';
+    const presetBundle = presetBundleId ? getCatalogBundles().find(b=>b.id===presetBundleId) : null;
+    bundleEl.value = presetBundle ? presetBundle.name : '';
   }
   openModal('serviceCatalogModal');
 }
@@ -3919,33 +3926,80 @@ function saveServiceCatalog(){
   closeModal('serviceCatalogModal');
   populateServiceDropdown();
   renderCatalog();
+  renderBundleManagerList();
   showToast('Catalog updated ✓');
 }
 function deleteServiceCatalog(id){
-  if(!confirm('Remove this service from the catalog?')) return;
   const {bundles, services}=getFullCatalog();
-  saveFullCatalog(bundles, services.filter(s=>s.id!==id));
+  const s=services.find(x=>x.id===id);
+  if(!confirm(`Remove "${s?.name||'this service'}" from the catalog? Existing client assignments are unaffected.`)) return;
+  saveFullCatalog(bundles, services.filter(x=>x.id!==id));
   populateServiceDropdown();
   renderCatalog();
+  renderBundleManagerList();
   showToast('Service removed from catalog');
+}
+// Quick reassign from the Bundle Manager's expanded view — touches ONLY the
+// `bundle` field on this one service, nothing else, so it can never blank
+// any of its other fields (name/freq/desc/defaultAssignee stay exactly as
+// they were). newBundleName is '' for "— No Bundle —" (standalone).
+function quickMoveServiceToBundle(id, newBundleName){
+  const {bundles, services}=getFullCatalog();
+  const s=services.find(x=>x.id===id); if(!s) return;
+  s.bundle = newBundleName || null;
+  saveFullCatalog(bundles, services);
+  populateServiceDropdown();
+  renderCatalog();
+  renderBundleManagerList();
+  showToast('Service moved ✓');
 }
 
 // ── Bundle Manager (admin) ──────────────────────────────────────────────
+// Which bundles are currently expanded to show their services — purely
+// local UI state (never persisted/synced), reset each time the modal opens.
+let _bmExpanded = new Set();
 function openBundleManagerModal(){
   _el('bm-new-name').value='';
+  _bmExpanded = new Set();
   renderBundleManagerList();
   openModal('bundleManagerModal');
+}
+function toggleBundleExpand(id){
+  if(_bmExpanded.has(id)) _bmExpanded.delete(id); else _bmExpanded.add(id);
+  renderBundleManagerList();
 }
 function renderBundleManagerList(){
   const el=_el('bundle-manager-list'); if(!el) return;
   const {bundles, services}=getFullCatalog();
   if(!bundles.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-title">No bundles yet</div></div>'; return; }
+  const bundleOptionsFor = (currentName) => `<option value="">— No Bundle —</option>`
+    + bundles.map(bb=>`<option value="${escHtmlClient(bb.name)}"${bb.name===currentName?' selected':''}>${escHtmlClient(bb.name)}</option>`).join('');
   el.innerHTML=bundles.map(b=>{
-    const count=services.filter(s=>s.bundle===b.name).length;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
-      <input class="form-input" style="flex:1;padding:6px 10px;font-size:12px;" value="${escHtmlClient(b.name)}" onchange="renameBundleFromInput('${b.id}',this.value)">
-      <span style="font-size:10.5px;color:var(--text-light);white-space:nowrap;">${count} service${count===1?'':'s'}</span>
-      <button class="btn btn-xs btn-danger" onclick="deleteBundleConfirm('${b.id}','${count}')">✕</button>
+    const items=services.filter(s=>s.bundle===b.name);
+    const count=items.length;
+    const expanded=_bmExpanded.has(b.id);
+    const svcRows = items.map(s=>`
+      <div style="display:flex;align-items:center;gap:6px;padding:7px 9px;background:var(--bg,#f4f6f9);border-radius:7px;margin-bottom:5px;">
+        <span class="chip chip-${s.freq}" style="flex-shrink:0;">${s.freq}</span>
+        <div style="flex:1;min-width:0;overflow:hidden;">
+          <div style="font-size:11.5px;font-weight:700;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escHtmlClient(s.name)}">${escHtmlClient(s.name)}</div>
+          ${s.defaultAssignee ? `<div style="font-size:9.5px;color:var(--text-light);">${escHtmlClient(getUser(s.defaultAssignee)?.name||s.defaultAssignee)}</div>` : ''}
+        </div>
+        <select class="form-select" style="width:140px;flex-shrink:0;font-size:10.5px;padding:4px 6px;" title="Move to a different bundle" onchange="quickMoveServiceToBundle('${s.id}', this.value)">${bundleOptionsFor(b.name)}</select>
+        <button class="btn btn-xs btn-outline" title="Edit" onclick="editServiceCatalog('${s.id}')">✏️</button>
+        <button class="btn btn-xs btn-danger" title="Remove" onclick="deleteServiceCatalog('${s.id}')">✕</button>
+      </div>`).join('');
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;">
+        <span style="cursor:pointer;font-size:10px;color:var(--text-light);display:inline-block;transition:transform .15s;${expanded?'transform:rotate(90deg);':''}" onclick="toggleBundleExpand('${b.id}')">▶</span>
+        <input class="form-input" style="flex:1;padding:6px 10px;font-size:12px;" value="${escHtmlClient(b.name)}" onchange="renameBundleFromInput('${b.id}',this.value)">
+        <span style="font-size:10.5px;color:var(--text-light);white-space:nowrap;cursor:pointer;" onclick="toggleBundleExpand('${b.id}')">${count} service${count===1?'':'s'}</span>
+        <button class="btn btn-xs btn-danger" onclick="deleteBundleConfirm('${b.id}','${count}')">✕</button>
+      </div>
+      ${expanded ? `<div style="padding:0 10px 10px;">
+        ${svcRows || '<div style="font-size:10.5px;color:var(--text-light);padding:4px 0 8px;">No services in this bundle yet.</div>'}
+        <button class="btn btn-xs btn-outline" onclick="openServiceCatalogModal(null,'${b.id}')">+ Add Service</button>
+      </div>` : ''}
     </div>`;
   }).join('');
 }
