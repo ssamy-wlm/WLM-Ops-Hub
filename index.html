@@ -1852,6 +1852,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── DUPLICATE SERVICE SCAN (read-only, never removes anything) — Super Admin/Owner only ── -->
+      <div class="card" id="dupServiceScanCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🔁 Duplicate Service Scan <span id="dupServiceScanBadge" style="display:none;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;margin-left:6px;vertical-align:middle;"></span></div>
+            <div class="card-sub">Lists active services that share a client, location, and catalog item/name — candidates to review by eye, not confirmed duplicates. Same name doesn't always mean duplicate (e.g. two legitimately separate LinkedIn instances for one client). Read-only — never removes or changes anything.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="loadDupServiceScan()">↻ Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="dupServiceScanResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to check.</div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -2714,7 +2728,7 @@ function switchAdminTab(el, tab){
   if(tab==='messages')    renderAdminMessages();
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
-    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); }
+    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); loadDupServiceScan(); }
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
 }
@@ -6030,6 +6044,76 @@ async function loadSchemaDrift(){
   }
 }
 
+// ── Duplicate service scan (read-only, Super Admin/Owner only) ──
+// Fetches from /api/duplicate-services-scan, which only ever reads and
+// groups — never removes or changes anything. Surfaces candidates (same
+// client + location + catalog item/name) for a human to review; a same-name
+// match is not automatically a real duplicate (see CLAUDE.md: CRN's two
+// legitimate LinkedIn service instances), so this never offers a delete
+// action itself — any actual removal is a separate, deliberate,
+// dry-run/typed-confirmation-gated tool built against a specific reviewed
+// list, same pattern as the earlier cleanup-duplicate-services.js.
+async function loadDupServiceScan(){
+  const box = document.getElementById('dupServiceScanResults'); if(!box) return;
+  const badge = document.getElementById('dupServiceScanBadge');
+  box.textContent = 'Checking…';
+  if(badge) badge.style.display = 'none';
+  try{
+    const token = _opsToken();
+    if(!token) throw new Error('Not signed in');
+    const res = await fetch('/api/duplicate-services-scan', {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    const count = data.candidateCount ?? candidates.length;
+    if(badge){
+      badge.style.display = 'inline-block';
+      badge.textContent = count>0 ? (count+' candidate'+(count!==1?'s':'')) : 'None found';
+      badge.style.background = count>0 ? '#fde8e8' : '#e8f8f0';
+      badge.style.color = count>0 ? 'var(--red,#c0392b)' : 'var(--green,#1e8a5f)';
+    }
+    if(!count){ box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">✓ No active services share a client + location + catalog item/name.</div>'; return; }
+    const esc = (s) => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const groupsHtml = candidates.map(g => {
+      const rows = g.services.map(s => `
+        <tr>
+          <td style="padding:7px 14px;font-weight:700;">${esc(s.name)}</td>
+          <td style="padding:7px 14px;color:var(--text-light);">${esc(s.freq)}</td>
+          <td style="padding:7px 14px;">${esc(s.due)}</td>
+          <td style="padding:7px 14px;">${esc(s.lastDone)}</td>
+          <td style="padding:7px 14px;">${esc(s.assigneeName)}</td>
+          <td style="padding:7px 14px;color:var(--text-light);max-width:220px;">${esc(s.notes)}</td>
+          <td style="padding:7px 14px;color:var(--text-light);font-size:11px;">${esc(s.id)}</td>
+        </tr>`).join('');
+      return `
+        <div style="margin:14px 20px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <div style="padding:9px 14px;background:var(--bg2);font-weight:700;font-size:12px;">
+            ${esc(g.clientName)}${g.locationName?` — ${esc(g.locationName)} (franchise)`:''}
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead><tr style="border-bottom:1px solid var(--border);text-align:left;">
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Service</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Freq</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Due</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Last done</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Assignee</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Notes</th>
+                <th style="padding:7px 14px;color:var(--text-light);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">Service ID</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+    box.innerHTML = `
+      <div style="padding:12px 20px 0;color:var(--text-mid);">Review each group below — differing assignee/notes/due dates often mean these are legitimately separate, not duplicates. Nothing here can be removed from this screen.</div>
+      ${groupsHtml}`;
+  }catch(err){
+    box.innerHTML = `<div style="padding:16px 4px;color:var(--red,#c0392b);">Failed to check for duplicate services: ${err.message}</div>`;
+  }
+}
+
 // Backward-compat aliases
 async function cloudPushUsers(silent=false){ return cloudPushAll(silent); }
 async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
@@ -7619,6 +7703,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // Super Admin/Owner-only visibility as the error log above.
   const schemaDriftCard = document.getElementById('schemaDriftCard');
   if(schemaDriftCard) schemaDriftCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+
+  // Duplicate service scan (read-only, never removes anything) — same
+  // Super Admin/Owner-only visibility as the checks above.
+  const dupServiceScanCard = document.getElementById('dupServiceScanCard');
+  if(dupServiceScanCard) dupServiceScanCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
   // ── Creative Manager: Tracker (+ Messages) only. No Overview, Users,
   //    Reports, Live Feed, Payroll, Business Setup. Tracker access is required so
