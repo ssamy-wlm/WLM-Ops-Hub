@@ -2859,7 +2859,7 @@ function renderProjects(c){
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;" onclick="event.stopPropagation();">
             <span class="chip chip-${p.status}" style="font-size:8px;">${(p.status||'in-progress').replace('-',' ')}</span>
             <span class="priority-badge pb-${p.priority}" style="font-size:8px;">${p.priority||'medium'}</span>
-            ${canEdit?`<input type="date" id="svcdone-${c.id}-${p.serviceId}" value="${today()}" max="${today()}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();">
+            ${canEdit?`<input type="date" id="svcdone-${c.id}-${p.serviceId}" value="${today()}" max="${today()}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();" onchange="event.stopPropagation();onSvcDoneDateChange('${c.id}','${p.serviceId}')">
             <button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')" title="Mark done today, roll due date forward">${ICON_CHECK}</button>
             <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${p.serviceId}')" title="Edit">${ICON_EDIT}</button>`:''}
           </div>
@@ -3797,6 +3797,36 @@ function markServiceDone(clientId, serviceId, locationId){
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
 }
 
+// ── Editing the "mark as done on this date" input directly, WITHOUT clicking
+// Mark Done — this input previously had no onchange at all, so changing it
+// alone was a complete no-op: nothing ever read its value except the
+// separate Mark Done click. That's the confirmed root cause of the
+// "editing lastDone doesn't save" report — the date visibly changed in the
+// field, but nothing else in the page was ever wired to react to it, so no
+// write was ever attempted (not a broken network call, a missing handler).
+// This fires the same lastDone/due update through the identical write path
+// as markServiceDone() (updateClient -> saveClients -> immediate flush, so
+// this correction can't be lost to the debounce window either) but skips
+// the "marked complete" notification/toast, since correcting a date isn't
+// the same event as completing the work today.
+function onSvcDoneDateChange(clientId, serviceId, locationId){
+  const c=getClient(clientId); if(!c) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  const svc=loc?(loc.services||[]).find(s=>s.id===serviceId):(c.services||[]).find(s=>s.id===serviceId);
+  if(!svc) return;
+  const dateEl=_el('svcdone-'+clientId+'-'+serviceId);
+  const newDate=dateEl ? dateEl.value : '';
+  if(!newDate) return; // never write a blank value over an existing lastDone
+  svc.lastDone=newDate;
+  svc.due=calcNextDue(svc.freq, newDate);
+  updateClient(c);
+  if(!loc) syncServicesToProjects(clientId);
+  renderClientDetail(clientId, loc?'services':'projects');
+  renderMyWork();
+  if(typeof _flushCloudPush==='function') _flushCloudPush();
+  showToast(`Last done date updated for ${svc.name} ✓`);
+}
+
 // ── Franchises / locations under a client (e.g. Servpro -> Yonkers) ──────
 // Each location holds its own independent services[] array, structurally
 // identical to a client's top-level services. A client may have both
@@ -4307,7 +4337,7 @@ function renderMyWork(){
             <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
             <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}</div>
             <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
-            <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;">
+            <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}')">
             <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}')">✅ Mark Done</button>
           </div>`;
         }).join('');
@@ -4335,7 +4365,7 @@ function renderMyWork(){
                 <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
                 <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}</div>
                 <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
-                <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;">
+                <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}','${loc.id}')">
                 <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}','${loc.id}')">✅ Mark Done</button>
               </div>`;
             }).join('')}
