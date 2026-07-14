@@ -2740,10 +2740,7 @@ function renderClientDetail(clientId, tab){
     :`<span style="font-size:22px;font-weight:800;color:#fff;">${init}</span>`;
 
   const adminContact=SESSION.isAdmin?`
-    <div class="detail-info-item"><div class="detail-info-label">👤 Owner</div><div class="detail-info-value">${c.ownerName||'—'}</div></div>
-    <div class="detail-info-item"><div class="detail-info-label">📧 Email 🔒</div><div class="detail-info-value" style="font-size:10px;word-break:break-all;">${c.ownerEmail||'—'}</div></div>
-    <div class="detail-info-item"><div class="detail-info-label">📞 Phone</div><div class="detail-info-value">${c.ownerPhone||'—'}</div></div>
-    <div class="detail-info-item"><div class="detail-info-label">🏭 Industry</div><div class="detail-info-value">${c.industry||'—'}</div></div>`:
+    <div class="detail-info-item"><div class="detail-info-label">📧 Email 🔒</div><div class="detail-info-value" style="font-size:10px;word-break:break-all;">${c.ownerEmail||'—'}</div></div>`:
   '';
 
   const tabs=['overview','projects','services','brand-notes'].map(t=>`
@@ -2768,10 +2765,6 @@ function renderClientDetail(clientId, tab){
           ${c.website?`<a href="${c.website}" target="_blank" style="font-size:10px;color:var(--text);">🌐 ${c.website}</a>`:''}
         </div>
         <div class="detail-info-grid">
-          <div class="detail-info-item"><div class="detail-info-label">Account Manager</div><div class="detail-info-value">${c.accountManager||'—'}</div></div>
-          <div class="detail-info-item"><div class="detail-info-label">Start Date</div><div class="detail-info-value">${c.start||'—'}</div></div>
-          <div class="detail-info-item"><div class="detail-info-label">Referred By</div><div class="detail-info-value">${c.referredBy||'—'}</div></div>
-          <div class="detail-info-item"><div class="detail-info-label">Initial Bundle</div><div class="detail-info-value">${c.initialProject||'—'}</div></div>
           ${adminContact}
         </div>
       </div>
