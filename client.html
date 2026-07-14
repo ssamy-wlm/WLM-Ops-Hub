@@ -2484,6 +2484,11 @@ function selectClientColor(el){
 //  RENDER CLIENT GRID
 // ═══════════════════════════════════════════════════════
 let _activeClientId=null;
+// Remembers whichever detail tab is currently showing so a background
+// re-render (30s poll, visibilitychange — see renderClientGrid()'s re-anchor
+// below) can restore it instead of silently falling back to 'overview'.
+// Reset to 'overview' only on a deliberate fresh open (openClientDetail).
+let _activeDetailTab='overview';
 
 function renderClientGrid(list){
   list=list||getClients();
@@ -2713,6 +2718,7 @@ function openClientDetail(id, cardEl){
     return;
   }
   _activeClientId=id;
+  _activeDetailTab='overview'; // a fresh open always starts on Overview
   panel.style.display='block';
   if(cardEl) cardEl.insertAdjacentElement('afterend', panel);
   renderClientDetail(id);
@@ -2721,7 +2727,11 @@ function openClientDetail(id, cardEl){
 
 function renderClientDetail(clientId, tab){
   const c=getClient(clientId); if(!c) return;
-  tab=tab||'overview';
+  // No explicit tab (e.g. a background re-render triggered by the 30s poll
+  // or a visibilitychange, not a user click) — stay on whatever tab was
+  // already showing instead of silently snapping back to Overview.
+  tab=tab||_activeDetailTab||'overview';
+  _activeDetailTab=tab;
   const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
   const totalPct=calcClientOverallStats(c).overallPct;
