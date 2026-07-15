@@ -96,6 +96,13 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .su-actions{display:flex;gap:4px;margin-top:8px;}
 .su-btn{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;}
 .su-btn:hover{background:var(--bg2);color:var(--text);}
+/* Creative/Production/Account Manager: Summaries and Live Feed are view-only
+   for these three levels — toggled via a body class (not per-element hiding)
+   so it also covers elements re-rendered later (e.g. a fresh deleteSummary
+   button on every refreshSummaryLists() call). See applyAdminRoleRestrictions(). */
+body.restrict-insights-actions #summaryGenerateBtns,
+body.restrict-insights-actions .summary-del-btn,
+body.restrict-insights-actions #clearFeedBtn{display:none!important;}
 
 /* ── MAIN ── */
 .main{margin-left:240px;flex:1;min-width:0;min-height:100vh;display:flex;flex-direction:column;}
@@ -1270,7 +1277,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="report">Reports</option>
             <option value="nav">Navigation</option>
           </select>
-          <button class="btn btn-danger btn-sm" onclick="clearFeed()">🗑 Clear Feed</button>
+          <button class="btn btn-danger btn-sm" id="clearFeedBtn" onclick="clearFeed()">🗑 Clear Feed</button>
         </div>
       </div>
       <!-- Live stats bar -->
@@ -1310,7 +1317,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📝 Progress Summaries</div>
           <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Auto-compiled from the production tracker — progress logs, tasks completed, and milestones</div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;" id="summaryGenerateBtns">
           <button class="btn btn-blue" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openWeeklySummaryModal()">📋 Weekly</button>
           <button class="btn btn-primary" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openMonthlySummaryModal()">📊 Monthly</button>
           <button class="btn" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;background:var(--accent);color:#fff;" onclick="openYearlySummaryModal()">📅 Yearly</button>
@@ -5350,7 +5357,7 @@ function renderWeeklySummaries(){
         <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
         <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
         <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-        <button class="btn btn-sm btn-danger" onclick="deleteSummary('weekly',${s.id})">✕</button>
+        <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('weekly',${s.id})">✕</button>
       </div>
     </div>
     <div class="summary-card-body">
@@ -5380,7 +5387,7 @@ function renderMonthlySummaries(){
         <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
         <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
         <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-        <button class="btn btn-sm btn-danger" onclick="deleteSummary('monthly',${s.id})">✕</button>
+        <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('monthly',${s.id})">✕</button>
       </div>
     </div>
     <div class="summary-card-body">
@@ -5424,7 +5431,7 @@ function renderYearlySummaries(){
           <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
           <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
           <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-          <button class="btn btn-sm btn-danger" onclick="deleteSummary('yearly',${s.id})">✕</button>
+          <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('yearly',${s.id})">✕</button>
         </div>
       </div>
       <div class="summary-card-body">
@@ -7599,6 +7606,14 @@ function applyAdminRoleRestrictions(level, adminObj){
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
   updateRoadmapNavVisibility(level, adminObj);
 
+  // Creative/Production/Account Manager: Summaries and Live Feed are visible
+  // (see below) but strictly view-only — no generating/deleting summaries,
+  // no clearing the feed. Set independently of the nav-visibility branches
+  // below since production_manager's nav already showed both tabs before
+  // this restriction existed. See CLAUDE.md's permission project.
+  const isRestrictedManagerLevel = level === CREATIVE_MANAGER_ROLE || RESTRICTED_ADMIN_ROLES.includes(level);
+  document.body.classList.toggle('restrict-insights-actions', isRestrictedManagerLevel);
+
   // Shell title-strip person badge: job title if this admin has one set,
   // else falls back to their access-level label (see _getLevelInfo() — its
   // fallback for an unmatched/missing level already reads as fully
@@ -7627,14 +7642,15 @@ function applyAdminRoleRestrictions(level, adminObj){
   const schemaDriftCard = document.getElementById('schemaDriftCard');
   if(schemaDriftCard) schemaDriftCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
-  // ── Creative Manager: Tracker (+ Messages) only. No Overview, Users,
-  //    Reports, Live Feed, Payroll, Business Setup. Tracker access is required so
+  // ── Creative Manager: Tracker + Messages, plus view-only Summaries/Live
+  //    Feed under Insights (permission project follow-up) — no Overview,
+  //    Users, Payroll, Business Setup. Tracker access is required so
   //    she can open her own "My Work" view inside client.html — the standalone
   //    Clients tab that used to also be shown here was merged into the
   //    Tracker's own client view and removed (see CLAUDE.md). ──
   if(level === CREATIVE_MANAGER_ROLE){
-    // Show tabs: tracker, messages. Hide everything else.
-    const showOnly = ['tracker','messages'];
+    // Show tabs: tracker, messages, summaries, livefeed. Hide everything else.
+    const showOnly = ['tracker','messages','summaries','livefeed'];
     document.querySelectorAll('.admin-nav-item').forEach(el=>{
       const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
       if(!m) return;
@@ -7658,13 +7674,15 @@ function applyAdminRoleRestrictions(level, adminObj){
 
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
-  // so she keeps Live Feed & Business Setup; Account Manager stays clients-only.
-  // 'users' is hidden for both — see CLAUDE.md's permission project Step 1,
-  // which also hard-blocks this server-side (canEditUsers()) so this is UX
-  // convenience, not the actual security boundary.
+  // so she keeps Business Setup; Account Manager stays clients-only. Both now
+  // keep Summaries/Live Feed (view-only — see restrict-insights-actions
+  // above) instead of Live Feed being hidden for account_manager. 'users' is
+  // hidden for both — see CLAUDE.md's permission project Step 1, which also
+  // hard-blocks this server-side (canEditUsers()) so this is UX convenience,
+  // not the actual security boundary.
   const hideTabs = level === 'production_manager'
     ? ['payroll','timeoff','archive','users']
-    : ['payroll','timeoff','archive','bizSettings','livefeed','users'];
+    : ['payroll','timeoff','archive','bizSettings','users'];
   document.querySelectorAll('.admin-nav-item').forEach(el=>{
     const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
     if(m && hideTabs.includes(m[1])) el.style.display='none';
