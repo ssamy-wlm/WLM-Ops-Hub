@@ -2032,15 +2032,22 @@ function showSection(id, el){
 }
 
 // ── TRACKER (embedded production tracker iframe) ──
+// Cache-busted so a browser tab left open across a deploy (or an
+// aggressively cached static asset) can never keep serving an old
+// client.html into this iframe indefinitely — same fix already applied to
+// index.html's tracker iframes (see commit 934f8cb), just missing here.
+// The src==='about:blank' guard in loadTrackerFrame() only loads it once
+// per page session anyway, so this doesn't cause repeat reloads there.
 function loadTrackerFrame(){
   const frame = document.getElementById('trackerFrame');
-  if(frame && frame.src==='about:blank') frame.src = 'client.html?usermode=1';
+  if(frame && frame.src==='about:blank') frame.src = 'client.html?usermode=1&v=' + Date.now();
 }
 function openTrackerTo(clientId, projectId){
   const params = new URLSearchParams();
   params.set('usermode','1');
   if(clientId) params.set('openClient', clientId);
   if(projectId) params.set('openProject', projectId);
+  params.set('v', Date.now());
   const frame = document.getElementById('trackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
   showSection('tracker', document.getElementById('nav-tracker'));
@@ -2049,6 +2056,7 @@ function openTrackerPage(pageName, el){
   const params = new URLSearchParams();
   params.set('usermode','1');
   if(pageName) params.set('page', pageName);
+  params.set('v', Date.now());
   const frame = document.getElementById('trackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
   showSection('tracker', el);
