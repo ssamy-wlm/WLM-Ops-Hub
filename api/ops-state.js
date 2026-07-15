@@ -12,15 +12,30 @@
 //     but NOT the payroll ledger, NOT business settings/org chart/roadmap.
 //     Within this tier, the three specialized manager levels (creative/
 //     production/account manager — see canEditUsers()) additionally get
-//     other people's payRate/hours stripped from user records; plain
-//     'admin' keeps the full access it always had.
+//     other people's payRate/hours stripped from user records, and lose
+//     payroll-save/time-off events from the Live Feed (see
+//     stripSensitiveFeed()); plain 'admin' keeps the full access it
+//     always had.
 //   - 'member': clients (read-only visibility), own time-off only, minimal
-//     user/admin fields for display, nothing else.
+//     user/admin fields for display, Live Feed with the same
+//     payroll/time-off events stripped, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
+
+// Live Feed entries are free-text (see logActivity() in index.html) — the
+// sensitive ones aren't a separate field to strip, the entire event IS the
+// sensitive content (e.g. a payroll save logs the literal dollar total as
+// its "detail" string). 'admin' covers user/admin account CRUD and the
+// payroll-save event; 'timeoff' covers individual time-off decisions/dates.
+// Dropped entirely (not redacted) for member tier and the three restricted
+// manager levels — 'admin' level and super/owner see the full feed.
+const SENSITIVE_FEED_TYPES = new Set(['admin', 'timeoff']);
+function stripSensitiveFeed(feed) {
+  return (feed || []).filter(e => !SENSITIVE_FEED_TYPES.has(e.type));
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -209,7 +224,11 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
       record.notificationSettings = null;
-      // announcement, goals, feed, messages, clients, notifications stay visible to everyone.
+      // Payroll saves and time-off decisions are stripped out of the Live
+      // Feed for members too — same leak, same fix (see the permission
+      // project's Insights follow-up) — never gated by tier before this.
+      record.feed = stripSensitiveFeed(record.feed);
+      // announcement, goals, messages, clients, notifications stay visible to everyone.
     } else if (tier === 'manager') {
       // Every other admin level: team + client management (full user records,
       // all time-off requests, summaries, archive), but NOT the payroll
@@ -242,6 +261,9 @@ export default async function handler(req, res) {
           const { payRate, hours, ...rest } = u;
           return rest;
         });
+        // Same Live Feed leak as member tier above — payroll saves and
+        // time-off decisions dropped entirely for these three levels too.
+        record.feed = stripSensitiveFeed(record.feed);
       }
       // deletedUserIds, timeOffRequests, summaries stay full — team/client management.
     }
