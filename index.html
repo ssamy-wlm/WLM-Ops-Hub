@@ -1959,8 +1959,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <option value="production_manager">Production Manager</option>
           <option value="creative_manager">Creative Manager — Clients &amp; Tracker only, no reports/payroll</option>
           <option value="admin" selected>Admin — Full access to users, settings &amp; reports</option>
-          <option value="super">Super Admin — Full access including admin management</option>
-          <option value="owner">Owner / Partner — Unrestricted — same as primary account</option>
         </select>
         <div style="margin-top:8px;">
           <span id="adminLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
@@ -7581,6 +7579,15 @@ const ADMIN_LEVELS = [
   { value:'owner',              label:'Super Admin',        desc:'Unrestricted — same as primary account',         color:'#e05555' },
 ];
 
+// The two Super Admin values are reserved for the primary-admin sentinel
+// (ssamy@weblightmedia.com) and the CEO/owner exception already in place —
+// never assignable to a NEW admin created through the Add Admin modal. Kept
+// out of ADMIN_LEVELS' consumers here (not removed from ADMIN_LEVELS itself)
+// so _getLevelInfo()/the Edit Admin modal still correctly display/preserve
+// an existing 'super' or 'owner' admin's level — this only narrows what a
+// brand-new admin can be assigned.
+const NEW_ADMIN_ASSIGNABLE_LEVELS = ADMIN_LEVELS.filter(l => l.value !== 'super' && l.value !== 'owner');
+
 const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
 // creative_manager is its own category — clients-only with full tracker edit rights
 const CREATIVE_MANAGER_ROLE  = 'creative_manager';
@@ -7739,7 +7746,8 @@ function _getLevelInfo(value){
 function _populateAdminLevelSelect(){
   const sel = document.getElementById('newAdminLevel');
   if(!sel) return;
-  sel.innerHTML = ADMIN_LEVELS.map(l=>
+  // Super Admin is never offered here — see NEW_ADMIN_ASSIGNABLE_LEVELS.
+  sel.innerHTML = NEW_ADMIN_ASSIGNABLE_LEVELS.map(l=>
     `<option value="${l.value}">${l.label} — ${l.desc}</option>`
   ).join('');
   sel.value = 'admin'; // default
