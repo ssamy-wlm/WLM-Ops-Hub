@@ -799,16 +799,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           </div>
         </div>
 
-        <!-- Notification cards from client module -->
-        <div id="assign-notif-banner" style="display:none;background:linear-gradient(90deg,rgba(45,107,182,.09),rgba(135,171,213,.05));border:1px solid rgba(45,107,182,.18);border-radius:12px;padding:14px 18px;margin-bottom:18px;">
-          <div style="display:flex;align-items:center;gap:9px;margin-bottom:11px;">
-            <span style="font-size:18px;">🔔</span>
-            <div style="font-size:12px;font-weight:700;color:var(--text-dark);text-transform:uppercase;letter-spacing:.06em;">Client Notifications</div>
-            <div id="assign-notif-count" style="font-size:11px;font-weight:700;background:rgba(45,107,182,.12);color:#2E5DA6;border:1px solid rgba(45,107,182,.2);border-radius:20px;padding:1px 9px;"></div>
-            <button class="btn btn-xs btn-outline" style="margin-left:auto;" onclick="markAssignNotifRead()">Mark all read</button>
-          </div>
-          <div id="assign-notif-list"></div>
-        </div>
+        <!-- ── Section A: My assignments (primary content, shown first) ── -->
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">My Assignments</div>
 
         <!-- Stats row -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
@@ -821,6 +813,19 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div id="my-assignments-list">
           <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">Loading assignments…</div>
         </div>
+
+        <!-- ── Section B: Notifications (person-scoped only — see _getAssignNotifs()) ── -->
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin:26px 0 9px;">Notifications</div>
+        <div id="assign-notif-banner" style="display:none;background:linear-gradient(90deg,rgba(45,107,182,.09),rgba(135,171,213,.05));border:1px solid rgba(45,107,182,.18);border-radius:12px;padding:14px 18px;">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:11px;">
+            <span style="font-size:18px;">🔔</span>
+            <div style="font-size:12px;font-weight:700;color:var(--text-dark);text-transform:uppercase;letter-spacing:.06em;">Your Notifications</div>
+            <div id="assign-notif-count" style="font-size:11px;font-weight:700;background:rgba(45,107,182,.12);color:#2E5DA6;border:1px solid rgba(45,107,182,.2);border-radius:20px;padding:1px 9px;"></div>
+            <button class="btn btn-xs btn-outline" style="margin-left:auto;" onclick="markAssignNotifRead()">Mark all read</button>
+          </div>
+          <div id="assign-notif-list"></div>
+        </div>
+        <div id="assign-notif-empty" style="text-align:center;padding:24px;color:var(--text-light);font-size:12px;">No notifications right now.</div>
       </div>
 
       <!-- ── MESSAGES ── -->
@@ -1731,8 +1736,20 @@ function _getAssignNotifs(){
     const myName = currentUser?.name||'';
     // wl_user_assignments: personal alerts written by client.html pushNotif()
     const userAlerts = (JSON.parse(localStorage.getItem(_ASSIGN_USER_KEY)||'[]')||[]).filter(n=>!n.userId||(n.userId===myId||n.userId===myName));
-    // wl_client_notifications: general client module notifications
-    const allNotifs  = JSON.parse(localStorage.getItem(_ASSIGN_NOTIF_KEY)||'[]')||[];
+    // wl_client_notifications: EVERY pushNotif() call in client.html writes
+    // here unconditionally — this is the admin's own notification-center feed
+    // (forUser:'admin' for "Service done"/"Admin marked complete"/progress
+    // updates/etc.), not a per-person stream. It carries no clientId/
+    // serviceId/assigneeId to match against — only forUser (a specific
+    // person's id) or the literal string 'admin'. Filtering on forUser here
+    // reuses the exact same field that already makes userAlerts correctly
+    // scoped above; this drops every admin-broadcast entry (the actual leak
+    // — a person otherwise saw agency-wide notifications for clients/
+    // services they have nothing to do with) while keeping anything
+    // genuinely targeted at this person (which duplicates userAlerts by id
+    // anyway, see the dedupe below). See CLAUDE.md's My Work notification
+    // leak fix for the full investigation.
+    const allNotifs  = (JSON.parse(localStorage.getItem(_ASSIGN_NOTIF_KEY)||'[]')||[]).filter(n=>n.forUser===myId||n.forUser===myName);
     // Server-synced notifications (assignment/time-off decision/message) —
     // created ONLY server-side in api/ops-sync.js, already scoped to this
     // person by /api/ops-state; mapped to the same shape as the two legacy,
@@ -1813,8 +1830,10 @@ function loadMyAssignments(){
   const banner  = document.getElementById('assign-notif-banner');
   const nList   = document.getElementById('assign-notif-list');
   const nCount  = document.getElementById('assign-notif-count');
+  const nEmpty  = document.getElementById('assign-notif-empty');
   if(banner && notifs.length){
     banner.style.display='block';
+    if(nEmpty) nEmpty.style.display='none';
     if(nCount) nCount.textContent = unread.length+' unread';
     if(nList) nList.innerHTML = notifs.slice(0,8).map(n=>`
       <div style="display:flex;align-items:flex-start;gap:9px;background:rgba(255,255,255,.65);border-radius:9px;padding:8px 12px;margin-bottom:6px;${!n.read?'border-left:3px solid #2E5DA6;':''}">
@@ -1825,8 +1844,9 @@ function loadMyAssignments(){
           <div style="font-size:10px;color:var(--text-light);margin-top:3px;">${n.ts?new Date(n.ts).toLocaleString():''}</div>
         </div>
       </div>`).join('');
-  } else if(banner){
-    banner.style.display='none';
+  } else {
+    if(banner) banner.style.display='none';
+    if(nEmpty) nEmpty.style.display='block';
   }
 
   // ── Build assignment items ──
