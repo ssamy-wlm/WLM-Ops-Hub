@@ -32,7 +32,7 @@
 // is deliberately not used anywhere in this file.
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession, tierOf } from '../lib/opsSession.js';
+import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 import { logError } from '../lib/errorLog.js';
 
@@ -486,19 +486,26 @@ export default async function handler(req, res) {
     }
 
     if (isAdmin) {
-      // users: both tiers manage the team, but payroll/pay-rate fields are
-      // Super Admin/CEO exclusive — stripped (not rejected) for manager tier
-      // so an unrelated title/role edit isn't blocked by a stale field.
+      // users: 'admin' level and super/owner manage the team, but the three
+      // specialized manager levels (creative/production/account manager) are
+      // hard-blocked from ops_users entirely — see CLAUDE.md's permission
+      // project Step 1. Payroll/pay-rate fields stay Super Admin/CEO
+      // exclusive for whoever CAN write users — stripped (not rejected) so
+      // an unrelated title/role edit isn't blocked by a stale field.
       const usersIncoming = (c.users || []).filter(validUserOrAdmin);
       if (usersIncoming.length) {
-        let toWrite = usersIncoming;
-        if (tier === 'manager') {
-          const ids = usersIncoming.map(r => r.id);
-          const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
-          const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
-          toWrite = usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)));
+        if (tier === 'manager' && !canEditUsers(session)) {
+          warnings.push(`users: dropped — restricted manager level (${session.level}) cannot edit user accounts`);
+        } else {
+          let toWrite = usersIncoming;
+          if (tier === 'manager') {
+            const ids = usersIncoming.map(r => r.id);
+            const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
+            const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+            toWrite = usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)));
+          }
+          applied.users = await upsertRows(supabase, 'ops_users', toWrite, warnings);
         }
-        applied.users = await upsertRows(supabase, 'ops_users', toWrite, warnings);
       }
 
       // admins/roadmap/org chart/business settings/payroll ledger: Super
