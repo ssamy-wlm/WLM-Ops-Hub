@@ -7659,12 +7659,26 @@ function applyAdminRoleRestrictions(level, adminObj){
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
   // so she keeps Live Feed & Business Setup; Account Manager stays clients-only.
+  // 'users' is hidden for both — see CLAUDE.md's permission project Step 1,
+  // which also hard-blocks this server-side (canEditUsers()) so this is UX
+  // convenience, not the actual security boundary.
   const hideTabs = level === 'production_manager'
-    ? ['payroll','timeoff','archive']
-    : ['payroll','timeoff','archive','bizSettings','livefeed'];
+    ? ['payroll','timeoff','archive','users']
+    : ['payroll','timeoff','archive','bizSettings','livefeed','users'];
   document.querySelectorAll('.admin-nav-item').forEach(el=>{
     const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
     if(m && hideTabs.includes(m[1])) el.style.display='none';
+  });
+  // Users is a dropdown wrapper (.admin-nav-dropdown containing the
+  // .admin-drop-trigger + its submenu), not a flat nav item — hiding just
+  // the trigger above leaves the wrapper shell in the DOM, so hide the
+  // whole wrapper too when its trigger's tab is in hideTabs (same pattern
+  // already used for Creative Manager above).
+  document.querySelectorAll('.admin-nav-dropdown').forEach(wrap=>{
+    const trigger = wrap.querySelector('.admin-drop-trigger');
+    if(!trigger) return;
+    const m2 = trigger.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
+    if(m2 && hideTabs.includes(m2[1])) wrap.style.display='none';
   });
   // Disable add/edit/delete actions in UI (hide action buttons)
   document.querySelectorAll('.su-btn').forEach(b=>b.style.display='none');

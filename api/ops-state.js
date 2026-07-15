@@ -7,14 +7,17 @@
 //   - 'super' (Super Admin/CEO — super/owner levels): sees everything,
 //     including payroll/pay rates, admin accounts, business settings, org
 //     chart, and roadmap.
-//   - 'manager' (every other admin level): team + client management —
-//     full user records including payroll/pay-rate fields, all time-off
-//     requests, summaries, archive/tombstones — but NOT the payroll ledger,
-//     NOT business settings/org chart/roadmap.
+//   - 'manager' (every other admin level): team + client management — full
+//     user records, all time-off requests, summaries, archive/tombstones —
+//     but NOT the payroll ledger, NOT business settings/org chart/roadmap.
+//     Within this tier, the three specialized manager levels (creative/
+//     production/account manager — see canEditUsers()) additionally get
+//     other people's payRate/hours stripped from user records; plain
+//     'admin' keeps the full access it always had.
 //   - 'member': clients (read-only visibility), own time-off only, minimal
 //     user/admin fields for display, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession, tierOf } from '../lib/opsSession.js';
+import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
@@ -208,10 +211,10 @@ export default async function handler(req, res) {
       record.notificationSettings = null;
       // announcement, goals, feed, messages, clients, notifications stay visible to everyone.
     } else if (tier === 'manager') {
-      // Every other admin level: team + client management (full user records
-      // including payroll, all time-off requests, summaries, archive), but
-      // NOT the payroll ledger and NOT business settings/org chart/roadmap —
-      // those stay Super Admin/CEO exclusive.
+      // Every other admin level: team + client management (full user records,
+      // all time-off requests, summaries, archive), but NOT the payroll
+      // ledger and NOT business settings/org chart/roadmap — those stay
+      // Super Admin/CEO exclusive.
       record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title, level: a.level, status: a.status }));
       record.roadmapTasks = [];
       record.timeOffLedger = [];
@@ -224,6 +227,22 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
       record.notificationSettings = null;
+      // Creative/Production/Account Manager (canEditUsers()===false) also
+      // lose visibility into OTHER people's payRate/hours — 'admin' keeps
+      // the full read access it always had. The caller's own record is left
+      // intact, same carve-out already used for member tier above. This is a
+      // read-only transform of the in-memory response array — it never
+      // writes anything back to ops_users, on purpose: an earlier stripping
+      // pass here that also touched writes is what caused a real incident
+      // where a user's payRate got silently zeroed (see saveEditUser() in
+      // index.html) — this strips on OUTPUT only, every request, fresh.
+      if (!canEditUsers(session)) {
+        record.users = record.users.map(u => {
+          if (u.id === session.id) return u;
+          const { payRate, hours, ...rest } = u;
+          return rest;
+        });
+      }
       // deletedUserIds, timeOffRequests, summaries stay full — team/client management.
     }
     // tier === 'super': record is returned exactly as assembled above.
