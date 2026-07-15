@@ -219,7 +219,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .project-head:hover{background:var(--bg);}
 .project-head-expand{font-size:10px;color:var(--text-light);transition:transform .2s;flex-shrink:0;}
 .project-head-expand.open{transform:rotate(90deg);}
-.project-body{padding:13px 15px;border-top:1px solid var(--border);background:var(--bg);display:none;}
+.project-body{padding:13px 15px;border-top:0.5px solid var(--border);background:var(--bg);display:none;}
 .project-body.open{display:block;}
 
 /* ── SUB-PROJECTS ── */
@@ -268,6 +268,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
    funnel board, notifications, etc.). */
 #client-detail-panel .card{border-width:0.5px;box-shadow:none;}
 #client-detail-panel .chip{font-weight:600;padding:2px 8px;}
+#client-detail-panel .priority-badge{font-weight:600;padding:2px 8px;}
 #client-detail-panel .detail-name{font-weight:500;}
 #client-detail-panel .milestone-title{font-weight:500;}
 .next-due{font-size:10px;font-weight:700;}
@@ -2829,19 +2830,27 @@ function renderOverview(c){
     return `<div class="alert-item alert-${cls}"><div class="alert-icon">${icon}</div><div class="alert-body"><div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div><div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div></div></div>`;
   }).join('');
 
-  return `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
-      <div>
-        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Bundles (${allProj.length})</div>
-        ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No bundles yet.</div>'}
-        ${c.recurringTags?`<div style="margin-top:12px;font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Recurring Services</div>
-        <div>${c.recurringTags.split(',').filter(Boolean).map(t=>`<span class="service-tag service-tag-monthly">${t.trim()}</span>`).join('')}</div>`:''}
-      </div>
-      <div>
-        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Service Alerts</div>
-        ${svcAlerts||'<div style="font-size:11px;color:var(--text-light);">No services scheduled.</div>'}
-      </div>
+  const bundlesCol=`
+    <div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Bundles (${allProj.length})</div>
+      ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No bundles yet.</div>'}
+      ${c.recurringTags?`<div style="margin-top:12px;font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Recurring Services</div>
+      <div>${c.recurringTags.split(',').filter(Boolean).map(t=>`<span class="service-tag service-tag-monthly">${t.trim()}</span>`).join('')}</div>`:''}
     </div>`;
+  const alertsCol=`
+    <div>
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Service Alerts</div>
+      ${svcAlerts||'<div style="font-size:11px;color:var(--text-light);">No services scheduled.</div>'}
+    </div>`;
+
+  // With no bundles (and no recurring-service tags) the left column is just
+  // an empty-state line — a fixed two-column grid then reads as broken/
+  // lopsided rather than intentional. Give Service Alerts the full width
+  // (centered, capped) instead in that case.
+  const hasBundleContent=allProj.length>0||!!c.recurringTags;
+  return hasBundleContent
+    ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">${bundlesCol}${alertsCol}</div>`
+    : `<div style="max-width:480px;margin:0 auto;">${alertsCol}</div>`;
 }
 
 // ── Projects Tab ──
@@ -2942,13 +2951,13 @@ function renderProjects(c){
             <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
             <span class="priority-badge pb-${p.priority}" style="font-size:8px;">${p.priority}</span>
             <div onclick="event.stopPropagation();">
-              <button class="btn btn-xs btn-outline" onclick="openProgressModal('${c.id}','${p.id}')">📈 Log</button>
+              <button class="btn btn-xs btn-outline" onclick="openProgressModal('${c.id}','${p.id}')">Log</button>
               ${canEdit?`
-              <button class="btn btn-xs btn-outline" onclick="openMilestoneModal('${c.id}','${p.id}')">🏆</button>
+              <button class="btn btn-xs btn-outline" onclick="openMilestoneModal('${c.id}','${p.id}')" title="Add milestone">🏆</button>
               <button class="btn btn-xs btn-outline" onclick="openSubprojectModal('${c.id}','${p.id}')">+ Sub</button>
               <button class="btn btn-xs btn-outline" onclick="openTaskModal('${c.id}','${p.id}',null)">+ Task</button>
-              <button class="btn btn-xs btn-outline" onclick="editProject('${c.id}','${p.id}')">✏️</button>
-              <button class="btn btn-xs btn-danger" onclick="deleteProject('${c.id}','${p.id}')">✕</button>`:''}
+              <button class="btn btn-xs btn-outline" onclick="editProject('${c.id}','${p.id}')" title="Edit">${ICON_EDIT}</button>
+              <button class="btn btn-xs btn-danger" onclick="deleteProject('${c.id}','${p.id}')" title="Delete">${ICON_X}</button>`:''}
             </div>
           </div>
         </div>
