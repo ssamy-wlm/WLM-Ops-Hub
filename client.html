@@ -271,6 +271,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 #client-detail-panel .priority-badge{font-weight:600;padding:2px 8px;}
 #client-detail-panel .detail-name{font-weight:500;}
 #client-detail-panel .milestone-title{font-weight:500;}
+/* Overview tab's Service Alerts — scoped so My Work's identical .alert-item/
+   .alert-title elsewhere in this file (a different page section, outside
+   #client-detail-panel) are completely unaffected. */
+#client-detail-panel .alert-item{border-width:0.5px;border-radius:12px;}
+#client-detail-panel .alert-title{font-weight:500;}
 .next-due{font-size:10px;font-weight:700;}
 .next-due.overdue{color:var(--red);}
 .next-due.soon{color:var(--orange);}
@@ -1800,6 +1805,27 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
 // this helper — a service with no status field at all is legacy data and
 // counts as active, same as before this field existed.
 function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
+// Shared "how many services are actually current" calc — reused by the
+// client-detail header's "X of Y done this cycle" headline and the Overview
+// tab's stat cards, so both always agree and there's exactly one place this
+// math lives. Same scope/definition as PR #124: top-level c.services only
+// (matching calcClientOverallStats, not the franchise-inclusive
+// _allClientServices used by due-alerts/My Work), "done" = has a lastDone
+// and isn't currently overdue, "this month" = due date's YYYY-MM prefix
+// matches today's. Read-only — never touches lastDone or any stored data.
+function _svcCycleStats(c){
+  const t=today();
+  const thisMonth=t.slice(0,7);
+  const isDone=s=>!!(s.lastDone&&!(s.due&&s.due<t));
+  const activeSvcs=(c.services||[]).filter(s=>!_isInactiveService(s));
+  const dueThisMonthSvcs=activeSvcs.filter(s=>s.due&&s.due.startsWith(thisMonth));
+  const activeDone=activeSvcs.filter(isDone).length;
+  const monthDone=dueThisMonthSvcs.filter(isDone).length;
+  return {
+    activeTotal: activeSvcs.length, activeDone, activeOutstanding: activeSvcs.length-activeDone,
+    monthTotal: dueThisMonthSvcs.length, monthDone, monthOutstanding: dueThisMonthSvcs.length-monthDone,
+  };
+}
 function _allClientServices(c, includeInactive){
   const top=(c.services||[]).map(s=>({...s,_locationId:'',_locationName:''}));
   const fromLocs=(c.locations||[]).flatMap(loc=>(loc.services||[]).map(s=>({...s,_locationId:loc.id,_locationName:loc.name})));
@@ -2735,27 +2761,12 @@ function renderClientDetail(clientId, tab){
   _activeDetailTab=tab;
   const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
-  const totalPct=calcClientOverallStats(c).overallPct;
-
-  // Plain-count service breakdown shown beneath the overall % — same "done"
-  // definition calcClientOverallStats already uses (has a lastDone and isn't
-  // currently overdue) and the same "due this month" date-prefix match the
-  // Reports tab's doneThisMonth/dueThisMonth already use. No new math, just
-  // reused against the individual service objects instead of via name-matched
-  // breakdown lookups (services can share a name, see the duplicate-service
-  // gap noted elsewhere).
-  const _detailToday=today();
-  const _detailThisMonth=_detailToday.slice(0,7);
-  const _svcIsDone=s=>!!(s.lastDone&&!(s.due&&s.due<_detailToday));
-  // Cancelled/archived excluded from both buckets, same as every other
-  // derived view in this file (_allClientServices/_isInactiveService) —
-  // an archived duplicate shouldn't count as "outstanding" work.
-  const _activeSvcs=(c.services||[]).filter(s=>!_isInactiveService(s));
-  const _dueThisMonthSvcs=_activeSvcs.filter(s=>s.due&&s.due.startsWith(_detailThisMonth));
-  const monthDone=_dueThisMonthSvcs.filter(_svcIsDone).length;
-  const monthOutstanding=_dueThisMonthSvcs.length-monthDone;
-  const activeDone=_activeSvcs.filter(_svcIsDone).length;
-  const activeOutstanding=_activeSvcs.length-activeDone;
+  // Headline is a count ("X of Y done this cycle"), not a percentage — the
+  // owner found the old overallPct% misleading (inflated by a bulk lastDone
+  // backfill). Shared with the Overview tab's stat cards via _svcCycleStats()
+  // so there's exactly one place this math lives.
+  const cycle=_svcCycleStats(c);
+  const {monthDone,monthOutstanding,activeDone}=cycle;
   const logoHtml=c.logo
     ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
     :`<span style="font-size:22px;font-weight:800;color:#fff;">${init}</span>`;
@@ -2790,10 +2801,9 @@ function renderClientDetail(clientId, tab){
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div style="font-size:28px;font-weight:800;color:${c.color||_hashClientColor(c.name)};">${totalPct}%</div>
-        <div style="font-size:9px;color:var(--text-light);">Overall progress</div>
+        <div style="font-size:24px;font-weight:500;color:${c.color||_hashClientColor(c.name)};">${activeDone} <span style="font-size:14px;font-weight:400;color:var(--text-light);">of ${cycle.activeTotal}</span></div>
+        <div style="font-size:9px;color:var(--text-light);">Done this cycle</div>
         <div style="margin-top:5px;font-size:10px;color:var(--text-light);">This month: ${monthDone} done · ${monthOutstanding} outstanding</div>
-        <div style="font-size:10px;color:var(--text-light);">All active: ${activeDone} done · ${activeOutstanding} outstanding</div>
         <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
           ${SESSION.isAdmin?`
             <button class="btn btn-xs btn-outline" onclick="togglePinClient('${c.id}')" style="color:${c.pinned?'var(--gold-dark)':''};">${ICON_PIN} ${c.pinned?'Unpin':'Pin to top'}</button>
@@ -2811,24 +2821,51 @@ function renderClientDetail(clientId, tab){
 }
 
 // ── Overview Tab ──
+const _ALERT_PILL={overdue:{cls:'chip-high',label:'Overdue',dot:'var(--red)'},soon:{cls:'chip-medium',label:'Due soon',dot:'var(--orange)'},ok:{cls:'chip-low',label:'On track',dot:'var(--green)'}};
+function _statCard(label,value){
+  return `<div style="background:var(--bg);border-radius:12px;padding:14px 16px;">
+    <div style="font-size:13px;color:var(--text-mid);margin-bottom:4px;">${label}</div>
+    <div style="font-size:22px;font-weight:500;color:var(--text-dark);">${value}</div>
+  </div>`;
+}
 function renderOverview(c){
   const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
+  // Same helper the header's "X of Y done this cycle" headline uses — one
+  // formula, read in two places, never re-derived.
+  const cycle=_svcCycleStats(c);
   const projSummary=allProj.map(p=>`
     <div style="display:flex;align-items:center;gap:9px;padding:7px 11px;background:var(--bg);border-radius:9px;margin-bottom:5px;cursor:pointer;" onclick="renderClientDetail('${c.id}','projects')">
       <div style="width:9px;height:9px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
-      <div style="flex:1;font-size:11px;font-weight:700;color:var(--text-dark);">${p.name}</div>
+      <div style="flex:1;font-size:11px;font-weight:500;color:var(--text-dark);">${p.name}</div>
       <div style="width:70px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
-      <span style="font-size:10px;font-weight:800;color:${p.color||c.color};width:30px;text-align:right;">${p.progress||0}%</span>
+      <span style="font-size:10px;font-weight:500;color:${p.color||c.color};width:30px;text-align:right;">${p.progress||0}%</span>
       <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
     </div>`).join('');
 
   const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  // Alerts still walk every service including franchise locations
+  // (_allClientServices, unchanged data source/scope) — only the row
+  // styling changes here, same click-through (none today) as before.
   const svcAlerts=_allClientServices(c).map(svc=>{
     const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
-    const icon=cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+    const pill=_ALERT_PILL[cls];
     const locLabel=svc._locationName?` <span style="color:var(--text-light);">(${escHtmlClient(svc._locationName)})</span>`:'';
-    return `<div class="alert-item alert-${cls}"><div class="alert-icon">${icon}</div><div class="alert-body"><div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div><div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div></div></div>`;
+    return `<div class="alert-item alert-${cls}">
+      <div class="alert-icon" style="display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:${pill.dot};display:inline-block;"></span></div>
+      <div class="alert-body" style="flex:1;">
+        <div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div>
+        <div class="alert-meta">Due ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div>
+      </div>
+      <span class="chip ${pill.cls}">${pill.label}</span>
+    </div>`;
   }).join('');
+
+  const statsRow=`
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;">
+      ${_statCard('Bundles',allProj.length)}
+      ${_statCard('Active services',cycle.activeTotal)}
+      ${_statCard('Done this cycle',`${cycle.activeDone} of ${cycle.activeTotal}`)}
+    </div>`;
 
   const bundlesCol=`
     <div>
@@ -2845,12 +2882,14 @@ function renderOverview(c){
 
   // With no bundles (and no recurring-service tags) the left column is just
   // an empty-state line — a fixed two-column grid then reads as broken/
-  // lopsided rather than intentional. Give Service Alerts the full width
-  // (centered, capped) instead in that case.
+  // lopsided rather than intentional. The stats row above already gives the
+  // panel structure either way; give Service Alerts the full width
+  // (centered, capped) instead of a half-empty grid in that case.
   const hasBundleContent=allProj.length>0||!!c.recurringTags;
-  return hasBundleContent
+  const body=hasBundleContent
     ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">${bundlesCol}${alertsCol}</div>`
     : `<div style="max-width:480px;margin:0 auto;">${alertsCol}</div>`;
+  return statsRow+body;
 }
 
 // ── Projects Tab ──
