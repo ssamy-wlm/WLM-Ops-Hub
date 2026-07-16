@@ -2394,7 +2394,7 @@ function showPage(name, el){
   const [title,sub]=PAGE_META[name]||['',''];
   _el('page-title').textContent=title;
   _el('page-sub').textContent=sub;
-  if(name==='clients'){ populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); renderClientGrid(); renderClientFilterChips(); }
+  if(name==='clients'){ populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); filterClients(); }
   if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
@@ -2544,7 +2544,12 @@ let _activeClientId=null;
 let _activeDetailTab='overview';
 
 function renderClientGrid(list){
-  list=list||getClients();
+  // No explicit list — a bare re-render (background poll, visibilitychange,
+  // or any future call site that forgets) must never silently show every
+  // client and drop whatever filter is active. filterClients() re-reads the
+  // still-set filter inputs and calls back into this function with the
+  // correctly filtered list; this call renders nothing itself.
+  if(list===undefined){ filterClients(); return; }
   // Pinned clients always float to the top — mirrors the same sort the
   // Clients tab (index.html) used before it was merged into this view.
   list=[...list].sort((a,b)=>{ if(a.pinned&&!b.pinned) return -1; if(!a.pinned&&b.pinned) return 1; return 0; });
@@ -2606,7 +2611,10 @@ function renderClientGrid(list){
     const openCard=[...grid.children].find(el=>el.dataset && el.dataset.clientId===_activeClientId);
     if(openCard && getClient(_activeClientId)){
       openCard.insertAdjacentElement('afterend', detailPanel);
-      renderClientDetail(_activeClientId);
+      // Explicit tab, not relying on renderClientDetail's own no-arg fallback —
+      // a background re-render (30s poll, visibilitychange) must keep whatever
+      // tab (Bundles/Services/etc.) was showing, never fold back to Overview.
+      renderClientDetail(_activeClientId, _activeDetailTab);
     } else {
       _activeClientId=null;
       detailPanel.style.display='none';
@@ -2725,8 +2733,7 @@ function clearClientFilters(){
   ['client-search','filter-status','filter-service','filter-proj-type','filter-proj-status','filter-manager']
     .forEach(id=>{ const el=_el(id); if(el) el.value=''; });
   _el('filter-sort').value='name';
-  renderClientGrid();
-  renderClientFilterChips();
+  filterClients();
 }
 
 function renderClientFilterChips(){
@@ -3326,7 +3333,7 @@ function saveClient(){
   }
   closeModal('clientModal');
   populateScheduleClientFilter();
-  renderClientGrid();
+  filterClients();
   if(_activeClientId===editId&&editId) renderClientDetail(editId);
   showToast(editId?'Client updated ✓':'Client added ✓');
 }
@@ -3341,7 +3348,7 @@ function toggleClientStatus(id){
   c.status=c.status==='active'?'inactive':'active';
   saveClients(clients);
   renderClientDetail(id);
-  renderClientGrid();
+  filterClients();
   showToast(`Client marked ${c.status}`);
 }
 
@@ -3351,7 +3358,7 @@ function togglePinClient(id){
   c.pinned=!c.pinned;
   saveClients(clients);
   renderClientDetail(id);
-  renderClientGrid();
+  filterClients();
   showToast(c.pinned?'Client pinned to top':'Client unpinned');
 }
 
@@ -3423,7 +3430,7 @@ function saveProject(){
   saveClients(clients);
   closeModal('projectModal');
   renderClientDetail(clientId,'projects');
-  renderClientGrid();
+  filterClients();
   showToast(projId?'Bundle updated ✓':'Bundle added ✓');
 }
 
@@ -3434,7 +3441,7 @@ function deleteProject(clientId,projId){
   c.projects=c.projects.filter(p=>p.id!==projId);
   saveClients(clients);
   renderClientDetail(clientId,'projects');
-  renderClientGrid();
+  filterClients();
   showToast('Bundle deleted');
 }
 
@@ -3676,7 +3683,7 @@ function saveProgress(){
     forUser:'admin', fromUser:SESSION.name });
   closeModal('progressModal');
   renderClientDetail(clientId,'projects');
-  renderClientGrid();
+  filterClients();
   showToast('Progress logged ✓');
 }
 
@@ -4681,7 +4688,7 @@ function init(){
   _initialTierResolve().then(()=>{
     ensureCatalog();
     populateDropdowns();
-    renderClientGrid();
+    filterClients();
     populateScheduleClientFilter();
     renderMyWork();
     updateMyWorkBadge();
@@ -4704,7 +4711,7 @@ function init(){
   populateDropdowns();
   populateServiceDropdown();
   populateScheduleClientFilter();
-  renderClientGrid();
+  filterClients();
   checkServiceAlerts();
   refreshNotifBadge();
   updateMyWorkBadge();
@@ -4715,10 +4722,10 @@ function init(){
     renderNotifPanel();
     checkServiceAlerts();
     updateMyWorkBadge();
-    _pullClientsFromCloud().then(()=>{ populateDropdowns(); renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   }, 30000);
   document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); renderClientGrid(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   });
 }
 
