@@ -200,14 +200,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
 /* ── CLIENT DETAIL PANEL ── */
 #client-detail-panel{display:none;margin-top:20px;grid-column:1/-1;}
-.detail-header{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
-.detail-avatar{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#fff;flex-shrink:0;overflow:hidden;}
+.detail-header{padding:18px 22px;border-bottom:0.5px solid var(--border);display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
+.detail-avatar{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;color:#fff;flex-shrink:0;overflow:hidden;}
 .detail-avatar img{width:100%;height:100%;object-fit:cover;border-radius:14px;}
 .detail-name{font-family:'Poppins',sans-serif;font-size:21px;color:var(--text-dark);}
-.detail-info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px;margin-top:9px;}
-.detail-info-item{background:var(--bg);border-radius:8px;padding:7px 11px;}
-.detail-info-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:1px;}
-.detail-info-value{font-size:11px;font-weight:700;color:var(--text-dark);}
 .detail-tabs{display:flex;gap:2px;background:var(--bg2);border-radius:9px;padding:3px;overflow-x:auto;}
 .detail-tab{padding:6px 14px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;color:var(--text-mid);transition:all .15s;white-space:nowrap;}
 .detail-tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 5px rgba(45,107,182,.1);}
@@ -273,18 +269,30 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 #client-detail-panel .milestone-title{font-weight:500;}
 /* Overview tab's Service Alerts — scoped so My Work's identical .alert-item/
    .alert-title elsewhere in this file (a different page section, outside
-   #client-detail-panel) are completely unaffected. */
-#client-detail-panel .alert-item{border-width:0.5px;border-radius:12px;}
-#client-detail-panel .alert-title{font-weight:500;}
+   #client-detail-panel) are completely unaffected. Rows sit inside one
+   grouped, thin-bordered container (.alert-rows-group, same convention as
+   .service-table's wrapper) with a divider between rows instead of each
+   row being its own floating tinted card — the dot + status pill already
+   carry the color signal, so the per-row tinted background/border this
+   class used elsewhere (My Work) would be redundant here. */
+.section-label{font-size:12px;font-weight:500;color:var(--text-mid);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+#client-detail-panel .alert-rows-group{border:0.5px solid var(--border);border-radius:10px;overflow:hidden;}
+#client-detail-panel .alert-item{border-width:0;border-radius:0;margin-bottom:0;background:transparent;border-bottom:0.5px solid var(--border);}
+#client-detail-panel .alert-item:last-child{border-bottom:none;}
+#client-detail-panel .alert-title{font-weight:500;font-size:13px;}
+#client-detail-panel .alert-meta{font-size:11px;}
 .next-due{font-size:10px;font-weight:700;}
 .next-due.overdue{color:var(--red);}
 .next-due.soon{color:var(--orange);}
 .next-due.ok{color:var(--green);}
 .user-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:20px;font-size:10px;font-weight:600;color:var(--text-dark);margin:2px;}
 .uc-av{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:7px;font-weight:800;color:#fff;flex-shrink:0;}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 16px;font-size:13px;}
+.kv .k{color:var(--text-mid);}
+.kv .v{color:var(--text-dark);}
 
 /* ── NOTES / BRAND ── */
-.notes-block{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin-bottom:10px;font-size:12px;color:var(--text-dark);white-space:pre-wrap;line-height:1.6;}
+.notes-block{background:var(--bg);border:0.5px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:13px;color:var(--text-dark);white-space:pre-wrap;line-height:1.6;}
 .brand-swatch{width:26px;height:26px;border-radius:6px;flex-shrink:0;border:1px solid var(--border);}
 
 /* ── MODALS ── */
@@ -2802,15 +2810,17 @@ function renderClientDetail(clientId, tab){
   const {monthDone,monthOutstanding,activeDone}=cycle;
   const logoHtml=c.logo
     ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
-    :`<span style="font-size:22px;font-weight:800;color:#fff;">${init}</span>`;
+    :`<span style="font-size:22px;font-weight:500;color:#fff;">${init}</span>`;
 
-  const adminContact=SESSION.isAdmin?`
-    <div class="detail-info-item"><div class="detail-info-label">📧 Email 🔒</div><div class="detail-info-value" style="font-size:10px;word-break:break-all;">${c.ownerEmail||'—'}</div></div>`:
-  '';
+  // Email is admin-only (visibility already gated by SESSION.isAdmin — the
+  // padlock glyph this used to carry was redundant) and sits inline in the
+  // metarow next to status, matching the mockup's plain "status · email"
+  // line instead of a separate labeled info-card block.
+  const adminContact=(SESSION.isAdmin&&c.ownerEmail)?`<span style="font-size:10px;color:var(--text-light);">✉ ${c.ownerEmail}</span>`:'';
 
   const tabs=['overview','projects','services','brand-notes'].map(t=>`
     <div class="detail-tab${tab===t?' active':''}" onclick="renderClientDetail('${c.id}','${t}')">${
-      {overview:'📋 Overview',projects:'📁 Bundles',services:'🔁 Services','brand-notes':'🎨 Brand & Notes'}[t]
+      {overview:'Overview',projects:'Bundles',services:'Services','brand-notes':'Brand & Notes'}[t]
     }</div>`).join('');
 
   let body='';
@@ -2824,13 +2834,11 @@ function renderClientDetail(clientId, tab){
       <div class="detail-avatar" style="background:${c.color||_hashClientColor(c.name)};">${logoHtml}</div>
       <div style="flex:1;min-width:0;">
         <div class="detail-name">${c.pinned?'📌 ':''}${c.name} <span class="client-code" style="font-size:12px;">${c.code||''}</span></div>
-        <div style="margin-top:4px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+        <div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span>
-          ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${c.industry}</span>`:''}
-          ${c.website?`<a href="${c.website}" target="_blank" style="font-size:10px;color:var(--text);">🌐 ${c.website}</a>`:''}
-        </div>
-        <div class="detail-info-grid">
           ${adminContact}
+          ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${c.industry}</span>`:''}
+          ${c.website?`<a href="${c.website}" target="_blank" style="font-size:10px;color:var(--text);">${c.website}</a>`:''}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -2856,24 +2864,20 @@ function renderClientDetail(clientId, tab){
 // ── Overview Tab ──
 const _ALERT_PILL={overdue:{cls:'chip-high',label:'Overdue',dot:'var(--red)'},soon:{cls:'chip-medium',label:'Due soon',dot:'var(--orange)'},ok:{cls:'chip-low',label:'On track',dot:'var(--green)'}};
 function _statCard(label,value){
-  return `<div style="background:var(--bg);border-radius:12px;padding:14px 16px;">
-    <div style="font-size:13px;color:var(--text-mid);margin-bottom:4px;">${label}</div>
+  return `<div style="background:var(--bg);border-radius:8px;padding:12px 14px;">
+    <div style="font-size:12px;color:var(--text-mid);margin-bottom:4px;">${label}</div>
     <div style="font-size:22px;font-weight:500;color:var(--text-dark);">${value}</div>
   </div>`;
 }
+// Overview is a single column, always: 3 stat cards + the full-width Service
+// Alerts list — no bundle-progress rows, no recurring-service tag strip, and
+// no two-column split when bundles exist. Bundles have their own tab; this
+// one only ever shows the at-a-glance counts + what needs attention.
 function renderOverview(c){
   const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
   // Same helper the header's "X of Y done this cycle" headline uses — one
   // formula, read in two places, never re-derived.
   const cycle=_svcCycleStats(c);
-  const projSummary=allProj.map(p=>`
-    <div style="display:flex;align-items:center;gap:9px;padding:7px 11px;background:var(--bg);border-radius:9px;margin-bottom:5px;cursor:pointer;" onclick="renderClientDetail('${c.id}','projects')">
-      <div style="width:9px;height:9px;border-radius:3px;background:${p.color||c.color};flex-shrink:0;"></div>
-      <div style="flex:1;font-size:11px;font-weight:500;color:var(--text-dark);">${p.name}</div>
-      <div style="width:70px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
-      <span style="font-size:10px;font-weight:500;color:${p.color||c.color};width:30px;text-align:right;">${p.progress||0}%</span>
-      <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
-    </div>`).join('');
 
   // Alerts still walk every service including franchise locations
   // (_allClientServices, unchanged data source/scope) — only the row
@@ -2883,7 +2887,7 @@ function renderOverview(c){
     const pill=_ALERT_PILL[cls];
     const locLabel=svc._locationName?` <span style="color:var(--text-light);">(${escHtmlClient(svc._locationName)})</span>`:'';
     return `<div class="alert-item alert-${cls}">
-      <div class="alert-icon" style="display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:${pill.dot};display:inline-block;"></span></div>
+      <div class="alert-icon" style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${pill.dot};display:inline-block;"></span></div>
       <div class="alert-body" style="flex:1;">
         <div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div>
         <div class="alert-meta">Due ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div>
@@ -2893,35 +2897,17 @@ function renderOverview(c){
   }).join('');
 
   const statsRow=`
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
       ${_statCard('Bundles',allProj.length)}
       ${_statCard('Active services',cycle.activeTotal)}
       ${_statCard('Done this cycle',`${cycle.activeDone} of ${cycle.activeTotal}`)}
     </div>`;
 
-  const bundlesCol=`
-    <div>
-      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Bundles (${allProj.length})</div>
-      ${projSummary||'<div style="font-size:11px;color:var(--text-light);">No bundles yet.</div>'}
-      ${c.recurringTags?`<div style="margin-top:12px;font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Recurring Services</div>
-      <div>${c.recurringTags.split(',').filter(Boolean).map(t=>`<span class="service-tag service-tag-monthly">${t.trim()}</span>`).join('')}</div>`:''}
+  return `${statsRow}
+    <div class="section-label">Service Alerts</div>
+    <div class="alert-rows-group">
+      ${svcAlerts||'<div style="font-size:13px;color:var(--text-light);padding:18px;text-align:center;">No services scheduled.</div>'}
     </div>`;
-  const alertsCol=`
-    <div>
-      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Service Alerts</div>
-      ${svcAlerts||'<div style="font-size:11px;color:var(--text-light);">No services scheduled.</div>'}
-    </div>`;
-
-  // With no bundles (and no recurring-service tags) the left column is just
-  // an empty-state line — a fixed two-column grid then reads as broken/
-  // lopsided rather than intentional. The stats row above already gives the
-  // panel structure either way; give Service Alerts the full width
-  // (centered, capped) instead of a half-empty grid in that case.
-  const hasBundleContent=allProj.length>0||!!c.recurringTags;
-  const body=hasBundleContent
-    ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">${bundlesCol}${alertsCol}</div>`
-    : `<div style="max-width:480px;margin:0 auto;">${alertsCol}</div>`;
-  return statsRow+body;
 }
 
 // ── Projects Tab ──
@@ -2953,7 +2939,7 @@ function renderProjects(c){
       <div class="project-block">
         <div class="project-head" onclick="toggleProjectBlock(this)">
           <div class="project-head-expand">▶</div>
-          <div style="display:flex;align-items:center;justify-content:center;flex-shrink:0;width:15px;"><span style="width:8px;height:8px;border-radius:50%;background:${duePill.dot};display:inline-block;"></span></div>
+          <div style="display:flex;align-items:center;justify-content:center;flex-shrink:0;width:15px;"><span style="width:9px;height:9px;border-radius:50%;background:${duePill.dot};display:inline-block;"></span></div>
           <div style="flex:1;">
             <div style="font-size:12px;font-weight:500;color:var(--text-dark);">${p.name}</div>
             <div style="font-size:9px;color:var(--text-light);"><span class="chip chip-${p.freq||'monthly'}">${freqChip}</span>${p.due?' · Next due: <strong>'+p.due+'</strong>':''}</div>
@@ -2961,8 +2947,7 @@ function renderProjects(c){
           <div style="flex-shrink:0;">${assignedChips||'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</div>
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;" onclick="event.stopPropagation();">
             <span class="chip ${duePill.cls}" style="font-size:8px;">${duePill.label}</span>
-            ${canEdit?`<input type="date" id="svcdone-${c.id}-${p.serviceId}" value="${today()}" max="${today()}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();" onchange="event.stopPropagation();onSvcDoneDateChange('${c.id}','${p.serviceId}')">
-            <button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')" title="Mark done today, roll due date forward">${ICON_CHECK}</button>
+            ${canEdit?`<button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')" title="Mark done today, roll due date forward">${ICON_CHECK}</button>
             <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${p.serviceId}')" title="Edit">${ICON_EDIT}</button>`:''}
           </div>
         </div>
@@ -3053,8 +3038,8 @@ function renderProjects(c){
 
   return `
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:11px;">
-      ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openProjectModal('${c.id}')">+ Add Bundle</button>
-      <button class="btn btn-outline btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
+      ${SESSION.isAdmin?`<button class="btn btn-outline btn-sm" onclick="openProjectModal('${c.id}')">+ Add Bundle</button>
+      <button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
     ${projs||'<div class="empty-state"><div class="empty-state-title">No bundles yet.</div></div>'}`;
 }
@@ -3105,7 +3090,7 @@ function _serviceRow(c, svc, locationId){
   const statusBadge=inactive?`<span class="chip" style="background:var(--bg2);color:var(--text-light);text-transform:capitalize;margin-left:6px;">${svc.status}</span>`:'';
   return `
       <tr${inactive?' style="opacity:.6;"':''}>
-        <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
+        <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
         <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
@@ -3175,29 +3160,27 @@ function renderBrand(c){
       <div class="brand-swatch" style="background:${col.trim()};"></div>
       <span style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text-dark);">${col.trim()}</span>
     </div>`).join('');
+  // Brand details as a plain key/value list (label · value), matching the
+  // mockup's calm layout — logo shown inline as a small thumbnail, everything
+  // else is just text. Rows with nothing set are skipped rather than shown
+  // empty, so the list never pads itself out with blank rows.
+  const kvRows=[
+    c.logo&&['Logo',`<img src="${c.logo}" style="max-height:32px;max-width:120px;border-radius:4px;vertical-align:middle;" onerror="this.style.display='none'">`],
+    c.brandColors&&['Brand colors',swatches],
+    c.primaryFont&&['Primary font',c.primaryFont],
+    c.secondaryFont&&['Secondary font',c.secondaryFont],
+  ].filter(Boolean).map(([k,v])=>`<span class="k">${k}</span><span class="v">${v}</span>`).join('');
+
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
-      ${SESSION.isAdmin?`<button class="btn btn-outline btn-sm" onclick="openNotesModal('${c.id}')">✏️ Edit Notes &amp; Brand</button>`:''}
+      ${SESSION.isAdmin?`<button class="btn btn-outline btn-sm" onclick="openNotesModal('${c.id}')" title="Edit">${ICON_EDIT} Edit Notes &amp; Brand</button>`:''}
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
-      <div>
-        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Internal Notes</div>
-        ${c.notes?`<div class="notes-block">${c.notes}</div>`:'<div style="font-size:11px;color:var(--text-light);">No notes added yet.</div>'}
-        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:13px 0 7px;">Brand Details / Style Guide</div>
-        ${c.brandDetails?`<div class="notes-block">${c.brandDetails}</div>`:'<div style="font-size:11px;color:var(--text-light);">No brand details added yet.</div>'}
-        ${c.toneOfVoice?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:10px 0 5px;">Tone of Voice</div><div class="notes-block" style="font-size:11px;">${c.toneOfVoice}</div>`:''}
-      </div>
-      <div>
-        ${c.logo?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Logo</div>
-          <div style="margin-bottom:13px;"><img src="${c.logo}" style="max-height:70px;max-width:180px;border-radius:8px;border:1px solid var(--border);" onerror="this.style.display='none'"></div>`:''}
-        ${c.brandColors?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;">Brand Colors</div>
-          <div style="margin-bottom:13px;">${swatches}</div>`:''}
-        ${c.primaryFont?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Primary Font</div>
-          <div style="font-size:13px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">${c.primaryFont}</div>`:''}
-        ${c.secondaryFont?`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Secondary Font</div>
-          <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">${c.secondaryFont}</div>`:''}
-      </div>
-    </div>`;
+    <div class="section-label">Brand details</div>
+    ${kvRows?`<div class="kv" style="margin-bottom:20px;">${kvRows}</div>`:'<div style="font-size:13px;color:var(--text-light);margin-bottom:20px;">No brand details added yet.</div>'}
+    ${c.brandDetails?`<div class="section-label">Style Guide</div><div class="notes-block">${c.brandDetails}</div>`:''}
+    <div class="section-label">Notes</div>
+    ${c.notes?`<div class="notes-block">${c.notes}</div>`:'<div style="font-size:13px;color:var(--text-light);">No notes added yet.</div>'}
+    ${c.toneOfVoice?`<div class="section-label" style="margin-top:13px;">Tone of Voice</div><div class="notes-block">${c.toneOfVoice}</div>`:''}`;
 }
 
 function toggleProjectBlock(header){
