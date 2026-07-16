@@ -1805,18 +1805,23 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
 // this helper — a service with no status field at all is legacy data and
 // counts as active, same as before this field existed.
 function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
+// "Done this cycle" — has a lastDone and isn't currently overdue. Single
+// definition shared by _svcCycleStats (the header/stat-card counts) and
+// _svcDueStatus below (the status dot/pill color) so a service can never
+// count as "done" in one place and "not done" in the other.
+function _svcIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
 // Shared "how many services are actually current" calc — reused by the
 // client-detail header's "X of Y done this cycle" headline and the Overview
 // tab's stat cards, so both always agree and there's exactly one place this
 // math lives. Same scope/definition as PR #124: top-level c.services only
 // (matching calcClientOverallStats, not the franchise-inclusive
-// _allClientServices used by due-alerts/My Work), "done" = has a lastDone
-// and isn't currently overdue, "this month" = due date's YYYY-MM prefix
-// matches today's. Read-only — never touches lastDone or any stored data.
+// _allClientServices used by due-alerts/My Work), "this month" = due date's
+// YYYY-MM prefix matches today's. Read-only — never touches lastDone or any
+// stored data.
 function _svcCycleStats(c){
   const t=today();
   const thisMonth=t.slice(0,7);
-  const isDone=s=>!!(s.lastDone&&!(s.due&&s.due<t));
+  const isDone=s=>_svcIsDoneThisCycle(s,t);
   const activeSvcs=(c.services||[]).filter(s=>!_isInactiveService(s));
   const dueThisMonthSvcs=activeSvcs.filter(s=>s.due&&s.due.startsWith(thisMonth));
   const activeDone=activeSvcs.filter(isDone).length;
@@ -1825,6 +1830,26 @@ function _svcCycleStats(c){
     activeTotal: activeSvcs.length, activeDone, activeOutstanding: activeSvcs.length-activeDone,
     monthTotal: dueThisMonthSvcs.length, monthDone, monthOutstanding: dueThisMonthSvcs.length-monthDone,
   };
+}
+// ── Service status dot/pill — single source of truth ─────────────────────
+// Owner-defined rule (fixes the dot color appearing arbitrary — it never
+// accounted for lastDone before, only the raw due date):
+//   green  "on track"  — done this cycle, OR due date is more than
+//                        DUE_SOON_DAYS days away
+//   amber  "due soon"  — NOT done this cycle AND due within the next
+//                        DUE_SOON_DAYS days (inclusive)
+//   red    "overdue"   — NOT done this cycle AND due date is in the past
+// Used by every place the dot/pill appears (Overview Service Alerts,
+// Services tab rows, Bundles tab recurring-service rows) so a service is
+// never a different color depending on which tab you're looking at.
+const DUE_SOON_DAYS = 7;
+function _svcDueStatus(svc){
+  const t=today();
+  if(_svcIsDoneThisCycle(svc,t)) return 'ok';
+  if(!svc.due) return 'ok';
+  if(svc.due<t) return 'overdue';
+  const soon=new Date(); soon.setDate(soon.getDate()+DUE_SOON_DAYS);
+  return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
 }
 function _allClientServices(c, includeInactive){
   const top=(c.services||[]).map(s=>({...s,_locationId:'',_locationName:''}));
@@ -2842,12 +2867,11 @@ function renderOverview(c){
       <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
     </div>`).join('');
 
-  const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   // Alerts still walk every service including franchise locations
   // (_allClientServices, unchanged data source/scope) — only the row
   // styling changes here, same click-through (none today) as before.
   const svcAlerts=_allClientServices(c).map(svc=>{
-    const cls=svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+    const cls=_svcDueStatus(svc);
     const pill=_ALERT_PILL[cls];
     const locLabel=svc._locationName?` <span style="color:var(--text-light);">(${escHtmlClient(svc._locationName)})</span>`:'';
     return `<div class="alert-item alert-${cls}">
@@ -2894,9 +2918,6 @@ function renderOverview(c){
 
 // ── Projects Tab ──
 function renderProjects(c){
-  const t=today();
-  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
-
   // First-name fallback so a surname mismatch between someone's assigned ID
   // (p.users[]) and their resolved SESSION identity doesn't strand them
   // without edit rights on their own work.
@@ -2914,7 +2935,7 @@ function renderProjects(c){
     const canEdit=SESSION.isAdmin||onProject;
     // ── Recurring Service block ──────────────────────────────────────
     if(p.isRecurringService){
-      const dueCls=p.due&&p.due<t?'overdue':p.due&&p.due<=in7s?'soon':'ok';
+      const dueCls=_svcDueStatus(p);
       const dueDot=_ALERT_PILL[dueCls].dot;
       const days=daysUntil(p.due);
       const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+' days away');
@@ -3067,9 +3088,8 @@ function renderTaskRow(clientId, projId, spId, t, canEdit){
 // franchise's id, and is threaded through edit/remove/mark-done so a write
 // always lands back in the same list it came from.
 function _serviceRow(c, svc, locationId){
-  const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   const inactive=_isInactiveService(svc);
-  const cls=inactive?'ok':svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
+  const cls=inactive?'ok':_svcDueStatus(svc);
   const dot=inactive?'var(--text-light)':_ALERT_PILL[cls].dot;
   const days=daysUntil(svc.due);
   const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
