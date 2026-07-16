@@ -2915,7 +2915,7 @@ function renderProjects(c){
     // ── Recurring Service block ──────────────────────────────────────
     if(p.isRecurringService){
       const dueCls=p.due&&p.due<t?'overdue':p.due&&p.due<=in7s?'soon':'ok';
-      const dueIcon=dueCls==='overdue'?'🔴':dueCls==='soon'?'🟡':'🟢';
+      const dueDot=_ALERT_PILL[dueCls].dot;
       const days=daysUntil(p.due);
       const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+' days away');
       const assignedChips=(p.users||[]).map(uid=>userChip(uid)).join('');
@@ -2924,10 +2924,10 @@ function renderProjects(c){
       <div class="project-block">
         <div class="project-head" onclick="toggleProjectBlock(this)">
           <div class="project-head-expand">▶</div>
-          <div style="font-size:15px;flex-shrink:0;">${dueIcon}</div>
+          <div style="display:flex;align-items:center;justify-content:center;flex-shrink:0;width:15px;"><span style="width:8px;height:8px;border-radius:50%;background:${dueDot};display:inline-block;"></span></div>
           <div style="flex:1;">
             <div style="font-size:12px;font-weight:500;color:var(--text-dark);">${p.name}</div>
-            <div style="font-size:9px;color:var(--text-light);">🔁 Recurring Service · <span class="chip chip-${p.freq||'monthly'}">${freqChip}</span>${p.due?' · Next due: <strong>'+p.due+'</strong>':''}</div>
+            <div style="font-size:9px;color:var(--text-light);">Recurring Service · <span class="chip chip-${p.freq||'monthly'}">${freqChip}</span>${p.due?' · Next due: <strong>'+p.due+'</strong>':''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;" onclick="event.stopPropagation();">
             <span class="chip chip-${p.status}" style="font-size:8px;">${(p.status||'in-progress').replace('-',' ')}</span>
@@ -2986,7 +2986,7 @@ function renderProjects(c){
           </div>
           <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
             <div style="width:60px;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${p.progress||0}%;background:${p.color||c.color};"></div></div>
-            <span style="font-size:11px;font-weight:800;color:${p.color||c.color};">${p.progress||0}%</span>
+            <span style="font-size:11px;font-weight:500;color:${p.color||c.color};">${p.progress||0}%</span>
             <span class="chip chip-${p.status}" style="font-size:8px;">${p.status.replace('-',' ')}</span>
             <span class="priority-badge pb-${p.priority}" style="font-size:8px;">${p.priority}</span>
             <div onclick="event.stopPropagation();">
@@ -3028,7 +3028,7 @@ function renderProjects(c){
       ${SESSION.isAdmin?`<button class="btn btn-primary btn-sm" onclick="openProjectModal('${c.id}')">+ Add Bundle</button>
       <button class="btn btn-outline btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
-    ${projs||'<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No bundles or services yet</div></div>'}`;
+    ${projs||'<div class="empty-state"><div class="empty-state-title">No bundles or services yet</div></div>'}`;
 }
 
 function renderSubprojectRow(clientId, projId, sp, canEdit){
@@ -3038,13 +3038,13 @@ function renderSubprojectRow(clientId, projId, sp, canEdit){
     <div class="subproject-item" style="flex-direction:column;align-items:flex-start;gap:3px;">
       <div style="display:flex;align-items:center;gap:7px;width:100%;">
         <div class="task-check${done?' done':''}" onclick="toggleSubprojectDone('${clientId}','${projId}','${sp.id}')">${done?'✓':''}</div>
-        <span style="flex:1;font-size:11px;font-weight:700;color:var(--text-dark);${done?'text-decoration:line-through;opacity:.6':''}">${sp.name}</span>
+        <span style="flex:1;font-size:11px;font-weight:500;color:var(--text-dark);${done?'text-decoration:line-through;opacity:.6':''}">${sp.name}</span>
         <span class="chip chip-${sp.billing||'one-time'}" style="font-size:8px;">${sp.billing||'one-time'}</span>
         <span class="chip chip-${sp.status}" style="font-size:8px;">${sp.status.replace('-',' ')}</span>
         ${(sp.users||[]).map(uid=>userChip(uid)).join('')}
         ${canEdit?`<button class="btn btn-xs btn-outline" onclick="openTaskModal('${clientId}','${projId}','${sp.id}')">+ Task</button>
-          <button class="btn btn-xs btn-outline" onclick="openSubprojectModal('${clientId}','${projId}','${sp.id}')">✏️</button>
-          <button class="btn btn-xs btn-danger" onclick="deleteSubproject('${clientId}','${projId}','${sp.id}')">✕</button>`:''}
+          <button class="btn btn-xs btn-outline" onclick="openSubprojectModal('${clientId}','${projId}','${sp.id}')" title="Edit">${ICON_EDIT}</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteSubproject('${clientId}','${projId}','${sp.id}')" title="Delete">${ICON_X}</button>`:''}
       </div>
       ${(sp.tasks||[]).length?`<div style="width:100%;padding-left:22px;">${taskHtml}</div>`:''}
     </div>`;
@@ -3057,7 +3057,7 @@ function renderTaskRow(clientId, projId, spId, t, canEdit){
       <span class="task-name">${t.name}</span>
       ${t.assigneeId?`<span class="task-assignee">${getUser(t.assigneeId)?.name||t.assigneeId}</span>`:''}
       ${t.due?`<span style="font-size:9px;color:var(--text-light);">${t.due}</span>`:''}
-      ${canEdit?`<button class="btn btn-xs btn-danger" onclick="deleteTask('${clientId}','${projId}','${spId||''}','${t.id}')">✕</button>`:''}
+      ${canEdit?`<button class="btn btn-xs btn-danger" onclick="deleteTask('${clientId}','${projId}','${spId||''}','${t.id}')" title="Delete">${ICON_X}</button>`:''}
     </div>`;
 }
 
@@ -3070,7 +3070,7 @@ function _serviceRow(c, svc, locationId){
   const t=today(); const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   const inactive=_isInactiveService(svc);
   const cls=inactive?'ok':svc.due&&svc.due<t?'overdue':svc.due&&svc.due<=in7s?'soon':'ok';
-  const icon=inactive?(svc.status==='cancelled'?'🚫':'📦'):cls==='overdue'?'🔴':cls==='soon'?'🟡':'🟢';
+  const dot=inactive?'var(--text-light)':_ALERT_PILL[cls].dot;
   const days=daysUntil(svc.due);
   const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
   const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
@@ -3078,7 +3078,7 @@ function _serviceRow(c, svc, locationId){
   const statusBadge=inactive?`<span class="chip" style="background:var(--bg2);color:var(--text-light);text-transform:capitalize;margin-left:6px;">${svc.status}</span>`:'';
   return `
       <tr${inactive?' style="opacity:.6;"':''}>
-        <td><span style="font-size:13px;">${icon}</span></td>
+        <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
         <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
@@ -3100,7 +3100,7 @@ function toggleShowInactiveServices(clientId){
 }
 function _serviceTable(c, svcs, locationId){
   const visible=_showInactiveServices?svcs:svcs.filter(s=>!_isInactiveService(s));
-  if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-icon">🔁</div><div class="empty-state-title">No recurring services added yet</div></div>';
+  if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-title">No recurring services added yet</div></div>';
   return `<div style="overflow-x:auto;">
     <table class="service-table">
       <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
@@ -3121,7 +3121,7 @@ function renderServices(c){
         <div style="flex:1;"></div>
         ${SESSION.isAdmin?`
           <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}',null,'${loc.id}')">+ Add Service</button>
-          <button class="btn btn-xs btn-danger" onclick="removeFranchiseLocation('${c.id}','${loc.id}')">✕ Remove Franchise</button>
+          <button class="btn btn-xs btn-danger" onclick="removeFranchiseLocation('${c.id}','${loc.id}')">Remove Franchise</button>
         `:''}
       </div>
       ${_serviceTable(c, loc.services||[], loc.id)}
