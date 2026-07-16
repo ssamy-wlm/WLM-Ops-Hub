@@ -1970,8 +1970,21 @@ async function _doCloudPush(){
     if(changes.settings && changes.settings.serviceCatalog && body.applied && body.applied.serviceCatalog){
       localStorage.removeItem('wl_catalog_dirty');
     }
-    // Refresh from the server so this tab reflects exactly what was accepted.
-    await _pullClientsFromCloud();
+    // Refresh from the server so this tab reflects exactly what was accepted —
+    // _pullClientsFromCloud() only refreshes the underlying localStorage; on
+    // its own it never touched the screen, so a confirmed, successful write
+    // could sit correctly in wl_clients_db while the DOM kept showing
+    // whatever was on screen before this push started until some unrelated
+    // trigger (the next 30s poll, a tab switch, a manual reload) happened to
+    // re-render. Same re-render call the poll/visibilitychange handlers
+    // already make after their own pull, so every write is reflected
+    // immediately for the editing tab, not just eventually.
+    if(await _pullClientsFromCloud()){
+      populateDropdowns();
+      filterClients();
+      renderMyWork();
+      updateMyWorkBadge();
+    }
   }catch(e){}
 }
 function _scheduleCloudPush(){
