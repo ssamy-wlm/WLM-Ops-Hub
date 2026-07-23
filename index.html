@@ -4926,7 +4926,9 @@ function _resetAbbyAndEmilyFirstLoginPassword(){
 function _userHasAssignedWork(userId, userName){
   const nameLower = (userName||'').trim().toLowerCase();
   return _getClientDB().some(c=>{
-    const svcMatch = (c.services||[]).some(s=>s.assigneeId===userId || (s.assigneeName||s.assignee||'').trim().toLowerCase()===nameLower);
+    const svcMatch = (c.services||[]).some(s=>
+      (Array.isArray(s.assigneeIds) && s.assigneeIds.includes(userId)) ||
+      s.assigneeId===userId || (s.assigneeName||s.assignee||'').trim().toLowerCase()===nameLower);
     const recSvcMatch = (c.recurringServices||[]).some(s=>(s.assignedUserIds||[]).includes(userId) || (s.assigneeName||'').trim().toLowerCase()===nameLower);
     const projMatch = (c.projects||[]).some(p=>(p.users||[]).includes(userId));
     return svcMatch || recSvcMatch || projMatch;
