@@ -472,6 +472,34 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
+<!-- ══════════════ FORCE PASSWORD CHANGE SCREEN (Admin/Manager) ══════════════ -->
+<div id="adminChangePasswordScreen" style="display:none;position:fixed;inset:0;background:var(--bg-page,#f0ede8);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:var(--card,#fff);border-radius:18px;padding:36px 40px;width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,.12);border:1px solid var(--border);">
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="width:56px;height:56px;background:linear-gradient(135deg,#f59e0b,#fbbf24);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;">🔑</div>
+      <div style="font-size:20px;font-weight:800;color:var(--text-dark,#1a1814);letter-spacing:-.02em;margin-bottom:8px;">Set Your Password</div>
+      <div style="font-size:13px;color:var(--text-mid,#6b6660);line-height:1.5;">An initial password was set for your account.<br>Please create a new secure password to continue.</div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px;">
+      <label class="form-label">New Password</label>
+      <div style="position:relative;">
+        <input class="form-input" type="password" id="adminFpNewPass" placeholder="Minimum 8 characters" style="padding-right:42px;">
+        <button onclick="togglePwVis('adminFpNewPass',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-light);line-height:1;">👁</button>
+      </div>
+      <div id="adminFpStrength" style="font-size:11px;margin-top:4px;color:var(--text-light);"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:24px;">
+      <label class="form-label">Confirm New Password</label>
+      <input class="form-input" type="password" id="adminFpConfPass" placeholder="Re-enter your new password" onkeydown="if(event.key==='Enter')submitAdminForcedPasswordChange()">
+    </div>
+    <div id="adminFpError" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:#e05555;margin-bottom:16px;"></div>
+    <button class="btn btn-primary" style="width:100%;font-size:14px;padding:13px;" onclick="submitAdminForcedPasswordChange()">Save &amp; Continue →</button>
+    <div style="margin-top:14px;text-align:center;">
+      <button onclick="logout()" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-light);">← Sign out</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ USER APP ══════════════ -->
 <div id="userApp" class="app">
   <!-- SIDEBAR -->
@@ -1993,6 +2021,58 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
+<!-- ══════════════ GRANT MANAGER ROLE (dual-mode account model, Step 3) ══════════════
+     Super Admin only. Adds a manager/admin role to an EXISTING employee's ONE
+     account — never a second account (see CLAUDE.md's dual-mode permission
+     project). The person's login stays their own existing employee password;
+     this modal's password field seeds the (otherwise dormant, once linked)
+     ops_admins row and forces a one-time reset on first Manager-mode entry. -->
+<div id="grantManagerModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Grant Manager Role</div><div class="modal-sub" id="grantManagerSubtitle">Add admin/manager access to an existing employee's account</div></div>
+      <button class="modal-close" onclick="closeModal('grantManagerModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="grantManagerUserId">
+      <div class="form-group">
+        <label class="form-label">Job Title / Role (as Manager)</label>
+        <input class="form-input" placeholder="e.g. Creative Manager" id="grantManagerTitle">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Admin Access Level</label>
+        <select class="form-select" id="grantManagerLevel" onchange="_updateGrantManagerLevelBadge()"></select>
+        <div style="margin-top:8px;">
+          <span id="grantManagerLevelBadge" style="display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .2s;"></span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Initial Password</label>
+          <div style="position:relative;">
+            <input class="form-input" type="password" placeholder="Set an initial password" id="grantManagerPass" style="padding-right:42px;">
+            <button onclick="togglePwVis('grantManagerPass',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password</label>
+          <div style="position:relative;">
+            <input class="form-input" type="password" placeholder="Confirm password" id="grantManagerPass2" style="padding-right:42px;">
+            <button onclick="togglePwVis('grantManagerPass2',this)" type="button" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text-light);">👁</button>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-light);line-height:1.5;padding:10px 12px;background:var(--bg);border-radius:8px;">
+        They'll keep signing in with their existing employee password — this doesn't change it. On their first time entering Manager mode, they'll be prompted to set a new password.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('grantManagerModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="grantManagerRole()">Grant Manager Role →</button>
+    </div>
+  </div>
+</div>
+
 <!-- Email Preview Modal -->
 <div id="emailPreviewModal" class="modal-overlay" style="z-index:9999;">
   <div class="modal" style="max-width:580px;">
@@ -2667,6 +2747,8 @@ function switchToUserView(){
 
 function logout(){
   document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('adminChangePasswordScreen').style.display='none';
+  _pendingAdminLogin = null;
   document.getElementById('userApp').classList.remove('visible');
   document.getElementById('adminApp').classList.remove('visible');
   try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
@@ -3157,6 +3239,17 @@ function renderUserTable(){
     const badgeClass  = u.role==='Employee'?'badge-working':'badge-blue';
     const probation   = _isOnProbation(u);
     const probEnd     = u.probationEnd ? new Date(u.probationEnd).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+    // Dual-mode account model (Step 3) — Super Admin only, both to grant a
+    // manager role and to see who already holds one.
+    const isSuperAdminViewer = _adminLevel==='super' || _adminLevel==='owner';
+    const linkedAdmin = _linkedAdminFor(u.id);
+    const isDualRole = linkedAdmin && linkedAdmin.status==='active';
+    const dualBadge = isDualRole
+      ? `<span class="status-badge" style="background:${_getLevelInfo(linkedAdmin.level).color}18;color:${_getLevelInfo(linkedAdmin.level).color};border:1px solid ${_getLevelInfo(linkedAdmin.level).color}44;margin-left:4px;" title="Also holds a Manager role">Also: ${escHtml(_getLevelInfo(linkedAdmin.level).label)}</span>`
+      : '';
+    const managerRoleBtn = !isSuperAdminViewer ? '' : isDualRole
+      ? `<button class="btn btn-sm btn-outline" onclick="revokeManagerRole('${u.id}')">Revoke Manager Role</button>`
+      : `<button class="btn btn-sm btn-outline" onclick="openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${initials}</div>
@@ -3166,10 +3259,12 @@ function renderUserTable(){
       <td>
         <span class="status-badge ${badgeClass}">${u.role||'Contractor'}</span>
         ${probation?`<span class="status-badge" style="background:#f59e0b18;color:#d97706;border:1px solid #d97706aa;margin-left:4px;" title="Probation ends ${probEnd}">Probation</span>`:''}
+        ${dualBadge}
       </td>
       <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>
+        ${managerRoleBtn}
         <button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>
       </div></td>
     </tr>`;
@@ -4966,14 +5061,17 @@ window.doLogin = async function(){
   if(authData.role === 'admin'){
     const admins = dbGet(DB_KEYS.admins)||[];
     const fullAdmin = admins.find(a=>a.id===authData.id) || {};
-    currentRole='admin';
-    currentAdminInfo = {email: authData.email, name: fullAdmin.name||authData.name||'Admin', title: fullAdmin.title||authData.title||''};
-    logActivity('login',`Admin (${currentAdminInfo.name})`,'Admin signed in','admin panel');
-    try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:authData.level||fullAdmin.level||'admin', adminId:authData.id, ts:Date.now()})); }catch(e){}
-    showAdminApp();
-    setTimeout(()=>_updateSidebarForAdmin({...fullAdmin, name:currentAdminInfo.name, title:currentAdminInfo.title}), 50);
-    setTimeout(()=>applyAdminRoleRestrictions(authData.level||fullAdmin.level||'admin', fullAdmin), 100);
-    startLiveSync(authData.level||fullAdmin.level||'admin');
+    // Grant-manager-role (Step 3) sets mustChangePassword:true on the newly
+    // linked ops_admins row to force a reset on first Manager-mode entry,
+    // without ever touching the person's existing ops_users row — see
+    // api/ops-auth.js's OR-based resolution. Mirrors user.html's existing
+    // forced-password-change screen for members.
+    if(authData.mustChangePassword){
+      _pendingAdminLogin = { authData, fullAdmin };
+      showAdminForcedPasswordChange();
+      return;
+    }
+    _enterAdminApp(authData, fullAdmin);
     return;
   }
 
@@ -4984,6 +5082,84 @@ window.doLogin = async function(){
   logActivity('login', storedUser.name, 'User signed in', storedUser.title||'');
   showUserApp();
 };
+
+// ── Enter the admin app proper — extracted from window.doLogin so the forced
+// password change screen below can call it as a continuation, once, after a
+// successful reset, instead of duplicating this setup. ──
+function _enterAdminApp(authData, fullAdmin){
+  currentRole='admin';
+  currentAdminInfo = {email: authData.email, name: fullAdmin.name||authData.name||'Admin', title: fullAdmin.title||authData.title||''};
+  logActivity('login',`Admin (${currentAdminInfo.name})`,'Admin signed in','admin panel');
+  try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:authData.level||fullAdmin.level||'admin', adminId:authData.id, ts:Date.now()})); }catch(e){}
+  showAdminApp();
+  setTimeout(()=>_updateSidebarForAdmin({...fullAdmin, name:currentAdminInfo.name, title:currentAdminInfo.title}), 50);
+  setTimeout(()=>applyAdminRoleRestrictions(authData.level||fullAdmin.level||'admin', fullAdmin), 100);
+  startLiveSync(authData.level||fullAdmin.level||'admin');
+}
+
+// ── Forced password change (admin/manager login branch) — mirrors
+// user.html's showForcedPasswordChange()/submitForcedPasswordChange() for
+// members. Fires when a Grant-manager-role initial password (mustChangePassword
+// on the linked ops_admins row) hasn't been reset yet — see window.doLogin above. ──
+let _pendingAdminLogin = null;
+function showAdminForcedPasswordChange(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('adminChangePasswordScreen').style.display='flex';
+  document.getElementById('adminFpNewPass').value='';
+  document.getElementById('adminFpConfPass').value='';
+  document.getElementById('adminFpError').style.display='none';
+  document.getElementById('adminFpNewPass').addEventListener('input', function(){
+    const v=this.value;
+    const el=document.getElementById('adminFpStrength');
+    if(!v){el.textContent='';return;}
+    if(v.length<6){el.textContent='Too short';el.style.color='#e05555';return;}
+    if(v.length<8){el.textContent='Weak — try adding numbers or symbols';el.style.color='#d97706';return;}
+    if(v.length>=8 && /[0-9]/.test(v) && /[^a-zA-Z0-9]/.test(v)){el.textContent='Strong ✓';el.style.color='#2e9e6e';return;}
+    if(v.length>=8){el.textContent='Good';el.style.color='#2e9e6e';}
+  });
+}
+
+async function submitAdminForcedPasswordChange(){
+  const np  = document.getElementById('adminFpNewPass').value;
+  const cp  = document.getElementById('adminFpConfPass').value;
+  const err = document.getElementById('adminFpError');
+  const btn = document.querySelector('#adminChangePasswordScreen .btn-primary');
+  if(!np){err.textContent='Please enter a new password.';err.style.display='block';return;}
+  if(np.length<8){err.textContent='Password must be at least 8 characters.';err.style.display='block';return;}
+  if(np!==cp){err.textContent='Passwords do not match.';err.style.display='block';return;}
+
+  const token = _opsToken();
+  if(!token){ err.textContent='Not signed in — please refresh the page and log in again.'; err.style.display='block'; return; }
+
+  // Server-confirmed FIRST — a rejected/failed save here must never look
+  // like a successful one (same pattern as user.html's copy of this screen).
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; err.style.display='none'; }
+  try{
+    const res = await fetch(OPS_SYNC_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{selfPasswordChange:{password:np, mustChangePassword:false}}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.selfPasswordChange >= 1)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+  }catch(e){
+    err.textContent = 'Could not save your new password: '+e.message;
+    err.style.display='block';
+    if(btn){ btn.textContent='Save & Continue →'; btn.disabled=false; }
+    return;
+  }
+  if(btn){ btn.textContent='Save & Continue →'; btn.disabled=false; }
+
+  document.getElementById('adminChangePasswordScreen').style.display='none';
+  const pending = _pendingAdminLogin;
+  _pendingAdminLogin = null;
+  if(pending){
+    pending.authData.mustChangePassword = false;
+    _enterAdminApp(pending.authData, pending.fullAdmin);
+  }
+}
 
 // ── Helper: get the real logged-in user's name (never reads the static DOM placeholder) ──
 function _getCurrentUserName(){
@@ -7831,6 +8007,119 @@ function _updateLevelBadge(){
   badge.style.background = info.color + '22';
   badge.style.color = info.color;
   badge.style.border = `1px solid ${info.color}44`;
+}
+
+// ── Grant / Revoke Manager Role (dual-mode account model, Step 3) ──
+// One account, one login: this ADDS an admin/manager role to an EXISTING
+// employee's ops_users row via a linked ops_admins row (data.linkedUserId —
+// see api/ops-auth.js), never creates a second account. Super Admin only —
+// enforced server-side too (writes to the admins table are already gated to
+// tier==='super' in api/ops-sync.js; hiding the button here is UX only, not
+// the real security boundary). Never touches the ops_users row itself.
+function _linkedAdminFor(userId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  return admins.find(a=>a.linkedUserId===userId) || null;
+}
+
+function openGrantManagerModal(userId){
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===userId);
+  if(!u){ showToast('User not found'); return; }
+  document.getElementById('grantManagerUserId').value = userId;
+  document.getElementById('grantManagerSubtitle').textContent = `Add admin/manager access to ${u.name}'s existing account`;
+  document.getElementById('grantManagerTitle').value = '';
+  document.getElementById('grantManagerPass').value = '';
+  document.getElementById('grantManagerPass2').value = '';
+  // Never Super Admin — same restricted list the Add Admin modal uses (rule:
+  // Sarah/owner is the only Super Admin, never assignable via any grant UI).
+  const sel = document.getElementById('grantManagerLevel');
+  sel.innerHTML = NEW_ADMIN_ASSIGNABLE_LEVELS.map(l=>`<option value="${l.value}">${l.label} — ${l.desc}</option>`).join('');
+  sel.value = 'admin';
+  _updateGrantManagerLevelBadge();
+  openModal('grantManagerModal');
+}
+
+function _updateGrantManagerLevelBadge(){
+  const sel = document.getElementById('grantManagerLevel');
+  const badge = document.getElementById('grantManagerLevelBadge');
+  if(!sel||!badge) return;
+  const info = _getLevelInfo(sel.value);
+  badge.textContent = info.label;
+  badge.style.background = info.color+'22';
+  badge.style.color = info.color;
+  badge.style.border = `1px solid ${info.color}44`;
+}
+
+function grantManagerRole(){
+  const userId = document.getElementById('grantManagerUserId').value;
+  const title  = document.getElementById('grantManagerTitle').value.trim();
+  const level  = document.getElementById('grantManagerLevel').value;
+  const pass   = document.getElementById('grantManagerPass').value;
+  const pass2  = document.getElementById('grantManagerPass2').value;
+
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===userId);
+  if(!u){ showToast('User not found'); return; }
+  if(!title){ showToast('Please enter a job title'); return; }
+  if(!pass||pass.length<6){ showToast('Password must be at least 6 characters'); return; }
+  if(pass!==pass2){ showToast('Passwords do not match'); return; }
+
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const existingLink = admins.find(a=>a.linkedUserId===userId);
+
+  if(existingLink){
+    // Re-grant after an earlier revoke — reactivate the SAME linked row
+    // rather than creating a second one, so this person's account can never
+    // end up with more than one linked admin row.
+    existingLink.title = title;
+    existingLink.level = level;
+    existingLink.password = pass;
+    existingLink.mustChangePassword = true;
+    existingLink.status = 'active';
+    existingLink.name = u.name;   // kept verbatim in sync with the employee row
+    existingLink.email = u.email;
+  } else {
+    const initials = (u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+    admins.push({
+      id: 'adm_'+Date.now(),
+      name: u.name, email: u.email, // copied verbatim from the ops_users row — never retyped here
+      initials, title, level, password: pass,
+      linkedUserId: userId,
+      assignedUsers: [],
+      status: 'active',
+      mustChangePassword: true,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  dbSet(DB_KEYS.admins, admins);
+  cloudAutoSync(); // per-record push — only this admins row is dirty, see CLAUDE.md rule #1
+
+  renderUserTable();
+  if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
+  closeModal('grantManagerModal');
+  showToast(`Manager role granted to ${u.name} ✓`);
+  logActivity('admin','Admin','Granted manager role: '+u.name+' ('+_getLevelInfo(level).label+')', u.email);
+}
+
+function revokeManagerRole(userId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const link = admins.find(a=>a.linkedUserId===userId && a.status==='active');
+  if(!link){ showToast('No active manager role found for this person'); return; }
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===userId);
+  const displayName = u ? u.name : link.name;
+  // Deactivate only — never unlink/delete. A dual-role account whose admin
+  // row goes inactive degrades to employee-only on next login and is never
+  // locked out (see api/ops-auth.js's Step 1 design); the ops_users row is
+  // untouched either way.
+  if(!confirm(`Revoke manager role for ${displayName}?\nThey'll keep their employee account and login — this only removes admin/manager access. It can be re-granted later.`)) return;
+  link.status = 'inactive';
+  dbSet(DB_KEYS.admins, admins);
+  cloudAutoSync();
+  renderUserTable();
+  if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
+  showToast(`Manager role revoked for ${displayName}`);
+  logActivity('admin','Admin','Revoked manager role: '+displayName,'');
 }
 
 // ── Render the Admin Accounts table from localStorage ──

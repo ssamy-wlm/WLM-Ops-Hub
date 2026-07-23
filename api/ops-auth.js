@@ -107,7 +107,14 @@ export default async function handler(req, res) {
     const level = adminRow ? (adminRow.data.level || 'admin') : undefined;
     const id = employeeRow ? employeeRow.id : adminRow.id;
     const primary = employeeRow ? employeeRow.data : adminRow.data;
-    const mustChangePassword = !!(employeeRow ? employeeRow.data?.mustChangePassword : adminRow.data?.mustChangePassword);
+    // For a dual-role account, EITHER row can force a change — not just the
+    // employee row. This is what lets "Grant manager role" (see CLAUDE.md's
+    // dual-mode permission project, Step 3) force a password reset on first
+    // Manager-mode entry purely by setting mustChangePassword on the NEW
+    // ops_admins row, without ever writing to the person's existing ops_users
+    // row. For a single-role account this is unchanged — there's only one
+    // row to check either way.
+    const mustChangePassword = !!(employeeRow?.data?.mustChangePassword || adminRow?.data?.mustChangePassword);
 
     const token = signSession({
       id, role, level, name: primary.name, email: normEmail,
