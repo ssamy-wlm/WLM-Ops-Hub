@@ -1839,10 +1839,18 @@ function refreshRecurringDueDates(){
 // longer resolves (or, worse, now collides with an unrelated entry in the current
 // catalog) — match by exact service name first since names are stable, and only fall
 // back to catalogId when no name match exists.
+// Name comparison is trimmed as well as case-insensitive — a stray leading/trailing
+// space (common in CSV-imported service names) previously made an otherwise-exact
+// name silently fall through to a stale/empty catalogId and read as "not in
+// catalog" (e.g. an "Instagram " service on Glasco). Only auto-resolves when
+// EXACTLY ONE catalog entry matches by name — two entries sharing a name after
+// trimming is itself a catalog data-quality issue, and guessing between them would
+// be worse than leaving the service uncatalogued.
 function findCatalogEntryForService(s){
   const cat=getCatalog();
-  const byName=cat.find(e=>e.name.toLowerCase()===(s.name||'').toLowerCase());
-  if(byName) return byName;
+  const svcName=(s.name||'').trim().toLowerCase();
+  const byName=svcName?cat.filter(e=>(e.name||'').trim().toLowerCase()===svcName):[];
+  if(byName.length===1) return byName[0];
   return cat.find(e=>e.id===s.catalogId)||null;
 }
 // Sentinel <option> value for the Edit Service dropdown when a service's
@@ -4098,9 +4106,15 @@ function openAddServiceModal(clientId,entryId,locationId){
     const nameEl=_el('svc-name');
     if(catEntry){
       nameEl.value=catEntry.id;
+      // catEntry.id may differ from the service's own stored catalogId (this
+      // is exactly the case where the match came from the name fallback
+      // above, not an exact catalogId hit) — leaving the Name dropdown on
+      // catEntry.id means an ordinary Save (even with nothing else changed)
+      // now writes catalogId:catEntry.id, self-healing the stale/empty value
+      // going forward with no separate migration step.
     } else {
-      // No catalog match — inject an option carrying the service's OWN raw
-      // name so the dropdown shows what's actually assigned instead of
+      // No catalog match at all — inject an option carrying the service's OWN
+      // raw name so the dropdown shows what's actually assigned instead of
       // going blank, and so leaving it untouched on Save never remaps/
       // renames it (see saveClientService()'s UNCATALOGED_SENTINEL handling).
       const opt=document.createElement('option');
@@ -4108,6 +4122,32 @@ function openAddServiceModal(clientId,entryId,locationId){
       opt.textContent=(svc.name||'Unnamed service')+' (not in catalog)';
       nameEl.insertBefore(opt, nameEl.firstChild);
       nameEl.value=UNCATALOGED_SENTINEL;
+      // Same "don't show blank for something that isn't actually empty"
+      // fix, applied to the Bundle dropdown: a genuinely uncatalogued
+      // service still has its OWN bundle field frozen at assignment time
+      // (rule #8) even though no live catalog entry backs it anymore.
+      // populateServiceDropdown() (just above) only offers the catalog's
+      // CURRENT bundle names, so a bundle that's since been renamed/removed
+      // from the catalog has no matching <option> and silently shows blank.
+      // Inject one, exactly like the Name dropdown's sentinel — display
+      // only: saveClientService() already preserves current.bundle as-is
+      // for an uncatalogued service regardless of what this dropdown shows.
+      const bSel=_el('svc-bundle');
+      if(bSel && svc.bundle){
+        if(![...bSel.options].some(o=>o.value===svc.bundle)){
+          // The stored bundle NAME isn't among the catalog's current bundles
+          // either (renamed/removed since) — inject a clearly-labeled option
+          // so it's visible rather than silently absent.
+          const bOpt=document.createElement('option');
+          bOpt.value=svc.bundle;
+          bOpt.textContent=svc.bundle+' (not in catalog)';
+          bSel.insertBefore(bOpt, bSel.firstChild);
+        }
+        // Either way — injected above, or already a real bundle name that's
+        // just missing a matching catalog SERVICE entry for this one — select
+        // it explicitly; nothing here did that yet for the uncatalogued case.
+        bSel.value=svc.bundle;
+      }
     }
     _el('svc-freq').value=svc.freq||'monthly';
     _el('svc-lastdone').value=svc.lastDone||'';
