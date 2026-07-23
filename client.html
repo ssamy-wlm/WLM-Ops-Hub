@@ -2656,7 +2656,17 @@ function renderClientGrid(list){
   if(list===undefined){ filterClients(); return; }
   // Pinned clients always float to the top — mirrors the same sort the
   // Clients tab (index.html) used before it was merged into this view.
-  list=[...list].sort((a,b)=>{ if(a.pinned&&!b.pinned) return -1; if(!a.pinned&&b.pinned) return 1; return 0; });
+  // For non-admin viewers, their own employee favorites (Feature 6) float
+  // next, right after the admin-wide pin and before everything else — a
+  // personal layer on top of, never instead of, the shared pin.
+  list=[...list].sort((a,b)=>{
+    if(a.pinned&&!b.pinned) return -1; if(!a.pinned&&b.pinned) return 1;
+    if(!SESSION.isAdmin){
+      const af=isEmployeeFavorite(a.id), bf=isEmployeeFavorite(b.id);
+      if(af&&!bf) return -1; if(!af&&bf) return 1;
+    }
+    return 0;
+  });
   const grid=_el('client-grid'); if(!grid) return;
   // The detail panel gets moved inside the grid (see openClientDetail) so it can
   // expand directly under the clicked card — pull it back out before wiping the
@@ -2689,7 +2699,7 @@ function renderClientGrid(list){
       <div class="client-card-head">
         <div class="client-avatar" style="background:${c.color||_hashClientColor(c.name)};">${logoHtml}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${c.name}<span class="client-code">${c.code||''}</span></div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${c.name}<span class="client-code">${c.code||''}</span></div>
           <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${c.accountManager||'No manager'} · <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span></div>
         </div>
         ${SESSION.isAdmin?`<div style="display:flex;gap:4px;" onclick="event.stopPropagation();">
@@ -2697,7 +2707,9 @@ function renderClientGrid(list){
           <button class="btn btn-xs btn-outline" onclick="editClient('${c.id}')" title="Edit">${ICON_EDIT}</button>
           <button class="btn btn-xs btn-outline" onclick="toggleClientStatus('${c.id}')" title="Toggle Status">${c.status==='active'?ICON_PAUSE:ICON_PLAY}</button>
           <button class="btn btn-xs btn-danger" onclick="deleteClient('${c.id}')" title="Delete">${ICON_X}</button>
-        </div>`:''}
+        </div>`:`<div onclick="event.stopPropagation();">
+          <button class="btn btn-xs btn-outline" onclick="toggleEmployeeFavorite('${c.id}')" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}" style="color:${isEmployeeFavorite(c.id)?'var(--gold-dark)':''};">${isEmployeeFavorite(c.id)?'⭐':'☆'}</button>
+        </div>`}
       </div>
       <div class="client-card-body">
         <div style="font-size:9px;color:var(--text-light);margin-bottom:5px;">${allProj.length} project(s) · ${ongoingCount} ongoing · Started ${c.start||'—'}</div>
@@ -3000,7 +3012,7 @@ function renderClientDetail(clientId, tab){
     <div class="detail-header">
       <div class="detail-avatar" style="background:${c.color||_hashClientColor(c.name)};">${logoHtml}</div>
       <div style="flex:1;min-width:0;">
-        <div class="detail-name">${c.pinned?'📌 ':''}${c.name} <span class="client-code" style="font-size:12px;">${c.code||''}</span></div>
+        <div class="detail-name">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${c.name} <span class="client-code" style="font-size:12px;">${c.code||''}</span></div>
         <div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span>
           ${adminContact}
@@ -3017,7 +3029,9 @@ function renderClientDetail(clientId, tab){
             <button class="btn btn-xs btn-outline" onclick="togglePinClient('${c.id}')" style="color:${c.pinned?'var(--gold-dark)':''};">${ICON_PIN} ${c.pinned?'Unpin':'Pin to top'}</button>
             <button class="btn btn-xs btn-outline" onclick="editClient('${c.id}')">${ICON_EDIT} Edit</button>
             <button class="btn btn-xs btn-outline" onclick="toggleClientStatus('${c.id}')">${c.status==='active'?ICON_PAUSE+' Deactivate':ICON_PLAY+' Activate'}</button>
-          `:''}
+          `:`
+            <button class="btn btn-xs btn-outline" onclick="toggleEmployeeFavorite('${c.id}')" style="color:${isEmployeeFavorite(c.id)?'var(--gold-dark)':''};">${isEmployeeFavorite(c.id)?'⭐ Unfavorite':'☆ Favorite'}</button>
+          `}
           <button class="btn btn-xs btn-outline" onclick="_el('client-detail-panel').style.display='none';_activeClientId=null;">${ICON_X} Close</button>
         </div>
       </div>
@@ -3667,6 +3681,30 @@ function togglePinClient(id){
   renderClientDetail(id);
   filterClients();
   showToast(c.pinned?'Client pinned to top':'Client unpinned');
+}
+
+// ── Employee favorites (Monday feature pack, Feature 6) ──────────────────
+// A PARALLEL, per-viewer-scoped pin — deliberately never reads or writes
+// c.pinned (the existing admin-wide pin above, PR #107, shared/global and
+// visible to everyone). This is local-only, keyed per SESSION.id, exactly
+// like the saved-filters key scoping (Feature 3) — never synced to the
+// server, never affects any other person's ordering. Shared with
+// user.html's My Work list via the same localStorage key convention (same
+// origin, same person's id), so starring a client here also floats it in
+// My Work, and vice versa.
+function _favKey(){ return 'wl_employee_favorites_'+(SESSION.id||'anon'); }
+function getEmployeeFavorites(){
+  try{ return JSON.parse(localStorage.getItem(_favKey())||'[]'); }catch(e){ return []; }
+}
+function isEmployeeFavorite(id){ return getEmployeeFavorites().includes(id); }
+function toggleEmployeeFavorite(id){
+  const favs=getEmployeeFavorites();
+  const idx=favs.indexOf(id);
+  if(idx>-1) favs.splice(idx,1); else favs.push(id);
+  try{ localStorage.setItem(_favKey(), JSON.stringify(favs)); }catch(e){}
+  filterClients();
+  if(_activeClientId===id) renderClientDetail(id);
+  showToast(idx>-1?'Removed from favorites':'Added to favorites ⭐');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4733,7 +4771,14 @@ function renderMyWork(){
   const myId=SESSION.id||SESSION.name;
   let html=''; let found=false;
   const t=today();
-  getClients().forEach(c=>{
+  // Favorited clients' work cards float to the top here too (Feature 6) —
+  // same per-viewer favorites list as the Tracker grid above.
+  const myWorkClients=[...getClients()].sort((a,b)=>{
+    const af=isEmployeeFavorite(a.id), bf=isEmployeeFavorite(b.id);
+    if(af&&!bf) return -1; if(!af&&bf) return 1;
+    return 0;
+  });
+  myWorkClients.forEach(c=>{
     (c.projects||[]).forEach(p=>{
       const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name).map(t=>({...t,_spName:sp.name,_spId:sp.id})));

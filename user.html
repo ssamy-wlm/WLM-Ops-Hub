@@ -1776,6 +1776,26 @@ function _renderNotifSettingsForm(){
   if(dueSoonToggle) dueSoonToggle.checked = ns.dueSoon;
 }
 
+// ── Employee favorites (Monday feature pack, Feature 6) ──────────────────
+// Same per-viewer-scoped localStorage key convention client.html's Tracker
+// uses (wl_employee_favorites_<id>) — same origin, same person's id, so
+// starring a client here also floats it in the Tracker and vice versa.
+// Deliberately separate from any admin-wide pin field; per-user only, never
+// affects anyone else's ordering, never synced to the server.
+function _favKey(){ return 'wl_employee_favorites_'+(currentUser?.id||currentUser?.name||'anon'); }
+function getEmployeeFavorites(){
+  try{ return JSON.parse(localStorage.getItem(_favKey())||'[]'); }catch(e){ return []; }
+}
+function isEmployeeFavorite(id){ return getEmployeeFavorites().includes(id); }
+function toggleEmployeeFavorite(id, evt){
+  if(evt) evt.stopPropagation();
+  const favs=getEmployeeFavorites();
+  const idx=favs.indexOf(id);
+  if(idx>-1) favs.splice(idx,1); else favs.push(id);
+  try{ localStorage.setItem(_favKey(), JSON.stringify(favs)); }catch(e){}
+  loadMyAssignments();
+}
+
 // Mark a task done from the team portal and fire a notification into the tracker
 function userMarkTaskDone(clientId, projId, spId, taskId){
   try{
@@ -2107,7 +2127,14 @@ function updateAssignmentsBadge(){
 function loadMyAssignments(){
   const myId   = currentUser?.id||'';
   const myName = currentUser?.name||'';
-  const clients= _getAssignClients();
+  // Favorited clients float to the top here too (Feature 6) — same
+  // per-viewer favorites list as the Tracker; never affects anyone else's
+  // ordering since it's read fresh from this person's own localStorage key.
+  const clients= [..._getAssignClients()].sort((a,b)=>{
+    const af=isEmployeeFavorite(a.id), bf=isEmployeeFavorite(b.id);
+    if(af&&!bf) return -1; if(!af&&bf) return 1;
+    return 0;
+  });
   const todayStr = new Date().toISOString().slice(0,10);
   const in7  = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   const in30 = new Date(); in30.setDate(in30.getDate()+30); const in30s=in30.toISOString().slice(0,10);
@@ -2179,7 +2206,10 @@ function loadMyAssignments(){
         <div style="padding:14px 18px;background:linear-gradient(135deg,${c.color||_hashClientColor(c.name)}18,transparent);border-bottom:1px solid rgba(45,107,182,.1);display:flex;align-items:center;gap:11px;">
           <div style="width:34px;height:34px;border-radius:9px;background:${c.color||_hashClientColor(c.name)};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;flex-shrink:0;">${(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}</div>
           <div style="flex:1;">
-            <div style="font-size:13px;font-weight:800;color:var(--text-dark);">${c.name} <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code||''}</span></div>
+            <div style="font-size:13px;font-weight:800;color:var(--text-dark);">
+              <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
+              ${c.name} <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code||''}</span>
+            </div>
             <div style="font-size:10px;color:var(--text-light);">${p.name} · <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2E5DA6;">${(p.status||'').replace('-',' ')}</span> · ${p.progress||0}% complete</div>
           </div>
           <a href="javascript:void(0)" onclick="openTrackerTo('${c.id}','${p.id}')" style="font-size:10px;color:var(--text-mid);text-decoration:none;padding:4px 9px;border:1px solid rgba(45,107,182,.2);border-radius:7px;">Open ↗</a>
@@ -2250,7 +2280,10 @@ function loadMyAssignments(){
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}${Array.isArray(s.subitems)&&s.subitems.length?` <span style="background:rgba(0,0,0,.06);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;" title="Sub-items completed">${s.subitems.filter(si=>si.done).length}/${s.subitems.length}</span>`:''}</div>
-              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
+              <div style="font-size:10px;color:var(--text-light);">
+                <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
+                ${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}
+              </div>
             </div>
             <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
             <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
@@ -2280,7 +2313,10 @@ function loadMyAssignments(){
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
-              <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
+              <div style="font-size:10px;color:var(--text-light);">
+                <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
+                ${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||s.frequency||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}
+              </div>
             </div>
           </div>
         </div>`;
