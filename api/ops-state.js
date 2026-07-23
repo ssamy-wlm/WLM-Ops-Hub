@@ -146,6 +146,14 @@ export default async function handler(req, res) {
       // Harmless to expose: it's only ever the caller's own identity, never
       // anyone else's. Remove once the discrepancy is resolved.
       viewerId: session.id ?? null,
+      // Dual-mode account model (see CLAUDE.md, api/ops-auth.js): present
+      // only when the signed session actually carries them — undefined on
+      // the token becomes null here, exactly like viewerLevel above. Lets
+      // each portal detect a dual-role account (both fields set) on every
+      // load/reload, not just at the moment of a fresh login, so the mode
+      // switcher control can stay correctly shown/hidden across sessions.
+      viewerEmployeeId: session.employeeId ?? null,
+      viewerAdminId: session.adminId ?? null,
       users, admins, clients, goals, feed, messages, roadmapTasks,
       timeOffRequests, timeOffLedger, summaries,
       deletedUserIds: [...deletedIds],
