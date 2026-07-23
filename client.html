@@ -490,7 +490,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
             <option value="status">Sort: Status</option>
           </select>
           <button class="admin-only" onclick="clearClientFilters()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:11px;cursor:pointer;color:var(--text-light);white-space:nowrap;" title="Clear all filters">✕ Clear</button>
+          <button onclick="saveCurrentFilter()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:11px;cursor:pointer;color:var(--text-light);white-space:nowrap;" title="Save the current filter combination for quick reuse">☆ Save Filter</button>
         </div>
+        <!-- Saved filters — named, click-to-apply chips (per-user, stored locally) -->
+        <div id="client-saved-filters" style="display:none;gap:5px;flex-wrap:wrap;margin-top:7px;"></div>
         <!-- Active filter chips -->
         <div id="client-filter-chips" style="display:none;gap:5px;flex-wrap:wrap;margin-top:7px;"></div>
       </div>
@@ -2828,6 +2831,7 @@ function filterClients(){
   }
   renderClientGrid(list);
   renderClientFilterChips();
+  renderSavedFilterChips();
 }
 
 function clearClientFilters(){
@@ -2861,6 +2865,76 @@ function renderClientFilterChips(){
     <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 11px;background:rgba(45,107,182,.1);border:1px solid rgba(45,107,182,.2);border-radius:20px;font-size:10px;font-weight:600;color:#2E5DA6;cursor:default;">
       ${ch.label}
       <button onclick="(function(){var el=document.getElementById('${ch.id}');if(el)el.value='';filterClients();})()" style="background:none;border:none;cursor:pointer;color:#2E5DA6;font-size:12px;line-height:1;padding:0 0 0 2px;">✕</button>
+    </span>`).join('');
+}
+
+// ── Saved filters — per-user, local-only "views" over the tracker grid ──
+// A named snapshot of the filter-bar's DOM values (search/status/service/
+// bundle type/bundle status/manager/sort). Click a chip = write those
+// values back into the filter inputs and call filterClients() — the exact
+// same single re-apply path everything else uses (see PR #135), so a saved
+// filter survives background re-renders (30s poll, visibilitychange, tab
+// switches) the same way any manually-set filter already does. Stored in
+// localStorage only, scoped per SESSION.id so two people sharing a browser
+// never see each other's saved views — never synced to the server, so this
+// stays auto-approve tier (no data-write/permission question involved).
+function _savedFiltersKey(){ return 'wl_saved_filters_'+(SESSION.id||'anon'); }
+function getSavedFilters(){
+  try{ return JSON.parse(localStorage.getItem(_savedFiltersKey())||'[]'); }catch(e){ return []; }
+}
+function setSavedFilters(list){
+  try{ localStorage.setItem(_savedFiltersKey(), JSON.stringify(list||[])); }catch(e){}
+}
+function _currentFilterQuery(){
+  return {
+    search:     _el('client-search')?.value||'',
+    status:     _el('filter-status')?.value||'',
+    service:    _el('filter-service')?.value||'',
+    projType:   _el('filter-proj-type')?.value||'',
+    projStatus: _el('filter-proj-status')?.value||'',
+    manager:    _el('filter-manager')?.value||'',
+    sort:       _el('filter-sort')?.value||'name',
+  };
+}
+function saveCurrentFilter(){
+  const q=_currentFilterQuery();
+  if(!(q.search||q.status||q.service||q.projType||q.projStatus||q.manager)){
+    showToast('Set at least one filter before saving','warn'); return;
+  }
+  const name=(prompt('Name this filter (e.g. "My overdue", "Sherine\'s clients"):')||'').trim();
+  if(!name) return;
+  const list=getSavedFilters();
+  list.push({ id:'sf'+uid(), name, query:q });
+  setSavedFilters(list);
+  renderSavedFilterChips();
+  showToast('Filter saved ✓');
+}
+function applySavedFilter(id){
+  const f=getSavedFilters().find(x=>x.id===id); if(!f) return;
+  const q=f.query||{};
+  if(_el('client-search'))     _el('client-search').value=q.search||'';
+  if(_el('filter-status'))     _el('filter-status').value=q.status||'';
+  if(_el('filter-service'))    _el('filter-service').value=q.service||'';
+  if(_el('filter-proj-type'))  _el('filter-proj-type').value=q.projType||'';
+  if(_el('filter-proj-status'))_el('filter-proj-status').value=q.projStatus||'';
+  if(_el('filter-manager'))    _el('filter-manager').value=q.manager||'';
+  if(_el('filter-sort'))       _el('filter-sort').value=q.sort||'name';
+  filterClients();
+}
+function deleteSavedFilter(id, evt){
+  if(evt) evt.stopPropagation();
+  setSavedFilters(getSavedFilters().filter(x=>x.id!==id));
+  renderSavedFilterChips();
+}
+function renderSavedFilterChips(){
+  const wrap=_el('client-saved-filters'); if(!wrap) return;
+  const list=getSavedFilters();
+  if(!list.length){ wrap.style.display='none'; wrap.innerHTML=''; return; }
+  wrap.style.display='flex';
+  wrap.innerHTML=list.map(f=>`
+    <span onclick="applySavedFilter('${f.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px 3px 11px;background:#fff;border:1px solid var(--border);border-radius:20px;font-size:10px;font-weight:600;color:var(--text);cursor:pointer;" title="Apply saved filter">
+      ☆ ${f.name}
+      <button onclick="deleteSavedFilter('${f.id}', event)" style="background:none;border:none;cursor:pointer;color:var(--text-light);font-size:12px;line-height:1;padding:0 0 0 2px;">✕</button>
     </span>`).join('');
 }
 
