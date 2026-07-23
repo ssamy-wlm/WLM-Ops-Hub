@@ -966,6 +966,28 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   </div>
 </div>
 
+<!-- Service Sub-items / Checklist Modal (Monday feature pack #2) -->
+<div id="serviceSubitemsModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">☑️ Sub-items</div><div class="modal-sub" id="svcSubitemsSubtitle"></div></div>
+      <button class="modal-close" onclick="closeModal('serviceSubitemsModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="svcSubitemsClientId">
+      <input type="hidden" id="svcSubitemsServiceId">
+      <div id="svcSubitemsList" style="max-height:280px;overflow-y:auto;margin-bottom:14px;"></div>
+      <div style="display:flex;gap:8px;">
+        <input class="form-input" id="svcSubitemText" placeholder="Add a checklist step…" style="flex:1;" onkeydown="if(event.key==='Enter')addServiceSubitem()">
+        <button class="btn btn-outline btn-sm" onclick="addServiceSubitem()">+ Add</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('serviceSubitemsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Appearance Modal -->
 <div id="appearanceModal" class="modal-overlay">
   <div class="modal">
@@ -1829,6 +1851,73 @@ function postServiceUpdate(){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
+// ── Sub-items / checklist on services (Monday feature pack #2) ──
+// svc.subitems: [{id, text, done, ts}] — informational only, same as
+// client.html's copy of this feature: they never affect the service's
+// done/status logic — userMarkServiceDone() above is untouched and stays
+// the only way to actually complete the service. My Work only ever shows
+// services already assigned to the viewer, so posting/checking here is
+// always allowed (no read-only mode needed, unlike client.html where a
+// non-assignee can also view the row).
+function openServiceSubitemsModal(clientId, svcId){
+  const clients=_getAssignClients();
+  const c=clients.find(x=>x.id===clientId);
+  const svc=c&&(c.services||[]).find(s=>s.id===svcId);
+  if(!svc) return;
+  document.getElementById('svcSubitemsClientId').value=clientId;
+  document.getElementById('svcSubitemsServiceId').value=svcId;
+  document.getElementById('svcSubitemText').value='';
+  document.getElementById('svcSubitemsSubtitle').textContent=svc.name+' — '+(c?.name||'');
+  renderServiceSubitemsList(svc);
+  openModal('serviceSubitemsModal');
+}
+function renderServiceSubitemsList(svc){
+  const list=document.getElementById('svcSubitemsList');
+  const items=(svc&&Array.isArray(svc.subitems))?svc.subitems:[];
+  if(!items.length){ list.innerHTML='<div style="font-size:12px;color:var(--text-light);text-align:center;padding:14px;">No sub-items yet.</div>'; return; }
+  list.innerHTML=items.map(si=>`
+    <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked)" style="flex-shrink:0;width:16px;height:16px;">
+      <div style="font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</div>
+    </div>`).join('');
+}
+function addServiceSubitem(){
+  const clientId=document.getElementById('svcSubitemsClientId').value;
+  const svcId=document.getElementById('svcSubitemsServiceId').value;
+  const text=document.getElementById('svcSubitemText').value.trim();
+  if(!text) return;
+  try{
+    const clients=_getAssignClients();
+    const c=clients.find(x=>x.id===clientId); if(!c) return;
+    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    if(!Array.isArray(svc.subitems)) svc.subitems=[];
+    svc.subitems.push({ id:'sub'+Date.now(), text, done:false, ts:new Date().toISOString() });
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    document.getElementById('svcSubitemText').value='';
+    renderServiceSubitemsList(svc);
+    loadMyAssignments();
+    showToast('Sub-item added ✓');
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+function toggleServiceSubitem(subitemId, checked){
+  const clientId=document.getElementById('svcSubitemsClientId').value;
+  const svcId=document.getElementById('svcSubitemsServiceId').value;
+  try{
+    const clients=_getAssignClients();
+    const c=clients.find(x=>x.id===clientId); if(!c) return;
+    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
+    item.done=checked;
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    renderServiceSubitemsList(svc);
+    loadMyAssignments();
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+
 function userUpdateProgress(clientId, projId){
   try{
     const pctEl  = document.getElementById('ppct-'+clientId+'-'+projId);
@@ -2092,12 +2181,13 @@ function loadMyAssignments(){
           <div style="padding:11px 16px;display:flex;align-items:center;gap:11px;background:${isOver?'#fef8f8':isSoon?'#fffdf0':'linear-gradient(90deg,rgba(45,107,182,.06),transparent)'};">
             <span style="font-size:18px;">${icon}</span>
             <div style="flex:1;">
-              <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>
+              <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}${Array.isArray(s.subitems)&&s.subitems.length?` <span style="background:rgba(0,0,0,.06);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;" title="Sub-items completed">${s.subitems.filter(si=>si.done).length}/${s.subitems.length}</span>`:''}</div>
               <div style="font-size:10px;color:var(--text-light);">${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}</div>
             </div>
             <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
             <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
             <button onclick="openServiceUpdatesModal('${c.id}','${s.id}')" title="Updates" style="flex-shrink:0;padding:6px 10px;background:#fff;color:#2E5DA6;border:1px solid rgba(45,107,182,.25);border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">💬${Array.isArray(s.updates)&&s.updates.length?(' '+s.updates.length):''}</button>
+            <button onclick="openServiceSubitemsModal('${c.id}','${s.id}')" title="Sub-items" style="flex-shrink:0;padding:6px 10px;background:#fff;color:#2E5DA6;border:1px solid rgba(45,107,182,.25);border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">☑️${Array.isArray(s.subitems)&&s.subitems.length?(' '+s.subitems.filter(si=>si.done).length+'/'+s.subitems.length):''}</button>
           </div>
         </div>`;
       });
