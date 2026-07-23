@@ -812,9 +812,29 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Tasks assigned to you from the production tracker</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
+            <button onclick="toggleNotifSettingsPanel()" class="btn btn-outline btn-sm" title="Choose what My Work shows and counts">⚙ Notification Settings</button>
             <button onclick="showSection('tracker',document.querySelector('.nav-item[onclick*=tracker]'))" class="btn btn-outline btn-sm">Open Tracker ↗</button>
             <button class="btn btn-primary btn-sm" onclick="loadMyAssignments()">↺ Refresh</button>
           </div>
+        </div>
+
+        <!-- Per-user My Work preferences — local-only, narrows what's shown/counted below; never widens beyond this person's own role-visible data. -->
+        <div id="notif-settings-panel" style="display:none;background:#fff;border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:14px 18px;margin-bottom:18px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">What should My Work show?</div>
+          <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+              <input type="radio" name="notif-scope" id="notif-scope-mine" value="mine" checked onchange="saveNotifSettingsFromForm()">
+              My assignments only <span style="color:var(--text-light);font-size:10px;">(default)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+              <input type="radio" name="notif-scope" id="notif-scope-client" value="client" onchange="saveNotifSettingsFromForm()">
+              Everything on clients I'm assigned to
+            </label>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+            <input type="checkbox" id="notif-due-soon-toggle" checked onchange="saveNotifSettingsFromForm()">
+            Show due-soon reminders (services due within 7 days)
+          </label>
         </div>
 
         <!-- ── Section A: My assignments (primary content, shown first) ── -->
@@ -1714,6 +1734,48 @@ const _TRACKER_NOTIF_KEY = 'wl_notifications_db'; // client.html notification st
 
 function _getAssignClients(){ try{ return JSON.parse(localStorage.getItem(_ASSIGN_CL_KEY)||'[]')||[]; }catch(e){ return []; } }
 
+// ── Per-user notification/work-view settings (Monday feature pack, Feature 4) ──
+// Local-only, per-person preferences that FILTER what My Work shows/counts —
+// they can only narrow or re-scope what this person's own view surfaces,
+// never grant access to anything their role couldn't already see. 'client'
+// scope only ever surfaces OTHER services on a client this person already
+// has at least one assignment on — the exact same clients/services data
+// already synced to this browser (see rule #4: members already have
+// read-only client visibility) — so it never widens past the PR #132
+// scoping floor, which governs the separate person-targeted notification
+// feed (_getAssignNotifs()), left untouched here. Never synced to the
+// server — auto-approve tier, no data-write/permission question involved.
+function _notifSettingsKey(){ return 'wl_notif_settings_'+(currentUser?.id||currentUser?.name||'anon'); }
+function getNotifSettings(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(_notifSettingsKey())||'null');
+    return { scope: raw?.scope==='client'?'client':'mine', dueSoon: raw?.dueSoon!==false };
+  }catch(e){ return { scope:'mine', dueSoon:true }; }
+}
+function setNotifSettings(next){
+  try{ localStorage.setItem(_notifSettingsKey(), JSON.stringify(next)); }catch(e){}
+}
+function saveNotifSettingsFromForm(){
+  const scopeEl=document.querySelector('input[name="notif-scope"]:checked');
+  const dueSoonEl=document.getElementById('notif-due-soon-toggle');
+  setNotifSettings({ scope: scopeEl?scopeEl.value:'mine', dueSoon: dueSoonEl?dueSoonEl.checked:true });
+  loadMyAssignments();
+}
+function toggleNotifSettingsPanel(){
+  const p=document.getElementById('notif-settings-panel');
+  if(!p) return;
+  p.style.display = p.style.display==='none' ? 'block' : 'none';
+}
+function _renderNotifSettingsForm(){
+  const ns=getNotifSettings();
+  const scopeMine=document.getElementById('notif-scope-mine');
+  const scopeClient=document.getElementById('notif-scope-client');
+  const dueSoonToggle=document.getElementById('notif-due-soon-toggle');
+  if(scopeMine) scopeMine.checked = ns.scope==='mine';
+  if(scopeClient) scopeClient.checked = ns.scope==='client';
+  if(dueSoonToggle) dueSoonToggle.checked = ns.dueSoon;
+}
+
 // Mark a task done from the team portal and fire a notification into the tracker
 function userMarkTaskDone(clientId, projId, spId, taskId){
   try{
@@ -1995,6 +2057,7 @@ function updateAssignmentsBadge(){
     const clients= _getAssignClients();
     const todayStr = new Date().toISOString().slice(0,10);
     const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+    const ns = getNotifSettings();
     let taskCount=0, projCount=0, svcCount=0, dueCount=0;
     clients.forEach(c=>{
       (c.projects||[]).forEach(p=>{
@@ -2018,14 +2081,17 @@ function updateAssignmentsBadge(){
         if(isMe){
           svcCount++;
           const due = s.due||'';
-          if(due && due<=in7s) dueCount++;
+          // Overdue always counts; a due-soon-but-not-yet-overdue item only
+          // counts toward the badge when the due-soon reminder setting is on.
+          if(due && due<=in7s && (due<todayStr||ns.dueSoon)) dueCount++;
         }
       });
       // ── c.recurringServices[] — written by index.html (assignedUserIds schema) ──
       (c.recurringServices||[]).forEach(s=>{
         if((s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName)){
           svcCount++;
-          if(s.nextDueDate&&s.nextDueDate<=in7s) dueCount++;
+          const due = s.nextDueDate||'';
+          if(due && due<=in7s && (due<todayStr||ns.dueSoon)) dueCount++;
         }
       });
     });
@@ -2045,6 +2111,8 @@ function loadMyAssignments(){
   const todayStr = new Date().toISOString().slice(0,10);
   const in7  = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   const in30 = new Date(); in30.setDate(in30.getDate()+30); const in30s=in30.toISOString().slice(0,10);
+  const ns = getNotifSettings();
+  _renderNotifSettingsForm();
 
   // ── Notification banner ──
   const notifs  = _getAssignNotifs();
@@ -2102,7 +2170,7 @@ function loadMyAssignments(){
       found=true; clientHasWork=true;
       if(onProject) projCount++;
       if(p.due){
-        const isOver=p.due<todayStr, isSoon=!isOver&&p.due<=in7s, isMonth=!isOver&&p.due<=in30s;
+        const isOver=p.due<todayStr, isSoon=!isOver&&p.due<=in7s&&ns.dueSoon, isMonth=!isOver&&p.due<=in30s;
         if(isOver||isSoon) dueWeekCount++;
         if(isOver||isMonth) dueMonthCount++;
       }
@@ -2169,7 +2237,7 @@ function loadMyAssignments(){
       myTrackerSvcs.forEach(s=>{
         const due=s.due||'';
         const isOver=due&&due<todayStr;
-        const isSoon=due&&!isOver&&due<=in7s;
+        const isSoon=due&&!isOver&&due<=in7s&&ns.dueSoon;
         const isMonth=due&&!isOver&&due<=in30s;
         const icon=isOver?'🔴':isSoon?'🟡':'🟢';
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
@@ -2199,7 +2267,7 @@ function loadMyAssignments(){
       myIdxSvcs.forEach(s=>{
         const due=s.nextDueDate||'';
         const isOver=due&&due<todayStr;
-        const isSoon=due&&!isOver&&due<=in7s;
+        const isSoon=due&&!isOver&&due<=in7s&&ns.dueSoon;
         const isMonth=due&&!isOver&&due<=in30s;
         const icon=isOver?'🔴':isSoon?'🟡':'🟢';
         const days=due?Math.ceil((new Date(due)-new Date(todayStr))/86400000):null;
@@ -2217,6 +2285,40 @@ function loadMyAssignments(){
           </div>
         </div>`;
       });
+    }
+
+    // ── "Everything on clients I'm assigned to" (opt-in, off by default) ──
+    // Surfaces the OTHER services on a client this person already has at
+    // least one assignment on — informational only (no mark-done/progress
+    // controls, since these aren't the viewer's own items) and never
+    // counted toward their own projCount/svcCount/due stats above, which
+    // stay scoped to work actually assigned to them. This never grants
+    // access to anything the member role couldn't already see — c.services/
+    // c.recurringServices are the same client data already synced to this
+    // browser for the read-only Tracker view (see rule #4) — it only
+    // surfaces more of what's already visible, in one more place.
+    if(ns.scope==='client' && clientHasWork){
+      const otherTrackerSvcs=(c.services||[]).filter(s=>!myTrackerSvcs.includes(s));
+      const otherIdxSvcs=(c.recurringServices||[]).filter(s=>!myIdxSvcs.includes(s));
+      const otherAll=[
+        ...otherTrackerSvcs.map(s=>({ name:s.name, due:s.due||'', freq:s.freqLabel||s.freq||'monthly' })),
+        ...otherIdxSvcs.map(s=>({ name:s.name, due:s.nextDueDate||'', freq:s.freqLabel||s.freq||s.frequency||'monthly' })),
+      ];
+      if(otherAll.length){
+        html+=`<div style="background:#fafbff;border:1px dashed rgba(45,107,182,.2);border-radius:13px;margin-bottom:14px;padding:11px 16px;">
+          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;letter-spacing:.07em;">Other work on ${c.name} (not assigned to you)</div>`;
+        otherAll.forEach(s=>{
+          const isOver=s.due&&s.due<todayStr;
+          const isSoon=s.due&&!isOver&&s.due<=in7s&&ns.dueSoon;
+          const icon=isOver?'🔴':isSoon?'🟡':'🟢';
+          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:#fff;border-radius:8px;margin-bottom:4px;">
+            <span style="font-size:13px;">${icon}</span>
+            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${s.name}</span>
+            <span style="font-size:9px;color:var(--text-light);">${s.freq}${s.due?' · 📅 '+s.due:''}</span>
+          </div>`;
+        });
+        html+=`</div>`;
+      }
     }
 
     if(clientHasWork) clientIds.add(c.id);
