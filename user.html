@@ -480,6 +480,9 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
         <div class="su-btn header-profile-theme-btn" onclick="showSection('profile',document.querySelector('.nav-item'))" title="Profile" style="padding:5px 8px;flex:none;">⚙️</div>
         <div class="su-btn header-profile-theme-btn" onclick="openAppearanceModal()" title="Theme" style="padding:5px 8px;flex:none;">🎨</div>
+        <!-- Dual-mode switcher (Step 2) — hidden unless this account also carries
+             an admin role (see _updateModeSwitcherUI()). Plain members never see this. -->
+        <button class="btn header-signout-btn" id="modeSwitchBtn" onclick="switchToManagerView()" style="display:none;">⇄ Switch to Manager view</button>
         <button class="btn header-signout-btn" onclick="logout()">↩ Sign Out</button>
       </div>
     </div>
@@ -997,6 +1000,32 @@ function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token_
 // localStorage. Not a session restore, just removing a known-dead key.
 try{ localStorage.removeItem('wl_ops_token'); }catch(e){}
 
+// ── Dual-mode account switcher (Step 2) ── counterpart to index.html's copy
+// of this same design — see there for the full rationale. Shown ONLY when
+// the server confirms this session also carries an admin role
+// (viewerAdminId — api/ops-auth.js / api/ops-state.js). A plain member
+// session never has this field, so the button stays hidden and nothing else
+// changes for them.
+let _dualRoleAdminId = null;
+function _updateModeSwitcherUI(adminId){
+  _dualRoleAdminId = adminId || null;
+  const btn = document.getElementById('modeSwitchBtn');
+  if(!btn) return;
+  if(_dualRoleAdminId){
+    btn.style.display='';
+    // Mirror this SAME already-verified token into index.html's scoped key —
+    // see index.html's _updateModeSwitcherUI() for why this can't reintroduce
+    // the 2026-07-10 cross-portal token clobber (that was a different
+    // identity's login overwriting another tab's key; this is the same
+    // identity mirroring its own already-confirmed-dual-role token).
+    const token = _opsToken();
+    if(token) try{ localStorage.setItem('wl_ops_token_admin', token); }catch(e){}
+  } else {
+    btn.style.display='none';
+  }
+}
+function switchToManagerView(){ location.href = 'index.html'; }
+
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
 function _opsDirty(table, localArr){
@@ -1037,6 +1066,7 @@ async function cloudFetchUsers(){
     if(!res.ok) return null;
     const data = await res.json();
     const r = data?.record || {};
+    _updateModeSwitcherUI(r.viewerAdminId ?? null);
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
@@ -1161,8 +1191,12 @@ async function doLogin(){
     return;
   }
 
-  // Block admin accounts from the team-member portal
-  if(authData.role === 'admin'){
+  // Block admin-ONLY accounts from the team-member portal. A dual-role
+  // account also resolves role:'admin' (see api/ops-auth.js — role reflects
+  // whether an admin row exists at all, regardless of an employee profile),
+  // but it has a real employeeId and must be allowed straight through into
+  // the normal employee login below, exactly like a plain member.
+  if(authData.role === 'admin' && !authData.employeeId){
     _setOpsToken(null);
     errEl.innerHTML='⚠️ Admin account — please use <a href="index.html" style="color:var(--text);">Admin Panel</a>';
     errEl.style.display='block';
@@ -1285,6 +1319,7 @@ function logout(){
   // localStorage for the next tab to pick up (see CLAUDE.md scoped-token note).
   _setOpsToken(null);
   try{ localStorage.removeItem('wl_ops_token_admin'); }catch(e){}
+  _updateModeSwitcherUI(null);
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.remove('visible');

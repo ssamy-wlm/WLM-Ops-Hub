@@ -1074,6 +1074,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="admin-notif-list" style="padding:6px;"></div>
         </div>
         <div class="admin-avatar" id="admin-sidebar-avatar"></div>
+        <!-- Dual-mode switcher (Step 2) — hidden unless this account also carries
+             an employee profile (see _updateModeSwitcherUI()). Single-role admins
+             never see this. -->
+        <button class="btn btn-outline btn-sm" id="adminModeSwitchBtn" onclick="switchToEmployeeView()" style="display:none;">⇄ Switch to Employee view</button>
         <button class="btn btn-outline btn-sm" onclick="logout()">Sign out</button>
       </div>
     </div>
@@ -2674,6 +2678,7 @@ function logout(){
   // localStorage for the next tab to pick up (see CLAUDE.md scoped-token note).
   _setOpsToken(null);
   try{ localStorage.removeItem('wl_ops_token_member'); }catch(e){}
+  _updateModeSwitcherUI(null);
 }
 
 function initUserApp(){
@@ -5526,6 +5531,34 @@ function _setOpsToken(token){ try{ if(token) localStorage.setItem('wl_ops_token_
 // localStorage. Not a session restore, just removing a known-dead key.
 try{ localStorage.removeItem('wl_ops_token'); }catch(e){}
 
+// ── Dual-mode account switcher (Step 2) ──
+// Shown ONLY for an account the server has confirmed carries both an
+// employee profile and an admin role (viewerEmployeeId present on a
+// signed-in admin session — see api/ops-auth.js / api/ops-state.js). A
+// single-role admin session never has this field, so the button below stays
+// hidden and nothing else about this account's UI changes.
+let _dualRoleEmployeeId = null;
+function _updateModeSwitcherUI(employeeId){
+  _dualRoleEmployeeId = employeeId || null;
+  const btn = document.getElementById('adminModeSwitchBtn');
+  if(!btn) return;
+  if(_dualRoleEmployeeId){
+    btn.style.display='';
+    // Mirror this SAME already-verified token into user.html's scoped key so
+    // switching is a plain navigation, never a fresh login. This only ever
+    // runs for a session the server just confirmed is genuinely dual-role —
+    // never for a single-role login — so it can't reintroduce the
+    // cross-portal token clobber the 2026-07-10 incident fixed (see
+    // CLAUDE.md): that bug was a DIFFERENT identity silently overwriting
+    // another tab's key; this is the SAME identity mirroring its own token.
+    const token = _opsToken();
+    if(token) try{ localStorage.setItem('wl_ops_token_member', token); }catch(e){}
+  } else {
+    btn.style.display='none';
+  }
+}
+function switchToEmployeeView(){ location.href = 'user.html'; }
+
 // Server-verified tier/level from the most recent successful cloudPullAll()
 // call — the ONLY source restoreAdminSession() trusts to decide whether to
 // reveal #adminApp. Never derived from a cached wl_admin_session; a stale or
@@ -5790,6 +5823,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _lastPullOk = true;
     _lastViewerTier = r.viewerTier ?? null;
     _lastViewerLevel = r.viewerLevel ?? null;
+    _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
     _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
