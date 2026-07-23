@@ -943,6 +943,29 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   </div>
 </div>
 
+<!-- Service Updates / Comments Modal (Monday feature pack #1) -->
+<div id="serviceUpdatesModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">💬 Updates</div><div class="modal-sub" id="svcUpdatesSubtitle"></div></div>
+      <button class="modal-close" onclick="closeModal('serviceUpdatesModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="svcUpdatesClientId">
+      <input type="hidden" id="svcUpdatesServiceId">
+      <div id="svcUpdatesList" style="max-height:280px;overflow-y:auto;margin-bottom:14px;"></div>
+      <div class="form-group">
+        <label class="form-label">Add an update</label>
+        <textarea class="form-input" id="svcUpdateText" rows="3" placeholder="Add a note or update…" style="resize:vertical;"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('serviceUpdatesModal')">Close</button>
+      <button class="btn btn-primary" onclick="postServiceUpdate()">Post Update</button>
+    </div>
+  </div>
+</div>
+
 <!-- Appearance Modal -->
 <div id="appearanceModal" class="modal-overlay">
   <div class="modal">
@@ -1755,6 +1778,57 @@ function userMarkServiceDone(clientId, svcId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
+// ── Service Updates / Comments thread (Monday feature pack #1) ──
+// svc.updates: [{id, authorId, authorName, text, ts}] — synced via the same
+// whole-client push already used by userMarkServiceDone()/userUpdateProgress()
+// above. postServiceUpdate() mutates the SAME service object already loaded
+// from _getAssignClients() in place, never reconstructing it from a narrower
+// payload — this is what keeps a posted update from ever blanking any other
+// service field (the PR #88 empty-field pattern).
+function openServiceUpdatesModal(clientId, svcId){
+  const clients=_getAssignClients();
+  const c=clients.find(x=>x.id===clientId);
+  const svc=c&&(c.services||[]).find(s=>s.id===svcId);
+  if(!svc) return;
+  document.getElementById('svcUpdatesClientId').value=clientId;
+  document.getElementById('svcUpdatesServiceId').value=svcId;
+  document.getElementById('svcUpdateText').value='';
+  document.getElementById('svcUpdatesSubtitle').textContent=svc.name+' — '+(c?.name||'');
+  renderServiceUpdatesList(svc);
+  openModal('serviceUpdatesModal');
+}
+function renderServiceUpdatesList(svc){
+  const list=document.getElementById('svcUpdatesList');
+  const updates=(svc&&Array.isArray(svc.updates))?svc.updates:[];
+  if(!updates.length){ list.innerHTML='<div style="font-size:12px;color:var(--text-light);text-align:center;padding:14px;">No updates yet.</div>'; return; }
+  list.innerHTML=updates.slice().reverse().map(u=>`
+    <div style="padding:9px 0;border-bottom:1px solid var(--border);">
+      <div style="font-size:11px;font-weight:700;color:var(--text-dark);">${escHtmlUser(u.authorName||'')} <span style="font-weight:400;color:var(--text-light);">· ${new Date(u.ts).toLocaleString()}</span></div>
+      <div style="font-size:12px;color:var(--text-mid);margin-top:2px;white-space:pre-wrap;">${escHtmlUser(u.text||'')}</div>
+    </div>`).join('');
+}
+function postServiceUpdate(){
+  const clientId=document.getElementById('svcUpdatesClientId').value;
+  const svcId=document.getElementById('svcUpdatesServiceId').value;
+  const text=document.getElementById('svcUpdateText').value.trim();
+  if(!text) return;
+  try{
+    const clients=_getAssignClients();
+    const c=clients.find(x=>x.id===clientId); if(!c) return;
+    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    if(!Array.isArray(svc.updates)) svc.updates=[];
+    svc.updates.push({ id:'upd'+Date.now(), authorId:currentUser?.id||'', authorName:currentUser?.name||'Team member', text, ts:new Date().toISOString() });
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    logActivity('client', currentUser?.name||'', `Update on ${svc.name}`, text.substring(0,80));
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    document.getElementById('svcUpdateText').value='';
+    renderServiceUpdatesList(svc);
+    loadMyAssignments();
+    showToast('Update posted ✓');
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+
 function userUpdateProgress(clientId, projId){
   try{
     const pctEl  = document.getElementById('ppct-'+clientId+'-'+projId);
@@ -1788,7 +1862,7 @@ function userUpdateProgress(clientId, projId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
-const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬' };
+const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝' };
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';
@@ -2023,6 +2097,7 @@ function loadMyAssignments(){
             </div>
             <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
             <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
+            <button onclick="openServiceUpdatesModal('${c.id}','${s.id}')" title="Updates" style="flex-shrink:0;padding:6px 10px;background:#fff;color:#2E5DA6;border:1px solid rgba(45,107,182,.25);border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">💬${Array.isArray(s.updates)&&s.updates.length?(' '+s.updates.length):''}</button>
           </div>
         </div>`;
       });

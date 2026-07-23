@@ -6074,7 +6074,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 // triggering action happens; this file only ever pulls them (cloudPullAll
 // above) and pushes back a `read` toggle — never creates or infers one from
 // local state.
-const NOTIF_TYPE_ICON_ADMIN = { assignment:'📌', timeOff:'🗓️', message:'💬' };
+const NOTIF_TYPE_ICON_ADMIN = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝' };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
   const dot = document.getElementById('admin-notif-dot');
@@ -6125,7 +6125,7 @@ document.addEventListener('click', (e)=>{
 // what gets written there; it doesn't gate the firing logic itself. ──
 function renderNotificationSettingsUI(){
   const card = document.getElementById('notification-settings-card'); if(!card) return;
-  const settings = dbGet(DB_KEYS.notificationSettings) || { assignment:true, timeOff:true, message:true };
+  const settings = dbGet(DB_KEYS.notificationSettings) || { assignment:true, timeOff:true, message:true, serviceUpdate:true };
   const row = (key, label) => `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
       <div style="font-size:13px;">${label}</div>
@@ -6141,10 +6141,11 @@ function renderNotificationSettingsUI(){
       ${row('assignment','Service/task assigned to someone')}
       ${row('timeOff','Time-off request approved or denied')}
       ${row('message','New message sent')}
+      ${row('serviceUpdate','New update posted on a service')}
     </div>`;
 }
 function toggleNotificationSetting(key, checked){
-  const settings = dbGet(DB_KEYS.notificationSettings) || { assignment:true, timeOff:true, message:true };
+  const settings = dbGet(DB_KEYS.notificationSettings) || { assignment:true, timeOff:true, message:true, serviceUpdate:true };
   settings[key] = checked;
   dbSet(DB_KEYS.notificationSettings, settings);
   renderNotificationSettingsUI();

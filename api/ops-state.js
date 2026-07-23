@@ -175,7 +175,7 @@ export default async function handler(req, res) {
       // regardless (the toggle is read directly from ops_settings inside
       // api/ops-sync.js, not from this tier-filtered response), this only
       // controls who can see/change the toggle in the Settings UI.
-      notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true },
+      notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true, serviceUpdate: true },
     };
 
     // Password (plaintext credential): never leave this endpoint, for any
