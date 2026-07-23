@@ -1052,6 +1052,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            tracker" view (client.html) once that view reached full feature
            parity — see CLAUDE.md. This is the only remaining Operations item. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'tracker')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'clientHealth')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>Client Health</div>
 
       <div class="admin-nav-group-label">People &amp; HR</div>
       <!-- Users (+ Time off / Time off ledger / Archive) -->
@@ -1131,6 +1132,51 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card">
           <div class="card-header"><div class="card-title">Recent Activity</div></div>
           <div class="card-body" id="ov-activity-list" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No recent activity.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Client Health — aggregate green/amber/red service status per client,
+         using the exact same _svcDueStatus rule as the Tracker (see
+         CLAUDE.md's zero-shared-code rule — hand-duplicated, not imported).
+         Read-only, no new math: just counts each client's existing services
+         into the same three buckets the Tracker already colors dots by. -->
+    <div id="admin-clientHealth" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Client Health</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every active client's services, rolled up by due status — click a client to open it in the Tracker</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderClientHealthDashboard()">↺ Refresh</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;">
+        <div class="card" style="padding:14px 18px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">On Track</div>
+          <div style="font-size:26px;font-weight:800;color:var(--green);" id="ch-total-ok">0</div>
+        </div>
+        <div class="card" style="padding:14px 18px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Due Soon</div>
+          <div style="font-size:26px;font-weight:800;color:var(--orange);" id="ch-total-soon">0</div>
+        </div>
+        <div class="card" style="padding:14px 18px;">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Overdue</div>
+          <div style="font-size:26px;font-weight:800;color:var(--red);" id="ch-total-overdue">0</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding:0;">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟢 On Track</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+              </tr>
+            </thead>
+            <tbody id="clientHealthTableBody"></tbody>
+          </table>
+          <div id="clientHealthEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active clients with services yet.</div>
         </div>
       </div>
     </div>
@@ -2809,6 +2855,7 @@ function switchAdminTab(el, tab){
     if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); }
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
+  if(tab==='clientHealth') renderClientHealthDashboard();
 }
 
 function loadAdminTrackerFrame(){
@@ -4154,6 +4201,75 @@ window.switchAdminTab = function(el, tab){
 const _CL_DB_KEY = 'wl_clients_db';
 function _getClientDB(){ try{ return JSON.parse(localStorage.getItem(_CL_DB_KEY)||'null')||[]; }catch(e){ return []; } }
 function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify(arr)); }catch(e){} }
+
+// ── Client Health dashboard (Monday feature pack, Feature 5) ──────────────
+// Hand-duplicated from client.html's _svcDueStatus/_isInactiveService/
+// DUE_SOON_DAYS (see CLAUDE.md's zero-shared-code rule — no import, no
+// shared module) — same exact rule, so a service is never a different
+// color here than in the Tracker: green "on track" (done this cycle, or
+// due date more than DUE_SOON_DAYS away), amber "due soon" (not done, due
+// within DUE_SOON_DAYS inclusive), red "overdue" (not done, due date
+// already passed). Read-only aggregation only — never touches lastDone,
+// due, or any stored field; no new math beyond counting into these three
+// existing buckets.
+const CH_DUE_SOON_DAYS = 7;
+function _chIsInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
+function _chIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
+function _chSvcDueStatus(svc){
+  const t=new Date().toISOString().slice(0,10);
+  if(_chIsDoneThisCycle(svc,t)) return 'ok';
+  if(!svc.due) return 'ok';
+  if(svc.due<t) return 'overdue';
+  const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
+  return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
+}
+function renderClientHealthDashboard(){
+  const body=document.getElementById('clientHealthTableBody');
+  const empty=document.getElementById('clientHealthEmpty');
+  if(!body) return;
+  const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
+  let totalOk=0, totalSoon=0, totalOverdue=0;
+  const rows=clients.map(c=>{
+    const svcs=(c.services||[]).filter(s=>!_chIsInactiveService(s));
+    let ok=0, soon=0, overdue=0;
+    svcs.forEach(s=>{
+      const status=_chSvcDueStatus(s);
+      if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+    });
+    totalOk+=ok; totalSoon+=soon; totalOverdue+=overdue;
+    return { id:c.id, name:c.name||'(unnamed)', ok, soon, overdue, total:svcs.length };
+  }).sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||a.name.localeCompare(b.name));
+
+  const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+  set('ch-total-ok',totalOk); set('ch-total-soon',totalSoon); set('ch-total-overdue',totalOverdue);
+
+  if(!rows.length){
+    body.innerHTML=''; if(empty) empty.style.display='block';
+    return;
+  }
+  if(empty) empty.style.display='none';
+  body.innerHTML=rows.map(r=>`
+    <tr style="cursor:pointer;" onclick="openAdminTrackerToClient('${r.id}')" title="Open ${r.name} in the Tracker">
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:var(--green);">${r.ok}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+    </tr>`).join('');
+}
+function openAdminTrackerToClient(clientId){
+  // Switch tabs FIRST — switchAdminTab('tracker') runs loadAdminTrackerFrame(),
+  // which either sets the iframe's first-ever src or resets its internal SPA
+  // state back to the default clients view. Setting our deep-link src AFTER
+  // that (not before) means it always wins as the final navigation, instead
+  // of racing a tab-switch that could reset frame.src out from under it.
+  const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
+  switchAdminTab(trackerNavEl, 'tracker');
+  const params = new URLSearchParams();
+  params.set('openClient', clientId);
+  params.set('v', Date.now());
+  const frame = document.getElementById('adminTrackerFrame');
+  if(frame) frame.src = 'client.html?' + params.toString();
+}
 
 // ── Same dirty-tracking merge as above, kept fully separate (own key, own
 // functions — never reuses or modifies the clients merge from PR #41) for the
