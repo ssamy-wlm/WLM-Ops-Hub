@@ -1492,6 +1492,21 @@ function initApp(){
   if(saved) document.documentElement.setAttribute('data-theme', saved==='light'?'':saved);
 }
 
+// ── The ONE shared "is this tracker service assigned to me" predicate for
+// this file (assignment-module Feature A) — the same 5-clause OR-chain used
+// to be duplicated verbatim across _collectMyWorkItems, renderMyServiceSchedule,
+// updateAssignmentsBadge, and loadMyAssignments. Checks the new assigneeIds[]
+// array first (client.html's new multi-assignee source of truth — same
+// origin, same wl_clients_db, so it's already there once client.html saves
+// it), falling back to the exact legacy comparison for a service that
+// hasn't been touched since. Only for c.services[] (the tracker schema);
+// c.recurringServices[] already has its own array field (assignedUserIds)
+// and is untouched by this feature.
+function _svcAssignedToMe(s, myId, myName){
+  if(Array.isArray(s.assigneeIds) && s.assigneeIds.length) return s.assigneeIds.includes(myId) || s.assigneeIds.includes(myName);
+  return s.assigneeId===myId || s.assigneeId===myName || s.assigneeName===myName || s.assignee===myName || s.assignee===myId;
+}
+
 // ── My Roadmap — actual assigned work, bucketed by how soon it's due ──
 // Gathers the same kinds of items loadMyAssignments() shows in My Work (tracker
 // services, index.html recurring services, ad-hoc projects, and their tasks/
@@ -1503,8 +1518,7 @@ function _collectMyWorkItems(){
   const items = [];
   clients.forEach(c=>{
     (c.services||[]).forEach(s=>{
-      const mine = s.assigneeId===myId||s.assigneeId===myName||s.assigneeName===myName||s.assignee===myName||s.assignee===myId;
-      if(mine) items.push({name:s.name, client:c.name, due:s.due||''});
+      if(_svcAssignedToMe(s,myId,myName)) items.push({name:s.name, client:c.name, due:s.due||''});
     });
     (c.recurringServices||[]).forEach(s=>{
       if((s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName)) items.push({name:s.name, client:c.name, due:s.nextDueDate||''});
@@ -1594,8 +1608,7 @@ function renderMyServiceSchedule(){
     clients.forEach(c=>{
       // c.services[] — tracker schema (assigneeId / assigneeName / assignee)
       (c.services||[]).forEach(s=>{
-        const isMe = s.assigneeId===myId || s.assigneeId===myName ||
-                     s.assigneeName===myName || s.assignee===myName || s.assignee===myId;
+        const isMe = _svcAssignedToMe(s,myId,myName);
         if(isMe) items.push({
           clientName: c.name, clientColor: c.color||_hashClientColor(c.name),
           name: s.name, freq: s.freqLabel||s.freq||'monthly',
@@ -2095,9 +2108,7 @@ function updateAssignmentsBadge(){
       });
       // ── c.services[] — written by client.html tracker (assigneeId/assigneeName schema) ──
       (c.services||[]).forEach(s=>{
-        const isMe = s.assigneeId===myId || s.assigneeId===myName ||
-                     s.assigneeName===myName || s.assignee===myName ||
-                     s.assignee===myId;
+        const isMe = _svcAssignedToMe(s,myId,myName);
         if(isMe){
           svcCount++;
           const due = s.due||'';
@@ -2174,11 +2185,7 @@ function loadMyAssignments(){
   clients.forEach(c=>{
     let clientHasWork=false;
     // ── Services from client.html tracker (c.services[], assigneeId/assigneeName schema) ──
-    const myTrackerSvcs=(c.services||[]).filter(s=>{
-      return s.assigneeId===myId || s.assigneeId===myName ||
-             s.assigneeName===myName || s.assignee===myName ||
-             s.assignee===myId;
-    });
+    const myTrackerSvcs=(c.services||[]).filter(s=>_svcAssignedToMe(s,myId,myName));
 
     // ── Services from index.html (c.recurringServices[], assignedUserIds schema) ──
     const myIdxSvcs=(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName));

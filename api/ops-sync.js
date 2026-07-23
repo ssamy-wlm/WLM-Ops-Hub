@@ -102,9 +102,10 @@ function preserveMissingPayrollFields(incoming, current) {
 // (userMarkTaskDone()). ANY other change — to the client itself, to another
 // person's items — REJECTS THE WHOLE WRITE with a clear reason; nothing is
 // silently merged or dropped.
-function isAssignedToMember(item, memberId, memberName) {
+export function isAssignedToMember(item, memberId, memberName) {
   if (!item) return false;
   if (item.assigneeId === memberId) return true;
+  if (Array.isArray(item.assigneeIds) && item.assigneeIds.includes(memberId)) return true;
   if (Array.isArray(item.assignedUserIds) && item.assignedUserIds.includes(memberId)) return true;
   const assigneeName = String(item.assigneeName || item.assignee || '').trim().toLowerCase();
   const nameLower = String(memberName || '').trim().toLowerCase();
@@ -260,9 +261,28 @@ export function assigneeChanged(prev, next) {
   return nextId && nextId !== prevId;
 }
 
+// Multiple assignees per service (assigneeIds[], see CLAUDE.md's assignment-
+// module project, Feature A): returns every id present in the incoming
+// service's assigneeIds that was NOT already on the current DB row — i.e.
+// exactly the people newly added in THIS write, never someone already
+// assigned (re-saving an unchanged assignment fires nothing) and never
+// someone who was removed. Falls back to the single assigneeId/assignedUserIds
+// fields for a service that hasn't been migrated to assigneeIds yet, so an
+// old-style single reassignment still fires its one notification exactly as
+// it always did.
+function currentAssigneeIdSet(svc) {
+  if (Array.isArray(svc?.assigneeIds) && svc.assigneeIds.length) return new Set(svc.assigneeIds);
+  if (Array.isArray(svc?.assignedUserIds) && svc.assignedUserIds.length) return new Set(svc.assignedUserIds);
+  return new Set(svc?.assigneeId ? [svc.assigneeId] : []);
+}
+export function newlyAssignedServiceIds(prev, next) {
+  const prevIds = currentAssigneeIdSet(prev);
+  return [...currentAssigneeIdSet(next)].filter(id => id && !prevIds.has(id));
+}
+
 // Walks one client's services (top-level + every franchise location's own
-// services) comparing current vs incoming, returning every service whose
-// assigneeId newly changed in THIS write.
+// services) comparing current vs incoming, returning one event per service
+// PER newly-added assignee in THIS write (see newlyAssignedServiceIds above).
 export function collectServiceAssignmentEvents(client, curClient, incClient) {
   const events = [];
   const scan = (curList, incList, locationName) => {
@@ -270,12 +290,12 @@ export function collectServiceAssignmentEvents(client, curClient, incClient) {
     (incList || []).forEach(s => {
       if (!s?.id) return;
       const prev = curById.get(s.id);
-      if (assigneeChanged(prev, s)) {
+      newlyAssignedServiceIds(prev, s).forEach(assigneeId => {
         events.push({
           serviceId: s.id, serviceName: s.name, locationName,
-          assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
+          assigneeId, clientId: client.id, clientName: client.name,
         });
-      }
+      });
     });
   };
   scan(curClient.services, incClient.services, null);

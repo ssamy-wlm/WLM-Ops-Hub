@@ -1002,8 +1002,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         </div>
         <div id="svc-due-hint" style="font-size:11px;color:var(--text-light);margin-top:4px;"></div>
       </div>
-      <div class="form-group"><label class="form-label">Assigned Member</label>
-        <select class="form-select" id="svc-assignee"><option value="">— Unassigned —</option></select>
+      <div class="form-group"><label class="form-label">Assigned Members</label>
+        <div id="svc-assignee-checks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;"></div>
       </div>
       <div class="form-group" id="svc-platforms-group" style="display:none;">
         <label class="form-label">Platforms</label>
@@ -1721,7 +1721,7 @@ function migrateServicesToProjects(){
       status:svc.status==='on-hold'?'on-hold':svc.status==='not-started'?'not-started':'in-progress',
       priority:svc.due&&svc.due<t?'high':'medium', due:svc.due||'', progress:0,
       color:c.color||_hashClientColor(c.name),
-      users:svc.assigneeId?[svc.assigneeId]:(svc.assignee?[svc.assignee.toLowerCase()]:[]),
+      users:_svcAssigneeIds(svc),
       desc:[svc.platforms?'Platforms: '+svc.platforms:'',svc.notes||'',svc.freqLabel?'Frequency: '+svc.freqLabel:''].filter(Boolean).join(' · '),
       serviceId:svc.id, freq:svc.freq||'', freqLabel:svc.freqLabel||svc.freq||'',
       lastDone:svc.lastDone||'', subprojects:[],tasks:[],milestones:[],progressLog:[],
@@ -1754,7 +1754,7 @@ function syncServicesToProjects(clientId){
     due:svc.due||'',
     progress:0,
     color:c.color||_hashClientColor(c.name),
-    users:svc.assigneeId?[svc.assigneeId]:[],
+    users:_svcAssigneeIds(svc),
     desc:[svc.platforms?'Platforms: '+svc.platforms:'',svc.notes||'',svc.freqLabel?'Frequency: '+svc.freqLabel:''].filter(Boolean).join(' · '),
     serviceId:svc.id,
     freq:svc.freq||'',
@@ -1788,7 +1788,7 @@ function ensureServiceMirrors(){
       status:svc.status==='on-hold'?'on-hold':svc.status==='not-started'?'not-started':'in-progress',
       priority:svc.due&&svc.due<today()?'high':'medium',
       due:svc.due||'', progress:0, color:c.color||_hashClientColor(c.name),
-      users:svc.assigneeId?[svc.assigneeId]:[],
+      users:_svcAssigneeIds(svc),
       desc:[svc.platforms?'Platforms: '+svc.platforms:'',svc.notes||'',svc.freqLabel?'Frequency: '+svc.freqLabel:''].filter(Boolean).join(' · '),
       serviceId:svc.id, freq:svc.freq||'', freqLabel:svc.freqLabel||'',
       lastDone:svc.lastDone||'', subprojects:[],tasks:[],milestones:[],progressLog:[],
@@ -1896,6 +1896,43 @@ const WL_LEGACY_SERVICE_BUNDLE_MAP={
 // every derived view (due-alerts, calendar, schedule, My Work) that walks
 // this helper — a service with no status field at all is legacy data and
 // counts as active, same as before this field existed.
+// ── Multiple assignees per service (assignment-module Feature A) ──────────
+// svc.assigneeIds[] is the new source of truth; the legacy single fields
+// (assigneeId/assigneeName) always mirror assigneeIds[0] on save so every
+// consumer that hasn't been touched for multi-assignee support keeps working
+// unchanged. A service that has never been re-saved since this feature
+// shipped has no assigneeIds at all — _svcAssigneeIds() below falls back to
+// the single assigneeId in that case, so nothing needs a bulk migration; a
+// service only gains assigneeIds the next time its assignment is edited.
+function _svcAssigneeIds(svc){
+  if(Array.isArray(svc.assigneeIds) && svc.assigneeIds.length) return svc.assigneeIds;
+  if(svc.assigneeId) return [svc.assigneeId];
+  return svc.assignee ? [svc.assignee.toLowerCase()] : [];
+}
+// The ONE shared "is this service assigned to me" predicate for this file —
+// every read site (edit-rights gates, My Work, the badge count, calendar
+// filters) calls this instead of its own copy of the old 5-clause OR-chain,
+// so multi-assignee support only had to be added in one place. Checks the
+// new assigneeIds array first (by id AND by name, since some legacy rows
+// only ever had a name), then falls back to the exact legacy comparison an
+// un-migrated service already relied on.
+function _svcAssignedTo(svc, personId, personName){
+  const ids=_svcAssigneeIds(svc);
+  if(ids.length) return ids.includes(personId) || (!!personName && ids.includes(personName));
+  return svc.assigneeId===personId || svc.assigneeId===personName ||
+         svc.assigneeName===personName || svc.assignee===personName || svc.assignee===personId;
+}
+// Display-only: resolves every assignee id to a display name via the
+// roster, joined for a multi-assignee chip/label. Falls back to the
+// legacy single assigneeName for an un-migrated service (no roster lookup
+// needed in that case — the name is already stored on the record).
+function _svcAssigneeNames(svc){
+  if(Array.isArray(svc.assigneeIds) && svc.assigneeIds.length){
+    const roster=getRoster();
+    return svc.assigneeIds.map(id=>roster.find(u=>u.id===id)?.name||id).join(', ');
+  }
+  return svc.assigneeName||'';
+}
 function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
 // "Done this cycle" — has a lastDone and isn't currently overdue. Single
 // definition shared by _svcCycleStats (the header/stat-card counts) and
@@ -2517,13 +2554,14 @@ function populateDropdowns(){
   const roster=getRoster();
   const opts=roster.map(u=>`<option value="${u.id}">${u.name}${u.role?' ('+u.role+')':''}</option>`).join('');
   const noOpt=`<option value="">— Unassigned —</option>`;
-  ['tf-assignee','svc-assignee','sc-default-assignee','fm-assignee'].forEach(id=>{
+  ['tf-assignee','sc-default-assignee','fm-assignee'].forEach(id=>{
     const el=_el(id); if(el) el.innerHTML=noOpt+opts;
   });
   const mgr=_el('cf-manager');
   if(mgr) mgr.innerHTML=`<option value="">— Select —</option>`+opts;
   populateUserChecks('pf-user-checkboxes',roster,[]);
   populateUserChecks('sp-user-checkboxes',roster,[]);
+  populateUserChecks('svc-assignee-checks',roster,[]);
   const fm=_el('filter-manager');
   if(fm){
     const cur=fm.value;
@@ -2602,7 +2640,10 @@ function prefillServiceDefaults(){
   _el('svc-due').value=calcNextDue(_el('svc-freq').value,today());
   const cat=getCatalog();
   const svc=cat.find(s=>s.id===sel.value);
-  if(svc && svc.defaultAssignee){ const el=_el('svc-assignee'); if(el) el.value=svc.defaultAssignee; }
+  if(svc && svc.defaultAssignee){
+    const cb=document.querySelector(`#svc-assignee-checks input[value="${svc.defaultAssignee}"]`);
+    if(cb) cb.checked=true;
+  }
   _updateSvcPlatformsVisibility(svc?svc.name:'', []);
 }
 
@@ -3071,7 +3112,7 @@ function renderOverview(c){
       <div class="alert-icon" style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${pill.dot};display:inline-block;"></span></div>
       <div class="alert-body" style="flex:1;">
         <div class="alert-title">${escHtmlClient(svc.name)}${locLabel}</div>
-        <div class="alert-meta">Due ${svc.due||'—'} · ${svc.freq} · ${svc.assigneeName||'Unassigned'}</div>
+        <div class="alert-meta">Due ${svc.due||'—'} · ${svc.freq} · ${_svcAssigneeNames(svc)||'Unassigned'}</div>
       </div>
       <span class="chip ${pill.cls}">${pill.label}</span>
     </div>`;
@@ -3275,7 +3316,7 @@ function _serviceRow(c, svc, locationId){
   const dot=inactive?'var(--text-light)':_ALERT_PILL[cls].dot;
   const days=daysUntil(svc.due);
   const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+' days');
-  const svcCanEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const svcCanEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   const locArg=locationId?`,'${locationId}'`:'';
   const statusBadge=inactive?`<span class="chip" style="background:var(--bg2);color:var(--text-light);text-transform:capitalize;margin-left:6px;">${svc.status}</span>`:'';
   const updatesCount=Array.isArray(svc.updates)?svc.updates.length:0;
@@ -3293,7 +3334,7 @@ function _serviceRow(c, svc, locationId){
         <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
-        <td>${svc.assigneeName?`<span class="user-chip">${escHtmlClient(svc.assigneeName)}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
+        <td>${_svcAssigneeNames(svc)?`<span class="user-chip">${escHtmlClient(_svcAssigneeNames(svc))}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
           ${inactive
             ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})" title="Reactivate">${ICON_UNDO}</button>`:''}${commentBtn}${subitemsBtn}`
@@ -3382,7 +3423,7 @@ function openServiceUpdatesModal(clientId, svcId, locationId){
   _el('svc-updates-location-id').value=locationId||'';
   _el('svc-updates-sub').textContent=`${svc.name} — ${c.name}`;
   _el('svc-update-text').value='';
-  const canEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _el('svc-updates-add-wrap').style.display=canEdit?'block':'none';
   _el('svc-update-post-btn').style.display=canEdit?'':'none';
   _renderServiceUpdatesList(svc);
@@ -3441,7 +3482,7 @@ function openServiceSubitemsModal(clientId, svcId, locationId){
   _el('svc-subitems-location-id').value=locationId||'';
   _el('svc-subitems-sub').textContent=`${svc.name} — ${c.name}`;
   _el('svc-subitem-text').value='';
-  const canEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _el('svc-subitems-add-wrap').style.display=canEdit?'flex':'none';
   _renderServiceSubitemsList(svc, canEdit);
   openModal('serviceSubitemsModal');
@@ -3470,7 +3511,7 @@ function addServiceSubitem(){
   svc.subitems.push({ id:'sub'+uid(), text, done:false, ts:new Date().toISOString() });
   saveClients(clients);
   _el('svc-subitem-text').value='';
-  const canEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _renderServiceSubitemsList(svc, canEdit);
   _refreshOpenServiceViews(clientId);
   showToast('Sub-item added ✓');
@@ -3486,7 +3527,7 @@ function toggleServiceSubitem(subitemId, checked){
   const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
   item.done=checked;
   saveClients(clients);
-  const canEdit=SESSION.isAdmin||(SESSION.id&&(svc.assigneeId===SESSION.id||svc.assigneeName===SESSION.name));
+  const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _renderServiceSubitemsList(svc, canEdit);
   _refreshOpenServiceViews(clientId);
 }
@@ -4070,8 +4111,6 @@ function openAddServiceModal(clientId,entryId,locationId){
   const c=getClient(clientId); if(!c) return;
   _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||''; _el('svc-location-id').value=locationId||'';
   const roster=getRoster();
-  const aEl=_el('svc-assignee');
-  aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   if(entryId){
     // Resolve location-aware, with a fallback across every franchise
     // location when none was passed in (see _resolveServiceAndLocation) —
@@ -4112,7 +4151,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _el('svc-freq').value=svc.freq||'monthly';
     _el('svc-lastdone').value=svc.lastDone||'';
     _el('svc-due').value=svc.due||'';
-    _el('svc-assignee').value=svc.assigneeId||'';
+    populateUserChecks('svc-assignee-checks', roster, _svcAssigneeIds(svc));
     _el('svc-notes').value=svc.notes||'';
     _updateDueHint(svc.due||'');
     _updateSvcPlatformsVisibility(svc.name, svc.platforms||[]);
@@ -4126,6 +4165,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _el('svc-freq').value='monthly';
     _el('svc-lastdone').value='';
     _el('svc-due').value=calcNextDue('monthly',today());
+    populateUserChecks('svc-assignee-checks', roster, []);
     _el('svc-notes').value='';
     _updateDueHint(_el('svc-due').value);
     _updateSvcPlatformsVisibility('', []);
@@ -4148,7 +4188,13 @@ function saveClientService(){
   const idx=entryId?targetList.findIndex(s=>s.id===entryId):-1;
   const current=idx>=0?targetList[idx]:null;
   const roster=getRoster();
-  const assigneeId=_el('svc-assignee').value;
+  // Multiple assignees per service: assigneeIds[] is the new source of
+  // truth; assigneeId/assigneeName always mirror assigneeIds[0] so every
+  // consumer that only knows the single legacy fields keeps working
+  // unchanged (My Work matching, notifications, favorites, workload, etc.)
+  // See _svcAssignedTo() above for the shared read-side predicate.
+  const assigneeIds=[...document.querySelectorAll('#svc-assignee-checks input:checked')].map(cb=>cb.value);
+  const assigneeId=assigneeIds[0]||'';
   const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
   const freq=_el('svc-freq').value;
   const lastDone=_el('svc-lastdone').value||'';
@@ -4170,7 +4216,7 @@ function saveClientService(){
     catalogId: keepUncataloged?current.catalogId:catalogId,
     bundle: keepUncataloged?current.bundle:(catEntry?.bundle||null),
     freq, due, lastDone,
-    assigneeId, assigneeName, notes:_el('svc-notes').value
+    assigneeIds, assigneeId, assigneeName, notes:_el('svc-notes').value
   };
   // Platforms only apply to the "Social Media Management" service — collected
   // from the checkbox group (see _updateSvcPlatformsVisibility()), never from
@@ -4190,16 +4236,19 @@ function saveClientService(){
   } else {
     targetList.push({id:'sv'+uid(),status:'active',...data});
     const forName=loc?`${c.name} — ${loc.name}`:c.name;
-    if(assigneeId){
+    // A brand-new service has no "previous" assignment to diff against, so
+    // every checked assignee is newly assigned — notify each one.
+    assigneeIds.forEach(id=>{
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`Service assigned: ${data.name}`,
         body:`You're handling "${data.name}" (${freq}) for ${forName}. Next due: ${due||'TBD'}.`,
-        forUser:assigneeId, fromUser:SESSION.name });
-    }
-    if(c.managerId && c.managerId!==assigneeId){
+        forUser:id, fromUser:SESSION.name });
+    });
+    if(c.managerId && !assigneeIds.includes(c.managerId)){
+      const namesLabel=assigneeIds.map(id=>roster.find(u=>u.id===id)?.name).filter(Boolean).join(', ');
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`New service added for ${forName}`,
-        body:`"${data.name}" (${freq}) assigned to ${assigneeName||'someone'}. Next due: ${due||'TBD'}.`,
+        body:`"${data.name}" (${freq}) assigned to ${namesLabel||'someone'}. Next due: ${due||'TBD'}.`,
         forUser:c.managerId, fromUser:SESSION.name });
     }
   }
@@ -4729,7 +4778,7 @@ function renderSchedule(){
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--text-mid);">
           <span>📅 <strong>${svc.due||'No date'}</strong>${daysLabel?' ('+daysLabel+')':''}</span>
-          <span>👤 ${svc.assigneeName||'Unassigned'}</span>
+          <span>👤 ${_svcAssigneeNames(svc)||'Unassigned'}</span>
           ${svc.freqLabel&&svc.freqLabel!==svc.freq?`<span>🔁 ${svc.freqLabel}</span>`:''}
         </div>
       </div>
@@ -4783,7 +4832,7 @@ function renderMyWork(){
       const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name).map(t=>({...t,_spName:sp.name,_spId:sp.id})));
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).includes(myId));
-      const mySvcs=(c.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===SESSION.name);
+      const mySvcs=(c.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name));
       const onProject=(p.users||[]).includes(myId);
       if(!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length&&!onProject) return;
       found=true;
@@ -4842,7 +4891,7 @@ function renderMyWork(){
     // Franchise services — rendered once per franchise, not nested inside the
     // projects loop above (a franchise service isn't tied to any one project).
     (c.locations||[]).forEach(loc=>{
-      const mySvcs=(loc.services||[]).filter(s=>s.assigneeId===myId||s.assigneeName===SESSION.name);
+      const mySvcs=(loc.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name));
       if(!mySvcs.length) return;
       found=true;
       html+=`
@@ -5033,18 +5082,19 @@ function runScheduledAlerts(){
       newAlerted.push(key);
       const days=daysUntil(svc.due);
       const urgency=days!==null&&days<0?'OVERDUE':days===0?'Due TODAY':days<=3?'Due in '+days+'d':'Upcoming';
-      // Notify the assigned user
-      if(svc.assigneeId){
+      // Notify every assigned person (not just the first/legacy assigneeId)
+      const svcAssigneeIds=_svcAssigneeIds(svc);
+      svcAssigneeIds.forEach(id=>{
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`[${urgency}] ${svc.name}`,
           body:`Service for ${c.name} is due ${svc.due}. Please action this.`,
-          forUser:svc.assigneeId, fromUser:'System' });
-      }
-      // Notify the account manager if different
-      if(c.managerId && c.managerId!==svc.assigneeId){
+          forUser:id, fromUser:'System' });
+      });
+      // Notify the account manager if not already one of the assignees
+      if(c.managerId && !svcAssigneeIds.includes(c.managerId)){
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`Service alert for ${c.name}: ${svc.name}`,
-          body:`${urgency} — due ${svc.due}. Assigned to ${svc.assigneeName||'no one'}.`,
+          body:`${urgency} — due ${svc.due}. Assigned to ${_svcAssigneeNames(svc)||'no one'}.`,
           forUser:c.managerId, fromUser:'System' });
       }
     });
@@ -5066,8 +5116,8 @@ function updateMyWorkBadge(){
         (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===SESSION.name)&&!t.done) count++; });
       });
     });
-    (c.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; });
-    (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(s=>{ if(s.assigneeId===myId||s.assigneeName===SESSION.name) count++; }));
+    (c.services||[]).forEach(s=>{ if(_svcAssignedTo(s,myId,SESSION.name)) count++; });
+    (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(s=>{ if(_svcAssignedTo(s,myId,SESSION.name)) count++; }));
   });
   const badge=_el('my-work-badge');
   if(badge){ badge.textContent=count; badge.style.display=count>0?'flex':'none'; }
@@ -5204,7 +5254,7 @@ function renderCalendar(){
       if(bundleF && !_serviceMatchesBundle(svc,bundleF)) return;
       if(!_passesDueFilter(svc.due, dueF, todayStr)) return;
       addEv(svc.due,{type:'service',label:svc._locationName?`${svc.name} (${svc._locationName})`:svc.name,client:c.name,color,
-        status:svc.status,due:svc.due,agent:rosterMap[svc.assigneeId]||'',
+        status:svc.status,due:svc.due,agent:_svcAssigneeIds(svc).map(id=>rosterMap[id]).filter(Boolean).join(', '),
         freq:svc.freqLabel||svc.freq||'',clientId:c.id,svcId:svc.id,locId:svc._locationId||''});
     });
     if(!serviceF){
@@ -5312,9 +5362,9 @@ function calShowDay(dateStr){
     if(typeF!=='project'){
       (c.services||[]).forEach(svc=>{
         if(svc.due!==dateStr) return;
-        if(agentF && svc.assigneeId!==agentF) return;
+        if(agentF && !_svcAssigneeIds(svc).includes(agentF)) return;
         evs.push({type:'service',label:svc.name,client:c.name,color,
-          status:svc.status,agent:rosterMap[svc.assigneeId]||'',
+          status:svc.status,agent:_svcAssigneeIds(svc).map(id=>rosterMap[id]).filter(Boolean).join(', '),
           freq:svc.freqLabel||svc.freq||'',platforms:svc.platforms||'',clientId:c.id});
       });
     }
