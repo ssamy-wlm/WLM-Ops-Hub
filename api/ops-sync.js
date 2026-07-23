@@ -76,6 +76,23 @@ function stripPayrollFields(incoming, current) {
   return row;
 }
 
+// Super/CEO tier MAY write payroll fields, but a save must never CLEAR them
+// as a side effect of an unrelated write — only an explicit edit should. A
+// broad dirty-sync push (cloudAutoSync()) can carry a user record whose
+// local cache copy of payRate/hours is genuinely missing (stale/partial
+// cache, a form that never round-tripped those fields, etc.), with no way
+// for the server to otherwise tell that apart from a deliberate clear. So:
+// fall back to the CURRENT db value only when the incoming field is
+// actually missing (undefined/null/''); a real, deliberate value — including
+// an explicit 0 — always wins. Brand-new users (no current row) pass through
+// unmodified, same as `stripPayrollFields` above.
+function preserveMissingPayrollFields(incoming, current) {
+  if (!current) return incoming;
+  const row = { ...incoming };
+  PAYROLL_FIELDS.forEach(f => { if (!hasContent(row[f])) row[f] = current[f]; });
+  return row;
+}
+
 // ── member client-write validation ──────────────────────────────────────────
 // A member may edit ONLY items they're assigned to: services[]/
 // recurringServices[] (matched by assigneeId/assigneeName/assignedUserIds —
@@ -589,13 +606,12 @@ export default async function handler(req, res) {
         if (tier === 'manager' && !canEditUsers(session)) {
           warnings.push(`users: dropped — restricted manager level (${session.level}) cannot edit user accounts`);
         } else {
-          let toWrite = usersIncoming;
-          if (tier === 'manager') {
-            const ids = usersIncoming.map(r => r.id);
-            const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
-            const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
-            toWrite = usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)));
-          }
+          const ids = usersIncoming.map(r => r.id);
+          const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
+          const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+          const toWrite = tier === 'manager'
+            ? usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)))
+            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)));
           applied.users = await upsertRows(supabase, 'ops_users', toWrite, warnings);
         }
       }
