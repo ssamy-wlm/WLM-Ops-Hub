@@ -469,6 +469,19 @@ export default async function handler(req, res) {
       } else {
         warnings.push('selfPasswordChange: own record not found');
       }
+      // A dual-role session's mustChangePassword is true if EITHER linked row
+      // says so (see api/ops-auth.js — this is what lets "Grant manager role"
+      // force a password change on first Manager-mode entry without ever
+      // writing to ops_users). The write above only clears it on the table
+      // that just changed (ops_users) — without also clearing it on the
+      // linked ops_admins row, the OR would keep forcing this same screen on
+      // every future login forever, not just the first one.
+      if (session.employeeId && session.adminId && 'mustChangePassword' in c.selfPasswordChange && !c.selfPasswordChange.mustChangePassword) {
+        const { data: curAdmin } = await supabase.from('ops_admins').select('data').eq('id', session.adminId).maybeSingle();
+        if (curAdmin && curAdmin.data && curAdmin.data.mustChangePassword) {
+          await supabase.from('ops_admins').update({ data: { ...curAdmin.data, mustChangePassword: false } }).eq('id', session.adminId);
+        }
+      }
     }
 
     // ── admin tables: silently drop (not error) a member's attempt at any of
