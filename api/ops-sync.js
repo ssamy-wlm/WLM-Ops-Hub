@@ -203,7 +203,7 @@ let _notifSettingsCache; // per-request cache, avoids re-querying ops_settings p
 async function getNotificationSettings(supabase) {
   if (_notifSettingsCache) return _notifSettingsCache;
   const { data } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
-  _notifSettingsCache = { assignment: true, timeOff: true, message: true, ...(data?.data || {}) };
+  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, ...(data?.data || {}) };
   return _notifSettingsCache;
 }
 
@@ -299,6 +299,39 @@ export function collectTaskAssignmentEvents(client, curClient, incClient) {
   return events;
 }
 
+// Same "current vs incoming, same request" comparison as
+// collectServiceAssignmentEvents above — walks a service's updates[] thread
+// (Monday feature pack #1: service comments) and returns one event per
+// update newly APPENDED in THIS write, detected by id so a client whose
+// updates[] didn't change produces zero events regardless of how many prior
+// updates already existed on that service.
+export function collectServiceUpdateEvents(client, curClient, incClient) {
+  const events = [];
+  const scan = (curList, incList, locationName) => {
+    const curById = new Map((curList || []).filter(s => s?.id).map(s => [s.id, s]));
+    (incList || []).forEach(s => {
+      if (!s?.id || !Array.isArray(s.updates)) return;
+      const prev = curById.get(s.id);
+      const prevUpdateIds = new Set((prev?.updates || []).filter(u => u?.id).map(u => u.id));
+      s.updates.forEach(u => {
+        if (!u?.id || prevUpdateIds.has(u.id)) return;
+        events.push({
+          serviceId: s.id, serviceName: s.name, locationName,
+          assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
+          authorId: u.authorId, authorName: u.authorName, updateText: u.text,
+        });
+      });
+    });
+  };
+  scan(curClient.services, incClient.services, null);
+  const curLocs2 = curClient.locations || [], incLocs2 = incClient.locations || [];
+  incLocs2.forEach(loc => {
+    const curLoc = curLocs2.find(l => l.id === loc.id);
+    scan(curLoc?.services, loc.services, loc.name);
+  });
+  return events;
+}
+
 let _directoryCache; // per-request cache — users/admins are fetched at most once per request
 async function getDirectory(supabase) {
   if (_directoryCache) return _directoryCache;
@@ -336,6 +369,35 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
         context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null },
       });
     });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// Monday feature pack #1: notifies a service's assignee when someone posts
+// an update/comment on it. Reuses the same recipient-resolution and manager-
+// escalation logic as fireAssignmentNotifications — the target ("the
+// service's assignee") is exactly what resolveNotifyRecipients already
+// resolves for that event type. Never notifies the author of their own
+// comment, and never fires for a service with no assignee (nobody to tell).
+async function fireServiceUpdateNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    if (!ev.assigneeId) return;
+    resolveNotifyRecipients(ev.assigneeId, users, admins)
+      .filter(r => r.id !== ev.authorId)
+      .forEach(r => {
+        const person = personOf(r.id, r.kind, { users, admins });
+        rows.push({
+          type: 'serviceUpdate', recipientId: r.id, recipientKind: r.kind,
+          recipientName: person?.name || '', recipientEmail: person?.email || '',
+          title: `New update on service: ${ev.serviceName}`,
+          body: `${ev.authorName || 'Someone'}${ev.locationName ? ' (' + ev.locationName + ')' : ''} — ${ev.clientName}: ${String(ev.updateText || '').slice(0, 140)}`,
+          link: '',
+          context: { clientId: ev.clientId, serviceId: ev.serviceId },
+        });
+      });
   });
   await insertNotifications(supabase, rows, warnings);
 }
@@ -423,6 +485,18 @@ async function insertNewOnly(supabase, table, rows, warnings) {
 }
 
 export default async function handler(req, res) {
+  // Both caches below are documented as "per-request" but were never
+  // actually reset anywhere — on a warm serverless instance (Vercel can and
+  // does reuse one across multiple invocations) they'd silently keep
+  // serving the FIRST request's notification settings/directory to every
+  // later request on that same warm instance, e.g. an admin turning a
+  // notification type off wouldn't take effect until a cold start happened
+  // to occur. Found while adding the serviceUpdate type (Monday feature
+  // pack #1) and testing it against a harness that — like a warm serverless
+  // instance — reuses the same module across multiple simulated requests.
+  _notifSettingsCache = undefined;
+  _directoryCache = undefined;
+
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -621,6 +695,7 @@ export default async function handler(req, res) {
       const byId = new Map((currentRows || []).map(r => [r.id, r]));
       const notifSettings = await getNotificationSettings(supabase);
       const assignmentEvents = [];
+      const serviceUpdateEvents = [];
 
       if (isAdmin) {
         applied.clients = await upsertRows(supabase, 'ops_clients', incoming, warnings, true);
@@ -630,6 +705,13 @@ export default async function handler(req, res) {
             if (!cur) continue; // brand-new client (e.g. a bulk import) — nothing to diff against
             assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
             assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
+          }
+        }
+        if (notifSettings.serviceUpdate) {
+          for (const inc of incoming) {
+            const cur = byId.get(inc.id);
+            if (!cur) continue;
+            serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
           }
         }
       } else {
@@ -654,11 +736,15 @@ export default async function handler(req, res) {
             assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
             assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
           }
+          if (notifSettings.serviceUpdate) {
+            serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
+          }
         }
         applied.clients = n;
       }
 
       await fireAssignmentNotifications(supabase, assignmentEvents, warnings);
+      await fireServiceUpdateNotifications(supabase, serviceUpdateEvents, warnings);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);
