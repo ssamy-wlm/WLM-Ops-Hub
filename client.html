@@ -1842,6 +1842,38 @@ function findCatalogEntryForService(s){
   if(byName) return byName;
   return cat.find(e=>e.id===s.catalogId)||null;
 }
+// Sentinel <option> value for the Edit Service dropdown when a service's
+// name/catalogId matches nothing in the current catalog (e.g. a
+// connector-added or legacy service like "7 Franchise Marketing Bundle").
+// Without this, the dropdown had no <option> to select — the browser shows
+// it blank — and saving without touching it sent catalogId:'' straight into
+// the "Select a service" guard, forcing an admin to pick SOME real catalog
+// entry just to save an unrelated field (freq/due/assignee/notes), silently
+// renaming the service in the process. See saveClientService() for the
+// matching preserve-as-is handling.
+const UNCATALOGED_SENTINEL='__uncataloged__';
+// Resolves a service by entryId the same way every other call site does
+// (top-level c.services, or one specific loc.services when locationId is
+// given) — but when NO locationId is passed and the id isn't in c.services,
+// also checks every franchise location before giving up. This is what makes
+// Edit recover a franchise service from the Bundles tab's mirrored-project
+// Edit button (client.html ~3019), which has never passed locationId — a
+// stale/legacy mirror pointing at a service that actually lives under a
+// franchise location would otherwise resolve to nothing and leave the Edit
+// form entirely blank (every field, not just the name).
+function _resolveServiceAndLocation(c, entryId, locationId){
+  if(locationId){
+    const loc=(c.locations||[]).find(l=>l.id===locationId);
+    return { svc: loc?(loc.services||[]).find(s=>s.id===entryId)||null:null, loc: loc||null };
+  }
+  let svc=(c.services||[]).find(s=>s.id===entryId);
+  if(svc) return { svc, loc:null };
+  for(const loc of (c.locations||[])){
+    svc=(loc.services||[]).find(s=>s.id===entryId);
+    if(svc) return { svc, loc };
+  }
+  return { svc:null, loc:null };
+}
 // Real client data predates the granular catalog and tags services with coarse legacy names
 // (e.g. "GBP Optimization") instead of catalog item names. Map those to their bundle here.
 const WL_LEGACY_SERVICE_BUNDLE_MAP={
@@ -3924,29 +3956,58 @@ function onSvcFreqChange(){
 
 function openAddServiceModal(clientId,entryId,locationId){
   const c=getClient(clientId); if(!c) return;
-  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
   _el('svc-client-id').value=clientId; _el('svc-entry-id').value=entryId||''; _el('svc-location-id').value=locationId||'';
-  _el('svc-modal-title').textContent=entryId?'Edit Service':'Add Bundle Service';
-  _el('svc-modal-sub').textContent=loc?`${c.name} — ${loc.name} (franchise)`:c.name;
   const roster=getRoster();
   const aEl=_el('svc-assignee');
   aEl.innerHTML=`<option value="">— Unassigned —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   if(entryId){
-    const svc=loc?(loc.services||[]).find(s=>s.id===entryId):(c.services||[]).find(s=>s.id===entryId);
-    if(svc){
-      const catEntry=findCatalogEntryForService(svc);
-      if(_el('svc-bundle')) _el('svc-bundle').value=catEntry?.bundle||'';
-      populateServiceDropdown();
-      _el('svc-name').value=catEntry?.id||svc.catalogId||'';
-      _el('svc-freq').value=svc.freq||'monthly';
-      _el('svc-lastdone').value=svc.lastDone||'';
-      _el('svc-due').value=svc.due||'';
-      _el('svc-assignee').value=svc.assigneeId||'';
-      _el('svc-notes').value=svc.notes||'';
-      _updateDueHint(svc.due||'');
-      _updateSvcPlatformsVisibility(svc.name, svc.platforms||[]);
+    // Resolve location-aware, with a fallback across every franchise
+    // location when none was passed in (see _resolveServiceAndLocation) —
+    // this is what recovers a franchise service opened from the Bundles
+    // tab's mirror-project Edit button, which never passes locationId.
+    const { svc, loc } = _resolveServiceAndLocation(c, entryId, locationId);
+    if(!svc){
+      // Genuinely doesn't exist anywhere on this client — a stale mirror
+      // pointing at a removed/renamed service. Say so plainly instead of
+      // silently opening a blank form that looks like an ordinary empty
+      // service (the exact confusing symptom this fix is for).
+      showToast('Could not find this service — it may have been removed or renamed','warn');
+      return;
     }
+    // The resolved location may differ from what was passed (or nothing was
+    // passed at all) — keep the hidden field in sync so Save writes back to
+    // the correct list.
+    _el('svc-location-id').value=loc?loc.id:'';
+    _el('svc-modal-title').textContent='Edit Service';
+    _el('svc-modal-sub').textContent=loc?`${c.name} — ${loc.name} (franchise)`:c.name;
+    const catEntry=findCatalogEntryForService(svc);
+    if(_el('svc-bundle')) _el('svc-bundle').value=catEntry?.bundle||'';
+    populateServiceDropdown();
+    const nameEl=_el('svc-name');
+    if(catEntry){
+      nameEl.value=catEntry.id;
+    } else {
+      // No catalog match — inject an option carrying the service's OWN raw
+      // name so the dropdown shows what's actually assigned instead of
+      // going blank, and so leaving it untouched on Save never remaps/
+      // renames it (see saveClientService()'s UNCATALOGED_SENTINEL handling).
+      const opt=document.createElement('option');
+      opt.value=UNCATALOGED_SENTINEL;
+      opt.textContent=(svc.name||'Unnamed service')+' (not in catalog)';
+      nameEl.insertBefore(opt, nameEl.firstChild);
+      nameEl.value=UNCATALOGED_SENTINEL;
+    }
+    _el('svc-freq').value=svc.freq||'monthly';
+    _el('svc-lastdone').value=svc.lastDone||'';
+    _el('svc-due').value=svc.due||'';
+    _el('svc-assignee').value=svc.assigneeId||'';
+    _el('svc-notes').value=svc.notes||'';
+    _updateDueHint(svc.due||'');
+    _updateSvcPlatformsVisibility(svc.name, svc.platforms||[]);
   } else {
+    const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+    _el('svc-modal-title').textContent='Add Bundle Service';
+    _el('svc-modal-sub').textContent=loc?`${c.name} — ${loc.name} (franchise)`:c.name;
     if(_el('svc-bundle')) _el('svc-bundle').value='';
     populateServiceDropdown();
     _el('svc-name').value='';
@@ -3972,6 +4033,8 @@ function saveClientService(){
   const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
   if(locationId && !loc) return; // franchise was removed from under us — bail rather than write to the client
   const targetList = loc ? (loc.services=loc.services||[]) : (c.services=c.services||[]);
+  const idx=entryId?targetList.findIndex(s=>s.id===entryId):-1;
+  const current=idx>=0?targetList[idx]:null;
   const roster=getRoster();
   const assigneeId=_el('svc-assignee').value;
   const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
@@ -3980,12 +4043,21 @@ function saveClientService(){
   // If lastDone is set and no due date given, auto-calculate it
   let due=_el('svc-due').value;
   if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
-  const svcName=catEntry?.name||catalogId;
+  // The Edit dropdown's UNCATALOGED_SENTINEL option means the admin left an
+  // uncatalogued service's name/bundle exactly as it was (see
+  // openAddServiceModal) — never derive name/catalogId/bundle from the
+  // sentinel itself, preserve whatever's already on the record. Only a real
+  // catalog pick here is treated as a deliberate rename.
+  const keepUncataloged = catalogId===UNCATALOGED_SENTINEL && current;
+  const svcName=keepUncataloged?current.name:(catEntry?.name||catalogId);
   const data={
     // bundle is resolved from the catalog and frozen HERE, not re-derived on
     // every render — so a later catalog edit (rename/delete a bundle or this
     // service) never changes what's already assigned to this client.
-    name:svcName, catalogId, bundle:catEntry?.bundle||null, freq, due, lastDone,
+    name:svcName,
+    catalogId: keepUncataloged?current.catalogId:catalogId,
+    bundle: keepUncataloged?current.bundle:(catEntry?.bundle||null),
+    freq, due, lastDone,
     assigneeId, assigneeName, notes:_el('svc-notes').value
   };
   // Platforms only apply to the "Social Media Management" service — collected
@@ -3994,7 +4066,6 @@ function saveClientService(){
   // (or none) untouched.
   if(_isSocialMediaService(svcName)) data.platforms=_collectSvcPlatforms();
   if(entryId){
-    const idx=targetList.findIndex(s=>s.id===entryId);
     if(idx>=0){
       Object.assign(targetList[idx], data);
       // Keep mirrored project in sync immediately (client-level services only —
