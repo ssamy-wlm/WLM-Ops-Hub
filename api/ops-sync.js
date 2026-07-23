@@ -454,7 +454,12 @@ export default async function handler(req, res) {
     // tables, so anyone can change their own login without gaining any other
     // write access to that table. ──
     if (c.selfPasswordChange && typeof c.selfPasswordChange === 'object' && hasContent(c.selfPasswordChange.password)) {
-      const table = isAdmin ? 'ops_admins' : 'ops_users';
+      // Table choice keys off whether this account HAS an employee profile
+      // (session.employeeId), not off tier/isAdmin — a dual-role account's
+      // canonical password lives on its ops_users row (session.id === that
+      // row's id, see api/ops-auth.js), so isAdmin alone would look up the
+      // wrong table/id for anyone who's both a worker and a manager.
+      const table = session.employeeId ? 'ops_users' : 'ops_admins';
       const { data: cur } = await supabase.from(table).select('data').eq('id', session.id).maybeSingle();
       if (cur && cur.data) {
         const merged = { ...cur.data, password: c.selfPasswordChange.password };
