@@ -223,8 +223,14 @@ export default async function handler(req, res) {
       record.timeOffRequests = record.timeOffRequests.filter(r => String(r.userName || '').toLowerCase() === myName);
       record.timeOffLedger = record.timeOffLedger.filter(r => r.employeeId === session.id);
       record.deletedUserIds = [];
-      record.orgNodes = [];
-      record.orgLinks = [];
+      // orgNodes/orgLinks: unlike everything else stripped in this branch,
+      // this is intentionally NOT redacted for member tier — it's just a
+      // diagram of names/titles/positions (see ORG_NODES_DEFAULT in
+      // index.html), no sensitive fields at all, and the read-only Company
+      // Overview chart in user.html needs the exact same data the admin
+      // chart renders from. Members still have no write path to either
+      // table — ops-sync.js gates admins/orgNodes/orgLinks writes to
+      // tier==='super' regardless of what this read returns.
       record.coc = null;
       record.settings = null;
       record.otPolicy = null;
