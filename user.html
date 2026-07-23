@@ -2108,7 +2108,12 @@ function showSection(id, el){
   if(id==='bizSetup') loadCoC();
   if(id==='mywork'||id==='myassignments') loadMyAssignments();
   if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
-  if(id==='companyOverview') renderCompanyOverviewChart();
+  // Paint immediately from whatever's cached (no flash of the empty state),
+  // then pull fresh so an admin's just-saved chart change shows up here
+  // without needing a full logout/login — cloudFetchUsers() re-renders this
+  // chart itself once the pull lands, as long as this section is still active
+  // (see the hook inside cloudFetchUsers()).
+  if(id==='companyOverview'){ renderCompanyOverviewChart(); cloudFetchUsers(); }
 }
 
 // ── TRACKER (embedded production tracker iframe) ──
@@ -2290,6 +2295,11 @@ setInterval(()=>{
     updateAssignmentsBadge(); // check for new client assignments
     if(document.getElementById('sec-timeoff')?.classList.contains('active')){
       cloudFetchUsers().then(renderMyTimeOffLedger);
+    }
+    // Company Overview: same pattern — pick up an admin's org chart save
+    // within 20s if a member has this tab open, without a manual refresh.
+    if(document.getElementById('sec-companyOverview')?.classList.contains('active')){
+      cloudFetchUsers();
     }
   }
 },20000);
