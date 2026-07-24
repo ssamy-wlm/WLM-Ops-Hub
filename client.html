@@ -958,6 +958,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div id="svc-subitems-list" style="max-height:280px;overflow-y:auto;margin-bottom:14px;"></div>
       <div id="svc-subitems-add-wrap" style="display:flex;gap:8px;">
         <input class="form-input" id="svc-subitem-text" placeholder="Add a checklist step…" style="flex:1;" onkeydown="if(event.key==='Enter')addServiceSubitem()">
+        <select class="form-select" id="svc-subitem-assignee" style="max-width:130px;"><option value="">Unassigned</option></select>
         <button class="btn btn-outline btn-sm" onclick="addServiceSubitem()">+ Add</button>
       </div>
     </div>
@@ -1940,6 +1941,15 @@ function _svcAssigneeNames(svc){
     return svc.assigneeIds.map(id=>roster.find(u=>u.id===id)?.name||id).join(', ');
   }
   return svc.assigneeName||'';
+}
+// "Your steps" hint (Feature B) — never affects service-level scoping, this
+// is purely a display convenience for someone who's ALREADY assigned to the
+// service (see renderMyWork()) so they can tell which sub-items are theirs
+// vs. a teammate's, on a shared service with multiple co-assignees.
+function _mySubitemHint(svc, personId, personName){
+  const mine=(svc.subitems||[]).filter(si=>_isMySubitem(si,personId,personName));
+  if(!mine.length) return '';
+  return `<div style="font-size:9px;color:#2E5DA6;margin-top:2px;">📌 Your steps: ${mine.map(si=>escHtmlClient(si.text||'')).join(', ')}</div>`;
 }
 function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
 // "Done this cycle" — has a lastDone and isn't currently overdue. Single
@@ -3481,6 +3491,25 @@ function _refreshOpenServiceViews(clientId){
   if(typeof renderClientDetail==='function' && _activeClientId===clientId) renderClientDetail(_activeClientId, _activeDetailTab);
   if(typeof renderMyWork==='function' && _el('my-work-list')) renderMyWork();
 }
+// Assignment-module Feature B: a sub-item may carry its OWN
+// assigneeId/assigneeName, separate from and never affecting the parent
+// service's assigneeIds — a step assignee does NOT become "assigned to the
+// service" for _svcAssignedTo()/badge-count/Services-tab purposes. WHO can
+// hand out/reassign a step stays gated by the same whole-service canEdit as
+// before (unchanged); the one deliberate widening is that a step's own
+// assignee can check THAT step off even without whole-service access (see
+// _canToggleSubitem below) — that's a write-authorization allowance, not a
+// scoping change, mirrored server-side in api/ops-sync.js's
+// isAssignedToMember().
+function _isMySubitem(si, personId, personName){
+  return !!si && ((personId&&si.assigneeId===personId) || (personName&&si.assigneeName===personName));
+}
+function _canToggleSubitem(svc, si, canEditService){
+  return canEditService || (SESSION.id&&_isMySubitem(si,SESSION.id,SESSION.name));
+}
+function _subitemAssigneeOptions(selectedId){
+  return `<option value="">Unassigned</option>`+getRoster().map(u=>`<option value="${u.id}"${u.id===selectedId?' selected':''}>${u.name}</option>`).join('');
+}
 function openServiceSubitemsModal(clientId, svcId, locationId){
   const c=getClient(clientId);
   const svc=_findServiceForUpdates(clientId, svcId, locationId);
@@ -3492,6 +3521,7 @@ function openServiceSubitemsModal(clientId, svcId, locationId){
   _el('svc-subitem-text').value='';
   const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _el('svc-subitems-add-wrap').style.display=canEdit?'flex':'none';
+  if(canEdit) _el('svc-subitem-assignee').innerHTML=_subitemAssigneeOptions('');
   _renderServiceSubitemsList(svc, canEdit);
   openModal('serviceSubitemsModal');
 }
@@ -3499,11 +3529,20 @@ function _renderServiceSubitemsList(svc, canEdit){
   const el=_el('svc-subitems-list');
   const items=Array.isArray(svc.subitems)?svc.subitems:[];
   if(!items.length){ el.innerHTML='<div style="font-size:12px;color:var(--text-light);text-align:center;padding:14px;">No sub-items yet.</div>'; return; }
-  el.innerHTML=items.map(si=>`
+  el.innerHTML=items.map(si=>{
+    const canToggle=_canToggleSubitem(svc,si,canEdit);
+    // Whoever can edit the whole service can reassign a step (a small
+    // roster select); everyone else just sees the assigned name, if any.
+    const assigneeControl=canEdit
+      ?`<select class="form-select" style="max-width:110px;font-size:10px;padding:3px 5px;flex-shrink:0;" onchange="setServiceSubitemAssignee('${si.id}',this.value)">${_subitemAssigneeOptions(si.assigneeId||'')}</select>`
+      :(si.assigneeName?`<span style="font-size:10px;color:var(--text-light);flex-shrink:0;">👤 ${escHtmlClient(si.assigneeName)}</span>`:'');
+    return `
     <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border);">
-      <input type="checkbox" ${si.done?'checked':''} ${canEdit?'':'disabled'} onchange="toggleServiceSubitem('${si.id}',this.checked)" style="flex-shrink:0;width:16px;height:16px;">
-      <div style="font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlClient(si.text||'')}</div>
-    </div>`).join('');
+      <input type="checkbox" ${si.done?'checked':''} ${canToggle?'':'disabled'} onchange="toggleServiceSubitem('${si.id}',this.checked)" style="flex-shrink:0;width:16px;height:16px;">
+      <div style="flex:1;font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlClient(si.text||'')}</div>
+      ${assigneeControl}
+    </div>`;
+  }).join('');
 }
 function addServiceSubitem(){
   const clientId=_el('svc-subitems-client-id').value;
@@ -3516,18 +3555,30 @@ function addServiceSubitem(){
   const list = locationId ? (c.locations||[]).find(l=>l.id===locationId)?.services : c.services;
   const svc=(list||[]).find(s=>s.id===svcId); if(!svc) return;
   if(!Array.isArray(svc.subitems)) svc.subitems=[];
-  svc.subitems.push({ id:'sub'+uid(), text, done:false, ts:new Date().toISOString() });
+  const roster=getRoster();
+  const assigneeId=_el('svc-subitem-assignee')?.value||'';
+  const assigneeName=assigneeId?(roster.find(u=>u.id===assigneeId)?.name||''):'';
+  const newItem={ id:'sub'+uid(), text, done:false, ts:new Date().toISOString() };
+  if(assigneeId){ newItem.assigneeId=assigneeId; newItem.assigneeName=assigneeName; }
+  svc.subitems.push(newItem);
   saveClients(clients);
   _el('svc-subitem-text').value='';
+  if(_el('svc-subitem-assignee')) _el('svc-subitem-assignee').value='';
   const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
   _renderServiceSubitemsList(svc, canEdit);
   _refreshOpenServiceViews(clientId);
-  showToast('Sub-item added ✓');
+  showToast(assigneeId?`Sub-item added and assigned to ${assigneeName} ✓`:'Sub-item added ✓');
 }
-function toggleServiceSubitem(subitemId, checked){
-  const clientId=_el('svc-subitems-client-id').value;
-  const svcId=_el('svc-subitems-service-id').value;
-  const locationId=_el('svc-subitems-location-id').value;
+// clientId/svcId/locationId are optional — omitted (the modal's own
+// checkbox onchange) reads the currently-open modal's hidden fields;
+// passed explicitly by the "Your Assigned Steps" My Work list below, which
+// toggles a step on a service that may not even be open in any modal.
+function toggleServiceSubitem(subitemId, checked, clientId, svcId, locationId){
+  if(clientId===undefined){
+    clientId=_el('svc-subitems-client-id').value;
+    svcId=_el('svc-subitems-service-id').value;
+    locationId=_el('svc-subitems-location-id').value;
+  }
   const clients=getClients();
   const c=clients.find(x=>x.id===clientId); if(!c) return;
   const list = locationId ? (c.locations||[]).find(l=>l.id===locationId)?.services : c.services;
@@ -3535,9 +3586,37 @@ function toggleServiceSubitem(subitemId, checked){
   const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
   item.done=checked;
   saveClients(clients);
+  // Only re-render the modal's own list if it's already showing THIS exact
+  // service — a toggle fired from the My Work "Your Assigned Steps" list
+  // must never clobber a modal that's open for a different service.
+  if(_el('svc-subitems-service-id').value===svcId && _el('svc-subitems-location-id').value===(locationId||'')){
+    const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
+    _renderServiceSubitemsList(svc, canEdit);
+  }
+  _refreshOpenServiceViews(clientId);
+  if(typeof renderMyWork==='function' && _el('my-work-list')) renderMyWork();
+}
+// Reassigning a step — gated identically to who can add one (whole-service
+// canEdit, enforced by the select only rendering for them in the first
+// place; re-checked here too since this is a distinct write path).
+function setServiceSubitemAssignee(subitemId, assigneeId){
+  const clientId=_el('svc-subitems-client-id').value;
+  const svcId=_el('svc-subitems-service-id').value;
+  const locationId=_el('svc-subitems-location-id').value;
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const list = locationId ? (c.locations||[]).find(l=>l.id===locationId)?.services : c.services;
+  const svc=(list||[]).find(s=>s.id===svcId); if(!svc) return;
   const canEdit=SESSION.isAdmin||(SESSION.id&&_svcAssignedTo(svc,SESSION.id,SESSION.name));
+  if(!canEdit) return;
+  const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
+  const roster=getRoster();
+  if(assigneeId){ item.assigneeId=assigneeId; item.assigneeName=roster.find(u=>u.id===assigneeId)?.name||''; }
+  else { delete item.assigneeId; delete item.assigneeName; }
+  saveClients(clients);
   _renderServiceSubitemsList(svc, canEdit);
   _refreshOpenServiceViews(clientId);
+  if(assigneeId) showToast(`Step assigned to ${item.assigneeName} ✓`);
 }
 
 // ── Brand & Notes Tab ──
@@ -4918,7 +4997,7 @@ function renderMyWork(){
           return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
             <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
             <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}')">
             <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}')">✅ Mark Done</button>
             <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
@@ -4950,7 +5029,7 @@ function renderMyWork(){
               return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
                 <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div></div>
+                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
                 <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}','${loc.id}')">
                 <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}','${loc.id}')">✅ Mark Done</button>
                 <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}','${loc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
@@ -4961,6 +5040,40 @@ function renderMyWork(){
         </div>`;
     });
   });
+  // ── "Your Assigned Steps" — sub-items assigned to this person on a
+  // service they are NOT otherwise assigned to (already covered above via
+  // the inline "your steps" hint on services in mySvcs). Explicitly
+  // excludes anything _svcAssignedTo() already matches, so a step never
+  // gets listed twice. Read-only besides the checkbox itself — no other
+  // control over a service that isn't theirs.
+  const myStepEntries=[];
+  getClients().forEach(c=>{
+    const scanList=(list, locationId, locationName)=>{
+      (list||[]).forEach(svc=>{
+        if(_svcAssignedTo(svc,myId,SESSION.name)) return; // already shown above with its own hint
+        (svc.subitems||[]).forEach(si=>{
+          if(_isMySubitem(si,myId,SESSION.name)) myStepEntries.push({ c, svc, si, locationId, locationName });
+        });
+      });
+    };
+    scanList(c.services, '', '');
+    (c.locations||[]).forEach(loc=>scanList(loc.services, loc.id, loc.name));
+  });
+  if(myStepEntries.length){
+    found=true;
+    html+=`
+      <div class="card" style="margin-bottom:14px;">
+        <div class="card-header" style="padding-bottom:12px;"><div><div class="card-title">Your Assigned Steps</div><div class="card-sub">Sub-items assigned to you on services you're not otherwise assigned to</div></div></div>
+        <div class="card-body">
+          ${myStepEntries.map(({c,svc,si,locationId,locationName})=>`
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border);">
+              <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked,'${c.id}','${svc.id}','${locationId}')" style="flex-shrink:0;width:16px;height:16px;">
+              <div style="flex:1;font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlClient(si.text||'')}</div>
+              <div style="font-size:10px;color:var(--text-light);flex-shrink:0;">${c.name}${locationName?' — '+locationName:''} · ${svc.name}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
   if(!found){
     el.innerHTML='<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No work assigned to you yet</div><div class="empty-state-sub">Your tasks and services will appear here once an admin assigns them.</div></div>';
     return;
