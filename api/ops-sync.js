@@ -107,6 +107,14 @@ export function isAssignedToMember(item, memberId, memberName) {
   if (item.assigneeId === memberId) return true;
   if (Array.isArray(item.assigneeIds) && item.assigneeIds.includes(memberId)) return true;
   if (Array.isArray(item.assignedUserIds) && item.assignedUserIds.includes(memberId)) return true;
+  // Assignment-module Feature B: a member assigned ONLY to one sub-item
+  // (not the whole service) still needs to be able to save that one write
+  // (checking their own step off) — checkMemberClientWrite() authorizes at
+  // the whole-service granularity, there's no per-field write path, so this
+  // is a write-authorization allowance, not a scoping widening: it doesn't
+  // touch _svcAssignedTo()/badge counts/the Services-tab filter, which stay
+  // scoped to the service's own assigneeIds exactly as before.
+  if (Array.isArray(item.subitems) && item.subitems.some(si => si && si.assigneeId === memberId)) return true;
   const assigneeName = String(item.assigneeName || item.assignee || '').trim().toLowerCase();
   const nameLower = String(memberName || '').trim().toLowerCase();
   return !!nameLower && assigneeName === nameLower;
@@ -307,6 +315,43 @@ export function collectServiceAssignmentEvents(client, curClient, incClient) {
   return events;
 }
 
+// Assignment-module Feature B: a sub-item's assigneeId is single-valued
+// (one person per step, not an array like a service's assigneeIds), so this
+// reuses the same single-id assigneeChanged() comparison collectTaskAssignmentEvents
+// already uses for tasks — walks each service's subitems[] (current vs
+// incoming, same request), firing one event per sub-item whose assignee
+// newly changed in THIS write. A sub-item assignment event is intentionally
+// SEPARATE from a service assignment event (see newlyAssignedServiceIds) —
+// assigning a step never touches the service's own assigneeIds.
+export function collectSubitemAssignmentEvents(client, curClient, incClient) {
+  const events = [];
+  const scanSubitems = (curSvc, incSvc, locationName) => {
+    if (!Array.isArray(incSvc?.subitems)) return;
+    const curById = new Map((curSvc?.subitems || []).filter(si => si?.id).map(si => [si.id, si]));
+    incSvc.subitems.forEach(si => {
+      if (!si?.id) return;
+      const prev = curById.get(si.id);
+      if (assigneeChanged(prev, si)) {
+        events.push({
+          subitemId: si.id, subitemText: si.text, serviceId: incSvc.id, serviceName: incSvc.name,
+          locationName, assigneeId: si.assigneeId, clientId: client.id, clientName: client.name,
+        });
+      }
+    });
+  };
+  const scanServices = (curList, incList, locationName) => {
+    const curById = new Map((curList || []).filter(s => s?.id).map(s => [s.id, s]));
+    (incList || []).forEach(s => scanSubitems(curById.get(s.id), s, locationName));
+  };
+  scanServices(curClient.services, incClient.services, null);
+  const curLocs2 = curClient.locations || [], incLocs2 = incClient.locations || [];
+  incLocs2.forEach(loc => {
+    const curLoc = curLocs2.find(l => l.id === loc.id);
+    scanServices(curLoc?.services, loc.services, loc.name);
+  });
+  return events;
+}
+
 // Same idea for project tasks (top-level tasks + subproject tasks).
 export function collectTaskAssignmentEvents(client, curClient, incClient) {
   const events = [];
@@ -395,15 +440,19 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
     resolveNotifyRecipients(ev.assigneeId, users, admins).forEach(r => {
       const person = personOf(r.id, r.kind, { users, admins });
       const isTask = !!ev.taskId;
-      const title = isTask ? `New task assigned: ${ev.taskName}` : `New service assigned: ${ev.serviceName}`;
-      const body = isTask
+      const isSubitem = !!ev.subitemId;
+      const title = isSubitem ? `New sub-item assigned: ${ev.subitemText}`
+        : isTask ? `New task assigned: ${ev.taskName}` : `New service assigned: ${ev.serviceName}`;
+      const body = isSubitem
+        ? `${ev.serviceName} — ${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`
+        : isTask
         ? `${ev.clientName} — ${ev.projectName}${ev.subName ? ' / ' + ev.subName : ''}`
         : `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`;
       rows.push({
         type: 'assignment', recipientId: r.id, recipientKind: r.kind,
         recipientName: person?.name || '', recipientEmail: person?.email || '',
         title, body, link: '',
-        context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null },
+        context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null, subitemId: ev.subitemId || null },
       });
     });
   });
@@ -741,6 +790,7 @@ export default async function handler(req, res) {
             if (!cur) continue; // brand-new client (e.g. a bulk import) — nothing to diff against
             assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
             assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
+            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc));
           }
         }
         if (notifSettings.serviceUpdate) {
@@ -771,6 +821,7 @@ export default async function handler(req, res) {
           if (notifSettings.assignment) {
             assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
             assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
+            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc));
           }
           if (notifSettings.serviceUpdate) {
             serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));

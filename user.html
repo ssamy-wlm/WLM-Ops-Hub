@@ -999,6 +999,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div id="svcSubitemsList" style="max-height:280px;overflow-y:auto;margin-bottom:14px;"></div>
       <div style="display:flex;gap:8px;">
         <input class="form-input" id="svcSubitemText" placeholder="Add a checklist step…" style="flex:1;" onkeydown="if(event.key==='Enter')addServiceSubitem()">
+        <select class="form-select" id="svcSubitemAssignee" style="max-width:130px;"><option value="">Unassigned</option></select>
         <button class="btn btn-outline btn-sm" onclick="addServiceSubitem()">+ Add</button>
       </div>
     </div>
@@ -1954,6 +1955,20 @@ function postServiceUpdate(){
 // services already assigned to the viewer, so posting/checking here is
 // always allowed (no read-only mode needed, unlike client.html where a
 // non-assignee can also view the row).
+// Assignment-module Feature B: a step's assigneeId/assigneeName never
+// affects service-level scoping (myTrackerSvcs above stays scoped to
+// _svcAssignedToMe() exactly as before) — this is purely an additional
+// per-step field. Whoever can open this modal (already a service assignee,
+// per the comment above) can also assign a step to a co-worker.
+function _stepRoster(){
+  return (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active'||!u.status).map(u=>({id:u.id, name:u.name||'Unknown'}));
+}
+function _stepAssigneeOptions(selectedId){
+  return `<option value="">Unassigned</option>`+_stepRoster().map(u=>`<option value="${u.id}"${u.id===selectedId?' selected':''}>${u.name}</option>`).join('');
+}
+function _isMySubitem(si, myId, myName){
+  return !!si && ((myId&&si.assigneeId===myId) || (myName&&si.assigneeName===myName));
+}
 function openServiceSubitemsModal(clientId, svcId){
   const clients=_getAssignClients();
   const c=clients.find(x=>x.id===clientId);
@@ -1962,6 +1977,7 @@ function openServiceSubitemsModal(clientId, svcId){
   document.getElementById('svcSubitemsClientId').value=clientId;
   document.getElementById('svcSubitemsServiceId').value=svcId;
   document.getElementById('svcSubitemText').value='';
+  document.getElementById('svcSubitemAssignee').innerHTML=_stepAssigneeOptions('');
   document.getElementById('svcSubitemsSubtitle').textContent=svc.name+' — '+(c?.name||'');
   renderServiceSubitemsList(svc);
   openModal('serviceSubitemsModal');
@@ -1973,7 +1989,8 @@ function renderServiceSubitemsList(svc){
   list.innerHTML=items.map(si=>`
     <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border);">
       <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked)" style="flex-shrink:0;width:16px;height:16px;">
-      <div style="font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</div>
+      <div style="flex:1;font-size:12px;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</div>
+      <select class="form-select" style="max-width:110px;font-size:10px;padding:3px 5px;flex-shrink:0;" onchange="setServiceSubitemAssignee('${si.id}',this.value)">${_stepAssigneeOptions(si.assigneeId||'')}</select>
     </div>`).join('');
 }
 function addServiceSubitem(){
@@ -1986,19 +2003,31 @@ function addServiceSubitem(){
     const c=clients.find(x=>x.id===clientId); if(!c) return;
     const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
     if(!Array.isArray(svc.subitems)) svc.subitems=[];
-    svc.subitems.push({ id:'sub'+Date.now(), text, done:false, ts:new Date().toISOString() });
+    const assigneeId=document.getElementById('svcSubitemAssignee')?.value||'';
+    const assigneeName=assigneeId?(_stepRoster().find(u=>u.id===assigneeId)?.name||''):'';
+    const newItem={ id:'sub'+Date.now(), text, done:false, ts:new Date().toISOString() };
+    if(assigneeId){ newItem.assigneeId=assigneeId; newItem.assigneeName=assigneeName; }
+    svc.subitems.push(newItem);
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
     if(typeof cloudPushData==='function') cloudPushData();
     else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     document.getElementById('svcSubitemText').value='';
+    document.getElementById('svcSubitemAssignee').value='';
     renderServiceSubitemsList(svc);
     loadMyAssignments();
-    showToast('Sub-item added ✓');
+    showToast(assigneeId?`Sub-item added and assigned to ${assigneeName} ✓`:'Sub-item added ✓');
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
-function toggleServiceSubitem(subitemId, checked){
-  const clientId=document.getElementById('svcSubitemsClientId').value;
-  const svcId=document.getElementById('svcSubitemsServiceId').value;
+// clientId/svcId are optional — omitted (the modal's own checkbox onchange)
+// reads the currently-open modal's hidden fields; passed explicitly by the
+// "Your Assigned Steps" My Work list, which toggles a step on a service
+// that isn't necessarily open in any modal (and may not even be one this
+// person is otherwise assigned to).
+function toggleServiceSubitem(subitemId, checked, clientId, svcId){
+  if(clientId===undefined){
+    clientId=document.getElementById('svcSubitemsClientId').value;
+    svcId=document.getElementById('svcSubitemsServiceId').value;
+  }
   try{
     const clients=_getAssignClients();
     const c=clients.find(x=>x.id===clientId); if(!c) return;
@@ -2008,8 +2037,29 @@ function toggleServiceSubitem(subitemId, checked){
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
     if(typeof cloudPushData==='function') cloudPushData();
     else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    // Only re-render the modal's own list if it's already showing THIS
+    // exact service — a toggle from the "Your Assigned Steps" list must
+    // never clobber a modal open for a different service.
+    if(document.getElementById('svcSubitemsServiceId').value===svcId) renderServiceSubitemsList(svc);
+    loadMyAssignments();
+  }catch(e){ showToast('Could not save — try again','warn'); }
+}
+function setServiceSubitemAssignee(subitemId, assigneeId){
+  const clientId=document.getElementById('svcSubitemsClientId').value;
+  const svcId=document.getElementById('svcSubitemsServiceId').value;
+  try{
+    const clients=_getAssignClients();
+    const c=clients.find(x=>x.id===clientId); if(!c) return;
+    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
+    if(assigneeId){ item.assigneeId=assigneeId; item.assigneeName=_stepRoster().find(u=>u.id===assigneeId)?.name||''; }
+    else { delete item.assigneeId; delete item.assigneeName; }
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     renderServiceSubitemsList(svc);
     loadMyAssignments();
+    if(assigneeId) showToast(`Step assigned to ${item.assigneeName} ✓`);
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
@@ -2291,6 +2341,7 @@ function loadMyAssignments(){
                 <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
                 ${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}
               </div>
+              ${(() => { const mine=(s.subitems||[]).filter(si=>_isMySubitem(si,myId,myName)); return mine.length?`<div style="font-size:10px;color:#2E5DA6;margin-top:2px;">📌 Your steps: ${mine.map(si=>escHtmlUser(si.text||'')).join(', ')}</div>`:''; })()}
             </div>
             <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
             <button onclick="userMarkServiceDone('${c.id}','${s.id}')" style="flex-shrink:0;padding:6px 12px;background:linear-gradient(135deg,#2e9e6e,#227a55);color:#fff;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Mark Done</button>
@@ -2366,6 +2417,33 @@ function loadMyAssignments(){
 
     if(clientHasWork) clientIds.add(c.id);
   });
+
+  // ── "Your Assigned Steps" — sub-items assigned to this person on a
+  // service they are NOT otherwise assigned to (services they ARE assigned
+  // to already show their own steps inline above, via the "your steps"
+  // hint). Never affects myTrackerSvcs/projCount/stats above — this is a
+  // separate, read-mostly list, same as client.html's copy of this feature.
+  const myStepEntries=[];
+  clients.forEach(c=>{
+    (c.services||[]).forEach(s=>{
+      if(_svcAssignedToMe(s,myId,myName)) return; // already shown above with its own hint
+      (s.subitems||[]).forEach(si=>{
+        if(_isMySubitem(si,myId,myName)) myStepEntries.push({ c, s, si });
+      });
+    });
+  });
+  if(myStepEntries.length){
+    found=true;
+    html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;padding:11px 16px;">
+      <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;letter-spacing:.07em;">Your Assigned Steps</div>
+      ${myStepEntries.map(({c,s,si})=>`
+        <div style="display:flex;align-items:center;gap:9px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
+          <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked,'${c.id}','${s.id}')" style="flex-shrink:0;width:15px;height:15px;">
+          <span style="flex:1;font-size:11px;font-weight:600;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</span>
+          <span style="font-size:9px;color:var(--text-light);">${c.name} · ${s.name}</span>
+        </div>`).join('')}
+    </div>`;
+  }
 
   // Update stats
   const set=(id,v,col)=>{ const e=document.getElementById(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
