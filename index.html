@@ -7264,35 +7264,43 @@ function saveOTPolicyBtn(){
   showToast('Overtime Policy saved ✓');
 }
 
+// Single source of truth for a payroll row's pay math — on-screen calc, saved
+// payroll records, and CSV export all call this so they cannot drift apart
+// (see the exportPayrollCSV/calcPayroll mismatch this replaced: the export
+// used to ignore overtime entirely and pay every hour at the flat regular rate).
+function _computePayrollRow(row){
+  const rate   = parseFloat(row.dataset.rate)||0;
+  const otOn   = row.dataset.otEnabled === 'true';
+  // A custom per-user OT rate (set in the Overtime Policy panel) overrides
+  // the standard 1.5× multiplier — e.g. Sarah Ibrahim is paid a flat custom
+  // rate for overtime instead of 1.5× her regular rate.
+  const otRate = parseFloat(row.dataset.otRate) || (rate * 1.5);
+  const uid    = row.dataset.uid;
+  const name   = (row.querySelector('.pay-name')||{}).textContent?.trim() || uid;
+  const hours  = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
+
+  let regPay = 0, otHours = 0, otPay = 0;
+  if(otOn && hours > 40){
+    otHours = hours - 40;
+    regPay  = 40 * rate;
+    otPay   = otHours * otRate;
+  } else {
+    regPay = hours * rate;
+  }
+
+  return { uid, name, rate, otOn, otRate, hours, regPay, otHours, otPay, pay: regPay + otPay };
+}
+
 function calcPayroll(){
   const rows = document.querySelectorAll('.payroll-row');
   let total = 0, totalOTPay = 0;
   const otLines = [];
 
   rows.forEach(row=>{
-    const rate   = parseFloat(row.dataset.rate)||0;
-    const otOn   = row.dataset.otEnabled === 'true';
-    // A custom per-user OT rate (set in the Overtime Policy panel) overrides
-    // the standard 1.5× multiplier — e.g. Sarah Ibrahim is paid a flat
-    // $12.50/hr for overtime instead of 1.5× her regular rate.
-    const otRate = parseFloat(row.dataset.otRate) || (rate * 1.5);
-    const uid    = row.dataset.uid;
-    const name   = (row.querySelector('.pay-name')||{}).textContent?.trim() || uid;
-    const hours  = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
-
-    let regPay = 0, otHours = 0, otPay = 0;
-    if(otOn && hours > 40){
-      otHours = hours - 40;
-      regPay  = 40 * rate;
-      otPay   = otHours * otRate;
-      otLines.push({name, otHours, otRate, otPay});
-    } else {
-      regPay = hours * rate;
-    }
-
-    const pay = regPay + otPay;
+    const { uid, name, rate, otOn, otRate, hours, otHours, otPay, pay } = _computePayrollRow(row);
     total     += pay;
     totalOTPay += otPay;
+    if(otHours > 0) otLines.push({name, otHours, otRate, otPay});
 
     const noteText = otHours > 0
       ? `40h reg + ${otHours.toFixed(1)}h OT @ $${otRate.toFixed(2)}/hr`
@@ -7340,22 +7348,10 @@ function savePayrollWeek(){
   const entries=[];
   let total=0;
   document.querySelectorAll('.payroll-row').forEach(row=>{
-    const uid      = row.dataset.uid;
-    const u        = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
-    const rate     = parseFloat(row.dataset.rate)||0;
-    const otOn     = row.dataset.otEnabled === 'true';
-    const otRate   = parseFloat(row.dataset.otRate) || (rate * 1.5);
-    const regHrs = parseFloat(row.querySelector('.pay-reg-hrs')?.value)||0;
-    let regPay = 0, otPay = 0;
-    if(otOn && regHrs > 40){
-      regPay = 40 * rate;
-      otPay  = (regHrs - 40) * otRate;
-    } else {
-      regPay = regHrs * rate;
-    }
-    const pay = regPay + otPay;
+    const { uid, rate, otOn, otRate, hours, otHours, otPay, pay } = _computePayrollRow(row);
+    const u = allUsers.find(x=>x.id===uid)||{name:'Unknown',payRate:0};
     total += pay;
-    entries.push({userId:uid, name:u.name, hours:regHrs, rate, otEnabled:otOn, otRate, pay});
+    entries.push({userId:uid, name:u.name, hours, rate, otEnabled:otOn, otRate, otHours, otPay, pay});
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
@@ -7412,16 +7408,14 @@ function renderSavedPayrolls(){
 function exportPayrollCSV(){
   const allUsers=dbGet(DB_KEYS.users)||[];
   const now=new Date();
-  let csv='Name,Role,Pay Rate,Hours Worked,Total Pay,Week\n';
+  let csv='Name,Role,Pay Rate,Hours Worked,OT Hours,OT Rate,OT Pay,Total Pay,Week\n';
   const day=now.getDay();
   const mon=new Date(now);mon.setDate(now.getDate()-(day===0?6:day-1));
   const weekStr=mon.toISOString().slice(0,10);
   document.querySelectorAll('.payroll-row').forEach(row=>{
-    const uid=row.dataset.uid;
+    const { uid, rate, otRate, hours, otHours, otPay, pay } = _computePayrollRow(row);
     const u=allUsers.find(x=>x.id===uid)||{name:'Unknown',role:'',payRate:0};
-    const hours=parseFloat(row.querySelector('input')?.value)||0;
-    const rate=parseFloat(row.dataset.rate)||0;
-    csv+=`"${u.name}","${u.role||''}","${rate}","${hours}","${(rate*hours).toFixed(2)}","${weekStr}"\n`;
+    csv+=`"${u.name}","${u.role||''}","${rate}","${hours}","${otHours.toFixed(1)}","${otHours>0?otRate.toFixed(2):''}","${otPay.toFixed(2)}","${pay.toFixed(2)}","${weekStr}"\n`;
   });
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');
