@@ -1942,6 +1942,79 @@ function _svcAssigneeNames(svc){
   }
   return svc.assigneeName||'';
 }
+// ── Quick inline reassign (assignment-module Feature C) ──────────────────
+// Click-to-open multi-select on the "Assigned to" cell in the Services tab
+// and the Bundles tab's recurring-service rows — same write path, mirror
+// rules, and notification behavior as the full Edit Service modal
+// (Feature A): assigneeIds is the source of truth, assigneeIds[0] mirrors
+// into the legacy assigneeId/assigneeName fields on save, and the server's
+// collectServiceAssignmentEvents() fires a notification to any NEWLY added
+// assignee on the very next sync — no separate client-side notification
+// logic needed here, this is just another edit going through the exact
+// same saveClients()/cloud-sync path saveClientService() already uses.
+// Admin-only, per "members never see edit controls" — a member who
+// happens to be assigned to the service can still mark it done/edit
+// sub-items/etc (svcCanEdit), but reassignment stays an admin action.
+function _assignCellId(context, svcId, locationId){
+  return `assign-cell-${context}-${svcId}${locationId?'-'+locationId:''}`;
+}
+function _assignCellStaticHtml(svc){
+  return _svcAssigneeNames(svc)
+    ? `<span class="user-chip">${escHtmlClient(_svcAssigneeNames(svc))}</span>`
+    : '<span style="font-size:10px;color:var(--text-light);">Unassigned</span>';
+}
+// context distinguishes the Services-tab cell from the Bundles-tab cell for
+// the SAME service (both can be in the DOM at once) so their element ids
+// never collide.
+function _renderAssignCell(context, clientId, svc, locationId){
+  const cellId=_assignCellId(context, svc.id, locationId);
+  if(!SESSION.isAdmin) return `<div id="${cellId}">${_assignCellStaticHtml(svc)}</div>`;
+  return `<div id="${cellId}" onclick="toggleInlineAssignDropdown(event,'${cellId}','${clientId}','${svc.id}','${locationId||''}')" style="cursor:pointer;" title="Click to reassign">${_assignCellStaticHtml(svc)}</div>`;
+}
+function toggleInlineAssignDropdown(evt, cellId, clientId, svcId, locationId){
+  if(evt) evt.stopPropagation();
+  const cell=_el(cellId); if(!cell) return;
+  // A full re-render of the currently active tab both closes THIS dropdown
+  // (rebuilds the cell fresh) and — as a side effect — any other dropdown
+  // that might be open elsewhere in the same tab, so there's no separate
+  // "close others" bookkeeping needed.
+  if(cell.dataset.open==='1'){ renderClientDetail(clientId, _activeDetailTab); return; }
+  const { svc } = _resolveServiceAndLocation(getClient(clientId), svcId, locationId);
+  if(!svc) return;
+  const roster=getRoster();
+  const checkedIds=_svcAssigneeIds(svc);
+  cell.dataset.open='1';
+  cell.innerHTML=`
+    <div onclick="event.stopPropagation();" style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px;min-width:170px;box-shadow:0 4px 14px rgba(0,0,0,.15);position:relative;z-index:5;">
+      <div style="max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:8px;">
+        ${roster.length?roster.map(u=>`
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;font-weight:400;">
+            <input type="checkbox" value="${u.id}" ${checkedIds.includes(u.id)?'checked':''}>
+            ${u.name}
+          </label>`).join(''):'<span style="font-size:10px;color:var(--text-light);">No team members found</span>'}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-xs btn-primary" onclick="saveInlineAssign('${cellId}','${clientId}','${svcId}','${locationId||''}')">Save</button>
+        <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();renderClientDetail('${clientId}', _activeDetailTab)">Cancel</button>
+      </div>
+    </div>`;
+}
+function saveInlineAssign(cellId, clientId, svcId, locationId){
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  const list=loc?(loc.services=loc.services||[]):(c.services=c.services||[]);
+  const svc=(list||[]).find(s=>s.id===svcId); if(!svc) return;
+  const checkedIds=[...document.querySelectorAll('#'+cellId+' input:checked')].map(cb=>cb.value);
+  const roster=getRoster();
+  svc.assigneeIds=checkedIds;
+  svc.assigneeId=checkedIds[0]||'';
+  svc.assigneeName=checkedIds[0]?(roster.find(u=>u.id===checkedIds[0])?.name||''):'';
+  saveClients(clients);
+  if(!loc) syncServicesToProjects(clientId); // keep Bundles-tab mirror in sync, same as saveClientService()
+  renderClientDetail(clientId, _activeDetailTab);
+  showToast('Assignment updated ✓');
+}
 // "Your steps" hint (Feature B) — never affects service-level scoping, this
 // is purely a display convenience for someone who's ALREADY assigned to the
 // service (see renderMyWork()) so they can tell which sub-items are theirs
@@ -3204,7 +3277,7 @@ function renderProjects(c){
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
             <div>
               <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Assigned To</div>
-              <div style="margin-bottom:10px;">${assignedChips||'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</div>
+              <div style="margin-bottom:10px;">${mirroredSvc?_renderAssignCell('proj',c.id,mirroredSvc,null):(assignedChips||'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>')}</div>
               ${p.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:6px;">${p.desc}</div>`:''}
             </div>
             <div>
@@ -3352,7 +3425,7 @@ function _serviceRow(c, svc, locationId){
         <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
-        <td>${_svcAssigneeNames(svc)?`<span class="user-chip">${escHtmlClient(_svcAssigneeNames(svc))}</span>`:'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</td>
+        <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
           ${inactive
             ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})" title="Reactivate">${ICON_UNDO}</button>`:''}${commentBtn}${subitemsBtn}`
