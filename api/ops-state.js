@@ -170,6 +170,13 @@ export default async function handler(req, res) {
       serviceCatalog: settingsMap.serviceCatalog ?? null,
       catalogSuggestions,
       notifications,
+      // Onboarding tour/tips flags: personal to the caller, same scoping as
+      // notifications above — every tier, including the primary-admin
+      // sentinel (which has no ops_users/ops_admins row), gets only its OWN
+      // key back, never another user's. Stored under a per-user key in the
+      // existing ops_settings table (see api/ops-sync.js) rather than a new
+      // table or a field on a row that may not exist for every account.
+      tourFlags: settingsMap['tourFlags_' + session.id] ?? { tourSeen: {}, dismissedTips: [] },
       // Notification on/off toggles: same Super Admin/CEO-only visibility as
       // otPolicy/coc below — everyone still GETS notified server-side
       // regardless (the toggle is read directly from ops_settings inside

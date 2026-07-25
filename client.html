@@ -382,6 +382,12 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 #access-denied{display:none;position:fixed;inset:0;background:rgba(15,30,60,.8);z-index:9000;align-items:center;justify-content:center;}
 #access-denied.show{display:flex;}
 .access-denied-box{background:var(--card);border-radius:18px;padding:40px 32px;text-align:center;max-width:400px;}
+
+/* ── Contextual tip chip (onboarding-tips feature) — fixed-position so it
+     never causes a layout shift, and leaves zero DOM/CSS weight once
+     dismissed (the element is simply removed). ── */
+.tip-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:7px 8px 7px 13px;font-size:11.5px;color:var(--text-dark);box-shadow:0 6px 18px rgba(0,0,0,.14);max-width:270px;}
+.tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -1227,6 +1233,12 @@ const CL_KEYS = {
   admins:         'wl_admins_db',
   liveFeed:       'wl_live_feed',       // shared with index.html admin feed
   userNotifs:     'wl_user_assignments', // picked up by user.html
+  // Onboarding tour/tips flags (assignment-module-adjacent feature) — same
+  // localStorage key name as index.html/user.html use, on purpose: this file
+  // is always loaded same-origin, embedded as an iframe in whichever portal
+  // is active, so the key is naturally shared storage already (same as
+  // wl_clients_db/wl_users_db above) — no cross-frame messaging needed.
+  tourFlags:      'wl_tour_flags',
 };
 function db(k){ try{ return JSON.parse(localStorage.getItem(k)||'null'); }catch(e){ return null; } }
 function dbSave(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
@@ -2141,6 +2153,55 @@ function _applyServerArray(table, arr, saveFn){
   saveFn(arr);
   _opsSetSnapshot(table, arr);
 }
+// Same principle for a singleton value (not an array) — only null/undefined
+// counts as "nothing to apply" (see index.html's identical copy).
+function _applyServerValue(saveFn, value){
+  if(value===null || value===undefined) return;
+  saveFn(value);
+}
+
+// ── Onboarding contextual tips (SPEC-onboarding-tips.md) ───────────────────
+// Small dismissible "💡 …" hint chips on first visit to a specific feature.
+// Per-user, persisted via the existing per-record sync (CL_KEYS.tourFlags,
+// pushed/pulled above) — never localStorage-only, and never written except
+// on an explicit dismiss (no load-time mutation, per CLAUDE.md rule #2).
+// Zero-shared-code rule: this is its own copy, not imported from
+// index.html/user.html, even though the underlying localStorage KEY name is
+// intentionally identical (same reasoning as CL_KEYS.tourFlags above).
+function _getTourFlags(){
+  const f=db(CL_KEYS.tourFlags);
+  return (f && typeof f==='object') ? f : { tourSeen:{}, dismissedTips:[] };
+}
+function _saveTourFlags(flags){
+  dbSave(CL_KEYS.tourFlags, flags);
+  _scheduleCloudPush();
+}
+function _maybeShowTip(id, selector, text){
+  const flags=_getTourFlags();
+  if((flags.dismissedTips||[]).includes(id)) return;
+  const anchor=document.querySelector(selector);
+  if(!anchor) return;
+  // Max one tip visible at a time, app-wide.
+  document.querySelectorAll('.tip-chip').forEach(el=>el.remove());
+  const rect=anchor.getBoundingClientRect();
+  const chip=document.createElement('div');
+  chip.className='tip-chip';
+  chip.dataset.tipId=id;
+  chip.style.position='fixed';
+  chip.style.zIndex='9500';
+  chip.style.top=(rect.bottom+8)+'px';
+  chip.style.left=Math.max(8, Math.min(rect.left, window.innerWidth-286))+'px';
+  chip.innerHTML=`<span>💡 ${escHtmlClient(text)}</span><button onclick="_dismissTip('${id}')" aria-label="Dismiss tip">✕</button>`;
+  document.body.appendChild(chip);
+}
+function _dismissTip(id){
+  const flags=_getTourFlags();
+  const set=new Set(flags.dismissedTips||[]);
+  set.add(id);
+  flags.dismissedTips=[...set];
+  _saveTourFlags(flags);
+  document.querySelectorAll(`.tip-chip[data-tip-id="${id}"]`).forEach(el=>el.remove());
+}
 
 let _cloudPushTimer=null;
 async function _doCloudPush(){
@@ -2161,6 +2222,9 @@ async function _doCloudPush(){
     // `read` (see readNotif()/markAllNotifsRead() above) — push just that.
     const notifsDirty=_opsDirty('notifications', getOpsNotifs());
     if(notifsDirty.length) changes.notifications=notifsDirty.map(n=>({id:n.id, read:!!n.read}));
+    // Onboarding tour/tips flags — only ever written by an explicit dismiss/
+    // finish/skip/replay action (see _setTourFlags below), never on load.
+    const tourFlags=db(CL_KEYS.tourFlags); if(tourFlags) changes.tourFlags=tourFlags;
     if(!Object.keys(changes).length) return;
 
     const res = await fetch(OPS_SYNC_URL,{
@@ -2242,6 +2306,7 @@ async function _pullClientsFromCloud(){
     console.log('[WLM Tracker] resolved viewer — id:', rec.viewerId, '| tier:', rec.viewerTier, '| level:', rec.viewerLevel);
     _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr));
     _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr));
+    _applyServerValue(v=>dbSave(CL_KEYS.tourFlags, v), rec.tourFlags);
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
     // so a plain truthy check doesn't catch it; parse and check length instead.
     if(rec.orgExcluded){ try{ if(JSON.parse(rec.orgExcluded).length) localStorage.setItem('wl_org_excluded_names',rec.orgExcluded); }catch(e){} }
@@ -2629,7 +2694,10 @@ function showPage(name, el){
   const [title,sub]=PAGE_META[name]||['',''];
   _el('page-title').textContent=title;
   _el('page-sub').textContent=sub;
-  if(name==='clients'){ populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); filterClients(); }
+  if(name==='clients'){
+    populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); filterClients();
+    setTimeout(()=>_maybeShowTip('savedFilters','button[onclick="saveCurrentFilter()"]','Save this filter combo for one-click reuse later.'),50);
+  }
   if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
@@ -3545,6 +3613,7 @@ function openServiceUpdatesModal(clientId, svcId, locationId){
   _el('svc-update-post-btn').style.display=canEdit?'':'none';
   _renderServiceUpdatesList(svc);
   openModal('serviceUpdatesModal');
+  setTimeout(()=>_maybeShowTip('serviceComments','#svc-updates-sub','Post updates here — your team can see the history any time they open this service.'),50);
 }
 function _renderServiceUpdatesList(svc){
   const el=_el('svc-updates-list');
@@ -3623,6 +3692,7 @@ function openServiceSubitemsModal(clientId, svcId, locationId){
   if(canEdit) _el('svc-subitem-assignee').innerHTML=_subitemAssigneeOptions('');
   _renderServiceSubitemsList(svc, canEdit);
   openModal('serviceSubitemsModal');
+  setTimeout(()=>_maybeShowTip('subitems','#svc-subitems-sub','Break a service into steps and assign each one — everyone can see what\'s left.'),50);
 }
 function _renderServiceSubitemsList(svc, canEdit){
   const el=_el('svc-subitems-list');
