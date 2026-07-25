@@ -1053,6 +1053,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            parity — see CLAUDE.md. This is the only remaining Operations item. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'tracker')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'clientHealth')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>Client Health</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'workload')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-1a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>Workload</div>
 
       <div class="admin-nav-group-label">People &amp; HR</div>
       <!-- Users (+ Time off / Time off ledger / Archive) -->
@@ -1177,6 +1178,40 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <tbody id="clientHealthTableBody"></tbody>
           </table>
           <div id="clientHealthEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active clients with services yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workload — assignment-module Feature D. Read-only: counts each
+         person's currently-assigned ACTIVE services into the same
+         on-track/due-soon/overdue buckets Client Health already uses, plus a
+         secondary count of assigned sub-item steps. No new math beyond
+         counting into those existing buckets, and no writes at all — just an
+         aggregation over data the Tracker already stores. Click a person to
+         open the Tracker pre-filtered to their assignments. -->
+    <div id="admin-workload" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Workload</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Each person's active assignments, busiest first — click a person to open the Tracker filtered to their work</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderWorkloadDashboard()">↺ Refresh</button>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding:0;">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Person</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Total Active</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Assigned Steps</th>
+              </tr>
+            </thead>
+            <tbody id="workloadTableBody"></tbody>
+          </table>
+          <div id="workloadEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No one has an active assignment yet.</div>
         </div>
       </div>
     </div>
@@ -2856,6 +2891,7 @@ function switchAdminTab(el, tab){
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
+  if(tab==='workload') renderWorkloadDashboard();
 }
 
 function loadAdminTrackerFrame(){
@@ -4266,6 +4302,83 @@ function openAdminTrackerToClient(clientId){
   switchAdminTab(trackerNavEl, 'tracker');
   const params = new URLSearchParams();
   params.set('openClient', clientId);
+  params.set('v', Date.now());
+  const frame = document.getElementById('adminTrackerFrame');
+  if(frame) frame.src = 'client.html?' + params.toString();
+}
+
+// ── Workload dashboard (assignment-module Feature D) ──────────────────────
+// Hand-duplicated from client.html's _svcAssigneeIds/_svcAssignedTo (see
+// CLAUDE.md's zero-shared-code rule — no import, no shared module). Same
+// exact predicate: assigneeIds[] first (by id or name), falling back to the
+// legacy single assigneeId/assigneeName/assignee fields for a service that's
+// never been touched since multi-assignee support shipped. Read-only —
+// only counts existing services/sub-items into buckets already defined by
+// _chSvcDueStatus/_chIsInactiveService above; never writes anything.
+function _wlSvcAssigneeIds(svc){
+  if(Array.isArray(svc.assigneeIds) && svc.assigneeIds.length) return svc.assigneeIds;
+  if(svc.assigneeId) return [svc.assigneeId];
+  return svc.assignee ? [svc.assignee.toLowerCase()] : [];
+}
+function _wlSvcAssignedTo(svc, personId, personName){
+  const ids=_wlSvcAssigneeIds(svc);
+  if(ids.length) return ids.includes(personId) || (!!personName && ids.includes(personName));
+  return svc.assigneeId===personId || svc.assigneeId===personName ||
+         svc.assigneeName===personName || svc.assignee===personName || svc.assignee===personId;
+}
+function renderWorkloadDashboard(){
+  const body=document.getElementById('workloadTableBody');
+  const empty=document.getElementById('workloadEmpty');
+  if(!body) return;
+  const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
+  // Flatten every active client's top-level + franchise-location services
+  // into one list, same as client.html's _allClientServices() does for its
+  // own due-date/alert/My Work views.
+  const allServices=[];
+  clients.forEach(c=>{
+    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s));
+    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s)));
+  });
+
+  const rows=_timeOffRoster().map(person=>{
+    let ok=0, soon=0, overdue=0, steps=0;
+    allServices.forEach(s=>{
+      if(_wlSvcAssignedTo(s, person.id, person.name)){
+        const status=_chSvcDueStatus(s);
+        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+      }
+      (s.subitems||[]).forEach(si=>{
+        if(si.assigneeId===person.id || si.assigneeName===person.name) steps++;
+      });
+    });
+    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, steps, total:ok+soon+overdue };
+  }).filter(r=>r.total>0 || r.steps>0)
+    .sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
+
+  if(!rows.length){
+    body.innerHTML=''; if(empty) empty.style.display='block';
+    return;
+  }
+  if(empty) empty.style.display='none';
+  body.innerHTML=rows.map(r=>`
+    <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
+    </tr>`).join('');
+}
+function openWorkloadPersonInTracker(personId, personName){
+  // Same tab-switch-first-then-set-src ordering as openAdminTrackerToClient,
+  // for the same reason — loadAdminTrackerFrame() would otherwise reset the
+  // iframe's internal state right after our deep-link src takes effect.
+  const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
+  switchAdminTab(trackerNavEl, 'tracker');
+  const params = new URLSearchParams();
+  params.set('page', 'clients');
+  params.set('filterAssignee', personId);
+  params.set('filterAssigneeName', personName||'');
   params.set('v', Date.now());
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
