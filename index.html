@@ -442,6 +442,21 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 .milestone-item:last-child{border-bottom:none;}
 .progress-log-item{padding:10px 14px;background:var(--bg);border-radius:8px;margin-bottom:8px;font-size:12px;}
 
+/* ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ──────────
+   Fixed-position — never shifts surrounding layout, and leaves zero DOM/CSS
+   weight once dismissed/finished (elements are simply removed). ── */
+.tip-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:7px 8px 7px 13px;font-size:11.5px;color:var(--text-dark);box-shadow:0 6px 18px rgba(0,0,0,.14);max-width:270px;position:fixed;z-index:9500;}
+.tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;}
+.tour-overlay{position:fixed;inset:0;z-index:9600;pointer-events:none;}
+.tour-spotlight{position:fixed;border-radius:10px;box-shadow:0 0 0 4000px rgba(15,23,42,.55);pointer-events:none;transition:top .2s,left .2s,width .2s,height .2s;}
+.tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:290px;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
+.tour-popover button{pointer-events:auto;}
+.tour-popover-text{font-size:13px;line-height:1.5;color:var(--text-dark);margin-bottom:14px;}
+.tour-popover-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.tour-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--text);}
+.tour-btn-skip{border:none;background:none;color:var(--text-light);padding:6px 4px;}
+.tour-btn-primary{background:var(--gold,#f5b301);border-color:var(--gold,#f5b301);color:#152444;}
+.tour-progress{font-size:10px;color:var(--text-light);margin-top:10px;text-align:right;}
 </style>
 </head>
 <body>
@@ -1193,7 +1208,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <div>
           <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Workload</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Each person's active assignments, busiest first — click a person to open the Tracker filtered to their work</div>
+          <div id="workload-tip-anchor" style="font-size:12px;color:var(--text-light);margin-top:2px;">Each person's active assignments, busiest first — click a person to open the Tracker filtered to their work</div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="renderWorkloadDashboard()">↺ Refresh</button>
       </div>
@@ -1675,6 +1690,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <!-- Notification settings -->
       <div class="card" id="notification-settings-card" style="margin-bottom:18px;"></div>
+      <!-- Onboarding tour/tips replay -->
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-header"><div class="card-title">👋 Onboarding</div><div class="card-sub">Reset the first-login tour and any dismissed tips for your account</div></div>
+        <div class="card-body">
+          <button class="btn btn-outline btn-sm" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
+        </div>
+      </div>
       <!-- Admin password change -->
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header"><div class="card-title">🔒 Admin Password</div><div class="card-sub">Change the password for your admin account</div></div>
@@ -2891,7 +2913,10 @@ function switchAdminTab(el, tab){
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
-  if(tab==='workload') renderWorkloadDashboard();
+  if(tab==='workload'){
+    renderWorkloadDashboard();
+    setTimeout(()=>_maybeShowTip('workload','#workload-tip-anchor','Click a person to see their assignments.'),50);
+  }
 }
 
 function loadAdminTrackerFrame(){
@@ -4384,6 +4409,121 @@ function openWorkloadPersonInTracker(personId, personName){
   if(frame) frame.src = 'client.html?' + params.toString();
 }
 
+// ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────
+// Per-user flags (tourSeen, dismissedTips[]) persisted via the existing
+// per-record sync (DB_KEYS.tourFlags, pushed/pulled in cloudPushAll/
+// cloudPullAll above) — never localStorage-only, never written except on an
+// explicit dismiss/finish/skip/replay action (CLAUDE.md rule #2 — no
+// load-time mutation). Zero-shared-code rule: this is its own copy, not
+// imported from client.html/user.html.
+function _getTourFlags(){
+  const f = dbGet(DB_KEYS.tourFlags);
+  return (f && typeof f==='object') ? f : { tourSeen:{}, dismissedTips:[] };
+}
+function _saveTourFlags(flags){
+  dbSet(DB_KEYS.tourFlags, flags);
+  cloudAutoSync();
+}
+function _maybeShowTip(id, selector, text){
+  const flags = _getTourFlags();
+  if((flags.dismissedTips||[]).includes(id)) return;
+  const anchor = document.querySelector(selector);
+  if(!anchor) return;
+  document.querySelectorAll('.tip-chip').forEach(el=>el.remove()); // max one visible at a time
+  const rect = anchor.getBoundingClientRect();
+  const chip = document.createElement('div');
+  chip.className = 'tip-chip';
+  chip.dataset.tipId = id;
+  chip.style.top = (rect.bottom+8)+'px';
+  chip.style.left = Math.max(8, Math.min(rect.left, window.innerWidth-286))+'px';
+  chip.innerHTML = `<span>💡 ${text}</span><button onclick="_dismissTip('${id}')" aria-label="Dismiss tip">✕</button>`;
+  document.body.appendChild(chip);
+}
+function _dismissTip(id){
+  const flags = _getTourFlags();
+  const set = new Set(flags.dismissedTips||[]);
+  set.add(id);
+  flags.dismissedTips = [...set];
+  _saveTourFlags(flags);
+  document.querySelectorAll(`.tip-chip[data-tip-id="${id}"]`).forEach(el=>el.remove());
+}
+
+// First-login guided tour — sequential spotlight/popover, admin portal.
+// "Clients" as a separate nav item no longer exists (merged into the
+// Tracker, see CLAUDE.md) — the spec's "Overview → Clients → Tracker" step
+// list is collapsed to "Overview → Tracker" here to match current nav.
+const ADMIN_TOUR_STEPS = [
+  { sel: '.admin-nav-item[onclick*="\'overview\'"]', text: "This is your Overview — a quick snapshot of what needs attention today." },
+  { sel: '.admin-nav-item[onclick*="\'tracker\'"]', text: "The Tracker holds every client, service, and bundle your team manages." },
+  { sel: '.admin-nav-item[onclick*="\'workload\'"]', text: "Workload shows who's carrying what, so you can spot overload at a glance." },
+  { sel: '.admin-nav-item[onclick*="\'payroll\'"]', text: "Payroll calculates hours and pay for your whole team." },
+  { sel: '.admin-nav-item[onclick*="\'bizSettings\'"]', text: "Business Setup is where org-wide settings, the org chart, and error logs live." },
+  { sel: '#admin-notif-btn', text: "This bell lets you know when something needs you — a message, a time-off request, a new assignment." },
+];
+let _tourIndex = 0;
+function startTour(){
+  _tourIndex = 0;
+  _renderTourStep();
+}
+function _renderTourStep(){
+  document.getElementById('tour-overlay')?.remove();
+  if(_tourIndex >= ADMIN_TOUR_STEPS.length){ _finishTour(); return; }
+  const step = ADMIN_TOUR_STEPS[_tourIndex];
+  const el = document.querySelector(step.sel);
+  if(!el){ _tourIndex++; _renderTourStep(); return; } // element not in DOM for this session — skip it, don't block the rest
+  const rect = el.getBoundingClientRect();
+  const overlay = document.createElement('div');
+  overlay.id = 'tour-overlay';
+  overlay.className = 'tour-overlay';
+  const popTop = Math.min(rect.bottom+14, window.innerHeight-200);
+  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-306);
+  overlay.innerHTML = `
+    <div class="tour-spotlight" style="top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;"></div>
+    <div class="tour-popover" style="top:${popTop}px;left:${popLeft}px;">
+      <div class="tour-popover-text">${step.text}</div>
+      <div class="tour-popover-actions">
+        <button class="tour-btn tour-btn-skip" onclick="skipTour()">Skip tour</button>
+        <div style="display:flex;gap:6px;">
+          ${_tourIndex>0?'<button class="tour-btn" onclick="_tourBack()">Back</button>':''}
+          <button class="tour-btn tour-btn-primary" onclick="_tourNext()">${_tourIndex===ADMIN_TOUR_STEPS.length-1?'Finish':'Next'}</button>
+        </div>
+      </div>
+      <div class="tour-progress">${_tourIndex+1} / ${ADMIN_TOUR_STEPS.length}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+function _tourNext(){ _tourIndex++; _renderTourStep(); }
+function _tourBack(){ if(_tourIndex>0){ _tourIndex--; _renderTourStep(); } }
+function skipTour(){ document.getElementById('tour-overlay')?.remove(); _markTourSeen(); }
+function _finishTour(){ document.getElementById('tour-overlay')?.remove(); _markTourSeen(); }
+function _markTourSeen(){
+  const flags = _getTourFlags();
+  flags.tourSeen = { ...(flags.tourSeen||{}), admin:true };
+  _saveTourFlags(flags);
+}
+// Triggers once per user on first login — checked after every successful
+// state pull (login or session-restore reload alike), but only actually
+// acted on once per page load (the in-memory guard below), so the 30s
+// background poll never re-evaluates or re-triggers it mid-session.
+let _tourCheckedThisLoad = false;
+function _maybeStartTourFromPull(){
+  if(_tourCheckedThisLoad) return;
+  _tourCheckedThisLoad = true;
+  const flags = _getTourFlags();
+  if(flags.tourSeen && flags.tourSeen.admin) return;
+  setTimeout(()=>{
+    if(document.getElementById('adminApp')?.classList.contains('visible')) startTour();
+  }, 500);
+}
+// Settings → "Replay tips & tour" — resets this user's flags; the tour and
+// any dismissed tips simply reappear the next time the relevant screen is
+// visited (this button doesn't force-restart anything on THIS screen).
+function replayTourAndTips(){
+  _saveTourFlags({ tourSeen:{}, dismissedTips:[] });
+  _tourCheckedThisLoad = false;
+  if(typeof showToast==='function') showToast('✅ Tour and tips reset — you\'ll see them again as you use the app');
+}
+
 // ── Same dirty-tracking merge as above, kept fully separate (own key, own
 // functions — never reuses or modifies the clients merge from PR #41) for the
 // shared users dataset. Root cause of the recurring "accounts disappear" bug:
@@ -4704,6 +4844,10 @@ const DB_KEYS = {
   timeOffLedger: 'wl_timeoff_ledger',
   notifications: 'wl_ops_notifications',
   notificationSettings: 'wl_notification_settings',
+  // Onboarding tour/tips flags — same localStorage key name client.html/
+  // user.html use (same-origin shared storage, see client.html's CL_KEYS
+  // comment for why that's intentional, not a coincidence).
+  tourFlags: 'wl_tour_flags',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -6145,6 +6289,9 @@ async function cloudPushAll(silent=false){
     const primaryAdminPw = localStorage.getItem('wl_primary_admin_pw'); if(primaryAdminPw) settings.primaryAdminPw = primaryAdminPw;
     const notifSettings = dbGet(DB_KEYS.notificationSettings); if(notifSettings) settings.notificationSettings = notifSettings;
     if(Object.keys(settings).length) changes.settings = settings;
+    // Onboarding tour/tips flags — only ever written by an explicit dismiss/
+    // finish/skip/replay action (see _saveTourFlags below), never on load.
+    const tourFlags = dbGet(DB_KEYS.tourFlags); if(tourFlags) changes.tourFlags = tourFlags;
 
     // Tombstones: only send ids we haven't already told the server about, so
     // we don't keep re-sending the same delete forever.
@@ -6247,6 +6394,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
+    _applyServerValue(v=>dbSet(DB_KEYS.tourFlags, v), r.tourFlags);
+    if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
     // deletedUserIds isn't part of the dirty/snapshot system above (tombstones
     // push separately, tracked via wl_tombstones_sent) but the same "empty
     // result must never undo real local tombstones" rule applies — an empty

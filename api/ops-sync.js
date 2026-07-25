@@ -644,6 +644,23 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── onboarding tour/tips flags: allowed for EVERY role, strictly scoped
+    // to the caller's own key — same-user-only enforcement is simply that
+    // the key is always derived from session.id (verified token), never
+    // taken from the request body. Stored in the existing ops_settings
+    // table under a per-user key (not a new table, not a field on a
+    // users/admins row) so it works uniformly even for the primary-admin
+    // sentinel, which has no ops_users/ops_admins row to attach a field to.
+    // Whole-blob replace is fine here — it's a tiny, single-owner value with
+    // no concurrent-editor scenario, and the client only sends it on an
+    // explicit dismiss/finish/skip/replay action, never on load (CLAUDE.md
+    // rule #2 — no load-time mutation).
+    if (c.tourFlags && typeof c.tourFlags === 'object') {
+      const key = 'tourFlags_' + session.id;
+      const { error } = await supabase.from('ops_settings').upsert({ key, data: c.tourFlags }, { onConflict: 'key' });
+      if (error) warnings.push(`tourFlags: ${error.message}`); else applied.tourFlags = 1;
+    }
+
     // ── admin tables: silently drop (not error) a member's attempt at any of
     // these, so a stray field in a batched payload can't fail the whole sync.
     // (Unlike the member-client-write path below, a member simply has no
