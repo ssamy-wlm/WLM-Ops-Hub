@@ -483,6 +483,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <select class="form-select admin-only" id="filter-manager" onchange="filterClients()" style="flex:1;min-width:120px;max-width:155px;font-size:11px;padding:7px 10px;">
             <option value="">All Managers</option>
           </select>
+          <select class="form-select admin-only" id="filter-assignee" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
+            <option value="">All Assignees</option>
+          </select>
           <select class="form-select admin-only" id="filter-sort" onchange="filterClients()" style="flex:1;min-width:120px;max-width:145px;font-size:11px;padding:7px 10px;">
             <option value="name">Sort: Name</option>
             <option value="start">Sort: Start Date</option>
@@ -2659,6 +2662,12 @@ function populateDropdowns(){
     fm.innerHTML=`<option value="">All Account Managers</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
     fm.value=cur;
   }
+  const fa=_el('filter-assignee');
+  if(fa){
+    const cur=fa.value;
+    fa.innerHTML=`<option value="">All Assignees</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+    fa.value=cur;
+  }
 }
 function populateUserChecks(containerId, roster, checked){
   const wrap=_el(containerId); if(!wrap) return;
@@ -2919,6 +2928,7 @@ function filterClients(){
   const pjType=_el('filter-proj-type')?.value||'';
   const pjSt=_el('filter-proj-status')?.value||'';
   const mg=_el('filter-manager')?.value||'';
+  const ag=_el('filter-assignee')?.value||'';
   const sort=_el('filter-sort')?.value||'name';
   let list=getClients();
 
@@ -2957,6 +2967,17 @@ function filterClients(){
   // account manager
   if(mg) list=list.filter(c=>c.managerId===mg);
 
+  // assigned to — matches any of the client's own services OR any franchise
+  // location's services, via the same _svcAssignedTo predicate the rest of
+  // the app already uses for edit-rights/My Work/badge counts.
+  if(ag){
+    const agName=(getRoster().find(u=>u.id===ag)||{}).name||'';
+    list=list.filter(c=>
+      (c.services||[]).some(s=>_svcAssignedTo(s,ag,agName)) ||
+      (c.locations||[]).some(loc=>(loc.services||[]).some(s=>_svcAssignedTo(s,ag,agName)))
+    );
+  }
+
   // Sort
   list.sort((a,b)=>{
     if(sort==='name') return a.name.localeCompare(b.name);
@@ -2979,7 +3000,7 @@ function filterClients(){
 }
 
 function clearClientFilters(){
-  ['client-search','filter-status','filter-service','filter-proj-type','filter-proj-status','filter-manager']
+  ['client-search','filter-status','filter-service','filter-proj-type','filter-proj-status','filter-manager','filter-assignee']
     .forEach(id=>{ const el=_el(id); if(el) el.value=''; });
   _el('filter-sort').value='name';
   filterClients();
@@ -2994,15 +3015,18 @@ function renderClientFilterChips(){
   const pt=_el('filter-proj-type')?.value;
   const ps=_el('filter-proj-status')?.value;
   const mg=_el('filter-manager')?.value;
+  const ag=_el('filter-assignee')?.value;
   // Find label text for service
   const svcLabel = sv ? (_el('filter-service')?.querySelector(`option[value="${sv}"]`)?.textContent||sv) : '';
   const mgLabel  = mg ? (_el('filter-manager')?.querySelector(`option[value="${mg}"]`)?.textContent||mg) : '';
+  const agLabel  = ag ? (_el('filter-assignee')?.querySelector(`option[value="${ag}"]`)?.textContent||ag) : '';
   if(q)  chips.push({label:'Search: "'+q+'"',       id:'client-search',   reset:''});
   if(st) chips.push({label:'Status: '+st,            id:'filter-status',   reset:''});
   if(sv) chips.push({label:'Service: '+svcLabel,     id:'filter-service',  reset:''});
   if(pt) chips.push({label:'Bundle Type: '+pt,      id:'filter-proj-type',reset:''});
   if(ps) chips.push({label:'Bundle Status: '+ps.replace('-',' '), id:'filter-proj-status', reset:''});
   if(mg) chips.push({label:'Manager: '+mgLabel,      id:'filter-manager',  reset:''});
+  if(ag) chips.push({label:'Assigned to: '+agLabel,  id:'filter-assignee', reset:''});
   if(!chips.length){ wrap.style.display='none'; return; }
   wrap.style.display='flex';
   wrap.innerHTML=chips.map(ch=>`
@@ -3037,12 +3061,13 @@ function _currentFilterQuery(){
     projType:   _el('filter-proj-type')?.value||'',
     projStatus: _el('filter-proj-status')?.value||'',
     manager:    _el('filter-manager')?.value||'',
+    assignee:   _el('filter-assignee')?.value||'',
     sort:       _el('filter-sort')?.value||'name',
   };
 }
 function saveCurrentFilter(){
   const q=_currentFilterQuery();
-  if(!(q.search||q.status||q.service||q.projType||q.projStatus||q.manager)){
+  if(!(q.search||q.status||q.service||q.projType||q.projStatus||q.manager||q.assignee)){
     showToast('Set at least one filter before saving','warn'); return;
   }
   const name=(prompt('Name this filter (e.g. "My overdue", "Sherine\'s clients"):')||'').trim();
@@ -3062,6 +3087,7 @@ function applySavedFilter(id){
   if(_el('filter-proj-type'))  _el('filter-proj-type').value=q.projType||'';
   if(_el('filter-proj-status'))_el('filter-proj-status').value=q.projStatus||'';
   if(_el('filter-manager'))    _el('filter-manager').value=q.manager||'';
+  if(_el('filter-assignee'))   _el('filter-assignee').value=q.assignee||'';
   if(_el('filter-sort'))       _el('filter-sort').value=q.sort||'name';
   filterClients();
 }
@@ -3735,6 +3761,14 @@ function _openDeepLinkFromUrl(){
     const params=new URLSearchParams(window.location.search);
     const page=params.get('page');
     if(page) showPage(page,_el('nav-'+page));
+    // Workload dashboard click-through (assignment-module Feature D) — set
+    // the Assigned To filter and re-run the existing filterClients() path,
+    // same mechanism applySavedFilter() already uses.
+    const filterAssignee=params.get('filterAssignee');
+    if(filterAssignee && _el('filter-assignee')){
+      _el('filter-assignee').value=filterAssignee;
+      filterClients();
+    }
     const clientId=params.get('openClient');
     if(!clientId) return;
     const projId=params.get('openProject');
