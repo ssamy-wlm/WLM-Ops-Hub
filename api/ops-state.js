@@ -24,6 +24,12 @@ import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 import { isHashed } from '../lib/passwordHash.js';
 
+// Kept identical to (but deliberately not imported from) api/ops-sync.js's
+// own copy — each Vercel serverless function bundles independently, and
+// every other shared-shape default in this file (notificationSettings
+// below) already follows the same duplicate-not-cross-import convention.
+const DEFAULT_TEAM_NOTIF_PREFS = { assigned: false, done: true, comment: false, overdue: true, broadcastAll: false };
+
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
 
 // Live Feed entries are free-text (see logActivity() in index.html) — the
@@ -197,7 +203,14 @@ export default async function handler(req, res) {
       // regardless (the toggle is read directly from ops_settings inside
       // api/ops-sync.js, not from this tier-filtered response), this only
       // controls who can see/change the toggle in the Settings UI.
-      notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true, serviceUpdate: true },
+      notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true },
+      // Team-activity notification prefs: personal to the CALLER'S OWN admin
+      // identity, same self-scoped-key pattern as tourFlags above (keyed by
+      // session.adminId falling back to session.id, matching how
+      // api/ops-sync.js derives the write-side key) — every admin tier gets
+      // only their own prefs back, never another admin's. Nulled for member
+      // tier below (members don't manage a team).
+      teamNotifPrefs: settingsMap['teamNotifPrefs_' + (session.adminId || session.id)] ?? DEFAULT_TEAM_NOTIF_PREFS,
       passwordMigrationStatus,
     };
 
@@ -286,6 +299,7 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       // primaryAdminPw already stripped unconditionally above, for every tier.
       record.notificationSettings = null;
+      record.teamNotifPrefs = null;
       record.passwordMigrationStatus = null;
       // Payroll saves and time-off decisions are stripped out of the Live
       // Feed for members too — same leak, same fix (see the permission
@@ -297,7 +311,18 @@ export default async function handler(req, res) {
       // all time-off requests, summaries, archive), but NOT the payroll
       // ledger and NOT business settings/org chart/roadmap — those stay
       // Super Admin/CEO exclusive.
-      record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title, level: a.level, status: a.status }));
+      // managedUserIds is exposed ONLY on the caller's own row here (not
+      // every other admin's) — "My Team's Work" needs to know who ITS OWN
+      // viewer manages; a manager-tier admin has no legitimate reason to see
+      // who a DIFFERENT manager manages. Super Admin (tier==='super') gets
+      // every admin's managedUserIds unfiltered, same as the rest of the
+      // admin record, since editing the field is already Super-Admin-only.
+      const callerAdminId = session.adminId || session.id;
+      record.admins = record.admins.map(a => {
+        const safe = { id: a.id, name: a.name, title: a.title, level: a.level, status: a.status };
+        if (a.id === callerAdminId) safe.managedUserIds = a.managedUserIds || [];
+        return safe;
+      });
       record.roadmapTasks = [];
       record.timeOffLedger = [];
       record.orgNodes = [];

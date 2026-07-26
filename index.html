@@ -1069,6 +1069,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-nav-item" onclick="switchAdminTab(this,'tracker')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'clientHealth')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>Client Health</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'workload')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-1a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>Workload</div>
+      <!-- Manager→member links feature: hidden unless this admin actually
+           manages someone (managedUserIds.length>0) — set in
+           applyAdminRoleRestrictions(), independent of the level-based
+           gating everything else on this nav uses. -->
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'myTeamsWork')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>My Team's Work</div>
 
       <div class="admin-nav-group-label">People &amp; HR</div>
       <!-- Users (+ Time off / Time off ledger / Archive) -->
@@ -1227,6 +1232,47 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <tbody id="workloadTableBody"></tbody>
           </table>
           <div id="workloadEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No one has an active assignment yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- My Team's Work — manager→member links feature. Read-only aggregation
+         scoped to THIS admin's own managedUserIds (Super Admin sees the full
+         union of everyone's managed relationships, since super already sees
+         everything else). Mirrors Workload's counting logic exactly (same
+         _wlSvcAssigneeIds/_wlSvcAssignedTo/_chSvcDueStatus), just filtered to
+         a roster subset — see renderMyTeamsWork(). The notification-type
+         toggle panel lives here (not Business Setup) because manager-tier
+         admins can't reach Business Setup at all. -->
+    <div id="admin-myTeamsWork" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">My Team's Work</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Your team's active assignments, busiest first — click a person to open the Tracker filtered to their work</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderMyTeamsWork()">↺ Refresh</button>
+      </div>
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-body">
+          <div style="font-size:12px;font-weight:700;color:var(--text-mid);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em;">Notify me when a team member…</div>
+          <div id="teamNotifPrefsToggles" style="display:flex;flex-wrap:wrap;gap:18px;"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding:0;">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Person</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Total Active</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Assigned Steps</th>
+              </tr>
+            </thead>
+            <tbody id="myTeamsWorkTableBody"></tbody>
+          </table>
+          <div id="myTeamsWorkEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">Nobody on your team has an active assignment yet.</div>
         </div>
       </div>
     </div>
@@ -2275,6 +2321,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       </div>
+      <div id="editAdminManagedUsersWrap" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px;">
+        <label class="form-label">Manages (team activity notifications)</label>
+        <div style="font-size:11px;color:var(--text-light);margin-bottom:8px;">Team members this admin gets notified about — Super Admin only.</div>
+        <div id="editAdminManagedUsersGrid" style="display:flex;flex-wrap:wrap;gap:2px 10px;max-height:160px;overflow-y:auto;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px;"></div>
+      </div>
       <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
         <div style="font-size:12px;font-weight:700;color:var(--text-mid);margin-bottom:10px;text-transform:uppercase;letter-spacing:.06em;">Change Password <span style="font-weight:400;color:var(--text-light);">(leave blank to keep current)</span></div>
         <div class="form-row">
@@ -2945,6 +2996,7 @@ function switchAdminTab(el, tab){
     renderWorkloadDashboard();
     setTimeout(()=>_maybeShowTip('workload','#workload-tip-anchor','Click a person to see their assignments.'),50);
   }
+  if(tab==='myTeamsWork') renderMyTeamsWork();
 }
 
 function loadAdminTrackerFrame(){
@@ -4460,6 +4512,105 @@ function openWorkloadPersonInTracker(personId, personName){
   if(frame) frame.src = 'client.html?' + params.toString();
 }
 
+// ── My Team's Work (manager→member links feature) ─────────────────────────
+// Mirrors renderWorkloadDashboard() exactly (same _wlSvcAssigneeIds/
+// _wlSvcAssignedTo/_chSvcDueStatus counting, same click-through), scoped to
+// a roster subset instead of everyone. Read-only aggregation, no writes.
+function _currentAdminId(){
+  try{ return JSON.parse(localStorage.getItem('wl_admin_session')||'{}').adminId || null; }catch(e){ return null; }
+}
+function renderMyTeamsWork(){
+  const body=document.getElementById('myTeamsWorkTableBody');
+  const empty=document.getElementById('myTeamsWorkEmpty');
+  if(!body) return;
+  _renderTeamNotifPrefsToggles();
+  const admins=dbGet(DB_KEYS.admins)||[];
+  const isSuperViewer=(_adminLevel==='super'||_adminLevel==='owner');
+  let managedIds;
+  if(isSuperViewer){
+    // Full union of every admin's managed relationships — super already sees
+    // everyone in Workload, so this is "who's managed, by anyone" rather
+    // than "who I personally manage".
+    const set=new Set();
+    admins.forEach(a=>(a.managedUserIds||[]).forEach(id=>set.add(id)));
+    managedIds=[...set];
+  } else {
+    const me=admins.find(a=>a.id===_currentAdminId());
+    managedIds=Array.isArray(me?.managedUserIds)?me.managedUserIds:[];
+  }
+  if(!managedIds.length){
+    body.innerHTML=''; if(empty) empty.style.display='block';
+    return;
+  }
+  const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
+  const allServices=[];
+  clients.forEach(c=>{
+    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s));
+    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s)));
+  });
+  const rows=_timeOffRoster().filter(p=>managedIds.includes(p.id)).map(person=>{
+    let ok=0, soon=0, overdue=0, steps=0;
+    allServices.forEach(s=>{
+      if(_wlSvcAssignedTo(s, person.id, person.name)){
+        const status=_chSvcDueStatus(s);
+        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+      }
+      (s.subitems||[]).forEach(si=>{
+        if(si.assigneeId===person.id || si.assigneeName===person.name) steps++;
+      });
+    });
+    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, steps, total:ok+soon+overdue };
+  }).sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
+
+  if(!rows.length){
+    body.innerHTML=''; if(empty) empty.style.display='block';
+    return;
+  }
+  if(empty) empty.style.display='none';
+  body.innerHTML=rows.map(r=>`
+    <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
+    </tr>`).join('');
+}
+
+// Per-admin "team activity" notification-type toggles — pushed/pulled via
+// DB_KEYS.teamNotifPrefs (see cloudPushAll/cloudPullAll above), same
+// self-scoped-key server pattern as tourFlags. Lives atop My Team's Work
+// (not Business Setup) since manager-tier admins can't reach that page.
+const TEAM_NOTIF_PREF_LABELS = {
+  assigned: 'is assigned something new',
+  done: 'marks a service or step done',
+  comment: 'posts an update/comment',
+  overdue: 'has something go overdue',
+  broadcastAll: '(Super Admin) get every team event, org-wide',
+};
+function _getTeamNotifPrefs(){
+  const p = dbGet(DB_KEYS.teamNotifPrefs);
+  return (p && typeof p==='object') ? p : { assigned:false, done:true, comment:false, overdue:true, broadcastAll:false };
+}
+function _renderTeamNotifPrefsToggles(){
+  const wrap=document.getElementById('teamNotifPrefsToggles');
+  if(!wrap) return;
+  const prefs=_getTeamNotifPrefs();
+  const isSuperViewer=(_adminLevel==='super'||_adminLevel==='owner');
+  const keys=['assigned','done','comment','overdue', ...(isSuperViewer?['broadcastAll']:[])];
+  wrap.innerHTML = keys.map(k=>`
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dark);cursor:pointer;">
+      <input type="checkbox" ${prefs[k]?'checked':''} onchange="_toggleTeamNotifPref('${k}',this.checked)">
+      ${TEAM_NOTIF_PREF_LABELS[k]}
+    </label>`).join('');
+}
+function _toggleTeamNotifPref(key, value){
+  const prefs=_getTeamNotifPrefs();
+  prefs[key]=value;
+  dbSet(DB_KEYS.teamNotifPrefs, prefs);
+  cloudAutoSync();
+}
+
 // ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────
 // Per-user flags (tourSeen, dismissedTips[]) persisted via the existing
 // per-record sync (DB_KEYS.tourFlags, pushed/pulled in cloudPushAll/
@@ -4900,6 +5051,9 @@ const DB_KEYS = {
   // user.html use (same-origin shared storage, see client.html's CL_KEYS
   // comment for why that's intentional, not a coincidence).
   tourFlags: 'wl_tour_flags',
+  // Per-admin "team activity" notification-type toggles (My Team's Work) —
+  // own copy, not shared with client.html/user.html (zero-shared-code rule).
+  teamNotifPrefs: 'wl_team_notif_prefs',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -6349,6 +6503,9 @@ async function cloudPushAll(silent=false){
     // Onboarding tour/tips flags — only ever written by an explicit dismiss/
     // finish/skip/replay action (see _saveTourFlags below), never on load.
     const tourFlags = dbGet(DB_KEYS.tourFlags); if(tourFlags) changes.tourFlags = tourFlags;
+    // Team-activity notification prefs — only ever written by an explicit
+    // toggle in the My Team's Work panel (see _saveTeamNotifPrefs below).
+    const teamNotifPrefs = dbGet(DB_KEYS.teamNotifPrefs); if(teamNotifPrefs) changes.teamNotifPrefs = teamNotifPrefs;
 
     // Tombstones: only send ids we haven't already told the server about, so
     // we don't keep re-sending the same delete forever.
@@ -6455,6 +6612,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof renderPasswordMigrationStatus==='function') renderPasswordMigrationStatus();
     _applyServerValue(v=>dbSet(DB_KEYS.tourFlags, v), r.tourFlags);
     if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
+    _applyServerValue(v=>dbSet(DB_KEYS.teamNotifPrefs, v), r.teamNotifPrefs);
+    if(typeof renderMyTeamsWork==='function') renderMyTeamsWork();
     // deletedUserIds isn't part of the dirty/snapshot system above (tombstones
     // push separately, tracked via wl_tombstones_sent) but the same "empty
     // result must never undo real local tombstones" rule applies — an empty
@@ -8267,11 +8426,22 @@ const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
 const CREATIVE_MANAGER_ROLE  = 'creative_manager';
 let _adminLevel = null;
 let _adminAssignedUsers = []; // user names/ids this admin can see
+let _adminManagesTeam = false; // true when this admin has managedUserIds (or is super/owner) — gates the "My Team's Work" nav item
 
 function applyAdminRoleRestrictions(level, adminObj){
   _adminLevel = level;
   _adminAssignedUsers = Array.isArray(adminObj?.assignedUsers) ? adminObj.assignedUsers : [];
   updateRoadmapNavVisibility(level, adminObj);
+
+  // My Team's Work: visible only to an admin who actually manages someone
+  // (managedUserIds.length>0) — orthogonal to every level-based gate below,
+  // so it's resolved once, up front, before any branch's own nav-hiding
+  // runs. super/owner always manages the full team view regardless of their
+  // own managedUserIds (see renderMyTeamsWork()'s super-tier union), so the
+  // tab stays visible for them too.
+  _adminManagesTeam = (Array.isArray(adminObj?.managedUserIds) && adminObj.managedUserIds.length > 0) || level==='super' || level==='owner';
+  const myTeamsWorkNav = document.querySelector('.admin-nav-item[onclick*="\'myTeamsWork\'"]');
+  if(myTeamsWorkNav) myTeamsWorkNav.style.display = _adminManagesTeam ? '' : 'none';
 
   // Creative/Production/Account Manager: Summaries and Live Feed are visible
   // (see below) but strictly view-only — no generating/deleting summaries,
@@ -8321,8 +8491,9 @@ function applyAdminRoleRestrictions(level, adminObj){
   //    Clients tab that used to also be shown here was merged into the
   //    Tracker's own client view and removed (see CLAUDE.md). ──
   if(level === CREATIVE_MANAGER_ROLE){
-    // Show tabs: tracker, messages, summaries, livefeed. Hide everything else.
-    const showOnly = ['tracker','messages','summaries','livefeed'];
+    // Show tabs: tracker, messages, summaries, livefeed, plus myTeamsWork
+    // when this admin actually manages someone. Hide everything else.
+    const showOnly = ['tracker','messages','summaries','livefeed', ...(_adminManagesTeam ? ['myTeamsWork'] : [])];
     document.querySelectorAll('.admin-nav-item').forEach(el=>{
       const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
       if(!m) return;
@@ -8423,6 +8594,35 @@ function _toggleAssignedUsersPanel(levelSelectId, wrapId, assignedSelectId, chip
   const isRestricted = RESTRICTED_ADMIN_ROLES.includes(level);
   wrap.style.display = isRestricted ? 'block' : 'none';
   if(isRestricted) _populateAssignedUsersSelect(assignedSelectId, chipsId, currentAssigned||[]);
+}
+
+// Manager→member links (managedUserIds) — deliberately NOT the name-based
+// chip picker above (_populateAssignedUsersSelect/_appendChip/
+// _getAssignedFromChips): that field stores display NAMES, which is why the
+// old assignedUsers-based notification escalation in resolveNotifyRecipients
+// was silently dead code (an id never matches a name). This is id-based from
+// the start, Super Admin only (same tier gate saveEditAdmin() already uses
+// for the whole admins[] write), always visible regardless of access level —
+// unlike assignedUsers, managing a team isn't tied to a specific level.
+function _populateManagedUsersGrid(containerId, checkedIds){
+  const container = document.getElementById(containerId);
+  if(!container) return;
+  const users = (dbGet(DB_KEYS.users)||[]).filter(u=>(u.status||'active')==='active');
+  const checked = new Set(checkedIds||[]);
+  if(!users.length){
+    container.innerHTML = '<div style="font-size:12px;color:var(--text-light);padding:6px 4px;">No active team members yet.</div>';
+    return;
+  }
+  container.innerHTML = users.map(u=>`
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dark);padding:4px 8px;cursor:pointer;">
+      <input type="checkbox" value="${u.id}" ${checked.has(u.id)?'checked':''}>
+      ${escHtml(u.name||'(unnamed)')}
+    </label>`).join('');
+}
+function _getManagedUsersFromGrid(containerId){
+  const container = document.getElementById(containerId);
+  if(!container) return [];
+  return [...container.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);
 }
 
 function _updateNewLevelBadge(){
@@ -8776,12 +8976,20 @@ function openEditAdminModal(adminId){
     document.getElementById('editAdminEmail').disabled = true;
     document.getElementById('editAdminLevel').disabled = true;
     _updateEditLevelBadge();
+    // The primary admin has no real ops_admins row — managedUserIds has
+    // nowhere to be stored for her (see saveEditAdmin()'s early return
+    // below), so the panel doesn't apply here.
+    const primaryManagedWrap = document.getElementById('editAdminManagedUsersWrap');
+    if(primaryManagedWrap) primaryManagedWrap.style.display = 'none';
     openModal('editAdminModal');
     return;
   }
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
   if(!a){ showToast('Admin not found'); return; }
+  const managedWrap = document.getElementById('editAdminManagedUsersWrap');
+  if(managedWrap) managedWrap.style.display = 'block';
+  _populateManagedUsersGrid('editAdminManagedUsersGrid', a.managedUserIds||[]);
   const nameParts = a.name.split(' ');
   document.getElementById('editAdminId').value    = a.id;
   document.getElementById('editAdminFirst').value = nameParts[0]||'';
@@ -8853,6 +9061,9 @@ function saveEditAdmin(){
   admins[idx].assignedUsers = RESTRICTED_ADMIN_ROLES.includes(level)
     ? _getAssignedFromChips('editAdminChips')
     : [];
+  // Manager→member links — id-based, not level-gated (unlike assignedUsers
+  // above): any admin can manage a team regardless of access level.
+  admins[idx].managedUserIds = _getManagedUsersFromGrid('editAdminManagedUsersGrid');
   if(pass) admins[idx].password = pass;
 
   dbSet(DB_KEYS.admins, admins);
