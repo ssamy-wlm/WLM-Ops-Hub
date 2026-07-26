@@ -1650,6 +1650,36 @@ function _svcAssignedToMe(s, myId, myName){
   return s.assigneeId===myId || s.assigneeId===myName || s.assigneeName===myName || s.assignee===myName || s.assignee===myId;
 }
 
+// Franchise/location services (client.locations[].services[], e.g. Servpro ->
+// Yonkers) behave exactly like top-level c.services[] for assignment purposes
+// (see api/ops-sync.js checkMemberClientWrite, which already walks both the
+// same way). Mirrors client.html's _allClientServices() — zero shared code
+// across portals (rule #3), so this is this file's own copy. Every "gather my
+// assigned tracker services" call site in this file must go through this, or
+// an employee assigned only to a franchise service is invisible here.
+// Returns shallow copies tagged with _locationName (display-only — never fed
+// back into a save; _findServiceById below returns the real, untagged
+// reference for anything that mutates), so the "(Franchise · Yonkers)" label
+// matches client.html's own franchise indicator in My Work.
+function _allServicesForClient(c){
+  const top = (c.services||[]).map(s=>({ ...s, _locationName: null }));
+  const locSvcs = (c.locations||[]).flatMap(l=>(l.services||[]).map(s=>({ ...s, _locationName: l.name })));
+  return top.concat(locSvcs);
+}
+
+// Same reasoning for single-service lookups by id (mark-done, updates,
+// sub-items) — a franchise service's id only exists inside its location's
+// services[], never in c.services[] itself.
+function _findServiceById(c, svcId){
+  const top = (c.services||[]).find(s=>s.id===svcId);
+  if(top) return top;
+  for(const loc of (c.locations||[])){
+    const s = (loc.services||[]).find(s=>s.id===svcId);
+    if(s) return s;
+  }
+  return null;
+}
+
 // ── My Roadmap — actual assigned work, bucketed by how soon it's due ──
 // Gathers the same kinds of items loadMyAssignments() shows in My Work (tracker
 // services, index.html recurring services, ad-hoc projects, and their tasks/
@@ -1660,7 +1690,7 @@ function _collectMyWorkItems(){
   const clients = _getAssignClients();
   const items = [];
   clients.forEach(c=>{
-    (c.services||[]).forEach(s=>{
+    _allServicesForClient(c).forEach(s=>{
       if(_svcAssignedToMe(s,myId,myName)) items.push({name:s.name, client:c.name, due:s.due||''});
     });
     (c.recurringServices||[]).forEach(s=>{
@@ -1749,8 +1779,9 @@ function renderMyServiceSchedule(){
   try{
     const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
     clients.forEach(c=>{
-      // c.services[] — tracker schema (assigneeId / assigneeName / assignee)
-      (c.services||[]).forEach(s=>{
+      // c.services[] — tracker schema (assigneeId / assigneeName / assignee),
+      // plus every franchise location's own services[] (see _allServicesForClient)
+      _allServicesForClient(c).forEach(s=>{
         const isMe = _svcAssignedToMe(s,myId,myName);
         if(isMe) items.push({
           clientName: c.name, clientColor: c.color||_hashClientColor(c.name),
@@ -2003,7 +2034,7 @@ function userMarkServiceDone(clientId, svcId){
   try{
     const clients = _getAssignClients();
     const c = clients.find(x=>x.id===clientId); if(!c) return;
-    const svc = (c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const svc = _findServiceById(c, svcId); if(!svc) return;
     const todayStr = new Date().toISOString().slice(0,10);
     const dateEl = document.getElementById('sdone-'+clientId+'-'+svcId);
     const doneStr = (dateEl && dateEl.value) ? dateEl.value : todayStr;
@@ -2048,7 +2079,7 @@ function userMarkServiceDone(clientId, svcId){
 function openServiceUpdatesModal(clientId, svcId){
   const clients=_getAssignClients();
   const c=clients.find(x=>x.id===clientId);
-  const svc=c&&(c.services||[]).find(s=>s.id===svcId);
+  const svc=c&&_findServiceById(c, svcId);
   if(!svc) return;
   document.getElementById('svcUpdatesClientId').value=clientId;
   document.getElementById('svcUpdatesServiceId').value=svcId;
@@ -2075,7 +2106,7 @@ function postServiceUpdate(){
   try{
     const clients=_getAssignClients();
     const c=clients.find(x=>x.id===clientId); if(!c) return;
-    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const svc=_findServiceById(c, svcId); if(!svc) return;
     if(!Array.isArray(svc.updates)) svc.updates=[];
     svc.updates.push({ id:'upd'+Date.now(), authorId:currentUser?.id||'', authorName:currentUser?.name||'Team member', text, ts:new Date().toISOString() });
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
@@ -2114,7 +2145,7 @@ function _isMySubitem(si, myId, myName){
 function openServiceSubitemsModal(clientId, svcId){
   const clients=_getAssignClients();
   const c=clients.find(x=>x.id===clientId);
-  const svc=c&&(c.services||[]).find(s=>s.id===svcId);
+  const svc=c&&_findServiceById(c, svcId);
   if(!svc) return;
   document.getElementById('svcSubitemsClientId').value=clientId;
   document.getElementById('svcSubitemsServiceId').value=svcId;
@@ -2143,7 +2174,7 @@ function addServiceSubitem(){
   try{
     const clients=_getAssignClients();
     const c=clients.find(x=>x.id===clientId); if(!c) return;
-    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const svc=_findServiceById(c, svcId); if(!svc) return;
     if(!Array.isArray(svc.subitems)) svc.subitems=[];
     const assigneeId=document.getElementById('svcSubitemAssignee')?.value||'';
     const assigneeName=assigneeId?(_stepRoster().find(u=>u.id===assigneeId)?.name||''):'';
@@ -2173,7 +2204,7 @@ function toggleServiceSubitem(subitemId, checked, clientId, svcId){
   try{
     const clients=_getAssignClients();
     const c=clients.find(x=>x.id===clientId); if(!c) return;
-    const svc=(c.services||[]).find(s=>s.id===svcId); if(!svc) return;
+    const svc=_findServiceById(c, svcId); if(!svc) return;
     const item=(svc.subitems||[]).find(si=>si.id===subitemId); if(!item) return;
     item.done=checked;
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
@@ -2298,8 +2329,9 @@ function updateAssignmentsBadge(){
           (sp.tasks||[]).forEach(t=>{ if((t.assigneeId===myId||t.assigneeName===myName)&&!t.done) taskCount++; });
         });
       });
-      // ── c.services[] — written by client.html tracker (assigneeId/assigneeName schema) ──
-      (c.services||[]).forEach(s=>{
+      // ── c.services[] — written by client.html tracker (assigneeId/assigneeName schema),
+      // plus every franchise location's own services[] ──
+      _allServicesForClient(c).forEach(s=>{
         const isMe = _svcAssignedToMe(s,myId,myName);
         if(isMe){
           svcCount++;
@@ -2376,8 +2408,9 @@ function loadMyAssignments(){
 
   clients.forEach(c=>{
     let clientHasWork=false;
-    // ── Services from client.html tracker (c.services[], assigneeId/assigneeName schema) ──
-    const myTrackerSvcs=(c.services||[]).filter(s=>_svcAssignedToMe(s,myId,myName));
+    // ── Services from client.html tracker (c.services[], assigneeId/assigneeName schema),
+    // plus every franchise location's own services[] ──
+    const myTrackerSvcs=_allServicesForClient(c).filter(s=>_svcAssignedToMe(s,myId,myName));
 
     // ── Services from index.html (c.recurringServices[], assignedUserIds schema) ──
     const myIdxSvcs=(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName));
@@ -2481,7 +2514,7 @@ function loadMyAssignments(){
               <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}${Array.isArray(s.subitems)&&s.subitems.length?` <span style="background:rgba(0,0,0,.06);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;" title="Sub-items completed">${s.subitems.filter(si=>si.done).length}/${s.subitems.length}</span>`:''}</div>
               <div style="font-size:10px;color:var(--text-light);">
                 <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
-                ${c.name} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}
+                ${c.name}${s._locationName?` <span style="font-size:9px;color:var(--text-light);">(Franchise · ${s._locationName})</span>`:''} <span style="background:rgba(45,107,182,.08);color:#2E5DA6;padding:1px 6px;border-radius:6px;font-weight:700;">${s.freqLabel||s.freq||'monthly'}</span>${due?' · 📅 '+due+(daysLabel?' ('+daysLabel+')':''):''}
               </div>
               ${(() => { const mine=(s.subitems||[]).filter(si=>_isMySubitem(si,myId,myName)); return mine.length?`<div style="font-size:10px;color:#2E5DA6;margin-top:2px;">📌 Your steps: ${mine.map(si=>escHtmlUser(si.text||'')).join(', ')}</div>`:''; })()}
             </div>
@@ -2534,7 +2567,7 @@ function loadMyAssignments(){
     // browser for the read-only Tracker view (see rule #4) — it only
     // surfaces more of what's already visible, in one more place.
     if(ns.scope==='client' && clientHasWork){
-      const otherTrackerSvcs=(c.services||[]).filter(s=>!myTrackerSvcs.includes(s));
+      const otherTrackerSvcs=_allServicesForClient(c).filter(s=>!myTrackerSvcs.includes(s));
       const otherIdxSvcs=(c.recurringServices||[]).filter(s=>!myIdxSvcs.includes(s));
       const otherAll=[
         ...otherTrackerSvcs.map(s=>({ name:s.name, due:s.due||'', freq:s.freqLabel||s.freq||'monthly' })),

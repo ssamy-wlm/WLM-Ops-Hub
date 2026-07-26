@@ -204,9 +204,14 @@ export function checkMemberClientWrite(current, incoming, memberId, memberName) 
   // services[], diffed the same way as top-level services above. Members can
   // never add/remove/rename a location itself — that's structural, admin-only,
   // like the scalar keys above.
+  // Compared by id-set, not array position — a client-side reorder of
+  // locations[] (e.g. a drag-reorder, or an unrelated resave that happens to
+  // resort the array) must never look like "members renamed/removed a
+  // franchise" just because index i no longer lines up.
   const curLocs = current.locations || [], incLocs = incoming.locations || [];
+  const incLocsById = new Map(incLocs.map(l => [l.id, l]));
   const locsStructurallyEqual = curLocs.length === incLocs.length
-    && curLocs.every((l, i) => l.id === incLocs[i]?.id && l.name === incLocs[i]?.name);
+    && curLocs.every(l => incLocsById.get(l.id)?.name === l.name);
   if (!locsStructurallyEqual) {
     return { allowed: false, reason: 'members cannot add/remove/rename franchises (locations)' };
   }
