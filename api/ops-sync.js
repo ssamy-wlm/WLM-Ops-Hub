@@ -94,6 +94,19 @@ function preserveMissingPasswordField(incoming, current) {
   return { ...incoming, password: current.password };
 }
 
+// A genuine password change (this row existed before, and the incoming
+// payload itself carries a new password value — not one merely carried
+// forward by preserveMissingPasswordField above, which is why this must run
+// BEFORE that) invalidates that account's existing sessions, so a stolen
+// pre-change token can't keep riding on the old credentials. Must run on the
+// RAW incoming row, before any other transform fills in a missing password
+// field, or a same-value carry-forward would be indistinguishable from a
+// real change by the time it reaches here.
+export function stampSessionRevocationOnPasswordChange(incoming, current) {
+  if (!current || !hasContent(incoming.password)) return incoming;
+  return { ...incoming, sessionsRevokedAt: new Date().toISOString() };
+}
+
 // Manager tier may edit users (team management) but never payroll/pay-rate
 // fields — those stay Super Admin/CEO exclusive. Preserves the CURRENT value
 // for any protected field rather than silently accepting whatever the payload
@@ -619,7 +632,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   let session;
-  try { session = requireSession(req); }
+  try { session = await requireSession(req); }
   catch (err) { await logError({ endpoint: 'ops-sync', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   const tier = tierOf(session); // 'super' | 'manager' | 'member'
@@ -662,6 +675,11 @@ export default async function handler(req, res) {
         } else {
           const { error } = await supabase.from('ops_settings')
             .upsert({ key: 'primaryAdminPw', data: hashPassword(c.selfPasswordChange.password) }, { onConflict: 'key' });
+          // A changed password invalidates every existing session for this
+          // account, including the one making this very request — the next
+          // request with this token re-logs in with the new credentials,
+          // same as any other password-change kill-switch.
+          if (!error) await supabase.from('ops_settings').upsert({ key: 'primaryAdminSessionsRevokedAt', data: new Date().toISOString() }, { onConflict: 'key' });
           if (error) warnings.push(`selfPasswordChange: ${error.message}`); else applied.selfPasswordChange = 1;
         }
       } else {
@@ -673,7 +691,7 @@ export default async function handler(req, res) {
         const table = session.employeeId ? 'ops_users' : 'ops_admins';
         const { data: cur } = await supabase.from(table).select('data').eq('id', session.id).maybeSingle();
         if (cur && cur.data) {
-          const merged = { ...cur.data, password: hashPassword(c.selfPasswordChange.password) };
+          const merged = { ...cur.data, password: hashPassword(c.selfPasswordChange.password), sessionsRevokedAt: new Date().toISOString() };
           if ('mustChangePassword' in c.selfPasswordChange) merged.mustChangePassword = !!c.selfPasswordChange.mustChangePassword;
           const { error } = await supabase.from(table).update({ data: merged }).eq('id', session.id);
           if (error) warnings.push(`selfPasswordChange: ${error.message}`); else applied.selfPasswordChange = 1;
@@ -713,6 +731,66 @@ export default async function handler(req, res) {
       if (error) warnings.push(`tourFlags: ${error.message}`); else applied.tourFlags = 1;
     }
 
+    // ── session kill-switch: Super Admin/CEO only. Two scopes:
+    //   'account' — sign a specific user and/or admin out everywhere, by id.
+    //   'all'     — emergency: sign every account out everywhere, including
+    //               the caller's own current session. Rule #6 (destructive/
+    //               high-blast-radius operations need a typed confirmation
+    //               checked server-side, not just gated in the UI) applies
+    //               to 'all' specifically — the client-side double-confirm
+    //               is not trusted alone; the exact phrase is re-checked here. ──
+    if (c.sessionRevocation && typeof c.sessionRevocation === 'object') {
+      if (tier !== 'super') {
+        warnings.push('sessionRevocation: dropped — Super Admin/CEO only');
+      } else {
+        const { scope, userId, adminId, confirmPhrase } = c.sessionRevocation;
+        const now = new Date().toISOString();
+        if (scope === 'account') {
+          let n = 0;
+          if (hasContent(userId)) {
+            const { data: cur } = await supabase.from('ops_users').select('data').eq('id', userId).maybeSingle();
+            if (cur?.data) {
+              const { error } = await supabase.from('ops_users').update({ data: { ...cur.data, sessionsRevokedAt: now } }).eq('id', userId);
+              if (error) warnings.push(`sessionRevocation: ${error.message}`); else n++;
+            }
+          }
+          if (hasContent(adminId)) {
+            const { data: cur } = await supabase.from('ops_admins').select('data').eq('id', adminId).maybeSingle();
+            if (cur?.data) {
+              const { error } = await supabase.from('ops_admins').update({ data: { ...cur.data, sessionsRevokedAt: now } }).eq('id', adminId);
+              if (error) warnings.push(`sessionRevocation: ${error.message}`); else n++;
+            }
+          }
+          if (!hasContent(userId) && !hasContent(adminId)) warnings.push('sessionRevocation: no userId/adminId specified');
+          else applied.sessionRevocation = n;
+        } else if (scope === 'all') {
+          const REQUIRED_PHRASE = 'SIGN OUT ALL ACCOUNTS';
+          if (confirmPhrase !== REQUIRED_PHRASE) {
+            warnings.push(`sessionRevocation: confirmation phrase did not match — type exactly "${REQUIRED_PHRASE}"`);
+          } else {
+            const [{ data: allUsers }, { data: allAdmins }] = await Promise.all([
+              supabase.from('ops_users').select('id, data'),
+              supabase.from('ops_admins').select('id, data'),
+            ]);
+            let n = 0;
+            for (const u of allUsers || []) {
+              const { error } = await supabase.from('ops_users').update({ data: { ...u.data, sessionsRevokedAt: now } }).eq('id', u.id);
+              if (!error) n++;
+            }
+            for (const a of allAdmins || []) {
+              const { error } = await supabase.from('ops_admins').update({ data: { ...a.data, sessionsRevokedAt: now } }).eq('id', a.id);
+              if (!error) n++;
+            }
+            const { error: settingsErr } = await supabase.from('ops_settings').upsert({ key: 'primaryAdminSessionsRevokedAt', data: now }, { onConflict: 'key' });
+            if (!settingsErr) n++;
+            applied.sessionRevocation = n;
+          }
+        } else {
+          warnings.push('sessionRevocation: unknown scope — must be "account" or "all"');
+        }
+      }
+    }
+
     // ── admin tables: silently drop (not error) a member's attempt at any of
     // these, so a stray field in a batched payload can't fail the whole sync.
     // (Unlike the member-client-write path below, a member simply has no
@@ -747,9 +825,10 @@ export default async function handler(req, res) {
           const ids = usersIncoming.map(r => r.id);
           const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
           const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+          const stamped = usersIncoming.map(u => stampSessionRevocationOnPasswordChange(u, byId.get(u.id)));
           const toWrite = (tier === 'manager'
-            ? usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)))
-            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
+            ? stamped.map(u => stripPayrollFields(u, byId.get(u.id)))
+            : stamped.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
           ).map(u => preserveMissingPasswordField(u, byId.get(u.id)));
           applied.users = await upsertRows(supabase, 'ops_users', hashIncomingPasswords(toWrite), warnings);
         }
@@ -766,7 +845,9 @@ export default async function handler(req, res) {
           // typed) must never wipe the stored password/hash.
           const { data: currentAdminRows } = await supabase.from('ops_admins').select('id, data').in('id', adminsIncoming.map(r => r.id));
           const adminById = new Map((currentAdminRows || []).map(r => [r.id, r.data]));
-          adminsToWrite = adminsIncoming.map(a => preserveMissingPasswordField(a, adminById.get(a.id)));
+          adminsToWrite = adminsIncoming
+            .map(a => stampSessionRevocationOnPasswordChange(a, adminById.get(a.id)))
+            .map(a => preserveMissingPasswordField(a, adminById.get(a.id)));
         }
         applied.admins = await upsertRows(supabase, 'ops_admins', hashIncomingPasswords(adminsToWrite), warnings);
         applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);

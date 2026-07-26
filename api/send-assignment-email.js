@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   }
 
   let session;
-  try { session = requireSession(req); }
+  try { session = await requireSession(req); }
   catch (err) { await logError({ endpoint: 'send-assignment-email', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   if (tierOf(session) === 'member') return res.status(403).json({ error: 'Admin only' });
