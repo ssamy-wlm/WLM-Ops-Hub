@@ -3281,10 +3281,14 @@ function _statCard(label,value){
 // no two-column split when bundles exist. Bundles have their own tab; this
 // one only ever shows the at-a-glance counts + what needs attention.
 function renderOverview(c){
-  const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
   // Same helper the header's "X of Y done this cycle" headline uses — one
   // formula, read in two places, never re-derived.
   const cycle=_svcCycleStats(c);
+  // Distinct non-empty bundle labels among the client's active services
+  // (getBundleForService — see _renderBundleGroups) — NOT a count of
+  // standalone "Bundle" project records, which stayed empty for every
+  // client and is why this always showed 0 before.
+  const bundleCount=new Set(_allClientServices(c).map(getBundleForService).filter(Boolean)).size;
 
   // Alerts still walk every service including franchise locations
   // (_allClientServices, unchanged data source/scope) — only the row
@@ -3305,7 +3309,7 @@ function renderOverview(c){
 
   const statsRow=`
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
-      ${_statCard('Bundles',allProj.length)}
+      ${_statCard('Bundles',bundleCount)}
       ${_statCard('Active services',cycle.activeTotal)}
       ${_statCard('Done this cycle',`${cycle.activeDone} of ${cycle.activeTotal}`)}
     </div>`;
@@ -3331,60 +3335,16 @@ function renderProjects(c){
     return !!rec && (rec.name||'').trim().split(/\s+/)[0].toLowerCase()===_sessFirst;
   };
 
-  const projs=(c.projects||[]).map(p=>{
+  // Recurring-service mirrors (p.isRecurringService) used to render here as
+  // a flat 1:1 list — literally the same content as the Services tab, since
+  // there's exactly one mirror per service. Replaced below with real
+  // services grouped by bundle label (see _renderBundleGroups). Only genuine
+  // standalone "Bundle" project records (created via "+ Add Bundle" — their
+  // own progress log/milestones/tasks, unrelated to a service's bundle
+  // field) render in this loop now.
+  const projs=(c.projects||[]).filter(p=>!p.isRecurringService).map(p=>{
     const onProject=(p.users||[]).some(_idMatchesSession);
     const canEdit=SESSION.isAdmin||onProject;
-    // ── Recurring Service block ──────────────────────────────────────
-    if(p.isRecurringService){
-      const dueCls=_svcDueStatus(p);
-      const duePill=_ALERT_PILL[dueCls];
-      const days=daysUntil(p.due);
-      const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days+' days away');
-      const assignedChips=(p.users||[]).map(uid=>userChip(uid)).join('');
-      const freqChip=p.freqLabel||p.freq||'';
-      // p is the mirrored PROJECT entry, not the real service — resolve the
-      // actual service (which carries .updates) via p.serviceId.
-      const mirroredSvc=(c.services||[]).find(s=>s.id===p.serviceId);
-      const svcUpdatesCount=mirroredSvc&&Array.isArray(mirroredSvc.updates)?mirroredSvc.updates.length:0;
-      const svcSubitems=mirroredSvc&&Array.isArray(mirroredSvc.subitems)?mirroredSvc.subitems:[];
-      const svcSubitemsDone=svcSubitems.filter(si=>si.done).length;
-      const svcSubitemsBadge=svcSubitems.length?`<span class="chip" style="background:var(--bg2);color:var(--text-light);margin-left:6px;" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:'';
-      return `
-      <div class="project-block">
-        <div class="project-head" onclick="toggleProjectBlock(this)">
-          <div class="project-head-expand">▶</div>
-          <div style="display:flex;align-items:center;justify-content:center;flex-shrink:0;width:15px;"><span style="width:9px;height:9px;border-radius:50%;background:${duePill.dot};display:inline-block;"></span></div>
-          <div style="flex:1;">
-            <div style="font-size:12px;font-weight:500;color:var(--text-dark);">${p.name}${svcSubitemsBadge}</div>
-            <div style="font-size:9px;color:var(--text-light);"><span class="chip chip-${p.freq||'monthly'}">${freqChip}</span>${p.due?' · Next due: <strong>'+p.due+'</strong>':''}</div>
-          </div>
-          <div style="flex-shrink:0;">${assignedChips||'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>'}</div>
-          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;" onclick="event.stopPropagation();">
-            <span class="chip ${duePill.cls}" style="font-size:8px;">${duePill.label}</span>
-            ${canEdit?`<button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${p.serviceId}')" title="Mark done today, roll due date forward">${ICON_CHECK}</button>
-            <button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${p.serviceId}')" title="Edit">${ICON_EDIT}</button>`:''}
-            <button class="btn btn-xs btn-outline" onclick="openServiceUpdatesModal('${c.id}','${p.serviceId}')" title="Updates">${ICON_COMMENT}${svcUpdatesCount?` ${svcUpdatesCount}`:''}</button>
-            <button class="btn btn-xs btn-outline" onclick="openServiceSubitemsModal('${c.id}','${p.serviceId}')" title="Sub-items">${ICON_CHECKLIST}</button>
-          </div>
-        </div>
-        <div class="project-body">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-            <div>
-              <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Assigned To</div>
-              <div style="margin-bottom:10px;">${mirroredSvc?_renderAssignCell('proj',c.id,mirroredSvc,null):(assignedChips||'<span style="font-size:10px;color:var(--text-light);">Unassigned</span>')}</div>
-              ${p.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:6px;">${p.desc}</div>`:''}
-            </div>
-            <div>
-              <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">Schedule</div>
-              <div style="font-size:11px;margin-bottom:4px;">${p.lastDone?'✅ Last done: <strong>'+p.lastDone+'</strong>':'⬜ Not yet completed'}</div>
-              <div class="next-due ${dueCls}" style="font-size:11px;">📅 Next due: <strong>${p.due||'—'}</strong></div>
-              ${daysLabel?`<div style="font-size:10px;color:var(--text-light);margin-top:3px;">${daysLabel}</div>`:''}
-            </div>
-          </div>
-        </div>
-      </div>`;
-    }
-
     // ── Regular Project block ────────────────────────────────────────
     const assignedChips=(p.users||[]).map(uid=>userChip(uid)).join('');
     const subHtml=(p.subprojects||[]).map(sp=>renderSubprojectRow(c.id,p.id,sp,canEdit)).join('');
@@ -3457,7 +3417,51 @@ function renderProjects(c){
       ${SESSION.isAdmin?`<button class="btn btn-outline btn-sm" onclick="openProjectModal('${c.id}')">+ Add Bundle</button>
       <button class="btn btn-primary btn-sm" onclick="openAddServiceModal('${c.id}')">+ Add Service</button>`:''}
     </div>
-    ${projs||'<div class="empty-state"><div class="empty-state-title">No bundles yet.</div></div>'}`;
+    ${projs}
+    ${_renderBundleGroups(c)}
+    ${(!projs && !_allClientServices(c).length)?'<div class="empty-state"><div class="empty-state-title">No bundles yet.</div></div>':''}`;
+}
+
+// Groups active services (top-level + every franchise location's own, via
+// _allClientServices) by their resolved bundle label (getBundleForService —
+// the service's own frozen .bundle field, never re-derived live from the
+// catalog except as a fallback for older records predating the field; rule
+// #8 non-retroactivity) into collapsible sections, reusing the exact same
+// row style/edit controls as the Services tab (_serviceTable/_serviceRow) —
+// this is what used to be a flat 1:1 list of recurring-service mirrors,
+// identical to the Services tab, because nothing here ever grouped by
+// bundle. Services with no bundle label group under "Standalone / Ungrouped".
+function _renderBundleGroups(c){
+  const active=_allClientServices(c);
+  if(!active.length) return '';
+  const UNGROUPED='Standalone / Ungrouped';
+  const groups=new Map();
+  active.forEach(s=>{
+    const label=(getBundleForService(s)||'').trim()||UNGROUPED;
+    if(!groups.has(label)) groups.set(label,[]);
+    groups.get(label).push(s);
+  });
+  const labels=[...groups.keys()].sort((a,b)=>{
+    if(a===UNGROUPED) return 1;
+    if(b===UNGROUPED) return -1;
+    return a.localeCompare(b);
+  });
+  return labels.map(label=>{
+    const svcs=groups.get(label);
+    return `
+    <div class="project-block">
+      <div class="project-head" onclick="toggleProjectBlock(this)">
+        <div class="project-head-expand">▶</div>
+        <div style="flex:1;">
+          <div style="font-size:12px;font-weight:500;color:var(--text-dark);">📦 ${escHtmlClient(label)}</div>
+          <div style="font-size:9px;color:var(--text-light);">${svcs.length} service${svcs.length!==1?'s':''}</div>
+        </div>
+      </div>
+      <div class="project-body">
+        ${_serviceTable(c, svcs, undefined)}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function renderSubprojectRow(clientId, projId, sp, canEdit){
@@ -3537,13 +3541,18 @@ function toggleShowInactiveServices(clientId){
   _showInactiveServices=!_showInactiveServices;
   renderClientDetail(clientId,'services');
 }
+// locationId: pass a single id/'' to force every row to that location (the
+// Services tab's per-location tables). Omit it (undefined) to let each
+// service use its OWN tagged _locationId instead — needed by the Bundles
+// tab, where one bundle group can mix top-level and franchise-location
+// services together (see _allClientServices()).
 function _serviceTable(c, svcs, locationId){
   const visible=_showInactiveServices?svcs:svcs.filter(s=>!_isInactiveService(s));
   if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-title">No recurring services added yet</div></div>';
   return `<div style="overflow-x:auto;">
     <table class="service-table">
       <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
-      <tbody>${visible.map(svc=>_serviceRow(c,svc,locationId)).join('')}</tbody>
+      <tbody>${visible.map(svc=>_serviceRow(c,svc,locationId!==undefined?locationId:svc._locationId)).join('')}</tbody>
     </table>
   </div>`;
 }
