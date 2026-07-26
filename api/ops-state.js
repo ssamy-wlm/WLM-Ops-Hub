@@ -216,8 +216,23 @@ export default async function handler(req, res) {
     // happen to exclude it too, but only as a side effect of allow-listing
     // a few display fields; super-tier previously returned every admin row,
     // password field included, completely unfiltered).
+    //
+    // primaryAdminPw is the same credential, one row over — the CEO's own
+    // login secret, held in ops_settings rather than a users/admins row.
+    // It was previously nulled ONLY inside the member/manager tier branches
+    // below, so every super-tier caller (every level:'owner' admin, not
+    // just the primary-admin sentinel herself — see tierOf() in
+    // lib/opsSession.js) received it unfiltered on every pull: a real
+    // credential (hash today, or literal plaintext for an account that
+    // hasn't logged in since the hashing migration shipped) disclosed to a
+    // different principal than the one it belongs to. Nothing client-side
+    // has read this field since the primaryAdminPw-revert fix above removed
+    // index.html's only consumer, so it's stripped unconditionally now,
+    // exactly like the two lines above — the tier branches below no longer
+    // need their own copy of this line.
     record.users = record.users.map(u => { const { password, ...rest } = u; return rest; });
     record.admins = record.admins.map(a => { const { password, ...rest } = a; return rest; });
+    record.primaryAdminPw = null;
 
     // Payroll/pay-rate fields (payRate, hours): member tier ONLY — every
     // admin tier (manager and super) manages the team and needs to see and
@@ -269,7 +284,7 @@ export default async function handler(req, res) {
       record.otPolicy = null;
       record.orgExcluded = '[]';
       record.orgLayoutVersion = null;
-      record.primaryAdminPw = null;
+      // primaryAdminPw already stripped unconditionally above, for every tier.
       record.notificationSettings = null;
       record.passwordMigrationStatus = null;
       // Payroll saves and time-off decisions are stripped out of the Live
@@ -292,7 +307,7 @@ export default async function handler(req, res) {
       record.otPolicy = null;
       record.orgExcluded = '[]';
       record.orgLayoutVersion = null;
-      record.primaryAdminPw = null;
+      // primaryAdminPw already stripped unconditionally above, for every tier.
       record.notificationSettings = null;
       record.passwordMigrationStatus = null;
       // Creative/Production/Account Manager (canEditUsers()===false) also
