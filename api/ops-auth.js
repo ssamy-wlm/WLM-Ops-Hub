@@ -1,13 +1,30 @@
 // Verifies login credentials against Supabase and issues a signed session
-// token (see lib/opsSession.js). Passwords are checked exactly as they are
-// stored today (plaintext) — this migration does NOT change login or hash
-// anything; that is a separate, later follow-up. What's new is that the
-// *role* the server will trust for /api/ops-sync comes from this signed
-// token, not from anything the browser can edit.
+// token (see lib/opsSession.js). The *role* the server trusts for
+// /api/ops-sync comes from this signed token, not from anything the
+// browser can edit.
+//
+// Password storage is being migrated from plaintext to scrypt hashes
+// (lib/passwordHash.js), lazily and per-row: a stored value that's already
+// a hash is verified as a hash; a value that's still plaintext is compared
+// as plaintext (so every existing account keeps logging in unchanged), and
+// on a SUCCESSFUL legacy-plaintext login that row is immediately re-saved
+// as a hash. No bulk rewrite, no forced reset — see CLAUDE.md.
 
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { signSession } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
+import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
+
+// Checks a submitted password against a stored value that may be a hash or
+// still plaintext, returning both the verdict and whether this call just
+// upgraded a legacy plaintext match — kept as one shared helper so the
+// primary-admin branch and the regular user/admin branch (below) apply the
+// exact same rule instead of two hand-copies drifting apart.
+function checkPassword(submitted, stored) {
+  if (isHashed(stored)) return { ok: verifyPassword(submitted, stored), upgraded: false };
+  const ok = stored === submitted;
+  return { ok, upgraded: ok };
+}
 
 const PRIMARY_ADMIN_EMAIL = 'ssamy@weblightmedia.com';
 
@@ -31,9 +48,15 @@ export default async function handler(req, res) {
     // (set via Settings), never in code. ──
     const { data: pwRow } = await supabase.from('ops_settings').select('data').eq('key', 'primaryAdminPw').maybeSingle();
     const primaryPw = pwRow && pwRow.data;
-    if (normEmail === PRIMARY_ADMIN_EMAIL && primaryPw && password === primaryPw) {
-      const token = signSession({ id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
-      return res.status(200).json({ token, role: 'admin', level: 'owner', id: 'primary-admin', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
+    if (normEmail === PRIMARY_ADMIN_EMAIL && primaryPw) {
+      const { ok, upgraded } = checkPassword(password, primaryPw);
+      if (ok) {
+        if (upgraded) {
+          await supabase.from('ops_settings').upsert({ key: 'primaryAdminPw', data: hashPassword(password) }, { onConflict: 'key' });
+        }
+        const token = signSession({ id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
+        return res.status(200).json({ token, role: 'admin', level: 'owner', id: 'primary-admin', name: 'Sarah Samy', email: PRIMARY_ADMIN_EMAIL });
+      }
     }
 
     // ── One account per email: an ops_admins row optionally carries
@@ -101,7 +124,15 @@ export default async function handler(req, res) {
       }
     }
 
-    if (passwordSource.data?.password !== password) return res.status(401).json({ error: 'Invalid email or password' });
+    const { ok: pwOk, upgraded: pwUpgraded } = checkPassword(password, passwordSource.data?.password);
+    if (!pwOk) return res.status(401).json({ error: 'Invalid email or password' });
+    if (pwUpgraded) {
+      // passwordSource is always either employeeRow (ops_users) or adminRow
+      // (ops_admins) — whichever branch above set it, re-save that SAME row
+      // only, by id, never a bulk rewrite.
+      const table = passwordSource === employeeRow ? 'ops_users' : 'ops_admins';
+      await supabase.from(table).update({ data: { ...passwordSource.data, password: hashPassword(password) } }).eq('id', passwordSource.id);
+    }
 
     const role = adminRow ? 'admin' : 'member';
     const level = adminRow ? (adminRow.data.level || 'admin') : undefined;

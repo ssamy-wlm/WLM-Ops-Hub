@@ -35,6 +35,7 @@ import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 import { logError } from '../lib/errorLog.js';
+import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
@@ -63,6 +64,34 @@ function validClient(row) {
 }
 function validGeneric(row) {
   return row && typeof row === 'object' && hasContent(row.id);
+}
+
+// A NEW incoming ops_users/ops_admins row may carry a plaintext password
+// (account creation, an admin/manager password reset, "Grant manager role"'s
+// initial password) — the client only ever sends a fresh plaintext value
+// here, never an existing hash round-tripped back (see api/ops-state.js's
+// unconditional password strip), so hash any password field present before
+// it reaches storage. isHashed() guards against double-hashing in the
+// unlikely event a hash rides along anyway.
+function hashIncomingPasswords(rows) {
+  return rows.map(r => (hasContent(r.password) && !isHashed(r.password)) ? { ...r, password: hashPassword(r.password) } : r);
+}
+
+// api/ops-state.js strips `password` from every user/admin record before it
+// ever reaches a browser, for every tier — so the client-side cache an
+// ordinary edit (title, phone, role, etc., no new password typed) is built
+// from NEVER has a password field to begin with, and the resulting payload
+// carries no `password` key at all. upsertRows() below does a full JSONB
+// replace of `data`, not a merge, so without this the account's stored
+// password/hash would be silently deleted by any unrelated field edit —
+// same class of bug preserveMissingPayrollFields() above exists to prevent
+// for payRate/hours, after the real incident that pattern is named for.
+// Only fills the gap when the incoming row is missing the field entirely;
+// an incoming row that DOES carry a password (a deliberate new one) always
+// wins, same "incoming wins if present" rule as the payroll helper.
+function preserveMissingPasswordField(incoming, current) {
+  if (!current || hasContent(incoming.password)) return incoming;
+  return { ...incoming, password: current.password };
 }
 
 // Manager tier may edit users (team management) but never payroll/pay-rate
@@ -614,32 +643,55 @@ export default async function handler(req, res) {
     // tables, so anyone can change their own login without gaining any other
     // write access to that table. ──
     if (c.selfPasswordChange && typeof c.selfPasswordChange === 'object' && hasContent(c.selfPasswordChange.password)) {
-      // Table choice keys off whether this account HAS an employee profile
-      // (session.employeeId), not off tier/isAdmin — a dual-role account's
-      // canonical password lives on its ops_users row (session.id === that
-      // row's id, see api/ops-auth.js), so isAdmin alone would look up the
-      // wrong table/id for anyone who's both a worker and a manager.
-      const table = session.employeeId ? 'ops_users' : 'ops_admins';
-      const { data: cur } = await supabase.from(table).select('data').eq('id', session.id).maybeSingle();
-      if (cur && cur.data) {
-        const merged = { ...cur.data, password: c.selfPasswordChange.password };
-        if ('mustChangePassword' in c.selfPasswordChange) merged.mustChangePassword = !!c.selfPasswordChange.mustChangePassword;
-        const { error } = await supabase.from(table).update({ data: merged }).eq('id', session.id);
-        if (error) warnings.push(`selfPasswordChange: ${error.message}`); else applied.selfPasswordChange = 1;
+      if (session.id === 'primary-admin') {
+        // The primary admin has no ops_users/ops_admins row at all — her
+        // password lives in ops_settings.primaryAdminPw (see
+        // api/ops-auth.js). Her Business Setup "Change Admin Password"
+        // screen used to verify her current password against a plaintext
+        // copy mirrored into her own browser's localStorage, which breaks
+        // once this value is a hash — so this is the one selfPasswordChange
+        // case that ALSO verifies the current password server-side (same
+        // hash-or-plaintext check login uses) before accepting a new one.
+        const { data: pwRow } = await supabase.from('ops_settings').select('data').eq('key', 'primaryAdminPw').maybeSingle();
+        const stored = pwRow && pwRow.data;
+        const submittedCurrent = c.selfPasswordChange.currentPassword;
+        const currentOk = hasContent(submittedCurrent) && hasContent(stored) &&
+          (isHashed(stored) ? verifyPassword(submittedCurrent, stored) : stored === submittedCurrent);
+        if (!currentOk) {
+          warnings.push('selfPasswordChange: current password is incorrect');
+        } else {
+          const { error } = await supabase.from('ops_settings')
+            .upsert({ key: 'primaryAdminPw', data: hashPassword(c.selfPasswordChange.password) }, { onConflict: 'key' });
+          if (error) warnings.push(`selfPasswordChange: ${error.message}`); else applied.selfPasswordChange = 1;
+        }
       } else {
-        warnings.push('selfPasswordChange: own record not found');
-      }
-      // A dual-role session's mustChangePassword is true if EITHER linked row
-      // says so (see api/ops-auth.js — this is what lets "Grant manager role"
-      // force a password change on first Manager-mode entry without ever
-      // writing to ops_users). The write above only clears it on the table
-      // that just changed (ops_users) — without also clearing it on the
-      // linked ops_admins row, the OR would keep forcing this same screen on
-      // every future login forever, not just the first one.
-      if (session.employeeId && session.adminId && 'mustChangePassword' in c.selfPasswordChange && !c.selfPasswordChange.mustChangePassword) {
-        const { data: curAdmin } = await supabase.from('ops_admins').select('data').eq('id', session.adminId).maybeSingle();
-        if (curAdmin && curAdmin.data && curAdmin.data.mustChangePassword) {
-          await supabase.from('ops_admins').update({ data: { ...curAdmin.data, mustChangePassword: false } }).eq('id', session.adminId);
+        // Table choice keys off whether this account HAS an employee profile
+        // (session.employeeId), not off tier/isAdmin — a dual-role account's
+        // canonical password lives on its ops_users row (session.id === that
+        // row's id, see api/ops-auth.js), so isAdmin alone would look up the
+        // wrong table/id for anyone who's both a worker and a manager.
+        const table = session.employeeId ? 'ops_users' : 'ops_admins';
+        const { data: cur } = await supabase.from(table).select('data').eq('id', session.id).maybeSingle();
+        if (cur && cur.data) {
+          const merged = { ...cur.data, password: hashPassword(c.selfPasswordChange.password) };
+          if ('mustChangePassword' in c.selfPasswordChange) merged.mustChangePassword = !!c.selfPasswordChange.mustChangePassword;
+          const { error } = await supabase.from(table).update({ data: merged }).eq('id', session.id);
+          if (error) warnings.push(`selfPasswordChange: ${error.message}`); else applied.selfPasswordChange = 1;
+        } else {
+          warnings.push('selfPasswordChange: own record not found');
+        }
+        // A dual-role session's mustChangePassword is true if EITHER linked row
+        // says so (see api/ops-auth.js — this is what lets "Grant manager role"
+        // force a password change on first Manager-mode entry without ever
+        // writing to ops_users). The write above only clears it on the table
+        // that just changed (ops_users) — without also clearing it on the
+        // linked ops_admins row, the OR would keep forcing this same screen on
+        // every future login forever, not just the first one.
+        if (session.employeeId && session.adminId && 'mustChangePassword' in c.selfPasswordChange && !c.selfPasswordChange.mustChangePassword) {
+          const { data: curAdmin } = await supabase.from('ops_admins').select('data').eq('id', session.adminId).maybeSingle();
+          if (curAdmin && curAdmin.data && curAdmin.data.mustChangePassword) {
+            await supabase.from('ops_admins').update({ data: { ...curAdmin.data, mustChangePassword: false } }).eq('id', session.adminId);
+          }
         }
       }
     }
@@ -695,17 +747,28 @@ export default async function handler(req, res) {
           const ids = usersIncoming.map(r => r.id);
           const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
           const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
-          const toWrite = tier === 'manager'
+          const toWrite = (tier === 'manager'
             ? usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)))
-            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)));
-          applied.users = await upsertRows(supabase, 'ops_users', toWrite, warnings);
+            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
+          ).map(u => preserveMissingPasswordField(u, byId.get(u.id)));
+          applied.users = await upsertRows(supabase, 'ops_users', hashIncomingPasswords(toWrite), warnings);
         }
       }
 
       // admins/roadmap/org chart/business settings/payroll ledger: Super
       // Admin/CEO exclusive — dropped for manager tier, same as for members.
       if (tier === 'super') {
-        applied.admins = await upsertRows(supabase, 'ops_admins', (c.admins || []).filter(validUserOrAdmin), warnings);
+        const adminsIncoming = (c.admins || []).filter(validUserOrAdmin);
+        let adminsToWrite = adminsIncoming;
+        if (adminsIncoming.length) {
+          // Same missing-password preservation as the users path above —
+          // an ordinary admin edit (title, level, etc., no new password
+          // typed) must never wipe the stored password/hash.
+          const { data: currentAdminRows } = await supabase.from('ops_admins').select('id, data').in('id', adminsIncoming.map(r => r.id));
+          const adminById = new Map((currentAdminRows || []).map(r => [r.id, r.data]));
+          adminsToWrite = adminsIncoming.map(a => preserveMissingPasswordField(a, adminById.get(a.id)));
+        }
+        applied.admins = await upsertRows(supabase, 'ops_admins', hashIncomingPasswords(adminsToWrite), warnings);
         applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
         applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
         applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);

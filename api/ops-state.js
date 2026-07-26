@@ -22,6 +22,7 @@
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
+import { isHashed } from '../lib/passwordHash.js';
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
 
@@ -126,6 +127,20 @@ export default async function handler(req, res) {
     // tier). A super admin does not see anyone else's notifications either.
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
 
+    // Password-hash migration progress (Super Admin/CEO only, see rule #6 in
+    // the migration plan) — a read-only count of accounts still on the
+    // legacy plaintext path, computed from the RAW rows here, before
+    // record.users strips the password field below. Never triggers or
+    // performs any migration itself — every account only ever upgrades
+    // lazily, on its own next successful login (see api/ops-auth.js).
+    const pwValues = [...users.map(u => u.password), ...admins.map(a => a.password), settingsMap.primaryAdminPw]
+      .filter(v => v !== undefined && v !== null && v !== '');
+    const passwordMigrationStatus = {
+      hashed: pwValues.filter(isHashed).length,
+      legacy: pwValues.filter(v => !isHashed(v)).length,
+      total: pwValues.length,
+    };
+
     const record = {
       // Server-verified identity — the ONLY legitimate source of tier/role for
       // every frontend's UI gating. Never derive admin capability from a
@@ -183,15 +198,26 @@ export default async function handler(req, res) {
       // api/ops-sync.js, not from this tier-filtered response), this only
       // controls who can see/change the toggle in the Settings UI.
       notificationSettings: settingsMap.notificationSettings ?? { assignment: true, timeOff: true, message: true, serviceUpdate: true },
+      passwordMigrationStatus,
     };
 
-    // Password (plaintext credential): never leave this endpoint, for any
-    // tier — no admin UI ever needs it, and stripping it doesn't affect what
-    // an admin can edit (saveEditUser() only ever sends a NEW password,
-    // never round-trips the existing hash). mustChangePassword is NOT a
-    // credential — it's the non-sensitive status flag the admin UI's
-    // "awaiting first login" badge needs, so it stays in the response.
+    // Password (hash today, legacy plaintext for any not-yet-upgraded
+    // account): never leave this endpoint, for any tier or table — no admin
+    // UI ever needs it, and stripping it doesn't affect what an admin can
+    // edit (saveEditUser()/saveEditAdmin() only ever send a NEW password,
+    // never round-trip the existing value — see preserveMissingPasswordField
+    // in api/ops-sync.js, which restores it server-side when one isn't
+    // supplied). mustChangePassword is NOT a credential — it's the
+    // non-sensitive status flag the admin UI's "awaiting first login" badge
+    // needs, so it stays in the response.
+    //
+    // record.admins gets the identical strip — for tier==='super' this is
+    // the ONLY place it's ever removed (the member/manager branches below
+    // happen to exclude it too, but only as a side effect of allow-listing
+    // a few display fields; super-tier previously returned every admin row,
+    // password field included, completely unfiltered).
     record.users = record.users.map(u => { const { password, ...rest } = u; return rest; });
+    record.admins = record.admins.map(a => { const { password, ...rest } = a; return rest; });
 
     // Payroll/pay-rate fields (payRate, hours): member tier ONLY — every
     // admin tier (manager and super) manages the team and needs to see and
@@ -245,6 +271,7 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
       record.notificationSettings = null;
+      record.passwordMigrationStatus = null;
       // Payroll saves and time-off decisions are stripped out of the Live
       // Feed for members too — same leak, same fix (see the permission
       // project's Insights follow-up) — never gated by tier before this.
@@ -267,6 +294,7 @@ export default async function handler(req, res) {
       record.orgLayoutVersion = null;
       record.primaryAdminPw = null;
       record.notificationSettings = null;
+      record.passwordMigrationStatus = null;
       // Creative/Production/Account Manager (canEditUsers()===false) also
       // lose visibility into OTHER people's payRate/hours — 'admin' keeps
       // the full read access it always had. The caller's own record is left

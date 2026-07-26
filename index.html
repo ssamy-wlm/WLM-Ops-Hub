@@ -1994,6 +1994,23 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── Password hash migration progress (read-only, never triggers or
+           performs anything) — Super Admin/Owner only, same visibility as
+           the error log/schema drift cards above. Every account upgrades
+           itself lazily on its own next successful login (api/ops-auth.js);
+           this is purely a count of what's already there. ── -->
+      <div class="card" id="passwordMigrationCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🔑 Password Security Migration</div>
+            <div class="card-sub">Accounts still on the legacy plaintext path upgrade automatically the next time they log in — nothing to do here.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="passwordMigrationResults" style="font-size:13px;color:var(--text-mid);">Loading…</div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -2909,7 +2926,7 @@ function switchAdminTab(el, tab){
   if(tab==='messages')    renderAdminMessages();
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
-    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); }
+    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); }
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
@@ -3627,19 +3644,39 @@ function changeUserPassword(){
   ['userCurPw','userNewPw','userConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   showToast('Password updated successfully ✓');
 }
-function changeAdminPassword(){
+// Routed through the same selfPasswordChange server carve-out every other
+// role's password change uses (see api/ops-sync.js), rather than the old
+// client-side-only check against a plaintext localStorage mirror of
+// ops_settings.primaryAdminPw — that comparison silently stops working the
+// moment this value becomes a hash (password-hashing migration). The
+// server verifies the current password itself (hash-or-plaintext, same
+// rule as login) and only writes the new one on a confirmed match — same
+// server-confirmed-first pattern as submitAdminForcedPasswordChange().
+async function changeAdminPassword(){
   const cur=document.getElementById('adminCurPw')?.value;
   const nw=document.getElementById('adminNewPw')?.value;
   const conf=document.getElementById('adminConfPw')?.value;
   if(!cur){showToast('Please enter your current password');return;}
   if(!nw||nw.length<8){showToast('New password must be at least 8 characters');return;}
   if(nw!==conf){showToast('Passwords do not match');return;}
-  const storedPw = localStorage.getItem('wl_primary_admin_pw') || '31279475';
-  if(cur!==storedPw){showToast('Current password is incorrect');return;}
-  localStorage.setItem('wl_primary_admin_pw', nw);
+  const token=_opsToken();
+  if(!token){ showToast('Not signed in — please refresh the page and log in again'); return; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{selfPasswordChange:{currentPassword:cur, password:nw}}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.selfPasswordChange>=1)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+  }catch(e){
+    showToast('❌ Could not update password: '+e.message);
+    return;
+  }
   ['adminCurPw','adminNewPw','adminConfPw'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   showToast('Admin password updated successfully ✓');
-  cloudAutoSync();
 }
 
 // ── PASSWORD VISIBILITY ──
@@ -4844,6 +4881,7 @@ const DB_KEYS = {
   timeOffLedger: 'wl_timeoff_ledger',
   notifications: 'wl_ops_notifications',
   notificationSettings: 'wl_notification_settings',
+  passwordMigrationStatus: 'wl_password_migration_status',
   // Onboarding tour/tips flags — same localStorage key name client.html/
   // user.html use (same-origin shared storage, see client.html's CL_KEYS
   // comment for why that's intentional, not a coincidence).
@@ -6286,7 +6324,12 @@ async function cloudPushAll(silent=false){
     const otPolicy = dbGet(DB_KEYS.otPolicy); if(otPolicy) settings.otPolicy = otPolicy;
     const orgExcluded = localStorage.getItem('wl_org_excluded_names'); if(orgExcluded) settings.orgExcluded = orgExcluded;
     const orgLayoutVersion = localStorage.getItem('wl_org_layout_ver'); if(orgLayoutVersion) settings.orgLayoutVersion = orgLayoutVersion;
-    const primaryAdminPw = localStorage.getItem('wl_primary_admin_pw'); if(primaryAdminPw) settings.primaryAdminPw = primaryAdminPw;
+    // primaryAdminPw is intentionally NEVER echoed back here (see the
+    // password-hashing migration) — the only legitimate writers of that
+    // value are api/ops-auth.js's lazy hash-upgrade on login and
+    // changeAdminPassword()'s selfPasswordChange call, both server-side.
+    // Re-sending whatever this browser last cached would silently revert a
+    // just-upgraded hash back to stale plaintext on any unrelated sync.
     const notifSettings = dbGet(DB_KEYS.notificationSettings); if(notifSettings) settings.notificationSettings = notifSettings;
     if(Object.keys(settings).length) changes.settings = settings;
     // Onboarding tour/tips flags — only ever written by an explicit dismiss/
@@ -6394,6 +6437,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
+    _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
+    if(typeof renderPasswordMigrationStatus==='function') renderPasswordMigrationStatus();
     _applyServerValue(v=>dbSet(DB_KEYS.tourFlags, v), r.tourFlags);
     if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
     // deletedUserIds isn't part of the dirty/snapshot system above (tombstones
@@ -6410,7 +6455,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // so a plain truthy check doesn't catch it; parse and check length instead.
     if(r.orgExcluded){ try{ if(JSON.parse(r.orgExcluded).length) localStorage.setItem('wl_org_excluded_names', r.orgExcluded); }catch(e){} }
     if(r.orgLayoutVersion)  localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
-    if(r.primaryAdminPw)    localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
+    // r.primaryAdminPw is intentionally never cached locally anymore (see
+    // the password-hashing migration) — nothing legitimately reads it
+    // client-side any more, and caching it was the other half of the
+    // silent-revert bug the removed cloudPushAll() echo-back caused.
     // Service Catalog is edited in client.html, not here — this file only
     // reads it. Skip if a same-browser client.html tab has an unpushed local
     // edit in flight (shared localStorage flag), so this pull can't clobber it.
@@ -6530,6 +6578,26 @@ function toggleNotificationSetting(key, checked){
   dbSet(DB_KEYS.notificationSettings, settings);
   renderNotificationSettingsUI();
   cloudAutoSync();
+}
+
+// ── Password hash migration progress (read-only, Super Admin/Owner only) ──
+// Purely a count of what's already in the database — see
+// api/ops-state.js's passwordMigrationStatus. Never triggers, requests, or
+// performs any migration itself; nothing here writes anything.
+function renderPasswordMigrationStatus(){
+  const box = document.getElementById('passwordMigrationResults'); if(!box) return;
+  const status = dbGet(DB_KEYS.passwordMigrationStatus);
+  if(!status || !status.total){ box.textContent = 'No accounts found.'; return; }
+  const pct = Math.round((status.hashed/status.total)*100);
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;">
+      <div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:var(--green,#2e9e6e);"></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--text-dark);white-space:nowrap;">${status.hashed} / ${status.total} upgraded</div>
+    </div>
+    ${status.legacy>0?`<div style="font-size:11px;color:var(--text-light);margin-top:8px;">${status.legacy} account${status.legacy===1?'':'s'} still on the legacy path — each upgrades automatically the next time that person logs in.</div>`:'<div style="font-size:11px;color:var(--green,#2e9e6e);margin-top:8px;">All accounts are on the hashed path ✓</div>'}
+  `;
 }
 
 // ── Error log viewer (read-only capture, Super Admin/Owner only) ──
@@ -8226,6 +8294,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // Super Admin/Owner-only visibility as the error log above.
   const schemaDriftCard = document.getElementById('schemaDriftCard');
   if(schemaDriftCard) schemaDriftCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+
+  // Password hash migration progress (read-only) — same Super Admin/Owner-
+  // only visibility as the two cards above.
+  const passwordMigrationCard = document.getElementById('passwordMigrationCard');
+  if(passwordMigrationCard) passwordMigrationCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
   // ── Creative Manager: Tracker + Messages, plus view-only Summaries/Live
   //    Feed under Insights (permission project follow-up) — no Overview,
