@@ -3011,11 +3011,11 @@ function renderMyTimeOff(){
     const statusBg = r.status==='approved'?'rgba(46,158,110,.1)':r.status==='denied'?'rgba(224,85,85,.1)':'rgba(245,185,66,.1)';
     return `<div style="padding:12px 0;border-bottom:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.type} · ${r.startDate}${r.endDate!==r.startDate?' → '+r.endDate:''} (${r.days} day${r.days!==1?'s':''})</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtmlUser(r.type)} · ${r.startDate}${r.endDate!==r.startDate?' → '+r.endDate:''} (${r.days} day${r.days!==1?'s':''})</div>
         <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${statusBg};color:${statusColor};">${(r.status||'pending').toUpperCase()}</span>
       </div>
-      ${r.reason?`<div style="font-size:12px;color:var(--text-mid);">${r.reason}</div>`:''}
-      ${r.adminNote?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;font-style:italic;">Admin: ${r.adminNote}</div>`:''}
+      ${r.reason?`<div style="font-size:12px;color:var(--text-mid);">${escHtmlUser(r.reason)}</div>`:''}
+      ${r.adminNote?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;font-style:italic;">Admin: ${escHtmlUser(r.adminNote)}</div>`:''}
     </div>`;
   }).join('');
 }

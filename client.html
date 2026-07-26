@@ -2892,10 +2892,10 @@ function renderClientGrid(list){
     const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
     const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     const logoHtml=c.logo
-      ?`<img src="${c.logo}" onerror="this.style.display='none';this.nextSibling.style.display='flex';" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"><span style="display:none;font-size:16px;font-weight:800;color:#fff;">${init}</span>`
-      :`<span style="font-size:16px;font-weight:800;color:#fff;">${init}</span>`;
+      ?`<img src="${escHtmlClient(c.logo)}" onerror="this.style.display='none';this.nextSibling.style.display='flex';" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"><span style="display:none;font-size:16px;font-weight:800;color:#fff;">${escHtmlClient(init)}</span>`
+      :`<span style="font-size:16px;font-weight:800;color:#fff;">${escHtmlClient(init)}</span>`;
     const svcs=(c.services||[]);
-    const svcBadges=svcs.slice(0,3).map(s=>`<span class="service-tag service-tag-${s.freq}">${s.name}</span>`).join('');
+    const svcBadges=svcs.slice(0,3).map(s=>`<span class="service-tag service-tag-${s.freq}">${escHtmlClient(s.name)}</span>`).join('');
     const svcMore=svcs.length>3?`<span style="font-size:9px;color:var(--text-light);">+${svcs.length-3} more</span>`:'';
     const ongoingCount=allProj.filter(p=>p.status!=='completed').length;
 
@@ -2908,8 +2908,8 @@ function renderClientGrid(list){
       <div class="client-card-head">
         <div class="client-avatar" style="background:${c.color||_hashClientColor(c.name)};">${logoHtml}</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${c.name}<span class="client-code">${c.code||''}</span></div>
-          <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${c.accountManager||'No manager'} · <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span></div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${escHtmlClient(c.name)}<span class="client-code">${escHtmlClient(c.code||'')}</span></div>
+          <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${escHtmlClient(c.accountManager||'No manager')} · <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span></div>
         </div>
         ${SESSION.isAdmin?`<div style="display:flex;gap:4px;" onclick="event.stopPropagation();">
           <button class="btn btn-xs btn-outline" onclick="togglePinClient('${c.id}')" title="${c.pinned?'Unpin':'Pin to top'}" style="color:${c.pinned?'var(--gold-dark)':''};">${ICON_PIN}</button>
@@ -3214,14 +3214,14 @@ function renderClientDetail(clientId, tab){
   const cycle=_svcCycleStats(c);
   const {monthDone,monthOutstanding,activeDone}=cycle;
   const logoHtml=c.logo
-    ?`<img src="${c.logo}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
-    :`<span style="font-size:22px;font-weight:500;color:#fff;">${init}</span>`;
+    ?`<img src="${escHtmlClient(c.logo)}" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover;border-radius:14px;">`
+    :`<span style="font-size:22px;font-weight:500;color:#fff;">${escHtmlClient(init)}</span>`;
 
   // Email is admin-only (visibility already gated by SESSION.isAdmin — the
   // padlock glyph this used to carry was redundant) and sits inline in the
   // metarow next to status, matching the mockup's plain "status · email"
   // line instead of a separate labeled info-card block.
-  const adminContact=(SESSION.isAdmin&&c.ownerEmail)?`<span style="font-size:10px;color:var(--text-light);">✉ ${c.ownerEmail}</span>`:'';
+  const adminContact=(SESSION.isAdmin&&c.ownerEmail)?`<span style="font-size:10px;color:var(--text-light);">✉ ${escHtmlClient(c.ownerEmail)}</span>`:'';
 
   const tabs=['overview','projects','services','brand-notes'].map(t=>`
     <div class="detail-tab${tab===t?' active':''}" onclick="renderClientDetail('${c.id}','${t}')">${
@@ -3238,12 +3238,12 @@ function renderClientDetail(clientId, tab){
     <div class="detail-header">
       <div class="detail-avatar" style="background:${c.color||_hashClientColor(c.name)};">${logoHtml}</div>
       <div style="flex:1;min-width:0;">
-        <div class="detail-name">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${c.name} <span class="client-code" style="font-size:12px;">${c.code||''}</span></div>
+        <div class="detail-name">${c.pinned?'📌 ':''}${!SESSION.isAdmin&&isEmployeeFavorite(c.id)?'⭐ ':''}${escHtmlClient(c.name)} <span class="client-code" style="font-size:12px;">${escHtmlClient(c.code||'')}</span></div>
         <div style="margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span class="chip chip-${c.status||'active'}">${c.status||'active'}</span>
           ${adminContact}
-          ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${c.industry}</span>`:''}
-          ${c.website?`<a href="${c.website}" target="_blank" style="font-size:10px;color:var(--text);">${c.website}</a>`:''}
+          ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${escHtmlClient(c.industry)}</span>`:''}
+          ${c.website?`<a href="${escHtmlClient(c.website)}" target="_blank" style="font-size:10px;color:var(--text);">${escHtmlClient(c.website)}</a>`:''}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -3800,11 +3800,11 @@ function renderBrand(c){
   // else is just text. Rows with nothing set are skipped rather than shown
   // empty, so the list never pads itself out with blank rows.
   const kvRows=[
-    c.logo&&['Logo',`<img src="${c.logo}" style="max-height:32px;max-width:120px;border-radius:4px;vertical-align:middle;" onerror="this.style.display='none'">`],
+    c.logo&&['Logo',`<img src="${escHtmlClient(c.logo)}" style="max-height:32px;max-width:120px;border-radius:4px;vertical-align:middle;" onerror="this.style.display='none'">`],
     c.brandColors&&['Brand colors',swatches],
-    c.primaryFont&&['Primary font',c.primaryFont],
-    c.secondaryFont&&['Secondary font',c.secondaryFont],
-  ].filter(Boolean).map(([k,v])=>`<span class="k">${k}</span><span class="v">${v}</span>`).join('');
+    c.primaryFont&&['Primary font',escHtmlClient(c.primaryFont)],
+    c.secondaryFont&&['Secondary font',escHtmlClient(c.secondaryFont)],
+  ].filter(Boolean).map(([k,v])=>`<span class="k">${escHtmlClient(k)}</span><span class="v">${v}</span>`).join('');
 
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:11px;">
@@ -3812,10 +3812,10 @@ function renderBrand(c){
     </div>
     <div class="section-label">Brand details</div>
     ${kvRows?`<div class="kv" style="margin-bottom:20px;">${kvRows}</div>`:'<div style="font-size:13px;color:var(--text-light);margin-bottom:20px;">No brand details added yet.</div>'}
-    ${c.brandDetails?`<div class="section-label">Style Guide</div><div class="notes-block">${c.brandDetails}</div>`:''}
+    ${c.brandDetails?`<div class="section-label">Style Guide</div><div class="notes-block">${escHtmlClient(c.brandDetails)}</div>`:''}
     <div class="section-label">Notes</div>
-    ${c.notes?`<div class="notes-block">${c.notes}</div>`:'<div style="font-size:13px;color:var(--text-light);">No notes added yet.</div>'}
-    ${c.toneOfVoice?`<div class="section-label" style="margin-top:13px;">Tone of Voice</div><div class="notes-block">${c.toneOfVoice}</div>`:''}`;
+    ${c.notes?`<div class="notes-block">${escHtmlClient(c.notes)}</div>`:'<div style="font-size:13px;color:var(--text-light);">No notes added yet.</div>'}
+    ${c.toneOfVoice?`<div class="section-label" style="margin-top:13px;">Tone of Voice</div><div class="notes-block">${escHtmlClient(c.toneOfVoice)}</div>`:''}`;
 }
 
 function toggleProjectBlock(header){
@@ -4741,8 +4741,8 @@ function renderCatalog(){
   const renderRow=s=>`
       <div style="display:flex;align-items:center;gap:11px;padding:9px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;margin-bottom:6px;">
         <span class="chip chip-${s.freq}">${s.freq}</span>
-        <div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.name}</div>${s.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:1px;">${s.desc}</div>`:''}</div>
-        ${s.defaultAssignee?`<span class="user-chip">${getUser(s.defaultAssignee)?.name||s.defaultAssignee}</span>`:''}
+        <div style="flex:1;"><div style="font-size:12px;font-weight:700;color:var(--text-dark);">${escHtmlClient(s.name)}</div>${s.desc?`<div style="font-size:10px;color:var(--text-light);margin-top:1px;">${escHtmlClient(s.desc)}</div>`:''}</div>
+        ${s.defaultAssignee?`<span class="user-chip">${escHtmlClient(getUser(s.defaultAssignee)?.name||s.defaultAssignee)}</span>`:''}
         ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="editServiceCatalog('${s.id}')">✏️</button>
           <button class="btn btn-xs btn-danger" onclick="deleteServiceCatalog('${s.id}')">✕</button>`:''}
       </div>`;
@@ -4750,7 +4750,7 @@ function renderCatalog(){
   bundles.forEach(b=>{
     const items=services.filter(s=>s.bundle===b.name);
     if(!items.length) return;
-    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">📦 ${b.name}</div>`;
+    html+=`<div style="margin-bottom:20px;"><div style="font-size:12px;font-weight:800;color:var(--text-dark);margin-bottom:9px;padding-bottom:6px;border-bottom:1px solid var(--border);">📦 ${escHtmlClient(b.name)}</div>`;
     html+=items.map(renderRow).join('');
     html+='</div>';
   });

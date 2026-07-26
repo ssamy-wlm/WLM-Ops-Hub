@@ -1676,6 +1676,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-primary" onclick="showToast('Company info saved ✓')">Save Company Info</button>
           </div>
         </div>
+        <div class="card" id="security-kill-switch-card" style="display:none;">
+          <div class="card-header"><div class="card-title">🔒 Security</div></div>
+          <div class="card-body">
+            <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;">A stolen or leaked login stays valid until it naturally expires (up to 90 days). Use this to force it out immediately. Per-account sign-out is also available next to each person in the Users/Admin Accounts tables.</div>
+            <button class="btn btn-danger" onclick="signOutAllAccountsEverywhere()">🚨 Sign Out ALL Accounts Everywhere</button>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header"><div class="card-title">📣 Broadcast Announcement</div></div>
           <div class="card-body">
@@ -2926,7 +2933,11 @@ function switchAdminTab(el, tab){
   if(tab==='messages')    renderAdminMessages();
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
-    if(_adminLevel==='super' || _adminLevel==='owner'){ loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); }
+    if(_adminLevel==='super' || _adminLevel==='owner'){
+      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus();
+      const killSwitchCard=document.getElementById('security-kill-switch-card');
+      if(killSwitchCard) killSwitchCard.style.display='block';
+    }
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
@@ -3377,12 +3388,12 @@ function renderUserTable(){
       : `<button class="btn btn-sm btn-outline" onclick="openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:10px;">
-        <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${initials}</div>
-        <div><div>${u.name}</div><div class="td-sub">${u.email}</div></div>
+        <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${escHtml(initials)}</div>
+        <div><div>${escHtml(u.name)}</div><div class="td-sub">${escHtml(u.email)}</div></div>
       </div></td>
-      <td><div>${u.title||'—'}</div><div class="td-sub">${u.resp||''}</div></td>
+      <td><div>${escHtml(u.title||'—')}</div><div class="td-sub">${escHtml(u.resp||'')}</div></td>
       <td>
-        <span class="status-badge ${badgeClass}">${u.role||'Contractor'}</span>
+        <span class="status-badge ${badgeClass}">${escHtml(u.role||'Contractor')}</span>
         ${probation?`<span class="status-badge" style="background:#f59e0b18;color:#d97706;border:1px solid #d97706aa;margin-left:4px;" title="Probation ends ${probEnd}">Probation</span>`:''}
         ${dualBadge}
       </td>
@@ -3390,6 +3401,7 @@ function renderUserTable(){
       <td><div class="td-actions">
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>
         ${managerRoleBtn}
+        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
         <button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>
       </div></td>
     </tr>`;
@@ -3566,7 +3578,7 @@ function confirmAddOrgMember(){
   const chart=document.getElementById('org-extra-members');
   const wrap=document.createElement('div');
   wrap.style.cssText='display:flex;justify-content:center;margin-top:18px;';
-  wrap.innerHTML=`<div class="org-node org-${level}" style="opacity:0;transform:translateY(10px);transition:all .3s;"><div class="org-avatar" style="background:${color};">${initials}</div><div class="org-name">${name}</div><div class="org-title">${title}</div><button class="org-remove" onclick="removeOrgNode(this)" title="Remove">✕</button></div>`;
+  wrap.innerHTML=`<div class="org-node org-${level}" style="opacity:0;transform:translateY(10px);transition:all .3s;"><div class="org-avatar" style="background:${color};">${escHtmlAdmin(initials)}</div><div class="org-name">${escHtmlAdmin(name)}</div><div class="org-title">${escHtmlAdmin(title)}</div><button class="org-remove" onclick="removeOrgNode(this)" title="Remove">✕</button></div>`;
   chart.appendChild(wrap);
   requestAnimationFrame(()=>{const n=wrap.querySelector('.org-node');n.style.opacity='1';n.style.transform='translateY(0)';});
   document.getElementById('add-org-form').style.display='none';
@@ -4105,17 +4117,19 @@ function renderOrgChart(){
     const initials=(node.name.split(' ').map(w=>w[0]).join('').substring(0,2)).toUpperCase();
     div.innerHTML=`
       <div style="pointer-events:none;">
-        ${node.photo?'':'<div style="font-size:16px;font-weight:800;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.3);line-height:1;">'+initials+'</div>'}
+        ${node.photo?'':'<div style="font-size:16px;font-weight:800;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.3);line-height:1;">'+escHtmlAdmin(initials)+'</div>'}
         ${node.fixed?'<div style="position:absolute;bottom:4px;right:4px;font-size:9px;">📌</div>':''}
       </div>`;
     // Label below bubble
     const label = document.createElement('div');
     label.style.cssText='pointer-events:none;text-align:center;line-height:1.35;position:relative;z-index:2;';
-    label.innerHTML=`<div style="display:inline-block;background:rgba(255,255,255,0.88);backdrop-filter:blur(4px);border-radius:6px;padding:3px 7px;box-shadow:0 1px 6px rgba(0,0,0,.10);"><div style="font-size:11px;font-weight:700;color:#1a2e4a;white-space:nowrap;">${node.name}</div><div style="font-size:9.5px;color:#5a6e8a;margin-top:1px;white-space:nowrap;">${node.title}</div></div>`;
+    label.innerHTML=`<div style="display:inline-block;background:rgba(255,255,255,0.88);backdrop-filter:blur(4px);border-radius:6px;padding:3px 7px;box-shadow:0 1px 6px rgba(0,0,0,.10);"><div style="font-size:11px;font-weight:700;color:#1a2e4a;white-space:nowrap;">${escHtmlAdmin(node.name)}</div><div style="font-size:9.5px;color:#5a6e8a;margin-top:1px;white-space:nowrap;">${escHtmlAdmin(node.title)}</div></div>`;
     wrapper.appendChild(div);
     wrapper.appendChild(label);
     const placeholder = wrapper; // alias so event code below still works
-    // Tooltip on hover
+    // Tooltip on hover (element.title is set as a plain attribute value, not
+    // parsed as HTML by the browser — no escaping needed here, unlike the
+    // innerHTML assignments above).
     wrapper.title = `${node.name} — ${node.title}`;
     // Events
     if(!node.fixed){
@@ -5675,8 +5689,8 @@ function renderFeedList(events){
     return `<div class="feed-item">
       <div class="feed-icon ${iconClass[e.type]||'feed-icon-nav'}">${icons[e.type]||'📌'}</div>
       <div class="feed-body">
-        <div><span class="feed-user">${e.user}</span><span class="feed-badge" style="${badgeStyle[e.type]||''}">${e.type.toUpperCase()}</span></div>
-        <div class="feed-desc">${e.desc}${e.detail?` <span style="color:var(--text-light);">— ${e.detail}</span>`:''}</div>
+        <div><span class="feed-user">${escHtmlAdmin(e.user)}</span><span class="feed-badge" style="${badgeStyle[e.type]||''}">${e.type.toUpperCase()}</span></div>
+        <div class="feed-desc">${escHtmlAdmin(e.desc)}${e.detail?` <span style="color:var(--text-light);">— ${escHtmlAdmin(e.detail)}</span>`:''}</div>
         <div class="feed-time">${timeStr}</div>
       </div>
     </div>`;
@@ -5756,10 +5770,10 @@ function _renderTrackerPreview(data){
   data.milestones.forEach(e=>clients[e.clientId].miles.push(e));
   const rows=Object.values(clients).map(cl=>`
     <div style="margin-bottom:10px;padding:10px;background:var(--card);border-radius:8px;border-left:3px solid ${cl.color};">
-      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">${cl.name}</div>
-      ${cl.logs.map(l=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">📈 <b>${l.projName}</b> — ${l.note||'Progress updated'} (${l.pct}%) · ${l.date}</div>`).join('')}
-      ${cl.tasks.map(t=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">✅ <b>${t.projName}</b>${t.spName?' › '+t.spName:''} — ${t.taskName} · ${t.completedBy}</div>`).join('')}
-      ${cl.miles.map(m=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">🏁 <b>${m.projName}</b> — ${m.title} · ${m.date}</div>`).join('')}
+      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">${escHtmlAdmin(cl.name)}</div>
+      ${cl.logs.map(l=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">📈 <b>${escHtmlAdmin(l.projName)}</b> — ${escHtmlAdmin(l.note||'Progress updated')} (${l.pct}%) · ${l.date}</div>`).join('')}
+      ${cl.tasks.map(t=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">✅ <b>${escHtmlAdmin(t.projName)}</b>${t.spName?' › '+escHtmlAdmin(t.spName):''} — ${escHtmlAdmin(t.taskName)} · ${escHtmlAdmin(t.completedBy)}</div>`).join('')}
+      ${cl.miles.map(m=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">🏁 <b>${escHtmlAdmin(m.projName)}</b> — ${escHtmlAdmin(m.title)} · ${m.date}</div>`).join('')}
     </div>`).join('');
   return statBar+rows;
 }
@@ -5930,10 +5944,10 @@ function _renderSummaryClientBreakdown(data){
   (data.milestones||[]).forEach(e=>clients[e.clientId].miles.push(e));
   return Object.values(clients).map(cl=>`
     <div style="margin-bottom:10px;padding:12px 14px;background:var(--bg);border-radius:10px;border-left:3px solid ${cl.color};">
-      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:7px;">${cl.name}</div>
-      ${cl.logs.map(l=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">📈 <span style="font-weight:600;">${l.projName}</span> — ${l.note||'Progress logged'} <span style="color:var(--btn);font-weight:700;">${l.pct}%</span> <span style="color:var(--text-light);">· ${l.date} · ${l.user||'—'}</span></div>`).join('')}
-      ${cl.tasks.map(t=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">✅ <span style="font-weight:600;">${t.projName}</span>${t.spName?' › '+t.spName:''} — ${t.taskName} <span style="color:var(--text-light);">· ${t.completedBy} · ${t.completedAt?.slice(0,10)||''}</span></div>`).join('')}
-      ${cl.miles.map(m=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">🏁 <span style="font-weight:600;">${m.projName}</span> — ${m.title} <span style="color:var(--text-light);">· ${m.date}</span></div>`).join('')}
+      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:7px;">${escHtmlAdmin(cl.name)}</div>
+      ${cl.logs.map(l=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">📈 <span style="font-weight:600;">${escHtmlAdmin(l.projName)}</span> — ${escHtmlAdmin(l.note||'Progress logged')} <span style="color:var(--btn);font-weight:700;">${l.pct}%</span> <span style="color:var(--text-light);">· ${l.date} · ${escHtmlAdmin(l.user||'—')}</span></div>`).join('')}
+      ${cl.tasks.map(t=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">✅ <span style="font-weight:600;">${escHtmlAdmin(t.projName)}</span>${t.spName?' › '+escHtmlAdmin(t.spName):''} — ${escHtmlAdmin(t.taskName)} <span style="color:var(--text-light);">· ${escHtmlAdmin(t.completedBy)} · ${t.completedAt?.slice(0,10)||''}</span></div>`).join('')}
+      ${cl.miles.map(m=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">🏁 <span style="font-weight:600;">${escHtmlAdmin(m.projName)}</span> — ${escHtmlAdmin(m.title)} <span style="color:var(--text-light);">· ${m.date}</span></div>`).join('')}
     </div>`).join('');
 }
 
@@ -5944,7 +5958,7 @@ function renderWeeklySummaries(){
   list.innerHTML=sums.map(s=>`<div class="summary-card">
     <div class="summary-card-header">
       <div>
-        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${s.title}</div>
+        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${s.start} → ${s.end} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -5961,7 +5975,7 @@ function renderWeeklySummaries(){
         <div class="sum-metric"><div class="sum-metric-val">${s.totalMilestones||0}</div><div class="sum-metric-label">Milestones</div></div>
       </div>
       ${_renderSummaryClientBreakdown(s)}
-      ${s.adminNotes?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px 16px;margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Admin Notes</div><div style="font-size:13px;color:var(--text-mid);">${s.adminNotes}</div></div>`:''}
+      ${s.adminNotes?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px 16px;margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Admin Notes</div><div style="font-size:13px;color:var(--text-mid);">${escHtmlAdmin(s.adminNotes)}</div></div>`:''}
     </div>
   </div>`).join('');
 }
@@ -5974,7 +5988,7 @@ function renderMonthlySummaries(){
   list.innerHTML=sums.map(s=>`<div class="summary-card">
     <div class="summary-card-header">
       <div>
-        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${s.title}</div>
+        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${MONTHS[s.month]} ${s.year} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -5990,12 +6004,12 @@ function renderMonthlySummaries(){
         <div class="sum-metric"><div class="sum-metric-val">${s.totalTasksDone||0}</div><div class="sum-metric-label">Tasks Completed</div></div>
         <div class="sum-metric"><div class="sum-metric-val">${s.totalMilestones||0}</div><div class="sum-metric-label">Milestones Hit</div></div>
       </div>
-      ${s.executiveSummary?`<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Executive Summary</div><div style="font-size:13px;color:var(--text-mid);line-height:1.7;">${s.executiveSummary}</div></div>`:''}
+      ${s.executiveSummary?`<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Executive Summary</div><div style="font-size:13px;color:var(--text-mid);line-height:1.7;">${escHtmlAdmin(s.executiveSummary)}</div></div>`:''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
-        ${s.keyWins?`<div style="background:#e8f8f0;border:1px solid rgba(46,158,110,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">✅ Key Wins</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${s.keyWins}</div></div>`:''}
-        ${s.issuesActions?`<div style="background:#fff8e8;border:1px solid rgba(217,119,6,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">⚠ Issues &amp; Actions</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${s.issuesActions}</div></div>`:''}
+        ${s.keyWins?`<div style="background:#e8f8f0;border:1px solid rgba(46,158,110,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">✅ Key Wins</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.keyWins)}</div></div>`:''}
+        ${s.issuesActions?`<div style="background:#fff8e8;border:1px solid rgba(217,119,6,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">⚠ Issues &amp; Actions</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.issuesActions)}</div></div>`:''}
       </div>
-      ${s.nextMonthGoals?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px;margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">🎯 Next Month Goals</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${s.nextMonthGoals}</div></div>`:''}
+      ${s.nextMonthGoals?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px;margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">🎯 Next Month Goals</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.nextMonthGoals)}</div></div>`:''}
       ${_renderSummaryClientBreakdown(s)}
     </div>
   </div>`).join('');
@@ -6018,7 +6032,7 @@ function renderYearlySummaries(){
     return `<div class="summary-card">
       <div class="summary-card-header">
         <div>
-          <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${s.title}</div>
+          <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Full year ${s.year} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -7102,10 +7116,10 @@ function refreshArchive(){
         const _ac=_archPalette[i%_archPalette.length];
         return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border);">
           <div style="display:flex;align-items:center;gap:12px;">
-            <div class="avatar" style="background:${_ac};">${initials}</div>
+            <div class="avatar" style="background:${_ac};">${escHtmlAdmin(initials)}</div>
             <div>
-              <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${u.name||'Unknown'}</div>
-              <div style="font-size:12px;color:var(--text-light);">${u.email||'—'} · ${u.title||''}</div>
+              <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(u.name||'Unknown')}</div>
+              <div style="font-size:12px;color:var(--text-light);">${escHtmlAdmin(u.email||'—')} · ${escHtmlAdmin(u.title||'')}</div>
               <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Archived ${arDate} · ${u.eodCount||0} EODs on record</div>
             </div>
           </div>
@@ -7209,13 +7223,13 @@ function renderAdminTimeOff(){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div style="flex:1;min-width:200px;">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${r.userName||'Unknown'}</div>
+            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${escHtmlAdmin(r.userName||'Unknown')}</div>
             <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${statusBg};color:${statusColor};">${(r.status||'pending').toUpperCase()}</span>
           </div>
           <div style="font-size:13px;color:var(--text);font-weight:600;">📅 ${r.startDate} → ${r.endDate} (${r.days||'?'} day${(r.days||1)!==1?'s':''})</div>
-          <div style="font-size:12px;color:var(--text-mid);margin-top:4px;">Type: ${r.type||'PTO'} · Submitted: ${submittedDate}</div>
-          ${r.reason?`<div style="font-size:12px;color:var(--text-mid);margin-top:4px;background:var(--bg);padding:8px 10px;border-radius:8px;">${r.reason}</div>`:''}
-          ${r.adminNote?`<div style="font-size:11px;color:var(--text-light);margin-top:4px;font-style:italic;">Admin note: ${r.adminNote}</div>`:''}
+          <div style="font-size:12px;color:var(--text-mid);margin-top:4px;">Type: ${escHtmlAdmin(r.type||'PTO')} · Submitted: ${submittedDate}</div>
+          ${r.reason?`<div style="font-size:12px;color:var(--text-mid);margin-top:4px;background:var(--bg);padding:8px 10px;border-radius:8px;">${escHtmlAdmin(r.reason)}</div>`:''}
+          ${r.adminNote?`<div style="font-size:11px;color:var(--text-light);margin-top:4px;font-style:italic;">Admin note: ${escHtmlAdmin(r.adminNote)}</div>`:''}
         </div>
         ${r.status==='pending'?`<div style="display:flex;gap:8px;flex-shrink:0;">
           <button class="btn btn-sm" style="background:var(--green);color:#fff;" onclick="reviewTimeOff('${r.id}','approved')">✓ Approve</button>
@@ -8606,12 +8620,69 @@ window._renderAdminTableImpl = function(){
       <td style="padding:14px 18px;">
         <div class="td-actions">
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
+          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
           <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
         </div>
       </td>`;
     tbody.appendChild(tr);
   });
 };
+
+// ── Session kill-switch (Super Admin/CEO only) — see api/ops-sync.js
+// c.sessionRevocation. Per-account: sign a specific user and/or admin out of
+// every existing session immediately (their token stays cryptographically
+// valid but is rejected on the next request because it was issued before the
+// new sessionsRevokedAt timestamp — see lib/opsSession.js isSessionRevoked()).
+// Never a bulk table replace — a single scoped write, same fetch/response
+// pattern every other admin write in this file already uses.
+async function signOutAccountEverywhere(userId, adminId, displayName){
+  if(!confirm(`Sign ${displayName||'this account'} out of every device/browser right now? They'll need to log in again.`)) return;
+  const token = _opsToken();
+  const sessionRevocation = { scope: 'account' };
+  if(userId) sessionRevocation.userId = userId;
+  if(adminId) sessionRevocation.adminId = adminId;
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{sessionRevocation}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.sessionRevocation)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+    showToast(`${displayName||'Account'} signed out everywhere ✓`);
+  }catch(e){
+    showToast('❌ Could not sign out: '+e.message,'warn');
+  }
+}
+
+// Emergency: sign every account (every user, every admin, the primary admin
+// sentinel) out of every session at once, including the caller's own current
+// one — a double client-side confirm PLUS a server-checked typed phrase
+// (CLAUDE.md rule #6: destructive/high-blast-radius actions need a real
+// confirmation, not just a UI gate) before this fires.
+async function signOutAllAccountsEverywhere(){
+  if(!confirm('This signs EVERY admin and team member out of every device immediately, including you. Continue?')) return;
+  const REQUIRED_PHRASE = 'SIGN OUT ALL ACCOUNTS';
+  const typed = prompt(`Type exactly "${REQUIRED_PHRASE}" to confirm this emergency action:`);
+  if(typed !== REQUIRED_PHRASE){ showToast('Confirmation phrase did not match — nothing was signed out.','warn'); return; }
+  const token = _opsToken();
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{sessionRevocation:{scope:'all', confirmPhrase: typed}}})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !(data.applied && data.applied.sessionRevocation)){
+      throw new Error(data.error || (data.warnings||[]).join('; ') || ('HTTP '+res.status));
+    }
+    showToast('Every account has been signed out. You will need to log in again.');
+  }catch(e){
+    showToast('❌ Could not sign out: '+e.message,'warn');
+  }
+}
 
 // ── Create a new admin account ──
 window._addAdminImpl = function(){

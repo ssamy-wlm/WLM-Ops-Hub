@@ -66,7 +66,7 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   let session;
-  try { session = requireSession(req); }
+  try { session = await requireSession(req); }
   catch (err) { await logError({ endpoint: 'schema-drift', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
   if (tierOf(session) !== 'super') return res.status(403).json({ error: 'Super Admin/Owner only' });
