@@ -6324,7 +6324,12 @@ async function cloudPushAll(silent=false){
     const otPolicy = dbGet(DB_KEYS.otPolicy); if(otPolicy) settings.otPolicy = otPolicy;
     const orgExcluded = localStorage.getItem('wl_org_excluded_names'); if(orgExcluded) settings.orgExcluded = orgExcluded;
     const orgLayoutVersion = localStorage.getItem('wl_org_layout_ver'); if(orgLayoutVersion) settings.orgLayoutVersion = orgLayoutVersion;
-    const primaryAdminPw = localStorage.getItem('wl_primary_admin_pw'); if(primaryAdminPw) settings.primaryAdminPw = primaryAdminPw;
+    // primaryAdminPw is intentionally NEVER echoed back here (see the
+    // password-hashing migration) — the only legitimate writers of that
+    // value are api/ops-auth.js's lazy hash-upgrade on login and
+    // changeAdminPassword()'s selfPasswordChange call, both server-side.
+    // Re-sending whatever this browser last cached would silently revert a
+    // just-upgraded hash back to stale plaintext on any unrelated sync.
     const notifSettings = dbGet(DB_KEYS.notificationSettings); if(notifSettings) settings.notificationSettings = notifSettings;
     if(Object.keys(settings).length) changes.settings = settings;
     // Onboarding tour/tips flags — only ever written by an explicit dismiss/
@@ -6450,7 +6455,10 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // so a plain truthy check doesn't catch it; parse and check length instead.
     if(r.orgExcluded){ try{ if(JSON.parse(r.orgExcluded).length) localStorage.setItem('wl_org_excluded_names', r.orgExcluded); }catch(e){} }
     if(r.orgLayoutVersion)  localStorage.setItem('wl_org_layout_ver', r.orgLayoutVersion);
-    if(r.primaryAdminPw)    localStorage.setItem('wl_primary_admin_pw', r.primaryAdminPw);
+    // r.primaryAdminPw is intentionally never cached locally anymore (see
+    // the password-hashing migration) — nothing legitimately reads it
+    // client-side any more, and caching it was the other half of the
+    // silent-revert bug the removed cloudPushAll() echo-back caused.
     // Service Catalog is edited in client.html, not here — this file only
     // reads it. Skip if a same-browser client.html tab has an unpushed local
     // edit in flight (shared localStorage flag), so this pull can't clobber it.

@@ -201,13 +201,23 @@ export default async function handler(req, res) {
       passwordMigrationStatus,
     };
 
-    // Password (plaintext credential): never leave this endpoint, for any
-    // tier — no admin UI ever needs it, and stripping it doesn't affect what
-    // an admin can edit (saveEditUser() only ever sends a NEW password,
-    // never round-trips the existing hash). mustChangePassword is NOT a
-    // credential — it's the non-sensitive status flag the admin UI's
-    // "awaiting first login" badge needs, so it stays in the response.
+    // Password (hash today, legacy plaintext for any not-yet-upgraded
+    // account): never leave this endpoint, for any tier or table — no admin
+    // UI ever needs it, and stripping it doesn't affect what an admin can
+    // edit (saveEditUser()/saveEditAdmin() only ever send a NEW password,
+    // never round-trip the existing value — see preserveMissingPasswordField
+    // in api/ops-sync.js, which restores it server-side when one isn't
+    // supplied). mustChangePassword is NOT a credential — it's the
+    // non-sensitive status flag the admin UI's "awaiting first login" badge
+    // needs, so it stays in the response.
+    //
+    // record.admins gets the identical strip — for tier==='super' this is
+    // the ONLY place it's ever removed (the member/manager branches below
+    // happen to exclude it too, but only as a side effect of allow-listing
+    // a few display fields; super-tier previously returned every admin row,
+    // password field included, completely unfiltered).
     record.users = record.users.map(u => { const { password, ...rest } = u; return rest; });
+    record.admins = record.admins.map(a => { const { password, ...rest } = a; return rest; });
 
     // Payroll/pay-rate fields (payRate, hours): member tier ONLY — every
     // admin tier (manager and super) manages the team and needs to see and

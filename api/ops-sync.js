@@ -77,6 +77,23 @@ function hashIncomingPasswords(rows) {
   return rows.map(r => (hasContent(r.password) && !isHashed(r.password)) ? { ...r, password: hashPassword(r.password) } : r);
 }
 
+// api/ops-state.js strips `password` from every user/admin record before it
+// ever reaches a browser, for every tier — so the client-side cache an
+// ordinary edit (title, phone, role, etc., no new password typed) is built
+// from NEVER has a password field to begin with, and the resulting payload
+// carries no `password` key at all. upsertRows() below does a full JSONB
+// replace of `data`, not a merge, so without this the account's stored
+// password/hash would be silently deleted by any unrelated field edit —
+// same class of bug preserveMissingPayrollFields() above exists to prevent
+// for payRate/hours, after the real incident that pattern is named for.
+// Only fills the gap when the incoming row is missing the field entirely;
+// an incoming row that DOES carry a password (a deliberate new one) always
+// wins, same "incoming wins if present" rule as the payroll helper.
+function preserveMissingPasswordField(incoming, current) {
+  if (!current || hasContent(incoming.password)) return incoming;
+  return { ...incoming, password: current.password };
+}
+
 // Manager tier may edit users (team management) but never payroll/pay-rate
 // fields — those stay Super Admin/CEO exclusive. Preserves the CURRENT value
 // for any protected field rather than silently accepting whatever the payload
@@ -730,9 +747,10 @@ export default async function handler(req, res) {
           const ids = usersIncoming.map(r => r.id);
           const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
           const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
-          const toWrite = tier === 'manager'
+          const toWrite = (tier === 'manager'
             ? usersIncoming.map(u => stripPayrollFields(u, byId.get(u.id)))
-            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)));
+            : usersIncoming.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
+          ).map(u => preserveMissingPasswordField(u, byId.get(u.id)));
           applied.users = await upsertRows(supabase, 'ops_users', hashIncomingPasswords(toWrite), warnings);
         }
       }
@@ -740,7 +758,17 @@ export default async function handler(req, res) {
       // admins/roadmap/org chart/business settings/payroll ledger: Super
       // Admin/CEO exclusive — dropped for manager tier, same as for members.
       if (tier === 'super') {
-        applied.admins = await upsertRows(supabase, 'ops_admins', hashIncomingPasswords((c.admins || []).filter(validUserOrAdmin)), warnings);
+        const adminsIncoming = (c.admins || []).filter(validUserOrAdmin);
+        let adminsToWrite = adminsIncoming;
+        if (adminsIncoming.length) {
+          // Same missing-password preservation as the users path above —
+          // an ordinary admin edit (title, level, etc., no new password
+          // typed) must never wipe the stored password/hash.
+          const { data: currentAdminRows } = await supabase.from('ops_admins').select('id, data').in('id', adminsIncoming.map(r => r.id));
+          const adminById = new Map((currentAdminRows || []).map(r => [r.id, r.data]));
+          adminsToWrite = adminsIncoming.map(a => preserveMissingPasswordField(a, adminById.get(a.id)));
+        }
+        applied.admins = await upsertRows(supabase, 'ops_admins', hashIncomingPasswords(adminsToWrite), warnings);
         applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
         applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
         applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);
