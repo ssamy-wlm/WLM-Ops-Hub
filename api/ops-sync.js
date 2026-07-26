@@ -273,10 +273,10 @@ export function checkMemberClientWrite(current, incoming, memberId, memberName) 
 // non-corrupting version of "diff old vs new": the diff only ever spans one
 // write, never a background reconciliation pass.
 let _notifSettingsCache; // per-request cache, avoids re-querying ops_settings per event
-async function getNotificationSettings(supabase) {
+export async function getNotificationSettings(supabase) {
   if (_notifSettingsCache) return _notifSettingsCache;
   const { data } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
-  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, ...(data?.data || {}) };
+  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true, ...(data?.data || {}) };
   return _notifSettingsCache;
 }
 
@@ -284,12 +284,31 @@ function genNotifId() {
   return `notif_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+// Per-admin "team activity" notification-type toggles (managedUserIds-based
+// escalation + opt-in broadcast to owner/super) — see resolveNotifyRecipients
+// below. Stored per-admin in ops_settings (key 'teamNotifPrefs_<adminId>'),
+// never a field on the ops_users/ops_admins row itself (same reasoning as
+// tourFlags — works uniformly for the primary-admin sentinel, which has no
+// row). "assigned"/"comment" default OFF (noisier events); "done"/"overdue"
+// default ON, matching the spec's requested defaults.
+export const DEFAULT_TEAM_NOTIF_PREFS = { assigned: false, done: true, comment: false, overdue: true, broadcastAll: false };
+
 // Resolves "the affected person + their admin/manager": the assignee
 // themselves, plus — in order of preference — their configured manager
 // (users[].managerId), or any admin scoped to them (admins[].assignedUsers),
 // or, if neither is configured, every super/owner admin as a fallback so a
 // notification is never silently dropped for lack of a configured manager.
-export function resolveNotifyRecipients(userId, users, admins) {
+//
+// `teamEventType` ('assigned'|'done'|'comment'|'overdue'), when passed,
+// ADDITIVELY escalates to two more kinds of recipient, on top of whatever
+// the block above already resolved: (a) any admin whose managedUserIds[]
+// (id-based — unlike the dead name-based assignedUsers escalation above)
+// includes this person, and (b) any owner/super admin who's opted into
+// teamNotifPrefs.broadcastAll — each gated by that admin's OWN
+// teamNotifPrefs[teamEventType] toggle. Existing dedup-by-id below means an
+// admin who's already a recipient via managerId/assignedUsers/fallback is
+// never double-notified just because they're also a manager or broadcaster.
+export function resolveNotifyRecipients(userId, users, admins, teamEventType) {
   // A service/task can be assigned to either a team member OR an admin —
   // detect which so the primary recipient's own kind is stored correctly
   // (personOf() below looks them up in the matching list).
@@ -305,6 +324,15 @@ export function resolveNotifyRecipients(userId, users, admins) {
     const scoped = admins.filter(a => Array.isArray(a.assignedUsers) && a.assignedUsers.includes(userId));
     if (scoped.length) scoped.forEach(a => out.push({ id: a.id, kind: 'admin' }));
     else admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  }
+  if (teamEventType) {
+    admins.forEach(a => {
+      if (a.id === userId) return;
+      const prefs = a.teamNotifPrefs || DEFAULT_TEAM_NOTIF_PREFS;
+      const isManager = Array.isArray(a.managedUserIds) && a.managedUserIds.includes(userId);
+      const isBroadcaster = (a.level === 'super' || a.level === 'owner') && prefs.broadcastAll;
+      if ((isManager || isBroadcaster) && prefs[teamEventType]) out.push({ id: a.id, kind: 'admin' });
+    });
   }
   const seen = new Set();
   return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
@@ -461,21 +489,64 @@ export function collectServiceUpdateEvents(client, curClient, incClient) {
   return events;
 }
 
+// Manager/team notifications: "marked done" — a service's lastDone
+// transitioning to a new value (completed this cycle), or a sub-item's done
+// flag flipping from falsy to true. Same current-vs-incoming, same-request
+// diff pattern as every collector above — never a load-time scan.
+export function collectServiceDoneEvents(client, curClient, incClient) {
+  const events = [];
+  const scanServices = (curList, incList, locationName) => {
+    const curById = new Map((curList || []).filter(s => s?.id).map(s => [s.id, s]));
+    (incList || []).forEach(s => {
+      if (!s?.id) return;
+      const prev = curById.get(s.id);
+      if (s.lastDone && s.lastDone !== prev?.lastDone) {
+        events.push({
+          serviceId: s.id, serviceName: s.name, locationName,
+          assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
+        });
+      }
+      if (Array.isArray(s.subitems)) {
+        const prevSubById = new Map((prev?.subitems || []).filter(si => si?.id).map(si => [si.id, si]));
+        s.subitems.forEach(si => {
+          if (!si?.id || !si.done || prevSubById.get(si.id)?.done) return;
+          events.push({
+            serviceId: s.id, serviceName: s.name, locationName, subitemId: si.id, subitemText: si.text,
+            assigneeId: si.assigneeId || s.assigneeId, clientId: client.id, clientName: client.name,
+          });
+        });
+      }
+    });
+  };
+  scanServices(curClient.services, incClient.services, null);
+  const curLocs3 = curClient.locations || [], incLocs3 = incClient.locations || [];
+  incLocs3.forEach(loc => {
+    const curLoc = curLocs3.find(l => l.id === loc.id);
+    scanServices(curLoc?.services, loc.services, loc.name);
+  });
+  return events;
+}
+
 let _directoryCache; // per-request cache — users/admins are fetched at most once per request
 async function getDirectory(supabase) {
   if (_directoryCache) return _directoryCache;
-  const [{ data: usersData }, { data: adminsData }] = await Promise.all([
+  const [{ data: usersData }, { data: adminsData }, { data: teamPrefRows }] = await Promise.all([
     supabase.from('ops_users').select('id, data'),
     supabase.from('ops_admins').select('id, data'),
+    supabase.from('ops_settings').select('key, data').like('key', 'teamNotifPrefs_%'),
   ]);
+  const prefsByAdminId = new Map((teamPrefRows || []).map(r => [r.key.slice('teamNotifPrefs_'.length), r.data]));
   _directoryCache = {
     users: (usersData || []).map(r => ({ id: r.id, ...r.data })),
-    admins: (adminsData || []).map(r => ({ id: r.id, ...r.data })),
+    admins: (adminsData || []).map(r => ({
+      id: r.id, ...r.data,
+      teamNotifPrefs: { ...DEFAULT_TEAM_NOTIF_PREFS, ...(prefsByAdminId.get(r.id) || {}) },
+    })),
   };
   return _directoryCache;
 }
 
-function personOf(id, kind, { users, admins }) {
+export function personOf(id, kind, { users, admins }) {
   return kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
 }
 
@@ -484,7 +555,7 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
   const { users, admins } = await getDirectory(supabase);
   const rows = [];
   events.forEach(ev => {
-    resolveNotifyRecipients(ev.assigneeId, users, admins).forEach(r => {
+    resolveNotifyRecipients(ev.assigneeId, users, admins, 'assigned').forEach(r => {
       const person = personOf(r.id, r.kind, { users, admins });
       const isTask = !!ev.taskId;
       const isSubitem = !!ev.subitemId;
@@ -518,7 +589,7 @@ async function fireServiceUpdateNotifications(supabase, events, warnings) {
   const rows = [];
   events.forEach(ev => {
     if (!ev.assigneeId) return;
-    resolveNotifyRecipients(ev.assigneeId, users, admins)
+    resolveNotifyRecipients(ev.assigneeId, users, admins, 'comment')
       .filter(r => r.id !== ev.authorId)
       .forEach(r => {
         const person = personOf(r.id, r.kind, { users, admins });
@@ -529,6 +600,36 @@ async function fireServiceUpdateNotifications(supabase, events, warnings) {
           body: `${ev.authorName || 'Someone'}${ev.locationName ? ' (' + ev.locationName + ')' : ''} — ${ev.clientName}: ${String(ev.updateText || '').slice(0, 140)}`,
           link: '',
           context: { clientId: ev.clientId, serviceId: ev.serviceId },
+        });
+      });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// Manager/team notifications: fires when a service or sub-item is marked
+// done. Manager-facing only — the person who marked it done already knows,
+// so (unlike fireAssignmentNotifications) the assignee themselves is always
+// filtered out here, same way fireServiceUpdateNotifications filters the
+// comment's own author.
+async function fireServiceDoneNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    if (!ev.assigneeId) return;
+    resolveNotifyRecipients(ev.assigneeId, users, admins, 'done')
+      .filter(r => r.id !== ev.assigneeId)
+      .forEach(r => {
+        const person = personOf(r.id, r.kind, { users, admins });
+        const title = ev.subitemId ? `Sub-item marked done: ${ev.subitemText}` : `Service marked done: ${ev.serviceName}`;
+        const body = ev.subitemId
+          ? `${ev.serviceName} — ${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`
+          : `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`;
+        rows.push({
+          type: 'serviceDone', recipientId: r.id, recipientKind: r.kind,
+          recipientName: person?.name || '', recipientEmail: person?.email || '',
+          title, body, link: '',
+          context: { clientId: ev.clientId, serviceId: ev.serviceId, subitemId: ev.subitemId || null },
         });
       });
   });
@@ -572,7 +673,7 @@ async function fireMessageNotification(supabase, message, warnings) {
   }], warnings);
 }
 
-async function insertNotifications(supabase, rows, warnings) {
+export async function insertNotifications(supabase, rows, warnings) {
   if (!rows.length) return;
   const payload = rows.map(r => ({ id: genNotifId(), data: { ...r, read: false, createdAt: new Date().toISOString() } }));
   const { error } = await supabase.from('ops_notifications').insert(payload);
@@ -734,6 +835,19 @@ export default async function handler(req, res) {
       const key = 'tourFlags_' + session.id;
       const { error } = await supabase.from('ops_settings').upsert({ key, data: c.tourFlags }, { onConflict: 'key' });
       if (error) warnings.push(`tourFlags: ${error.message}`); else applied.tourFlags = 1;
+    }
+
+    // ── team-activity notification prefs: same self-scoped-key carve-out as
+    // tourFlags above, admin-only (only admins manage a team), keyed by the
+    // caller's own ADMIN identity — session.adminId for a dual-role account,
+    // falling back to session.id (which IS the admin id for a plain admin
+    // session), or the literal 'primary-admin' sentinel for Sarah. This is
+    // what resolveNotifyRecipients() reads (via getDirectory) to decide
+    // whether THIS admin wants assigned/done/comment/overdue team events. ──
+    if (isAdmin && c.teamNotifPrefs && typeof c.teamNotifPrefs === 'object') {
+      const key = 'teamNotifPrefs_' + (session.adminId || session.id);
+      const { error } = await supabase.from('ops_settings').upsert({ key, data: c.teamNotifPrefs }, { onConflict: 'key' });
+      if (error) warnings.push(`teamNotifPrefs: ${error.message}`); else applied.teamNotifPrefs = 1;
     }
 
     // ── session kill-switch: Super Admin/CEO only. Two scopes:
@@ -947,6 +1061,7 @@ export default async function handler(req, res) {
       const notifSettings = await getNotificationSettings(supabase);
       const assignmentEvents = [];
       const serviceUpdateEvents = [];
+      const doneEvents = [];
 
       if (isAdmin) {
         applied.clients = await upsertRows(supabase, 'ops_clients', incoming, warnings, true);
@@ -964,6 +1079,13 @@ export default async function handler(req, res) {
             const cur = byId.get(inc.id);
             if (!cur) continue;
             serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
+          }
+        }
+        if (notifSettings.done) {
+          for (const inc of incoming) {
+            const cur = byId.get(inc.id);
+            if (!cur) continue;
+            doneEvents.push(...collectServiceDoneEvents(inc, cur.data, inc));
           }
         }
       } else {
@@ -992,12 +1114,16 @@ export default async function handler(req, res) {
           if (notifSettings.serviceUpdate) {
             serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
           }
+          if (notifSettings.done) {
+            doneEvents.push(...collectServiceDoneEvents(inc, cur.data, inc));
+          }
         }
         applied.clients = n;
       }
 
       await fireAssignmentNotifications(supabase, assignmentEvents, warnings);
       await fireServiceUpdateNotifications(supabase, serviceUpdateEvents, warnings);
+      await fireServiceDoneNotifications(supabase, doneEvents, warnings);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);

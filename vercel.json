@@ -9,5 +9,11 @@
       "src": "/user",
       "dest": "/user.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-overdue-check",
+      "schedule": "0 13 * * *"
+    }
   ]
 }
