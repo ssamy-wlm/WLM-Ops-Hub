@@ -2598,9 +2598,12 @@ function loadMyAssignments(){
   // to already show their own steps inline above, via the "your steps"
   // hint). Never affects myTrackerSvcs/projCount/stats above — this is a
   // separate, read-mostly list, same as client.html's copy of this feature.
+  // Scans franchise/location services too (_allServicesForClient, see #161)
+  // — a sub-item assigned on a franchise service the person isn't otherwise
+  // assigned to was invisible here until this fix.
   const myStepEntries=[];
   clients.forEach(c=>{
-    (c.services||[]).forEach(s=>{
+    _allServicesForClient(c).forEach(s=>{
       if(_svcAssignedToMe(s,myId,myName)) return; // already shown above with its own hint
       (s.subitems||[]).forEach(si=>{
         if(_isMySubitem(si,myId,myName)) myStepEntries.push({ c, s, si });
@@ -2615,7 +2618,7 @@ function loadMyAssignments(){
         <div style="display:flex;align-items:center;gap:9px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
           <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked,'${c.id}','${s.id}')" style="flex-shrink:0;width:15px;height:15px;">
           <span style="flex:1;font-size:11px;font-weight:600;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</span>
-          <span style="font-size:9px;color:var(--text-light);">${c.name} · ${s.name}</span>
+          <span style="font-size:9px;color:var(--text-light);">${c.name} · ${s.name}${s._locationName?` (Franchise · ${s._locationName})`:''}</span>
         </div>`).join('')}
     </div>`;
   }
