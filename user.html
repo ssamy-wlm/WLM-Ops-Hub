@@ -377,9 +377,11 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;}
 .tour-overlay{position:fixed;inset:0;z-index:9600;pointer-events:none;}
 .tour-spotlight{position:fixed;border-radius:10px;box-shadow:0 0 0 4000px rgba(15,23,42,.55);pointer-events:none;transition:top .2s,left .2s,width .2s,height .2s;}
-.tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:290px;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
+.tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
+.tour-learnmore-toggle{display:inline-block;border:none;background:none;padding:0;margin-bottom:10px;color:var(--accent,#2E5DA6);font-size:12px;font-weight:600;cursor:pointer;}
+.tour-popover-learnmore{font-size:12.5px;line-height:1.5;color:var(--text-mid);background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:12px;}
 .tour-popover button{pointer-events:auto;}
-.tour-popover-text{font-size:13px;line-height:1.5;color:var(--text-dark);margin-bottom:14px;}
+.tour-popover-text{font-size:13px;line-height:1.5;color:var(--text-dark);margin-bottom:10px;}
 .tour-popover-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .tour-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--text);}
 .tour-btn-skip{border:none;background:none;color:var(--text-light);padding:6px 4px;}
@@ -1304,22 +1306,53 @@ function _dismissTip(id){
   document.querySelectorAll(`.tip-chip[data-tip-id="${id}"]`).forEach(el=>el.remove());
 }
 
+// Help content — verbatim from help-content-DRAFT.md v2 (owner-approved
+// copy; never paraphrased here). Single source for both the tour below and
+// the "?" help panel (a later PR) — user.html's own copy (zero-shared-code
+// rule, not imported from index.html/client.html). Several employee screens
+// only have a short Tip in the approved doc, no Learn More — those entries
+// carry learnMore:null, which hides the toggle entirely (see _renderTourStep).
+const HELP_CONTENT = {
+  mywork: { label: 'My Work', sel: '#nav-mywork',
+    tip: "Everything assigned to you — services and individual steps.",
+    learnMore: "Your daily to-do. Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list." },
+  tracker: { label: 'Tracker', sel: '#nav-tracker',
+    tip: "See every client your team manages (view only for you).",
+    learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
+  reports: { label: 'Progress Reports', sel: '.nav-item[onclick*="\'reports\'"]',
+    tip: "See how your work is tracking over time.", learnMore: null },
+  serviceCatalog: { label: 'Service Catalog', sel: '.nav-item[onclick*="recurring-catalog"]',
+    tip: "Reference list of all services your team offers.", learnMore: null },
+  companyOverview: { label: 'Company Overview', sel: '.nav-item[onclick*="\'companyOverview\'"]',
+    tip: "The company org chart — who's who and who reports to whom.", learnMore: null },
+  downtimeTasks: { label: 'Downtime Tasks', sel: '.nav-item[onclick*="\'downtimeTasks\'"]',
+    tip: "Things to pick up when you have spare capacity.", learnMore: null },
+  goals: { label: 'Goals', sel: '.nav-item[onclick*="\'goals\'"]',
+    tip: "Your objectives and where you stand on them.", learnMore: null },
+  credentials: { label: 'Credentials', sel: '.nav-item[onclick*="\'credentials\'"]',
+    tip: "Securely stored logins you need for client work.", learnMore: null },
+  messages: { label: 'Messages', sel: '#nav-messages',
+    tip: "Direct notes tagged to a client or bundle.", learnMore: null },
+  timeoff: { label: 'Time Off', sel: '.nav-item[onclick*="\'timeoff\'"]',
+    tip: "Request time off and see your balance.", learnMore: null },
+};
 // First-login guided tour — sequential spotlight/popover, employee portal.
-// The mode-switch step is included only for a linked dual-role account —
-// same signal (_dualRoleAdminId, set by _updateModeSwitcherUI) that shows/
-// hides #modeSwitchBtn itself, so a single-role member never sees it. Can't
-// rely on the existing "element not in DOM" skip below for this one, since
-// the button is always present in the DOM, just hidden via display:none —
-// computed once at tour start instead (see startTour()), so it stays stable
-// across Back/Next within the same tour run.
+// Sidebar order per the build spec. The mode-switch step is included only
+// for a linked dual-role account — same signal (_dualRoleAdminId, set by
+// _updateModeSwitcherUI) that shows/hides #modeSwitchBtn itself, so a
+// single-role member never sees it. Computed once at tour start (see
+// startTour()) rather than relying on the visibility check below, so the
+// list stays stable across Back/Next within the same tour run — but the
+// visibility check still matters for every OTHER step here, since none of
+// these nav items are removed from the DOM when a section isn't relevant,
+// only hidden.
 const EMPLOYEE_TOUR_STEPS_BASE = [
-  { sel: '#nav-mywork', text: "My Work lists the services and steps assigned to you." },
-  { sel: '#nav-tracker', text: "The Tracker shows every client your team manages (read view)." },
-  { sel: '.nav-item[onclick*="\'timeoff\'"]', text: "Request time off and see your balance here." },
-  { sel: '#nav-messages', text: "Messages — direct notes tagged to a client or bundle." },
+  HELP_CONTENT.mywork, HELP_CONTENT.tracker, HELP_CONTENT.reports, HELP_CONTENT.serviceCatalog,
+  HELP_CONTENT.companyOverview, HELP_CONTENT.downtimeTasks, HELP_CONTENT.goals, HELP_CONTENT.credentials,
+  HELP_CONTENT.messages, HELP_CONTENT.timeoff,
 ];
-const EMPLOYEE_TOUR_STEP_MODE_SWITCH = { sel: '#modeSwitchBtn', text: "Switch between your Employee and Manager views here." };
-const EMPLOYEE_TOUR_STEP_BELL = { sel: '#notifBtn', text: "This bell lets you know when something needs you — a new message, an assignment, a decision." };
+const EMPLOYEE_TOUR_STEP_MODE_SWITCH = { label: 'Mode switcher', sel: '#modeSwitchBtn', tip: "Switch between your Employee view (your own work) and Manager view (managing clients).", learnMore: null };
+const EMPLOYEE_TOUR_STEP_BELL = { label: 'Notifications', sel: '#notifBtn', tip: "This bell lets you know when something needs you — a new message, an assignment, a decision.", learnMore: null };
 function _employeeTourSteps(){
   const steps = [...EMPLOYEE_TOUR_STEPS_BASE];
   if(_dualRoleAdminId) steps.push(EMPLOYEE_TOUR_STEP_MODE_SWITCH);
@@ -1333,22 +1366,28 @@ function startTour(){
   _tourSteps = _employeeTourSteps();
   _renderTourStep();
 }
+// An element hidden via display:none stays in the DOM — querySelector()
+// still finds it — so "not found" alone isn't enough to skip a step whose
+// nav item isn't relevant right now; check actual visibility too.
+function _isVisibleForTour(el){ return !!el && el.offsetParent !== null; }
 function _renderTourStep(){
   document.getElementById('tour-overlay')?.remove();
   if(_tourIndex >= _tourSteps.length){ _finishTour(); return; }
   const step = _tourSteps[_tourIndex];
   const el = document.querySelector(step.sel);
-  if(!el){ _tourIndex++; _renderTourStep(); return; } // element not in DOM this session — skip, don't block the rest
+  if(!_isVisibleForTour(el)){ _tourIndex++; _renderTourStep(); return; } // not visible right now — skip it, don't block the rest
   const rect = el.getBoundingClientRect();
   const overlay = document.createElement('div');
   overlay.id = 'tour-overlay';
   overlay.className = 'tour-overlay';
   const popTop = Math.min(rect.bottom+14, window.innerHeight-200);
-  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-306);
+  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-336);
   overlay.innerHTML = `
     <div class="tour-spotlight" style="top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;"></div>
     <div class="tour-popover" style="top:${popTop}px;left:${popLeft}px;">
-      <div class="tour-popover-text">${step.text}</div>
+      <div class="tour-popover-text">${step.tip}</div>
+      ${step.learnMore ? `<button type="button" class="tour-learnmore-toggle" onclick="_toggleTourLearnMore(this)">Learn more ▾</button>
+      <div class="tour-popover-learnmore" style="display:none;">${step.learnMore}</div>` : ''}
       <div class="tour-popover-actions">
         <button class="tour-btn tour-btn-skip" onclick="skipTour()">Skip tour</button>
         <div style="display:flex;gap:6px;">
@@ -1359,6 +1398,12 @@ function _renderTourStep(){
       <div class="tour-progress">${_tourIndex+1} / ${_tourSteps.length}</div>
     </div>`;
   document.body.appendChild(overlay);
+}
+function _toggleTourLearnMore(btn){
+  const box = btn.nextElementSibling;
+  const isOpen = box.style.display !== 'none';
+  box.style.display = isOpen ? 'none' : 'block';
+  btn.textContent = isOpen ? 'Learn more ▾' : 'Show less ▴';
 }
 function _tourNext(){ _tourIndex++; _renderTourStep(); }
 function _tourBack(){ if(_tourIndex>0){ _tourIndex--; _renderTourStep(); } }
