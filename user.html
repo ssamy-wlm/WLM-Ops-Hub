@@ -1305,22 +1305,38 @@ function _dismissTip(id){
 }
 
 // First-login guided tour — sequential spotlight/popover, employee portal.
-const EMPLOYEE_TOUR_STEPS = [
+// The mode-switch step is included only for a linked dual-role account —
+// same signal (_dualRoleAdminId, set by _updateModeSwitcherUI) that shows/
+// hides #modeSwitchBtn itself, so a single-role member never sees it. Can't
+// rely on the existing "element not in DOM" skip below for this one, since
+// the button is always present in the DOM, just hidden via display:none —
+// computed once at tour start instead (see startTour()), so it stays stable
+// across Back/Next within the same tour run.
+const EMPLOYEE_TOUR_STEPS_BASE = [
   { sel: '#nav-mywork', text: "My Work lists the services and steps assigned to you." },
   { sel: '#nav-tracker', text: "The Tracker shows every client your team manages (read view)." },
   { sel: '.nav-item[onclick*="\'timeoff\'"]', text: "Request time off and see your balance here." },
   { sel: '#nav-messages', text: "Messages — direct notes tagged to a client or bundle." },
-  { sel: '#notifBtn', text: "This bell lets you know when something needs you — a new message, an assignment, a decision." },
 ];
+const EMPLOYEE_TOUR_STEP_MODE_SWITCH = { sel: '#modeSwitchBtn', text: "Switch between your Employee and Manager views here." };
+const EMPLOYEE_TOUR_STEP_BELL = { sel: '#notifBtn', text: "This bell lets you know when something needs you — a new message, an assignment, a decision." };
+function _employeeTourSteps(){
+  const steps = [...EMPLOYEE_TOUR_STEPS_BASE];
+  if(_dualRoleAdminId) steps.push(EMPLOYEE_TOUR_STEP_MODE_SWITCH);
+  steps.push(EMPLOYEE_TOUR_STEP_BELL);
+  return steps;
+}
 let _tourIndex = 0;
+let _tourSteps = EMPLOYEE_TOUR_STEPS_BASE;
 function startTour(){
   _tourIndex = 0;
+  _tourSteps = _employeeTourSteps();
   _renderTourStep();
 }
 function _renderTourStep(){
   document.getElementById('tour-overlay')?.remove();
-  if(_tourIndex >= EMPLOYEE_TOUR_STEPS.length){ _finishTour(); return; }
-  const step = EMPLOYEE_TOUR_STEPS[_tourIndex];
+  if(_tourIndex >= _tourSteps.length){ _finishTour(); return; }
+  const step = _tourSteps[_tourIndex];
   const el = document.querySelector(step.sel);
   if(!el){ _tourIndex++; _renderTourStep(); return; } // element not in DOM this session — skip, don't block the rest
   const rect = el.getBoundingClientRect();
@@ -1337,10 +1353,10 @@ function _renderTourStep(){
         <button class="tour-btn tour-btn-skip" onclick="skipTour()">Skip tour</button>
         <div style="display:flex;gap:6px;">
           ${_tourIndex>0?'<button class="tour-btn" onclick="_tourBack()">Back</button>':''}
-          <button class="tour-btn tour-btn-primary" onclick="_tourNext()">${_tourIndex===EMPLOYEE_TOUR_STEPS.length-1?'Finish':'Next'}</button>
+          <button class="tour-btn tour-btn-primary" onclick="_tourNext()">${_tourIndex===_tourSteps.length-1?'Finish':'Next'}</button>
         </div>
       </div>
-      <div class="tour-progress">${_tourIndex+1} / ${EMPLOYEE_TOUR_STEPS.length}</div>
+      <div class="tour-progress">${_tourIndex+1} / ${_tourSteps.length}</div>
     </div>`;
   document.body.appendChild(overlay);
 }
