@@ -449,9 +449,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 .tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;}
 .tour-overlay{position:fixed;inset:0;z-index:9600;pointer-events:none;}
 .tour-spotlight{position:fixed;border-radius:10px;box-shadow:0 0 0 4000px rgba(15,23,42,.55);pointer-events:none;transition:top .2s,left .2s,width .2s,height .2s;}
-.tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:290px;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
+.tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
 .tour-popover button{pointer-events:auto;}
-.tour-popover-text{font-size:13px;line-height:1.5;color:var(--text-dark);margin-bottom:14px;}
+.tour-popover-text{font-size:13px;line-height:1.5;color:var(--text-dark);margin-bottom:10px;}
+.tour-learnmore-toggle{display:inline-block;border:none;background:none;padding:0;margin-bottom:10px;color:var(--accent,#2E5DA6);font-size:12px;font-weight:600;cursor:pointer;}
+.tour-popover-learnmore{font-size:12.5px;line-height:1.5;color:var(--text-mid);background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:12px;}
 .tour-popover-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .tour-btn{border:1px solid var(--border);background:#fff;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer;color:var(--text);}
 .tour-btn-skip{border:none;background:none;color:var(--text-light);padding:6px 4px;}
@@ -4650,39 +4652,97 @@ function _dismissTip(id){
   document.querySelectorAll(`.tip-chip[data-tip-id="${id}"]`).forEach(el=>el.remove());
 }
 
-// First-login guided tour — sequential spotlight/popover, admin portal.
-// "Clients" as a separate nav item no longer exists (merged into the
-// Tracker, see CLAUDE.md) — the spec's "Overview → Clients → Tracker" step
-// list is collapsed to "Overview → Tracker" here to match current nav.
+// Help content — verbatim from help-content-DRAFT.md v2 (owner-approved
+// copy; never paraphrased here). Single source for both the tour below and
+// the "?" help panel (a later PR) — one object per portal, per the zero-
+// shared-code rule (this is index.html's own copy, not shared with
+// user.html/client.html). `archive` has no tour step (nested under the
+// Users dropdown, not a sidebar item of its own — see the Users entry's
+// own text, which is used as-is) but stays here for the help panel to
+// surface when that screen is open. The notification bell has no entry in
+// the approved doc at all, so its tour step (below) keeps its original
+// single-line caption with no Learn More.
+const HELP_CONTENT = {
+  overview: { label: 'Overview', sel: '.admin-nav-item[onclick*="\'overview\'"]',
+    tip: "Your daily snapshot — what's due, what's overdue, and how clients are tracking.",
+    learnMore: "Start your day here. It surfaces services needing attention and overall client health so you know where to focus before diving into the Tracker." },
+  tracker: { label: 'Tracker', sel: '.admin-nav-item[onclick*="\'tracker\'"]',
+    tip: "Every client, service, and bundle your team manages — this is the heart of the app.",
+    learnMore: "Click a client to open its card. Use the four tabs: Overview (health + alerts), Bundles (services grouped by package), Services (the full editable list), and Brand & Notes. Filter or search to find clients fast; save a filter for one-click reuse. Add a client with +New Client; add work with +Add Service or +Add Bundle." },
+  clientHealth: { label: 'Client Health', sel: '.admin-nav-item[onclick*="\'clientHealth\'"]',
+    tip: "A dashboard of every client's service health at a glance.",
+    learnMore: "Its own top-level screen (between Tracker and Workload). Each client shows how many services are on track / due soon / overdue, so you can scan the whole book of business in one view and click through to any client that needs attention. Different from a single client's Overview tab — this is all clients at once." },
+  workload: { label: 'Workload', sel: '.admin-nav-item[onclick*="\'workload\'"]',
+    tip: "See who's carrying what, so you can spot overload at a glance.",
+    learnMore: "Each person shows their active service count — total, due soon, overdue. Sorted busiest-first. Click a person to jump to the Tracker filtered to just their assignments — handy before handing out new work." },
+  myTeamsWork: { label: "My Team's Work", sel: '.admin-nav-item[onclick*="\'myTeamsWork\'"]',
+    tip: "For admins who manage people — see your direct reports' workload in one place.",
+    learnMore: "Shows the services assigned to the people you manage, with its own notification-preferences panel so you can tune what you're alerted about. Visible to any admin who manages team members." },
+  users: { label: 'Users', sel: '#admin-drop-users',
+    tip: "Manage your team's accounts, roles, and pay rates.",
+    learnMore: "Add or edit team members, set their employment type and pay rate, and grant a manager role when someone steps up. Pay rate is visible to Admin-level and Super Admin — Account, Production, and Creative Managers can't see it. Use 'Grant Manager Role' to give someone manager access — they keep one login and switch between Employee and Manager views." },
+  archive: { label: 'Archive', sel: '.admin-nav-item[onclick*="\'archive\'"]',
+    tip: "Where archived team members go — removed from the active roster but not deleted.",
+    learnMore: "Archiving a user takes them off the live lists while keeping their record and history intact. Nothing is ever hard-deleted." },
+  timeoff: { label: 'Time off', sel: '.admin-nav-item[onclick*="\'timeoff\'"]',
+    tip: "Review time-off requests and track balances.",
+    learnMore: "Approve or decline requests; the ledger keeps a running record of each person's used and remaining days." },
+  payroll: { label: 'Payroll', sel: '.admin-nav-item[onclick*="\'payroll\'"]',
+    tip: "Calculates hours and pay for your whole team.",
+    learnMore: "Pulls logged hours and pay rates into a period total. Admin-level and Super Admin have full access; it's hidden specifically from Account, Production, and Creative Managers. (Production Manager still keeps the Time off ledger.)" },
+  summaries: { label: 'Summaries', sel: '.admin-nav-item[onclick*="\'summaries\'"]',
+    tip: "Reports on tracker activity over a period or this month.",
+    learnMore: "Use these for client reporting and to see what got done in a date range." },
+  livefeed: { label: 'Live feed', sel: '.admin-nav-item[onclick*="\'livefeed\'"]',
+    tip: "A running log of team activity across the app.",
+    learnMore: "See saves, assignments, and updates as they happen. Sensitive payroll details are hidden from anyone who shouldn't see them." },
+  library: { label: 'Library', sel: '.admin-nav-item[onclick*="wlmlibrary"]',
+    tip: "Your SOPs and how-to docs, in one place.",
+    learnMore: "Link out to the WebLight Media Library for processes and standards." },
+  messages: { label: 'Messages', sel: '#admin-nav-messages',
+    tip: "Direct notes tagged to a client or bundle.",
+    learnMore: "Keep client-specific conversations attached to the right record instead of scattered in email." },
+  bizSettings: { label: 'Business setup', sel: '.admin-nav-item[onclick*="\'bizSettings\'"]',
+    tip: "Org-wide settings: the org chart, service catalog, and error logs.",
+    learnMore: "Edit the company structure chart, manage the Service Catalog (the source of truth for bundles/services), check pending-migration and error logs, and replay the tour." },
+};
+// Sidebar order, per the build spec — 'archive' intentionally excluded (see
+// the HELP_CONTENT comment above). The bell keeps its original one-liner,
+// with no Learn More, since it has no entry in the approved content doc.
 const ADMIN_TOUR_STEPS = [
-  { sel: '.admin-nav-item[onclick*="\'overview\'"]', text: "This is your Overview — a quick snapshot of what needs attention today." },
-  { sel: '.admin-nav-item[onclick*="\'tracker\'"]', text: "The Tracker holds every client, service, and bundle your team manages." },
-  { sel: '.admin-nav-item[onclick*="\'workload\'"]', text: "Workload shows who's carrying what, so you can spot overload at a glance." },
-  { sel: '.admin-nav-item[onclick*="\'payroll\'"]', text: "Payroll calculates hours and pay for your whole team." },
-  { sel: '.admin-nav-item[onclick*="\'bizSettings\'"]', text: "Business Setup is where org-wide settings, the org chart, and error logs live." },
-  { sel: '#admin-notif-btn', text: "This bell lets you know when something needs you — a message, a time-off request, a new assignment." },
+  HELP_CONTENT.overview, HELP_CONTENT.tracker, HELP_CONTENT.clientHealth, HELP_CONTENT.workload,
+  HELP_CONTENT.myTeamsWork, HELP_CONTENT.users, HELP_CONTENT.timeoff, HELP_CONTENT.payroll,
+  HELP_CONTENT.summaries, HELP_CONTENT.livefeed, HELP_CONTENT.library, HELP_CONTENT.messages,
+  HELP_CONTENT.bizSettings,
+  { label: 'Notifications', sel: '#admin-notif-btn', tip: "This bell lets you know when something needs you — a message, a time-off request, a new assignment.", learnMore: null },
 ];
 let _tourIndex = 0;
 function startTour(){
   _tourIndex = 0;
   _renderTourStep();
 }
+// An element hidden via applyAdminRoleRestrictions() (style.display='none')
+// stays in the DOM — querySelector() still finds it — so "not found" alone
+// isn't enough to skip a role-gated step; check actual visibility too.
+function _isVisibleForTour(el){ return !!el && el.offsetParent !== null; }
 function _renderTourStep(){
   document.getElementById('tour-overlay')?.remove();
   if(_tourIndex >= ADMIN_TOUR_STEPS.length){ _finishTour(); return; }
   const step = ADMIN_TOUR_STEPS[_tourIndex];
   const el = document.querySelector(step.sel);
-  if(!el){ _tourIndex++; _renderTourStep(); return; } // element not in DOM for this session — skip it, don't block the rest
+  if(!_isVisibleForTour(el)){ _tourIndex++; _renderTourStep(); return; } // gated or not on this page — skip it, don't block the rest
   const rect = el.getBoundingClientRect();
   const overlay = document.createElement('div');
   overlay.id = 'tour-overlay';
   overlay.className = 'tour-overlay';
   const popTop = Math.min(rect.bottom+14, window.innerHeight-200);
-  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-306);
+  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-336);
   overlay.innerHTML = `
     <div class="tour-spotlight" style="top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;"></div>
     <div class="tour-popover" style="top:${popTop}px;left:${popLeft}px;">
-      <div class="tour-popover-text">${step.text}</div>
+      <div class="tour-popover-text">${step.tip}</div>
+      ${step.learnMore ? `<button type="button" class="tour-learnmore-toggle" onclick="_toggleTourLearnMore(this)">Learn more ▾</button>
+      <div class="tour-popover-learnmore" style="display:none;">${step.learnMore}</div>` : ''}
       <div class="tour-popover-actions">
         <button class="tour-btn tour-btn-skip" onclick="skipTour()">Skip tour</button>
         <div style="display:flex;gap:6px;">
@@ -4693,6 +4753,12 @@ function _renderTourStep(){
       <div class="tour-progress">${_tourIndex+1} / ${ADMIN_TOUR_STEPS.length}</div>
     </div>`;
   document.body.appendChild(overlay);
+}
+function _toggleTourLearnMore(btn){
+  const box = btn.nextElementSibling;
+  const isOpen = box.style.display !== 'none';
+  box.style.display = isOpen ? 'none' : 'block';
+  btn.textContent = isOpen ? 'Learn more ▾' : 'Show less ▴';
 }
 function _tourNext(){ _tourIndex++; _renderTourStep(); }
 function _tourBack(){ if(_tourIndex>0){ _tourIndex--; _renderTourStep(); } }
