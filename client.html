@@ -462,6 +462,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           </div>
           <div class="admin-only" style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
             <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
+            <button class="btn btn-outline btn-sm" id="quick-add-client-btn" style="display:none;" onclick="openQuickAddClientModal()" title="Create a client with all its services in one step">⚡ Quick Add Client</button>
           </div>
         </div>
         <!-- Row 2: filters — members see only Service (a simplified, single-filter
@@ -755,6 +756,55 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   </div>
 </div>
 
+<!-- QUICK ADD CLIENT (Super Admin/CEO only) — builds a client + all its
+     services + mirrored projects in one atomic step, reusing the same
+     record-construction logic as + New Client / + Add Service so the two
+     paths can never drift (see _buildServiceRecord()/syncServicesToProjects()). -->
+<div id="quickAddClientModal" class="modal-overlay">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div><div class="modal-title" id="qac-modal-title">⚡ Quick Add Client</div><div class="modal-sub" id="qac-modal-sub">Client + all its services in one step — review the preview before creating</div></div>
+      <button class="modal-close" onclick="closeModal('quickAddClientModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <button class="btn btn-sm" id="qac-mode-new-btn" onclick="setQuickAddMode('new')">⚡ New Client</button>
+        <button class="btn btn-outline btn-sm" id="qac-mode-existing-btn" onclick="setQuickAddMode('existing')">➕ Add Services to Existing Client</button>
+      </div>
+
+      <div id="qac-new-client-fields">
+        <div class="section-divider" style="margin-top:0;padding-top:0;border-top:none;">Client</div>
+        <div class="form-grid">
+          <div class="form-group full"><label class="form-label">Business / Company Name *</label><input class="form-input" id="qac-name" placeholder="e.g. Shapiro Auctions" oninput="renderQuickAddPreview()"></div>
+          <div class="form-group"><label class="form-label">Contact Name <span style="font-weight:400;color:var(--text-light);">(optional)</span></label><input class="form-input" id="qac-contact" placeholder="Full name"></div>
+          <div class="form-group full"><label class="form-label">Notes <span style="font-weight:400;color:var(--text-light);">(optional)</span></label><textarea class="form-input" id="qac-notes" rows="2" style="resize:vertical;" placeholder="Account notes…"></textarea></div>
+        </div>
+      </div>
+
+      <div id="qac-existing-client-fields" style="display:none;">
+        <div class="section-divider" style="margin-top:0;padding-top:0;border-top:none;">Existing Client</div>
+        <div class="form-grid">
+          <div class="form-group full"><label class="form-label">Client *</label>
+            <input class="form-input" id="qac-existing-search" list="qac-existing-client-names" placeholder="Search by name…" oninput="renderQuickAddPreview()">
+            <datalist id="qac-existing-client-names"></datalist>
+          </div>
+          <div class="form-group full"><label class="form-label">Append to Notes <span style="font-weight:400;color:var(--text-light);">(optional — added after existing notes, never overwrites them)</span></label><textarea class="form-input" id="qac-append-notes" rows="2" style="resize:vertical;" placeholder="Additional account notes to append…"></textarea></div>
+        </div>
+      </div>
+
+      <div class="section-divider">Services <span id="qac-services-mode-label" style="font-weight:400;color:var(--text-light);"></span></div>
+      <div id="qac-service-rows"></div>
+      <button class="btn btn-outline btn-sm" style="margin-top:6px;" onclick="addQuickAddServiceRow()">+ Add Service Row</button>
+
+      <div class="section-divider">Preview</div>
+      <div id="qac-preview" style="font-size:12px;background:var(--bg);border-radius:10px;padding:12px 14px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('quickAddClientModal')">Cancel</button>
+      <button class="btn btn-primary" id="qac-confirm-btn" onclick="confirmQuickAdd()" disabled>✅ Confirm</button>
+    </div>
+  </div>
+</div>
 
 <!-- ADD / EDIT BUNDLE -->
 <div id="projectModal" class="modal-overlay">
@@ -1343,6 +1393,12 @@ function _applyViewerTier(tier){
   // Hide admin-only UI for non-admins, and member-only UI for admins (inverse)
   document.querySelectorAll('.admin-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'':'none'; });
   document.querySelectorAll('.member-only').forEach(el=>{ el.style.display = SESSION.isAdmin?'none':''; });
+  // Quick Add Client: Super Admin/CEO only, stricter than the plain
+  // admin-only gate above (a manager-tier admin can already create clients
+  // one at a time via + New Client, but this bulk-construction tool is
+  // scoped narrower on purpose).
+  const quickAddBtn=_el('quick-add-client-btn');
+  if(quickAddBtn) quickAddBtn.style.display=(validTier==='super')?'':'none';
   // A one-directional "hide #nav-clients for non-admins" used to live here,
   // meant as a "redundant, defensive" extra on top of .wlm-topbar-navrow
   // already being admin-only — but it had no reset counterpart. Since this
@@ -4479,32 +4535,22 @@ function openAddServiceModal(clientId,entryId,locationId){
 }
 function editClientService(clientId,entryId,locationId){ openAddServiceModal(clientId,entryId,locationId); }
 
-function saveClientService(){
-  const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value, locationId=_el('svc-location-id').value;
-  const catalogId=_el('svc-name').value;
-  if(!catalogId){ showToast('Select a service','warn'); return; }
+// Pure, reusable service-record builder — the ONE place name/catalogId/
+// bundle resolution and assignee-array mirroring (assigneeIds[] is the
+// source of truth; assigneeId/assigneeName always mirror assigneeIds[0] so
+// every consumer that only knows the single legacy fields keeps working
+// unchanged) are computed. Shared by the Add/Edit Service modal
+// (saveClientService(), below) and Quick Add Client, so the two can never
+// drift apart (same lesson as the payroll triple-implementation bug —
+// CLAUDE.md). bundleOverride lets a caller with no catalog-linked bundle
+// picker of its own (Quick Add) supply an explicit bundle instead of
+// deriving it from catEntry; the modal never passes it, so its own existing
+// behavior is completely unchanged by this refactor.
+function _buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes, current, bundleOverride}){
   const cat=getCatalog();
   const catEntry=cat.find(s=>s.id===catalogId);
-  const clients=getClients();
-  const c=clients.find(x=>x.id===clientId); if(!c) return;
-  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
-  if(locationId && !loc) return; // franchise was removed from under us — bail rather than write to the client
-  const targetList = loc ? (loc.services=loc.services||[]) : (c.services=c.services||[]);
-  const idx=entryId?targetList.findIndex(s=>s.id===entryId):-1;
-  const current=idx>=0?targetList[idx]:null;
   const roster=getRoster();
-  // Multiple assignees per service: assigneeIds[] is the new source of
-  // truth; assigneeId/assigneeName always mirror assigneeIds[0] so every
-  // consumer that only knows the single legacy fields keeps working
-  // unchanged (My Work matching, notifications, favorites, workload, etc.)
-  // See _svcAssignedTo() above for the shared read-side predicate.
-  const assigneeIds=[...document.querySelectorAll('#svc-assignee-checks input:checked')].map(cb=>cb.value);
-  const assigneeId=assigneeIds[0]||'';
-  const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
-  const freq=_el('svc-freq').value;
-  const lastDone=_el('svc-lastdone').value||'';
-  // If lastDone is set and no due date given, auto-calculate it
-  let due=_el('svc-due').value;
+  // If lastDone is set and no due date given, auto-calculate it.
   if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
   // The Edit dropdown's UNCATALOGED_SENTINEL option means the admin left an
   // uncatalogued service's name/bundle exactly as it was (see
@@ -4513,21 +4559,41 @@ function saveClientService(){
   // catalog pick here is treated as a deliberate rename.
   const keepUncataloged = catalogId===UNCATALOGED_SENTINEL && current;
   const svcName=keepUncataloged?current.name:(catEntry?.name||catalogId);
-  const data={
+  const assigneeId=assigneeIds[0]||'';
+  const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
+  return {
     // bundle is resolved from the catalog and frozen HERE, not re-derived on
     // every render — so a later catalog edit (rename/delete a bundle or this
     // service) never changes what's already assigned to this client.
     name:svcName,
     catalogId: keepUncataloged?current.catalogId:catalogId,
-    bundle: keepUncataloged?current.bundle:(catEntry?.bundle||null),
+    bundle: keepUncataloged?current.bundle:(bundleOverride!==undefined?bundleOverride:(catEntry?.bundle||null)),
     freq, due, lastDone,
-    assigneeIds, assigneeId, assigneeName, notes:_el('svc-notes').value
+    assigneeIds, assigneeId, assigneeName, notes:notes||''
   };
+}
+
+function saveClientService(){
+  const clientId=_el('svc-client-id').value, entryId=_el('svc-entry-id').value, locationId=_el('svc-location-id').value;
+  const catalogId=_el('svc-name').value;
+  if(!catalogId){ showToast('Select a service','warn'); return; }
+  const clients=getClients();
+  const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  if(locationId && !loc) return; // franchise was removed from under us — bail rather than write to the client
+  const targetList = loc ? (loc.services=loc.services||[]) : (c.services=c.services||[]);
+  const idx=entryId?targetList.findIndex(s=>s.id===entryId):-1;
+  const current=idx>=0?targetList[idx]:null;
+  const assigneeIds=[...document.querySelectorAll('#svc-assignee-checks input:checked')].map(cb=>cb.value);
+  const freq=_el('svc-freq').value;
+  const lastDone=_el('svc-lastdone').value||'';
+  const due=_el('svc-due').value;
+  const data=_buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes:_el('svc-notes').value, current});
   // Platforms only apply to the "Social Media Management" service — collected
   // from the checkbox group (see _updateSvcPlatformsVisibility()), never from
   // free text. Other services keep whatever platforms field they already had
   // (or none) untouched.
-  if(_isSocialMediaService(svcName)) data.platforms=_collectSvcPlatforms();
+  if(_isSocialMediaService(data.name)) data.platforms=_collectSvcPlatforms();
   if(entryId){
     if(idx>=0){
       Object.assign(targetList[idx], data);
@@ -4564,6 +4630,319 @@ function saveClientService(){
   checkServiceAlerts();
   showToast('Service saved ✓');
 }
+
+// ═══════════════════════════════════════════════════════
+//  QUICK ADD CLIENT (Super Admin/CEO only)
+// ═══════════════════════════════════════════════════════
+// Builds a fully-correct client record — services[] (via the same
+// _buildServiceRecord() the Add/Edit Service modal uses) plus the mirrored
+// projects[] entries (via the existing syncServicesToProjects(), never
+// re-derived here) — from minimal structured input, in one atomic,
+// dry-run-then-confirm step. Deliberately does NOT write c.recurringServices[]
+// — that array belongs to a removed index.html tab (see the code comment on
+// _checkServiceAlerts()/computeProjectStats() in index.html) and nothing live
+// keeps it in sync; every reader that still consults it (stat counts,
+// due-date alerts) treats it as ADDITIVE to services[], not an alternate view,
+// so writing to both would double-count this client's work and fire a
+// duplicate notification per service.
+let _qacRowSeq=0;
+let _qacMode='new'; // 'new' | 'existing' — see setQuickAddMode()
+function openQuickAddClientModal(){
+  if(SESSION.tier!=='super'){ showToast('Super Admin/CEO only','warn'); return; }
+  _el('qac-name').value='';
+  _el('qac-contact').value='';
+  _el('qac-notes').value='';
+  _el('qac-existing-search').value='';
+  _el('qac-append-notes').value='';
+  _el('qac-service-rows').innerHTML='';
+  _qacRowSeq=0;
+  const dl=_el('qac-existing-client-names');
+  if(dl) dl.innerHTML=getClients().map(c=>`<option value="${escHtmlClient(c.name)}">`).join('');
+  addQuickAddServiceRow();
+  setQuickAddMode('new');
+  openModal('quickAddClientModal');
+}
+// Toggling between "create a brand-new client" and "append services to one
+// that already exists" — the service-row UI/logic (add row, resolve
+// assignees, _buildServiceRecord()) is fully shared between both modes;
+// only the target-resolution and duplicate-checking in
+// renderQuickAddPreview()/confirmQuickAdd() branch on this.
+function setQuickAddMode(mode){
+  _qacMode=mode==='existing'?'existing':'new';
+  const isExisting=_qacMode==='existing';
+  _el('qac-new-client-fields').style.display=isExisting?'none':'';
+  _el('qac-existing-client-fields').style.display=isExisting?'':'none';
+  _el('qac-mode-new-btn').className=isExisting?'btn btn-outline btn-sm':'btn btn-sm';
+  _el('qac-mode-existing-btn').className=isExisting?'btn btn-sm':'btn btn-outline btn-sm';
+  _el('qac-modal-title').textContent=isExisting?'➕ Add Services to Existing Client':'⚡ Quick Add Client';
+  _el('qac-modal-sub').textContent=isExisting
+    ?'Appends new services to an existing client — existing services are never touched'
+    :'Client + all its services in one step — review the preview before creating';
+  _el('qac-confirm-btn').textContent=isExisting?'✅ Confirm & Append Services':'✅ Confirm & Create Client';
+  _el('qac-services-mode-label')?.replaceChildren(document.createTextNode(isExisting?'(appended to the existing list)':''));
+  renderQuickAddPreview();
+}
+function addQuickAddServiceRow(){
+  const rowId='qacrow'+(_qacRowSeq++);
+  const wrap=_el('qac-service-rows');
+  const bundleOpts=['<option value="">Standalone / No Bundle</option>']
+    .concat(getBundleNames().map(n=>`<option value="${escHtmlClient(n)}">${escHtmlClient(n)}</option>`)).join('');
+  const catalogNames=[...new Set(getCatalog().map(s=>s.name))];
+  const div=document.createElement('div');
+  div.className='qac-service-row';
+  div.dataset.rowId=rowId;
+  div.style.cssText='display:grid;grid-template-columns:1.4fr 1.2fr 0.9fr 1.3fr auto;gap:8px;align-items:start;margin-bottom:4px;padding:8px;background:var(--card);border-radius:8px 8px 0 0;';
+  div.innerHTML=`
+    <div>
+      <input class="form-input" list="qac-catalog-names-${rowId}" placeholder="Service name" oninput="renderQuickAddPreview()" style="font-size:12px;padding:6px 8px;">
+      <datalist id="qac-catalog-names-${rowId}">${catalogNames.map(n=>`<option value="${escHtmlClient(n)}">`).join('')}</datalist>
+    </div>
+    <select class="form-select" style="font-size:12px;padding:6px 8px;" onchange="renderQuickAddPreview()">${bundleOpts}</select>
+    <select class="form-select" style="font-size:12px;padding:6px 8px;" onchange="renderQuickAddPreview()">
+      <option value="monthly">Monthly</option>
+      <option value="yearly">Yearly</option>
+      <option value="one-time">One-time</option>
+    </select>
+    <input class="form-input" placeholder="Assignee name(s), comma-separated" oninput="renderQuickAddPreview()" style="font-size:12px;padding:6px 8px;">
+    <button class="btn btn-xs btn-danger" onclick="removeQuickAddServiceRow('${rowId}')" title="Remove this service">✕</button>`;
+  const dupWrap=document.createElement('label');
+  dupWrap.className='qac-service-row-dup';
+  dupWrap.dataset.rowId=rowId;
+  dupWrap.style.cssText='display:none;align-items:center;gap:6px;font-size:11px;color:var(--red);background:var(--card);padding:0 8px 8px;border-radius:0 0 8px 8px;margin-bottom:4px;cursor:pointer;';
+  dupWrap.innerHTML=`<input type="checkbox" onchange="renderQuickAddPreview()"> Add anyway (a service with this name already exists on this client)`;
+  wrap.appendChild(div);
+  wrap.appendChild(dupWrap);
+  renderQuickAddPreview();
+}
+function removeQuickAddServiceRow(rowId){
+  const row=_el('qac-service-rows').querySelector(`.qac-service-row[data-row-id="${rowId}"]`);
+  if(row) row.remove();
+  const dup=_el('qac-service-rows').querySelector(`.qac-service-row-dup[data-row-id="${rowId}"]`);
+  if(dup) dup.remove();
+  renderQuickAddPreview();
+}
+// Reads the live DOM rows into plain data — the ONE place row-DOM layout is
+// known, so renderQuickAddPreview() and confirmQuickAdd() always agree on
+// exactly what's about to be written (no separate "preview model" that
+// could drift from what actually gets written).
+function _collectQuickAddRows(){
+  return [...document.querySelectorAll('#qac-service-rows .qac-service-row')].map(row=>{
+    const inputs=row.querySelectorAll('input');
+    const selects=row.querySelectorAll('select');
+    const dup=_el('qac-service-rows').querySelector(`.qac-service-row-dup[data-row-id="${row.dataset.rowId}"] input[type="checkbox"]`);
+    return {
+      rowId:row.dataset.rowId,
+      name:(inputs[0].value||'').trim(),
+      bundle:selects[0].value||'',
+      freq:selects[1].value,
+      assigneeText:(inputs[1].value||'').trim(),
+      forceDuplicate:!!(dup && dup.checked),
+    };
+  });
+}
+// The existing client this "Add Services to Existing Client" write targets —
+// resolved by exact (trimmed, case-insensitive) name match against the live
+// client list, same source of truth the picker's datalist was built from.
+function _findQuickAddTargetClient(){
+  const typed=(_el('qac-existing-search').value||'').trim();
+  if(!typed) return null;
+  return getClients().find(c=>(c.name||'').trim().toLowerCase()===typed.toLowerCase())||null;
+}
+function _resolveQuickAddAssignees(text){
+  const roster=getRoster();
+  const names=(text||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const resolved=[]; const unresolved=[];
+  names.forEach(n=>{
+    const u=roster.find(u=>u.id===n||u.name.toLowerCase()===n.toLowerCase());
+    if(u) resolved.push(u); else unresolved.push(n);
+  });
+  return {resolved, unresolved};
+}
+function renderQuickAddPreview(){
+  const el=_el('qac-preview'); if(!el) return;
+  const confirmBtn=_el('qac-confirm-btn');
+  const rows=_collectQuickAddRows();
+  const problems=[];
+  const isExisting=_qacMode==='existing';
+
+  let targetClient=null, headerHtml='';
+  if(isExisting){
+    targetClient=_findQuickAddTargetClient();
+    const typed=(_el('qac-existing-search').value||'').trim();
+    if(!typed) problems.push('Pick an existing client.');
+    else if(!targetClient) problems.push(`No client named "${typed}" found — pick one from the list (existing clients only; use "New Client" mode to create one).`);
+    headerHtml=targetClient
+      ? `<div style="margin-bottom:6px;"><strong>${escHtmlClient(targetClient.name)}</strong> <span style="color:var(--text-light);">— ${(targetClient.services||[]).length} existing service${(targetClient.services||[]).length!==1?'s':''}, untouched</span></div>`
+      : `<div style="color:var(--text-light);">${typed?'Client not found.':'Search for the client to append services to.'}</div>`;
+  } else {
+    const name=(_el('qac-name').value||'').trim();
+    if(!name) problems.push('Client name is required.');
+    const collision=name && getClients().some(c=>(c.name||'').trim().toLowerCase()===name.toLowerCase());
+    if(collision) problems.push(`A client named "${name}" already exists — pick a different name, or use "Add Services to Existing Client" instead. (Quick Add never overwrites/merges into an existing client.)`);
+    headerHtml=name?`<div style="margin-bottom:6px;"><strong>${escHtmlClient(name)}</strong>${collision?' <span style="color:var(--red);">(name already exists)</span>':''}</div>`:'<div style="color:var(--text-light);">Enter a client name to preview.</div>';
+  }
+
+  const existingNamesLower=isExisting&&targetClient?new Set((targetClient.services||[]).map(s=>(s.name||'').trim().toLowerCase())):new Set();
+  const namedRows=rows.filter(r=>r.name);
+  if(!namedRows.length) problems.push('Add at least one service.');
+
+  const svcPreview=namedRows.map(r=>{
+    const {resolved, unresolved}=_resolveQuickAddAssignees(r.assigneeText);
+    if(unresolved.length) problems.push(`"${r.name}": assignee "${unresolved.join(', ')}" doesn't match a real active user.`);
+    const isDup=isExisting && existingNamesLower.has(r.name.trim().toLowerCase());
+    const dupRow=_el('qac-service-rows').querySelector(`.qac-service-row-dup[data-row-id="${r.rowId}"]`);
+    if(dupRow) dupRow.style.display=isDup?'flex':'none';
+    if(isDup && !r.forceDuplicate) problems.push(`"${r.name}" already exists on ${escHtmlClient(targetClient.name)} — check "Add anyway" on that row, or remove/rename it.`);
+    const bundleLabel=r.bundle?escHtmlClient(r.bundle):'<em>Standalone</em>';
+    const assigneeLabel=resolved.length?escHtmlClient(resolved.map(u=>u.name).join(', ')):'<span style="color:var(--text-light);">Unassigned</span>';
+    return `<div style="padding:4px 0;border-bottom:1px solid var(--border);">
+      <strong>${escHtmlClient(r.name)}</strong>${isDup?' <span style="color:var(--red);">(duplicate name)</span>':''} — ${bundleLabel} · ${r.freq} · ${assigneeLabel}
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`
+    ${headerHtml}
+    ${svcPreview||'<div style="color:var(--text-light);">No services added yet.</div>'}
+    ${problems.length?`<div style="margin-top:10px;padding:8px 10px;background:#fff4f4;border:1px solid rgba(224,85,85,.3);border-radius:8px;color:var(--red);">${problems.map(p=>`⚠ ${p}`).join('<br>')}</div>`:`<div style="margin-top:10px;color:var(--green);">✓ Ready to ${isExisting?'append':'create'}.</div>`}`;
+
+  if(confirmBtn) confirmBtn.disabled=problems.length>0;
+}
+function confirmQuickAdd(){
+  if(_qacMode==='existing') confirmQuickAddServicesToExisting();
+  else confirmQuickAddClient();
+}
+function confirmQuickAddClient(){
+  if(SESSION.tier!=='super'){ showToast('Super Admin/CEO only','warn'); return; }
+  // Re-validate from scratch rather than trusting the button's disabled
+  // state alone — the DOM is the only source of truth, same principle as
+  // every other write in this file.
+  const name=(_el('qac-name').value||'').trim();
+  if(!name){ showToast('Client name is required','warn'); return; }
+  const clients=getClients();
+  if(clients.some(c=>(c.name||'').trim().toLowerCase()===name.toLowerCase())){
+    showToast(`A client named "${name}" already exists — not creating a duplicate`,'warn');
+    return;
+  }
+  const rows=_collectQuickAddRows().filter(r=>r.name);
+  if(!rows.length){ showToast('Add at least one service','warn'); return; }
+  for(const r of rows){
+    const {unresolved}=_resolveQuickAddAssignees(r.assigneeText);
+    if(unresolved.length){
+      showToast(`"${r.name}": assignee "${unresolved.join(', ')}" doesn't match a real active user — fix before creating`,'warn');
+      return;
+    }
+  }
+
+  const contact=(_el('qac-contact').value||'').trim();
+  const notes=(_el('qac-notes').value||'').trim();
+  const clientId='c'+uid();
+  const newClient={
+    id:clientId, name, status:'active', start:today(),
+    color:_hashClientColor(name),
+    ownerName:contact, notes,
+    services:[], projects:[],
+  };
+
+  const createdServiceNames=[];
+  rows.forEach(r=>{
+    const {resolved}=_resolveQuickAddAssignees(r.assigneeText);
+    const assigneeIds=resolved.map(u=>u.id);
+    // catalogId only set when the typed name matches a real catalog entry —
+    // otherwise this is an uncatalogued/one-off service, same as typing a
+    // new name in the regular Add Service modal; bundleOverride carries the
+    // admin's explicit bundle pick either way (see _buildServiceRecord()).
+    const catEntry=getCatalog().find(s=>s.name.toLowerCase()===r.name.toLowerCase());
+    const data=_buildServiceRecord({
+      catalogId: catEntry?catEntry.id:r.name,
+      assigneeIds, freq:r.freq, lastDone:'', due:'', notes:'',
+      current:null, bundleOverride:r.bundle||null,
+    });
+    newClient.services.push({id:'sv'+uid(), status:'active', ...data});
+    createdServiceNames.push(data.name);
+    assigneeIds.forEach(id=>{
+      pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
+        title:`Service assigned: ${data.name}`,
+        body:`You're handling "${data.name}" (${r.freq}) for ${name}. Next due: ${data.due||'TBD'}.`,
+        forUser:id, fromUser:SESSION.name });
+    });
+  });
+
+  clients.unshift(newClient);
+  saveClients(clients);
+  syncServicesToProjects(clientId); // reuse the exact same mirror-builder as every other service write
+  closeModal('quickAddClientModal');
+  populateScheduleClientFilter();
+  filterClients();
+  checkServiceAlerts();
+  showToast(`✅ ${name} created with ${createdServiceNames.length} service${createdServiceNames.length!==1?'s':''}`);
+}
+
+// Appends new services to an EXISTING client — never modifies, reorders, or
+// removes anything already on it. Same _buildServiceRecord()/
+// syncServicesToProjects() as confirmQuickAddClient() above, so the two
+// paths can never format services differently; only the target-resolution
+// and duplicate-name handling differ.
+function confirmQuickAddServicesToExisting(){
+  if(SESSION.tier!=='super'){ showToast('Super Admin/CEO only','warn'); return; }
+  const targetClient=_findQuickAddTargetClient();
+  if(!targetClient){ showToast('Pick a valid existing client first','warn'); return; }
+  const rows=_collectQuickAddRows().filter(r=>r.name);
+  if(!rows.length){ showToast('Add at least one service','warn'); return; }
+  for(const r of rows){
+    const {unresolved}=_resolveQuickAddAssignees(r.assigneeText);
+    if(unresolved.length){
+      showToast(`"${r.name}": assignee "${unresolved.join(', ')}" doesn't match a real active user — fix before appending`,'warn');
+      return;
+    }
+  }
+  const clients=getClients();
+  const c=clients.find(x=>x.id===targetClient.id);
+  if(!c){ showToast('That client no longer exists — refresh and try again','warn'); return; }
+  const existingNamesLower=new Set((c.services||[]).map(s=>(s.name||'').trim().toLowerCase()));
+  for(const r of rows){
+    if(existingNamesLower.has(r.name.trim().toLowerCase()) && !r.forceDuplicate){
+      showToast(`"${r.name}" already exists on ${c.name} — check "Add anyway" or remove/rename that row before appending`,'warn');
+      return;
+    }
+  }
+
+  // Append-only: c.services is never replaced or reordered, only pushed to.
+  // Existing service objects are never touched (assignees, status, dates —
+  // all left exactly as they were before this write).
+  c.services=c.services||[];
+  const appendNotes=(_el('qac-append-notes').value||'').trim();
+  if(appendNotes) c.notes=[c.notes||'', appendNotes].filter(Boolean).join('\n\n'); // append, never overwrite
+
+  const addedServiceNames=[];
+  rows.forEach(r=>{
+    const {resolved}=_resolveQuickAddAssignees(r.assigneeText);
+    const assigneeIds=resolved.map(u=>u.id);
+    const catEntry=getCatalog().find(s=>s.name.toLowerCase()===r.name.toLowerCase());
+    const data=_buildServiceRecord({
+      catalogId: catEntry?catEntry.id:r.name,
+      assigneeIds, freq:r.freq, lastDone:'', due:'', notes:'',
+      current:null, bundleOverride:r.bundle||null,
+    });
+    c.services.push({id:'sv'+uid(), status:'active', ...data});
+    addedServiceNames.push(data.name);
+    assigneeIds.forEach(id=>{
+      pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
+        title:`Service assigned: ${data.name}`,
+        body:`You're handling "${data.name}" (${r.freq}) for ${c.name}. Next due: ${data.due||'TBD'}.`,
+        forUser:id, fromUser:SESSION.name });
+    });
+  });
+
+  saveClients(clients);
+  syncServicesToProjects(c.id); // same mirror-builder every other service write already uses
+  closeModal('quickAddClientModal');
+  populateScheduleClientFilter();
+  filterClients();
+  checkServiceAlerts();
+  if(_activeClientId===c.id) renderClientDetail(c.id);
+  showToast(`✅ ${addedServiceNames.length} service${addedServiceNames.length!==1?'s':''} added to ${c.name}`);
+}
+
 // DATA-SAFETY: hard delete is never wired to a UI button — kept only as an
 // internal safety net (e.g. for a future admin tool), same as clients being
 // active/inactive-only. Cancel/Archive below are the actual UI actions.
