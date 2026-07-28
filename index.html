@@ -8493,7 +8493,7 @@ const RESTRICTED_ADMIN_ROLES = ['account_manager', 'production_manager'];
 const CREATIVE_MANAGER_ROLE  = 'creative_manager';
 let _adminLevel = null;
 let _adminAssignedUsers = []; // user names/ids this admin can see
-let _adminManagesTeam = false; // true when this admin has managedUserIds (or is super/owner) — gates the "My Team's Work" nav item
+let _adminManagesTeam = false; // true when this admin has managedUserIds — gates the "My Team's Work" nav item
 
 function applyAdminRoleRestrictions(level, adminObj){
   _adminLevel = level;
@@ -8503,10 +8503,10 @@ function applyAdminRoleRestrictions(level, adminObj){
   // My Team's Work: visible only to an admin who actually manages someone
   // (managedUserIds.length>0) — orthogonal to every level-based gate below,
   // so it's resolved once, up front, before any branch's own nav-hiding
-  // runs. super/owner always manages the full team view regardless of their
-  // own managedUserIds (see renderMyTeamsWork()'s super-tier union), so the
-  // tab stays visible for them too.
-  _adminManagesTeam = (Array.isArray(adminObj?.managedUserIds) && adminObj.managedUserIds.length > 0) || level==='super' || level==='owner';
+  // runs. Hidden for super/owner unconditionally — they already have the
+  // Workload dashboard, which covers every team member, so this tab would
+  // be redundant for them regardless of their own managedUserIds.
+  _adminManagesTeam = (level!=='super' && level!=='owner') && Array.isArray(adminObj?.managedUserIds) && adminObj.managedUserIds.length > 0;
   const myTeamsWorkNav = document.querySelector('.admin-nav-item[onclick*="\'myTeamsWork\'"]');
   if(myTeamsWorkNav) myTeamsWorkNav.style.display = _adminManagesTeam ? '' : 'none';
 
