@@ -3900,9 +3900,18 @@ function _openDeepLinkFromUrl(){
     // the Assigned To filter and re-run the existing filterClients() path,
     // same mechanism applySavedFilter() already uses.
     const filterAssignee=params.get('filterAssignee');
+    // Temporary diagnostic (2026-07-28) — Sarah reported the Workload
+    // click-through landing on the unfiltered Tracker list; the mechanism
+    // traced correctly in isolation, so this confirms what this document
+    // actually receives/applies in her real browser. Remove once resolved.
+    console.log('[WLM Workload click-through] location.search:', window.location.search,
+      '| filterAssignee param:', filterAssignee,
+      '| filter-assignee element found:', !!_el('filter-assignee'));
     if(filterAssignee && _el('filter-assignee')){
       _el('filter-assignee').value=filterAssignee;
       filterClients();
+      console.log('[WLM Workload click-through] filter-assignee.value after apply:', _el('filter-assignee').value,
+        '| visible client cards after filter:', document.querySelectorAll('.client-card').length);
     }
     const clientId=params.get('openClient');
     if(!clientId) return;
@@ -5889,10 +5898,17 @@ function init(){
     renderNotifPanel();
     checkServiceAlerts();
     updateMyWorkBadge();
-    _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients();
+      // Temporary diagnostic (2026-07-28) — see the matching comment in
+      // _openDeepLinkFromUrl(). Confirms whether the 30s poll is silently
+      // reverting an active Assigned-To filter. Remove once resolved.
+      console.log('[WLM Workload click-through] 30s poll — filter-assignee.value:', _el('filter-assignee')?.value);
+      renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   }, 30000);
   document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients(); renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
+    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients();
+      console.log('[WLM Workload click-through] visibilitychange pull — filter-assignee.value:', _el('filter-assignee')?.value, '| document.hidden:', document.hidden);
+      renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   });
 }
 

@@ -4512,6 +4512,11 @@ function openWorkloadPersonInTracker(personId, personName){
   params.set('v', Date.now());
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
+  // Temporary diagnostic (2026-07-28) — Sarah reported the Workload
+  // click-through landing on the unfiltered Tracker list; the code path
+  // traced correctly in isolation, so this confirms what actually gets
+  // set on the live iframe in her real browser. Remove once resolved.
+  console.log('[WLM Workload click-through] frame found:', !!frame, '| src set to:', frame ? frame.src : '(no frame)');
 }
 
 // ── My Team's Work (manager→member links feature) ─────────────────────────
