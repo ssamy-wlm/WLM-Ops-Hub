@@ -136,17 +136,34 @@ export default async function handler(req, res) {
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
     const salesFunnel = rows(salesFunnelQ.data);
 
-    // Sales Funnel access: a per-person flag (salesFunnelAccess) on the
-    // caller's OWN users/admins row — not a tier, so it's computed from the
-    // raw pre-strip arrays above rather than a level check. Super Admin/CEO
-    // always has implicit access regardless of the flag. Checked against
-    // whichever table session.role says the caller's identity lives in —
-    // dual-role accounts are scoped to their PRIMARY identity for this
-    // session, same as every other per-session field in this file.
+    // Sales Funnel access — three levels (viewer/editor/owner). Super
+    // Admin/CEO (this row's own level is 'super'/'owner') always resolves to
+    // 'owner' regardless of any stored field. An explicit salesFunnelLevel
+    // always wins; a legacy salesFunnelAccess:true (from before this 3-tier
+    // upgrade) falls back to 'editor' — exactly what that flag already let
+    // someone do — so nobody's access silently changes on deploy. This
+    // fallback is read-only by construction: it's recomputed fresh on every
+    // request and never writes anything back, so there's no migration step
+    // to run and nothing to go stale. Kept identical to (but deliberately
+    // not imported from) api/ops-sync.js's own copy, same convention as
+    // DEFAULT_TEAM_NOTIF_PREFS above.
+    const SUPER_CEO_LEVELS = new Set(['super', 'owner']);
+    function _funnelLevelOf(row) {
+      if (SUPER_CEO_LEVELS.has(row?.level)) return 'owner';
+      if (row?.salesFunnelLevel) return row.salesFunnelLevel;
+      if (row?.salesFunnelAccess === true) return 'editor';
+      return null;
+    }
+    // Checked against whichever table session.role says the caller's
+    // identity lives in — dual-role accounts are scoped to their PRIMARY
+    // identity for this session, same as every other per-session field in
+    // this file. tier==='super' is checked directly (not just via
+    // _funnelLevelOf(callerOwnRow)) because the primary-admin sentinel has
+    // no real ops_admins row to look up at all.
     const callerOwnRow = session.role === 'admin'
       ? admins.find(a => a.id === session.id)
       : users.find(u => u.id === session.id);
-    const hasFunnelAccess = tier === 'super' || callerOwnRow?.salesFunnelAccess === true;
+    const funnelLevel = tier === 'super' ? 'owner' : _funnelLevelOf(callerOwnRow);
 
     // Password-hash migration progress (Super Admin/CEO only, see rule #6 in
     // the migration plan) — a read-only count of accounts still on the
@@ -232,8 +249,8 @@ export default async function handler(req, res) {
       // entirely (not just an empty array) when access isn't granted, so a
       // caller without it can't see the data even by inspecting the raw
       // response.
-      viewerHasSalesFunnelAccess: hasFunnelAccess,
-      ...(hasFunnelAccess ? { salesFunnel } : {}),
+      viewerSalesFunnelLevel: funnelLevel,
+      ...(funnelLevel ? { salesFunnel } : {}),
     };
 
     // Password (hash today, legacy plaintext for any not-yet-upgraded
@@ -293,13 +310,20 @@ export default async function handler(req, res) {
         if (u.id === session.id) return u;
         const safe = {};
         MEMBER_SAFE_OTHER_USER_FIELDS.forEach(f => { if (f in u) safe[f] = u[f]; });
+        // funnelLevel is the RESOLVED level (never the raw stored fields) —
+        // a low-sensitivity permission indicator, same exposure as the
+        // other display fields above. Included so a granted Sales Funnel
+        // Owner who isn't tier-super can still see everyone else's current
+        // level to render the grant picker (index.html) — there is no
+        // other route to that information for a non-super viewer.
+        safe.funnelLevel = _funnelLevelOf(u);
         return safe;
       });
       // Time-off is scoped to their own records — matched by userName (time-off
       // requests) / employeeId (ledger entries), the actual fields the app
       // writes (see user.html submitTimeOffRequest() / index.html
       // logTimeOffEntry()) — NOT userId, which never exists on either record shape.
-      record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title }));
+      record.admins = record.admins.map(a => ({ id: a.id, name: a.name, title: a.title, funnelLevel: _funnelLevelOf(a) }));
       record.roadmapTasks = [];
       record.summaries = [];
       const myName = String(session.name || '').toLowerCase();
@@ -341,7 +365,10 @@ export default async function handler(req, res) {
       // admin record, since editing the field is already Super-Admin-only.
       const callerAdminId = session.adminId || session.id;
       record.admins = record.admins.map(a => {
-        const safe = { id: a.id, name: a.name, title: a.title, level: a.level, status: a.status };
+        // funnelLevel: RESOLVED level only, same low-sensitivity exposure
+        // reasoning as the member branch above — needed so a Sales Funnel
+        // Owner who isn't tier-super can see everyone's current level.
+        const safe = { id: a.id, name: a.name, title: a.title, level: a.level, status: a.status, funnelLevel: _funnelLevelOf(a) };
         if (a.id === callerAdminId) safe.managedUserIds = a.managedUserIds || [];
         return safe;
       });
