@@ -6806,6 +6806,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshArchive === 'function') refreshArchive();
     if(typeof updateAdminMsgBadge === 'function') updateAdminMsgBadge();
     if(typeof _refreshAdminMessagesIfOpen === 'function') _refreshAdminMessagesIfOpen();
+    // Client Health was the one tab render missing from this list — it only
+    // ever re-ran on tab-switch or its own Refresh button, so a pull landing
+    // while the tab was already open (the 30s live-sync poll, or any other
+    // pull triggered elsewhere) left it frozen on stale totals/rows. Guarded
+    // to the active tab only, same as every visibility check elsewhere.
+    if(document.getElementById('admin-clientHealth')?.classList.contains('active') && typeof renderClientHealthDashboard === 'function') renderClientHealthDashboard();
     if(!silent) showToast('✅ Synced');
   } catch(e){
     setCloudStatus('Sync failed: '+e.message,'error');
