@@ -342,11 +342,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .cl-swatch{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .15s;}
 .cl-swatch.sel{border-color:var(--text-dark);transform:scale(1.18);}
 
-/* ── FUNNEL BOARD ── */
-.funnel-col{background:var(--bg);border-radius:11px;padding:10px;}
-.funnel-col-head{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;display:flex;align-items:center;gap:5px;}
-.funnel-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:11px;margin-bottom:7px;cursor:pointer;transition:box-shadow .15s;}
-.funnel-card:hover{box-shadow:0 3px 14px rgba(0,0,0,.09);}
+/* ── SALES FUNNEL — clean table/list layout (replaced the kanban board) ── */
+.funnel-row{cursor:pointer;transition:background .1s;}
+.funnel-row:hover{background:rgba(45,107,182,.04);}
+.funnel-stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;}
 
 /* ── EMPTY STATE ── */
 .empty-state{text-align:center;padding:44px 22px;color:var(--text-light);}
@@ -373,7 +372,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
   .client-grid{grid-template-columns:1fr;}
   .form-grid{grid-template-columns:1fr;}
   .form-grid .full{grid-column:1;}
-  .funnel-board-grid{grid-template-columns:1fr 1fr!important;}
 }
 @media(max-width:550px){
 }
@@ -644,17 +642,47 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
     <!-- ═══ PAGE: SALES FUNNEL ═══ -->
     <div id="page-sales-funnel" class="page-section funnel-access-only">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
         <div>
           <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🎯 Sales Funnel</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Your pipeline for tracking leads and moving deals forward.</div>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-outline btn-sm" id="funnel-archived-toggle-btn" onclick="toggleFunnelArchivedView()">🗄️ Show Archived</button>
           <button class="btn btn-primary btn-sm" id="funnel-add-btn" onclick="openFunnelModal()">+ Add Prospect</button>
         </div>
       </div>
-      <div id="funnel-board" class="funnel-board-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;"></div>
+
+      <!-- Summary stat cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px;">
+        <div class="funnel-stat-card">
+          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Active Prospects</div>
+          <div id="funnel-stat-active" style="font-size:26px;font-weight:800;color:var(--text-dark);margin-top:4px;">0</div>
+        </div>
+        <div class="funnel-stat-card">
+          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Follow-ups Due</div>
+          <div id="funnel-stat-followup" style="font-size:26px;font-weight:800;color:var(--orange);margin-top:4px;">0</div>
+        </div>
+        <div class="funnel-stat-card">
+          <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Closed This Month</div>
+          <div id="funnel-stat-closed" style="font-size:26px;font-weight:800;color:#2e9e6e;margin-top:4px;">0</div>
+        </div>
+      </div>
+
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Business</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Contact</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Stage</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Next Step</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Follow-up</th>
+            </tr>
+          </thead>
+          <tbody id="funnel-table-body"></tbody>
+        </table>
+        <div id="funnel-empty" style="display:none;text-align:center;padding:50px 20px;color:var(--text-light);font-size:13px;"></div>
+      </div>
     </div>
 
 
@@ -2917,7 +2945,7 @@ function showPage(name, el){
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
     if(!SESSION.funnelLevel){ showToast('Access restricted — ask your Super Admin for Sales Funnel access','warn'); showPage('clients',_el('nav-clients')); return; }
-    renderFunnelBoard();
+    renderFunnelTable();
   }
   if(name==='notifications'){ renderNotifPage(); }
   if(name==='reports'){ renderReports(); }
@@ -6010,12 +6038,14 @@ function renderMyWork(){
 // ═══════════════════════════════════════════════════════
 //  SALES FUNNEL
 // ═══════════════════════════════════════════════════════
+// No icons anywhere in the Sales Funnel table redesign — stage is shown as
+// a plain colored text label instead.
 const FUNNEL_STAGES={
-  lead:        {label:'Lead',icon:'👀',color:'#7096C9'},
-  contacted:   {label:'Contacted',icon:'📞',color:'#2E5DA6'},
-  proposal:    {label:'Proposal Sent',icon:'📄',color:'#9333ea'},
-  negotiation: {label:'Negotiation',icon:'🤝',color:'#d97706'},
-  closed:      {label:'Closed Won',icon:'🎉',color:'#2e9e6e'},
+  lead:        {label:'Lead',color:'#7096C9'},
+  contacted:   {label:'Contacted',color:'#2E5DA6'},
+  proposal:    {label:'Proposal Sent',color:'#9333ea'},
+  negotiation: {label:'Negotiation',color:'#d97706'},
+  closed:      {label:'Closed Won',color:'#2e9e6e'},
 };
 // Archive-only — no hard delete anywhere in this feature, including for
 // Super Admin (CLAUDE.md's client/admin never-delete philosophy, extended
@@ -6027,7 +6057,7 @@ function toggleFunnelArchivedView(){
   _funnelShowArchived=!_funnelShowArchived;
   const btn=_el('funnel-archived-toggle-btn');
   if(btn) btn.textContent=_funnelShowArchived?'← Back to Active':'🗄️ Show Archived';
-  renderFunnelBoard();
+  renderFunnelTable();
 }
 // Same date-string comparison idiom used elsewhere in this file for service
 // due-status (e.g. _svcDueStatus) — 'due'/'overdue' badge only, no cron, no
@@ -6046,43 +6076,63 @@ function _funnelAccountabilityLine(p){
   const updated=(p.updatedByName && p.updatedAt!==p.createdAt)?`Last updated by ${p.updatedByName} · ${new Date(p.updatedAt).toLocaleDateString()}`:'';
   return [created,updated].filter(Boolean).join(' · ');
 }
-function renderFunnelBoard(){
-  const el=_el('funnel-board'); if(!el) return;
+// Follow-up column cell for the table — unlike _funnelFollowUpBadge() above
+// (used in the row-click modal/accountability context, which only ever
+// shows something when due/overdue), the table column always shows
+// SOMETHING: a colored Today/Overdue badge when applicable, otherwise the
+// plain future date, or an em-dash when there's no follow-up set at all.
+function _funnelFollowUpCell(p){
+  if(!p.followUpDate) return '<span style="font-size:11px;color:var(--text-light);">—</span>';
+  const t=today();
+  if(p.followUpDate<t) return `<span style="background:rgba(192,57,43,.12);color:#c0392b;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;white-space:nowrap;">Overdue</span>`;
+  if(p.followUpDate===t) return `<span style="background:rgba(217,119,6,.14);color:#d97706;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:700;white-space:nowrap;">Today</span>`;
+  return `<span style="font-size:11.5px;color:var(--text-light);">${p.followUpDate}</span>`;
+}
+function renderFunnelTable(){
+  const body=_el('funnel-table-body');
+  const empty=_el('funnel-empty');
+  if(!body) return;
   const canWrite=_funnelCanWrite();
   const addBtn=_el('funnel-add-btn'); if(addBtn) addBtn.style.display=canWrite?'':'none';
   const all=db(CL_KEYS.funnel)||[];
-  const prospects=all.filter(p=>_funnelShowArchived ? p.archived===true : p.archived!==true);
-  el.innerHTML=Object.entries(FUNNEL_STAGES).map(([key,stage])=>{
-    const items=prospects.filter(p=>p.stage===key);
-    const cards=items.map(p=>`
-      <div class="funnel-card" onclick="openFunnelModal('${p.id}')">
-        <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${escHtmlClient(p.name)}</div>
-        <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${escHtmlClient(p.contact||'')}${p.meetingType?' · '+escHtmlClient(p.meetingType):''}</div>
-        ${p.services?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">${escHtmlClient(p.services)}</div>`:''}
-        ${p.nextSteps?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">➜ ${escHtmlClient(p.nextSteps)}</div>`:''}
-        ${p.referredBy?`<div style="font-size:9px;color:var(--text-light);margin-top:2px;">Ref: ${escHtmlClient(p.referredBy)}</div>`:''}
-        ${_funnelShowArchived?'':_funnelFollowUpBadge(p)}
-        <div style="font-size:9px;color:var(--text-light);margin-top:5px;">${_funnelAccountabilityLine(p)}</div>
-        ${(_funnelShowArchived || !canWrite)?'':`<div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
-          ${key!=='closed'?`<button class="btn btn-xs btn-green" onclick="event.stopPropagation();moveFunnelStage('${p.id}','next')">→ Advance</button>`:''}
-          ${key==='closed'?`<button class="btn btn-xs btn-primary" onclick="event.stopPropagation();convertProspect('${p.id}')">✅ Convert</button>`:''}
-          <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();archiveFunnelProspect('${p.id}')">🗄️ Archive</button>
-        </div>`}
-      </div>`).join('');
-    return `
-      <div class="funnel-col">
-        <div class="funnel-col-head" style="color:${stage.color};">
-          ${stage.icon} ${stage.label}
-          <span style="background:${stage.color}22;color:${stage.color};padding:1px 7px;border-radius:9px;font-size:9px;">${items.length}</span>
-        </div>
-        ${cards||`<div style="font-size:10px;color:var(--text-light);text-align:center;padding:10px;">${_funnelShowArchived?'No archived prospects':'Empty'}</div>`}
-      </div>`;
-  }).join('');
+  const todayStr=today();
+  const list=all.filter(p=>_funnelShowArchived ? p.archived===true : p.archived!==true);
+
+  // Stats are always computed from the active (non-archived) set, regardless
+  // of which view (Active/Archived) is currently showing.
+  const active=all.filter(p=>p.archived!==true);
+  const followupDue=active.filter(p=>p.followUpDate && p.followUpDate<=todayStr).length;
+  const thisMonth=todayStr.slice(0,7);
+  // No dedicated closedAt field exists on this record (see api/ops-sync.js) —
+  // updatedAt is the closest available signal, refreshed on every write, so
+  // this is an approximation (a later unrelated edit to an old closed deal
+  // would also count) rather than an exact "closed on this date" figure.
+  const closedThisMonth=all.filter(p=>p.stage==='closed' && (p.updatedAt||'').slice(0,7)===thisMonth).length;
+  const setStat=(sid,v)=>{ const e=_el(sid); if(e) e.textContent=v; };
+  setStat('funnel-stat-active', active.length);
+  setStat('funnel-stat-followup', followupDue);
+  setStat('funnel-stat-closed', closedThisMonth);
+
+  if(!list.length){
+    body.innerHTML='';
+    if(empty){ empty.style.display='block'; empty.textContent=_funnelShowArchived?'No archived prospects.':'No prospects yet — click "+ Add Prospect" to start.'; }
+  } else {
+    if(empty) empty.style.display='none';
+    body.innerHTML=list.map(p=>{
+      const stage=FUNNEL_STAGES[p.stage]||FUNNEL_STAGES.lead;
+      return `<tr class="funnel-row" onclick="openFunnelModal('${p.id}')">
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13.5px;font-weight:600;color:var(--text-dark);">${escHtmlClient(p.name)}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${escHtmlClient(p.contact||'—')}${p.meetingType?` <span style="color:var(--text-light);">· ${escHtmlClient(p.meetingType)}</span>`:''}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700;color:${stage.color};">${stage.label}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(p.nextSteps||'—')}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);">${_funnelShowArchived?'<span style="font-size:11px;color:var(--text-light);">—</span>':_funnelFollowUpCell(p)}</td>
+      </tr>`;
+    }).join('');
+  }
   // Update funnel badge — active (non-archived) prospects only, regardless
   // of which view is currently showing.
-  const total=all.filter(p=>p.archived!==true).length;
   const badge=_el('funnel-badge');
-  if(badge){ badge.textContent=total; badge.style.display=total>0?'flex':'none'; }
+  if(badge){ badge.textContent=active.length; badge.style.display=active.length>0?'flex':'none'; }
 }
 const FUNNEL_MODAL_FIELD_IDS = ['fm-name','fm-contact','fm-email','fm-phone','fm-stage','fm-services','fm-referred','fm-assignee','fm-notes','fm-meeting-type','fm-next-steps','fm-followup-date'];
 function openFunnelModal(id){
@@ -6136,21 +6186,9 @@ function saveFunnelProspect(){
   else arr.unshift({id:'f'+uid(), archived:false, ...data});
   dbSave(CL_KEYS.funnel,arr);
   closeModal('funnelModal');
-  renderFunnelBoard();
+  renderFunnelTable();
   _scheduleCloudPush();
   showToast(id?'Prospect updated ✓':'Prospect added ✓');
-}
-function moveFunnelStage(id){
-  if(!_funnelCanWrite()) return; // defensive — the Advance button is hidden for Viewer, server also rejects
-  const stages=Object.keys(FUNNEL_STAGES);
-  const arr=db(CL_KEYS.funnel)||[];
-  const p=arr.find(x=>x.id===id); if(!p) return;
-  const idx=stages.indexOf(p.stage);
-  if(idx<stages.length-1){ p.stage=stages[idx+1]; }
-  dbSave(CL_KEYS.funnel,arr);
-  renderFunnelBoard();
-  _scheduleCloudPush();
-  if(p.stage==='closed') showToast('🎉 Prospect closed! Click Convert to add as client.');
 }
 function convertProspect(id){
   const arr=db(CL_KEYS.funnel)||[];
@@ -6176,7 +6214,7 @@ function archiveFunnelProspect(id){
   p.archived=true;
   dbSave(CL_KEYS.funnel,arr);
   closeModal('funnelModal');
-  renderFunnelBoard();
+  renderFunnelTable();
   _scheduleCloudPush();
   showToast('Prospect archived ✓');
 }
