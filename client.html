@@ -419,7 +419,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)">My work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
       <div class="nav-item" id="nav-reports" onclick="showPage('reports',this)">Progress reports</div>
       <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)">Service catalog</div>
-      <div class="nav-item admin-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)">Sales funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
+      <div class="nav-item funnel-access-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)" style="display:none;">Sales funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
     </div>
   </div>
 </div>
@@ -643,13 +643,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
 
     <!-- ═══ PAGE: SALES FUNNEL ═══ -->
-    <div id="page-sales-funnel" class="page-section admin-only">
+    <div id="page-sales-funnel" class="page-section funnel-access-only">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
         <div>
           <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🎯 Sales Funnel</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">New client intake — convert prospects to active clients</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openFunnelModal()">+ Add Prospect</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm" id="funnel-archived-toggle-btn" onclick="toggleFunnelArchivedView()">🗄️ Show Archived</button>
+          <button class="btn btn-primary btn-sm" onclick="openFunnelModal()">+ Add Prospect</button>
+        </div>
       </div>
       <div id="funnel-board" class="funnel-board-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;"></div>
     </div>
@@ -1270,11 +1273,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <div class="form-group"><label class="form-label">Assigned Sales Person</label>
           <select class="form-select" id="fm-assignee"><option value="">— Select —</option></select>
         </div>
+        <div class="form-group"><label class="form-label">Meeting Type</label><input class="form-input" id="fm-meeting-type" placeholder="e.g. Call, In-person, Zoom"></div>
+        <div class="form-group"><label class="form-label">Follow-up Date</label><input class="form-input" id="fm-followup-date" type="date"></div>
         <div class="form-group full"><label class="form-label">Notes</label><textarea class="form-input" id="fm-notes" rows="2" style="resize:vertical;" placeholder="Any relevant notes…"></textarea></div>
+        <div class="form-group full"><label class="form-label">Next Steps</label><textarea class="form-input" id="fm-next-steps" rows="2" style="resize:vertical;" placeholder="What happens next…"></textarea></div>
       </div>
+      <div id="fm-accountability" style="font-size:11px;color:var(--text-light);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('funnelModal')">Cancel</button>
+      <button class="btn btn-outline" id="funnel-archive-btn" style="display:none;" onclick="archiveFunnelProspect(_el('fm-id').value)">🗄️ Archive</button>
       <button class="btn btn-green" id="funnel-convert-btn" style="display:none;" onclick="convertProspectToClient()">✅ Convert to Client</button>
       <button class="btn btn-primary" onclick="saveFunnelProspect()">💾 Save Prospect</button>
     </div>
@@ -1374,7 +1382,7 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 // never here, never from a cached session object. This is the fix for the
 // live leak: a stale wl_admin_session left in localStorage from a previous
 // admin login on the same browser must never grant anything on its own.
-let SESSION = { role:'user', name:'', id:null, tier:'member', isAdmin:false };
+let SESSION = { role:'user', name:'', id:null, tier:'member', isAdmin:false, hasFunnelAccess:false };
 
 function detectSession(){
   try{
@@ -1461,6 +1469,34 @@ function _applyViewerTier(tier){
   // fire here on every load (via a setTimeout queued before the real tier was
   // even confirmed, so it ran regardless of outcome) — removed 2026-07-10;
   // My Work is still one click away via its own always-visible nav item.
+}
+
+// Sales Funnel access — a per-person flag (record.viewerHasSalesFunnelAccess
+// from api/ops-state.js), orthogonal to admin/member tier: a granted member
+// sees the funnel exactly like a granted admin does. Server-verified only,
+// same rule as _applyViewerTier() above — never re-derived client-side, and
+// never assumed true before the first successful pull resolves it (SESSION
+// starts with hasFunnelAccess:false).
+function _applyFunnelAccess(hasAccess){
+  SESSION.hasFunnelAccess = !!hasAccess;
+  document.querySelectorAll('.funnel-access-only').forEach(el=>{ el.style.display = SESSION.hasFunnelAccess?'':'none'; });
+  // The Sales Funnel nav item lives inside .wlm-topbar-navrow, which is
+  // itself admin-only (_applyViewerTier() already hid the WHOLE tab bar for
+  // any non-admin/manager/super viewer, before this function ever runs) — a
+  // granted plain member has no other reason to see that tab bar, so reveal
+  // just the navrow wrapper and the funnel tab for them, and explicitly hide
+  // every OTHER tab inside it (they don't carry their own visibility class,
+  // only ever relying on the wrapper's — which is no longer safe to reuse
+  // once the wrapper itself is being shown to a non-admin).
+  const navrow = document.querySelector('.wlm-topbar-navrow');
+  if(!navrow) return;
+  if(SESSION.hasFunnelAccess && !SESSION.isAdmin){
+    navrow.style.display = '';
+    navrow.querySelectorAll('.nav-item:not(.funnel-access-only)').forEach(el=>{ el.style.display='none'; });
+  } else if(!SESSION.hasFunnelAccess && !SESSION.isAdmin){
+    navrow.style.display = 'none';
+  }
+  // SESSION.isAdmin true: leave navrow exactly as _applyViewerTier() already set it.
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2375,6 +2411,11 @@ async function _doCloudPush(){
     }
     const suggestionsDirty=_opsDirty('catalogSuggestions', db(CL_KEYS.catalogSuggestions)||[]);
     if(suggestionsDirty.length) changes.catalogSuggestions=suggestionsDirty;
+    // Server drops this outright if the caller lacks Sales Funnel access
+    // (see api/ops-sync.js) — harmless to include unconditionally here, same
+    // as every other table's dirty-diff.
+    const funnelDirty=_opsDirty('salesFunnel', db(CL_KEYS.funnel)||[]);
+    if(funnelDirty.length) changes.salesFunnel=funnelDirty;
     // The only local mutation ever made to a synced notification is toggling
     // `read` (see readNotif()/markAllNotifsRead() above) — push just that.
     const notifsDirty=_opsDirty('notifications', getOpsNotifs());
@@ -2455,6 +2496,11 @@ async function _pullClientsFromCloud(){
     // fresh on every pull (init, 30s poll, visibility change). Never derived
     // from a cached localStorage session; see _applyViewerTier().
     _applyViewerTier(rec.viewerTier);
+    // Sales Funnel access — orthogonal to admin/member tier (a granted member
+    // sees the funnel same as a granted admin), so it's its own function
+    // rather than folded into _applyViewerTier() above. Server-verified only,
+    // same rule as tier — never re-derived client-side.
+    _applyFunnelAccess(rec.viewerHasSalesFunnelAccess);
     // Temporary diagnostic — see the matching comment in api/ops-state.js.
     // Prints the caller's own resolved identity so a stuck view-only report
     // can be confirmed/ruled out as a token-identity issue from the browser
@@ -2473,6 +2519,11 @@ async function _pullClientsFromCloud(){
     }
     _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr));
     _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr));
+    // Sales Funnel: omitted entirely from the response (not just an empty
+    // array) when access isn't granted — see api/ops-state.js — so this is a
+    // no-op for anyone without access, same "never let an absent/empty
+    // result blank out real local data" guard as every other synced table.
+    _applyServerArray('salesFunnel', rec.salesFunnel, arr=>dbSave(CL_KEYS.funnel, arr));
     if(typeof refreshNotifBadge==='function') refreshNotifBadge();
     return true;
   }catch(e){ console.warn('[WLM Tracker] Cloud pull failed —', e.message); return false; }
@@ -2859,7 +2910,7 @@ function showPage(name, el){
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
-    if(!SESSION.isAdmin){ showToast('Access restricted — admins only','warn'); showPage('clients',_el('nav-clients')); return; }
+    if(!SESSION.hasFunnelAccess){ showToast('Access restricted — ask your Super Admin for Sales Funnel access','warn'); showPage('clients',_el('nav-clients')); return; }
     renderFunnelBoard();
   }
   if(name==='notifications'){ renderNotifPage(); }
@@ -5945,22 +5996,55 @@ const FUNNEL_STAGES={
   negotiation: {label:'Negotiation',icon:'🤝',color:'#d97706'},
   closed:      {label:'Closed Won',icon:'🎉',color:'#2e9e6e'},
 };
+// Archive-only — no hard delete anywhere in this feature, including for
+// Super Admin (CLAUDE.md's client/admin never-delete philosophy, extended
+// here explicitly). Archiving sets data.archived:true on the record; it is
+// never removed from ops_sales_funnel. This toggle just switches which
+// subset of the SAME synced array the board currently displays.
+let _funnelShowArchived=false;
+function toggleFunnelArchivedView(){
+  _funnelShowArchived=!_funnelShowArchived;
+  const btn=_el('funnel-archived-toggle-btn');
+  if(btn) btn.textContent=_funnelShowArchived?'← Back to Active':'🗄️ Show Archived';
+  renderFunnelBoard();
+}
+// Same date-string comparison idiom used elsewhere in this file for service
+// due-status (e.g. _svcDueStatus) — 'due'/'overdue' badge only, no cron, no
+// notification-system wiring (stretch goal, out of scope for v1).
+function _funnelFollowUpBadge(p){
+  if(!p.followUpDate) return '';
+  const t=today();
+  if(p.followUpDate>t) return '';
+  const label=p.followUpDate===t?'Due today':'Overdue';
+  const color=p.followUpDate===t?'#d97706':'#c0392b';
+  return `<div style="display:inline-block;font-size:9px;font-weight:700;color:${color};background:${color}18;border:1px solid ${color}44;border-radius:9px;padding:1px 7px;margin-top:4px;">📅 ${label}: ${p.followUpDate}</div>`;
+}
+function _funnelAccountabilityLine(p){
+  if(!p.createdByName && !p.updatedByName) return '';
+  const created=p.createdByName?`Added by ${p.createdByName}${p.createdAt?' · '+new Date(p.createdAt).toLocaleDateString():''}`:'';
+  const updated=(p.updatedByName && p.updatedAt!==p.createdAt)?`Last updated by ${p.updatedByName} · ${new Date(p.updatedAt).toLocaleDateString()}`:'';
+  return [created,updated].filter(Boolean).join(' · ');
+}
 function renderFunnelBoard(){
   const el=_el('funnel-board'); if(!el) return;
-  const prospects=db(CL_KEYS.funnel)||[];
+  const all=db(CL_KEYS.funnel)||[];
+  const prospects=all.filter(p=>_funnelShowArchived ? p.archived===true : p.archived!==true);
   el.innerHTML=Object.entries(FUNNEL_STAGES).map(([key,stage])=>{
     const items=prospects.filter(p=>p.stage===key);
     const cards=items.map(p=>`
       <div class="funnel-card" onclick="openFunnelModal('${p.id}')">
-        <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${p.name}</div>
-        <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${p.contact||''}</div>
-        ${p.services?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">${p.services}</div>`:''}
-        ${p.referredBy?`<div style="font-size:9px;color:var(--text-light);margin-top:2px;">Ref: ${p.referredBy}</div>`:''}
-        <div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
+        <div style="font-size:12px;font-weight:700;color:var(--text-dark);">${escHtmlClient(p.name)}</div>
+        <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${escHtmlClient(p.contact||'')}${p.meetingType?' · '+escHtmlClient(p.meetingType):''}</div>
+        ${p.services?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">${escHtmlClient(p.services)}</div>`:''}
+        ${p.nextSteps?`<div style="font-size:10px;color:var(--text-mid);margin-top:3px;">➜ ${escHtmlClient(p.nextSteps)}</div>`:''}
+        ${p.referredBy?`<div style="font-size:9px;color:var(--text-light);margin-top:2px;">Ref: ${escHtmlClient(p.referredBy)}</div>`:''}
+        ${_funnelShowArchived?'':_funnelFollowUpBadge(p)}
+        <div style="font-size:9px;color:var(--text-light);margin-top:5px;">${_funnelAccountabilityLine(p)}</div>
+        ${_funnelShowArchived?'':`<div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
           ${key!=='closed'?`<button class="btn btn-xs btn-green" onclick="event.stopPropagation();moveFunnelStage('${p.id}','next')">→ Advance</button>`:''}
           ${key==='closed'?`<button class="btn btn-xs btn-primary" onclick="event.stopPropagation();convertProspect('${p.id}')">✅ Convert</button>`:''}
-          <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();deleteFunnelProspect('${p.id}')">✕</button>
-        </div>
+          <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();archiveFunnelProspect('${p.id}')">🗄️ Archive</button>
+        </div>`}
       </div>`).join('');
     return `
       <div class="funnel-col">
@@ -5968,11 +6052,12 @@ function renderFunnelBoard(){
           ${stage.icon} ${stage.label}
           <span style="background:${stage.color}22;color:${stage.color};padding:1px 7px;border-radius:9px;font-size:9px;">${items.length}</span>
         </div>
-        ${cards||`<div style="font-size:10px;color:var(--text-light);text-align:center;padding:10px;">Empty</div>`}
+        ${cards||`<div style="font-size:10px;color:var(--text-light);text-align:center;padding:10px;">${_funnelShowArchived?'No archived prospects':'Empty'}</div>`}
       </div>`;
   }).join('');
-  // Update funnel badge
-  const total=(db(CL_KEYS.funnel)||[]).length;
+  // Update funnel badge — active (non-archived) prospects only, regardless
+  // of which view is currently showing.
+  const total=all.filter(p=>p.archived!==true).length;
   const badge=_el('funnel-badge');
   if(badge){ badge.textContent=total; badge.style.display=total>0?'flex':'none'; }
 }
@@ -5983,15 +6068,22 @@ function openFunnelModal(id){
   _el('funnel-modal-title').textContent=id?'Edit Prospect':'Add Prospect';
   _el('fm-id').value=id||'';
   _el('funnel-convert-btn').style.display='none';
+  _el('funnel-archive-btn').style.display=id?'':'none';
+  _el('fm-accountability').textContent='';
   if(id){
     const p=(db(CL_KEYS.funnel)||[]).find(x=>x.id===id); if(!p) return;
     _el('fm-name').value=p.name||''; _el('fm-contact').value=p.contact||''; _el('fm-email').value=p.email||'';
     _el('fm-phone').value=p.phone||''; _el('fm-stage').value=p.stage||'lead';
     _el('fm-services').value=p.services||''; _el('fm-referred').value=p.referredBy||'';
     aEl.value=p.assigneeId||''; _el('fm-notes').value=p.notes||'';
-    if(p.stage==='closed') _el('funnel-convert-btn').style.display='';
+    _el('fm-meeting-type').value=p.meetingType||''; _el('fm-next-steps').value=p.nextSteps||'';
+    _el('fm-followup-date').value=p.followUpDate||'';
+    if(p.stage==='closed' && p.archived!==true) _el('funnel-convert-btn').style.display='';
+    _el('funnel-archive-btn').textContent=p.archived===true?'🗄️ Archived':'🗄️ Archive';
+    const accEl=_el('fm-accountability'); const line=_funnelAccountabilityLine(p);
+    if(accEl) accEl.textContent=line;
   } else {
-    ['fm-name','fm-contact','fm-email','fm-phone','fm-services','fm-referred','fm-notes'].forEach(id=>_el(id).value='');
+    ['fm-name','fm-contact','fm-email','fm-phone','fm-services','fm-referred','fm-notes','fm-meeting-type','fm-next-steps','fm-followup-date'].forEach(id=>_el(id).value='');
     _el('fm-stage').value='lead';
   }
   openModal('funnelModal');
@@ -6006,13 +6098,15 @@ function saveFunnelProspect(){
     name, contact:_el('fm-contact').value, email:_el('fm-email').value, phone:_el('fm-phone').value,
     stage:_el('fm-stage').value, services:_el('fm-services').value, referredBy:_el('fm-referred').value,
     assigneeId, assigneeName:roster.find(u=>u.id===assigneeId)?.name||'', notes:_el('fm-notes').value,
+    meetingType:_el('fm-meeting-type').value, nextSteps:_el('fm-next-steps').value, followUpDate:_el('fm-followup-date').value||null,
   };
   const arr=db(CL_KEYS.funnel)||[];
   if(id){ const idx=arr.findIndex(x=>x.id===id); if(idx>=0) Object.assign(arr[idx],data); }
-  else arr.unshift({id:'f'+uid(),...data});
+  else arr.unshift({id:'f'+uid(), archived:false, ...data});
   dbSave(CL_KEYS.funnel,arr);
   closeModal('funnelModal');
   renderFunnelBoard();
+  _scheduleCloudPush();
   showToast(id?'Prospect updated ✓':'Prospect added ✓');
 }
 function moveFunnelStage(id){
@@ -6023,6 +6117,7 @@ function moveFunnelStage(id){
   if(idx<stages.length-1){ p.stage=stages[idx+1]; }
   dbSave(CL_KEYS.funnel,arr);
   renderFunnelBoard();
+  _scheduleCloudPush();
   if(p.stage==='closed') showToast('🎉 Prospect closed! Click Convert to add as client.');
 }
 function convertProspect(id){
@@ -6039,11 +6134,19 @@ function convertProspect(id){
   showToast('Prospect loaded — complete the client form to save');
 }
 function convertProspectToClient(){ convertProspect(_el('fm-id').value); }
-function deleteFunnelProspect(id){
-  if(!confirm('Remove this prospect?')) return;
-  dbSave(CL_KEYS.funnel,(db(CL_KEYS.funnel)||[]).filter(x=>x.id!==id));
+// Archive-only — replaces the old hard-delete entirely. Never removes the
+// row: sets data.archived:true and pushes through the same sync path as any
+// other edit, so it shows up under "Show Archived" instead of disappearing.
+function archiveFunnelProspect(id){
+  if(!id) return;
+  const arr=db(CL_KEYS.funnel)||[];
+  const p=arr.find(x=>x.id===id); if(!p) return;
+  p.archived=true;
+  dbSave(CL_KEYS.funnel,arr);
+  closeModal('funnelModal');
   renderFunnelBoard();
-  showToast('Prospect removed');
+  _scheduleCloudPush();
+  showToast('Prospect archived ✓');
 }
 
 // ═══════════════════════════════════════════════════════

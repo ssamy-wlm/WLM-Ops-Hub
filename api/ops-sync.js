@@ -7,7 +7,8 @@
 //
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
-// settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications? },
+// settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications?,
+// salesFunnel? },
 // tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids] },
 // restoreUserIds?: [ids] }
 //
@@ -1230,6 +1231,57 @@ export default async function handler(req, res) {
         if (error) warnings.push(`catalogSuggestions(${inc.id}): ${error.message}`); else n++;
       }
       applied.catalogSuggestions = n;
+    }
+
+    // ── sales funnel: gated on a per-person salesFunnelAccess flag (checked
+    // against the caller's own users/admins row), NOT on tier — a member like
+    // a sales/account manager can be granted this same as an admin. Super
+    // Admin/CEO always has implicit access. Anyone granted access has full
+    // control over every entry (per Sarah — everyone shares one pipeline, no
+    // per-row ownership restriction), but identity is always server-forced:
+    // createdBy/createdByName/createdAt are stamped once on insert and never
+    // overwritten again; updatedBy/updatedByName/updatedAt refresh on every
+    // write, including an "Archive" action, which is nothing more than a
+    // normal write with archived:true in the payload — there is no separate
+    // delete/archive endpoint, and no code path here ever removes a row. ──
+    if (Array.isArray(c.salesFunnel) && c.salesFunnel.length) {
+      const dir = await getDirectory(supabase);
+      const callerOwnRow = session.role === 'admin'
+        ? dir.admins.find(a => a.id === session.id)
+        : dir.users.find(u => u.id === session.id);
+      const hasFunnelAccess = tier === 'super' || callerOwnRow?.salesFunnelAccess === true;
+      if (!hasFunnelAccess) {
+        warnings.push('salesFunnel: dropped — caller does not have Sales Funnel access');
+      } else {
+        const incoming = c.salesFunnel.filter(validGeneric);
+        const ids = incoming.map(r => r.id);
+        const { data: currentRows } = await supabase.from('ops_sales_funnel').select('id, data').in('id', ids);
+        const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
+        const now = new Date().toISOString();
+        let n = 0;
+        for (const inc of incoming) {
+          const cur = byId.get(inc.id);
+          if (!cur) {
+            const row = {
+              ...inc,
+              archived: false,
+              createdBy: session.id, createdByName: session.name, createdAt: now,
+              updatedBy: session.id, updatedByName: session.name, updatedAt: now,
+            };
+            const { error } = await supabase.from('ops_sales_funnel').insert({ id: inc.id, data: row });
+            if (error) warnings.push(`salesFunnel(${inc.id}): ${error.message}`); else n++;
+            continue;
+          }
+          const row = {
+            ...cur, ...inc,
+            createdBy: cur.createdBy, createdByName: cur.createdByName, createdAt: cur.createdAt,
+            updatedBy: session.id, updatedByName: session.name, updatedAt: now,
+          };
+          const { error } = await supabase.from('ops_sales_funnel').update({ data: row }).eq('id', inc.id);
+          if (error) warnings.push(`salesFunnel(${inc.id}): ${error.message}`); else n++;
+        }
+        applied.salesFunnel = n;
+      }
     }
 
     // ── notifications: every role may mark their OWN notifications read —

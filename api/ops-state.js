@@ -65,7 +65,7 @@ export default async function handler(req, res) {
     const [
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ,
-      orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ,
+      orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
@@ -83,6 +83,7 @@ export default async function handler(req, res) {
       supabase.from('ops_org_links').select('id, data').is('deleted_at', null),
       supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
       supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
+      supabase.from('ops_sales_funnel').select('id, data'),
     ]);
 
     // A single table's query failing (e.g. a column a newer deploy expects
@@ -103,6 +104,7 @@ export default async function handler(req, res) {
       ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['summaries', summariesQ],
       ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
       ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
+      ['salesFunnel', salesFunnelQ],
     ];
     for (const [table, q] of namedQueries) {
       if (q.error) {
@@ -132,6 +134,19 @@ export default async function handler(req, res) {
     // regardless of tier (unlike every other field below, which is scoped by
     // tier). A super admin does not see anyone else's notifications either.
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
+    const salesFunnel = rows(salesFunnelQ.data);
+
+    // Sales Funnel access: a per-person flag (salesFunnelAccess) on the
+    // caller's OWN users/admins row — not a tier, so it's computed from the
+    // raw pre-strip arrays above rather than a level check. Super Admin/CEO
+    // always has implicit access regardless of the flag. Checked against
+    // whichever table session.role says the caller's identity lives in —
+    // dual-role accounts are scoped to their PRIMARY identity for this
+    // session, same as every other per-session field in this file.
+    const callerOwnRow = session.role === 'admin'
+      ? admins.find(a => a.id === session.id)
+      : users.find(u => u.id === session.id);
+    const hasFunnelAccess = tier === 'super' || callerOwnRow?.salesFunnelAccess === true;
 
     // Password-hash migration progress (Super Admin/CEO only, see rule #6 in
     // the migration plan) — a read-only count of accounts still on the
@@ -212,6 +227,13 @@ export default async function handler(req, res) {
       // tier below (members don't manage a team).
       teamNotifPrefs: settingsMap['teamNotifPrefs_' + (session.adminId || session.id)] ?? DEFAULT_TEAM_NOTIF_PREFS,
       passwordMigrationStatus,
+      // Server-verified, same convention as viewerTier above — the frontend
+      // must never re-derive this client-side. Omit the salesFunnel key
+      // entirely (not just an empty array) when access isn't granted, so a
+      // caller without it can't see the data even by inspecting the raw
+      // response.
+      viewerHasSalesFunnelAccess: hasFunnelAccess,
+      ...(hasFunnelAccess ? { salesFunnel } : {}),
     };
 
     // Password (hash today, legacy plaintext for any not-yet-upgraded
