@@ -5312,7 +5312,12 @@ function markServiceDone(clientId, serviceId, locationId){
     title:`Service done: ${svc.name}`,
     body:`${SESSION.name} marked "${svc.name}" complete for ${forName}. Next due: ${svc.due||'TBD'}.`,
     forUser:'admin', fromUser:SESSION.name });
-  renderClientDetail(clientId, loc?'services':'projects'); // franchise services have no Projects-tab mirror to show
+  // Re-render whatever tab is actually open (same pattern as
+  // _refreshOpenServiceViews()) — never assume Services vs. Bundles from
+  // whether this is a franchise service, which silently snapped the panel
+  // to the wrong tab whenever a top-level service was marked done while
+  // viewing Services.
+  if(_activeClientId===clientId) renderClientDetail(clientId, _activeDetailTab);
   renderMyWork();
   // Push immediately (not debounced) — a discrete Mark Done click shouldn't risk
   // being lost to cloud sync if the tab closes before the debounce timer fires.
@@ -5345,7 +5350,12 @@ function setServiceStatus(clientId, serviceId, locationId, newStatus){
   if(!svc) return;
   svc.workStatus=newStatus;
   updateClient(c);
-  renderClientDetail(clientId, loc?'services':'projects');
+  // Re-render whatever tab is actually open (same pattern as
+  // _refreshOpenServiceViews()) — never assume Services vs. Bundles from
+  // whether this is a franchise service, which silently snapped the panel
+  // to the wrong tab whenever a top-level service's status was changed
+  // while viewing Services.
+  if(_activeClientId===clientId) renderClientDetail(clientId, _activeDetailTab);
   renderMyWork();
   if(typeof _flushCloudPush==='function') _flushCloudPush();
   const label=(SERVICE_STATUSES.find(s=>s.value===newStatus)||{}).label||newStatus;
