@@ -582,12 +582,18 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
               <span id="cal-month-label" style="font-size:16px;font-weight:800;color:var(--text-dark);min-width:160px;text-align:center;"></span>
               <button onclick="calNav(1)" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">›</button>
               <button onclick="calGoToday()" style="padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:11px;font-weight:700;cursor:pointer;margin-left:4px;">Today</button>
+              <!-- Week/Month toggle — defaults to Week (see _calMode), same
+                   button-pair style as the List/Calendar toggle above. -->
+              <div style="display:flex;background:var(--bg2);border-radius:8px;padding:3px;gap:2px;margin-left:8px;">
+                <button id="cal-mode-week" onclick="setCalMode('week')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text);box-shadow:0 1px 4px rgba(45,107,182,.1);">Week</button>
+                <button id="cal-mode-month" onclick="setCalMode('month')" style="padding:5px 13px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-light);">Month</button>
+              </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <div style="display:flex;gap:10px;font-size:10px;color:var(--text-light);align-items:center;">
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2e9e6e;margin-right:3px;vertical-align:middle;"></span>On Track</span>
+                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--orange);margin-right:3px;vertical-align:middle;"></span>Due Soon</span>
                 <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--red);margin-right:3px;vertical-align:middle;"></span>Overdue</span>
-                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--orange);margin-right:3px;vertical-align:middle;"></span>Due soon</span>
-                <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2e9e6e;margin-right:3px;vertical-align:middle;"></span>Upcoming</span>
                 <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#aaa;margin-right:3px;vertical-align:middle;"></span>Done</span>
               </div>
             </div>
@@ -6211,49 +6217,56 @@ function renderScheduleView(){
 }
 
 // ═══════════════════════════════════════════════════════
-//  CALENDAR
+//  CALENDAR — Week (default) / Month
 // ═══════════════════════════════════════════════════════
-let _calYear=new Date().getFullYear(), _calMonth=new Date().getMonth();
+// Redesign (2026-07-29): the old month-only grid packed 4-max tiny 9-10px
+// pills into ~110px cells — cramped, hard to click, and forced scrolling
+// through a whole month just to see the next few days. Week is now the
+// default (far less scroll to reach "what's due this week"), cards are
+// full-size and show both the service AND client name (not just a
+// truncated pill), and an empty day gets a light placeholder instead of
+// blank space so "nothing due" reads as a deliberate state, not missing
+// data. _calAnchor is a single reference Date; Week mode shows its
+// containing Sun-Sat week, Month mode shows its containing month —
+// switching modes keeps the same anchor so "today" lines up either way.
+let _calMode='week';
+let _calAnchor=new Date(); _calAnchor.setHours(0,0,0,0);
 
 function calNav(delta){
-  _calMonth+=delta;
-  if(_calMonth>11){_calMonth=0;_calYear++;}
-  if(_calMonth<0){_calMonth=11;_calYear--;}
+  const d=new Date(_calAnchor);
+  if(_calMode==='week') d.setDate(d.getDate()+delta*7);
+  else d.setMonth(d.getMonth()+delta);
+  _calAnchor=d;
   renderCalendar();
 }
 function calGoToday(){
-  _calYear=new Date().getFullYear();
-  _calMonth=new Date().getMonth();
+  _calAnchor=new Date(); _calAnchor.setHours(0,0,0,0);
   renderCalendar();
 }
+function setCalMode(mode){
+  _calMode=mode;
+  const wb=_el('cal-mode-week'), mb=_el('cal-mode-month');
+  const isWeek=mode==='week';
+  if(wb){ wb.style.background=isWeek?'var(--card)':'transparent'; wb.style.color=isWeek?'var(--text)':'var(--text-light)'; wb.style.boxShadow=isWeek?'0 1px 4px rgba(45,107,182,.1)':'none'; }
+  if(mb){ mb.style.background=isWeek?'transparent':'var(--card)'; mb.style.color=isWeek?'var(--text-light)':'var(--text)'; mb.style.boxShadow=isWeek?'none':'0 1px 4px rgba(45,107,182,.1)'; }
+  renderCalendar();
+}
+function _dateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-function renderCalendar(){
-  const year=_calYear, month=_calMonth;
+// Shared event-map builder — same filters (Client/Bundle/Service/Due date)
+// for both Week and Month, exactly as before.
+function _buildScheduleEventMap(){
   const todayStr=today();
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const DAY_HDRS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const label=_el('cal-month-label');
-  if(label) label.textContent=MONTHS[month]+' '+year;
-
-  // Same shared filter row the List view uses — Client/Bundle/Service/Due
-  // date all apply here too, so both views agree on what "narrowed down"
-  // means. A Service filter implies "recurring services only" (a one-time
-  // project isn't "a service"), matching the removed type dropdown's old
-  // service-only behavior.
   const clientF=_el('schedule-client-filter')?.value||'';
   const bundleF=_el('schedule-bundle-filter')?.value||'';
   const serviceF=_el('schedule-service-filter')?.value||'';
   const dueF=_el('schedule-filter')?.value||'';
-
-  // Build event map keyed by YYYY-MM-DD
   const evMap={};
   function addEv(ds,ev){ if(!ds) return; (evMap[ds]=evMap[ds]||[]).push(ev); }
-
   const clients=getClients().filter(c=>!clientF||c.id===clientF);
   const roster=getRoster();
   const rosterMap={};
   roster.forEach(u=>rosterMap[u.id]=u.name);
-
   clients.forEach(c=>{
     const color=c.color||_hashClientColor(c.name);
     _allClientServices(c).forEach(svc=>{
@@ -6277,20 +6290,104 @@ function renderCalendar(){
       });
     }
   });
+  return evMap;
+}
+function _calEventBarColor(ev, todayStr){
+  const done=ev.status==='completed'||ev.status==='done';
+  const over=!done&&ev.due<todayStr;
+  const soon=!done&&!over&&ev.due<=addDays(todayStr,7);
+  return done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
+}
+// Full-size event card — service/project name AND client name each get
+// their own line (the old pill only ever showed one truncated label), a
+// thicker color bar, and a bigger click target. Used by both Week (one row
+// of cards per day) and Month (up to MAX per cell, "+N more" beyond that).
+function _calEventCard(ev, todayStr){
+  const barColor=_calEventBarColor(ev, todayStr);
+  const icon=ev.type==='service'?'↻':'▣';
+  return `<div onclick="calShowDay('${ev.due}')" title="${ev.client}: ${ev.label} (${ev.agent||'Unassigned'})"
+    style="display:flex;flex-direction:column;gap:2px;padding:7px 9px;margin-bottom:6px;border-radius:8px;background:${barColor}14;border-left:4px solid ${barColor};cursor:pointer;">
+    <div style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:var(--text-dark);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      <span style="font-size:11px;color:${barColor};flex-shrink:0;">${icon}</span>${escHtmlClient(ev.label)}
+    </div>
+    <div style="font-size:10.5px;color:var(--text-light);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(ev.client)}${ev.agent?' · '+escHtmlClient(ev.agent):''}</div>
+  </div>`;
+}
+// Light, deliberate "nothing due" placeholder — an empty day used to just
+// be blank space below the day number, easy to misread as unloaded/broken
+// rather than "genuinely nothing here."
+function _calEmptyPlaceholder(){
+  return `<div style="font-size:10.5px;color:var(--text-light);opacity:.55;padding:7px 2px;text-align:center;border:1px dashed var(--border);border-radius:8px;">No services due</div>`;
+}
+
+function renderCalendar(){
+  if(_calMode==='week') _renderWeekGrid(); else _renderMonthGrid();
+  const panel=_el('cal-day-panel');
+  if(panel) panel.style.display='none';
+}
+
+function _renderWeekGrid(){
+  const todayStr=today();
+  const DAY_HDRS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const weekStart=new Date(_calAnchor);
+  weekStart.setDate(weekStart.getDate()-weekStart.getDay()); // back up to Sunday
+  const weekEnd=new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
+  const label=_el('cal-month-label');
+  if(label){
+    label.textContent = weekStart.getMonth()===weekEnd.getMonth()
+      ? `${MONTHS[weekStart.getMonth()]} ${weekStart.getDate()}–${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
+      : `${MONTHS[weekStart.getMonth()]} ${weekStart.getDate()} – ${MONTHS[weekEnd.getMonth()]} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
+  }
+
+  const evMap=_buildScheduleEventMap();
+
+  let html=`<div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:2px solid var(--border);">`;
+  for(let i=0;i<7;i++){
+    const d=new Date(weekStart); d.setDate(d.getDate()+i);
+    const isToday=_dateStr(d)===todayStr;
+    html+=`<div style="padding:10px 0;text-align:center;border-right:${i<6?'1px solid var(--border)':'none'};${isToday?'background:rgba(45,107,182,0.05);':''}">
+      <div style="font-size:10px;font-weight:800;color:var(--text-light);letter-spacing:.06em;text-transform:uppercase;">${DAY_HDRS[i]}</div>
+      <div style="margin-top:3px;">${isToday
+        ?`<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#2E5DA6;color:#fff;font-weight:800;font-size:13px;">${d.getDate()}</span>`
+        :`<span style="font-size:14px;font-weight:700;color:var(--text-dark);">${d.getDate()}</span>`}</div>
+    </div>`;
+  }
+  html+=`</div><div style="display:grid;grid-template-columns:repeat(7,1fr);min-height:340px;">`;
+  for(let i=0;i<7;i++){
+    const d=new Date(weekStart); d.setDate(d.getDate()+i);
+    const ds=_dateStr(d);
+    const isToday=ds===todayStr;
+    const evs=evMap[ds]||[];
+    const cards=evs.length ? evs.map(ev=>_calEventCard(ev, todayStr)).join('') : _calEmptyPlaceholder();
+    html+=`<div style="padding:10px 8px;border-right:${i<6?'1px solid var(--border)':'none'};${isToday?'background:rgba(45,107,182,0.03);':''}">${cards}</div>`;
+  }
+  html+=`</div>`;
+  const wrap=_el('cal-grid-wrap');
+  if(wrap) wrap.innerHTML=html;
+}
+
+function _renderMonthGrid(){
+  const year=_calAnchor.getFullYear(), month=_calAnchor.getMonth();
+  const todayStr=today();
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DAY_HDRS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const label=_el('cal-month-label');
+  if(label) label.textContent=MONTHS[month]+' '+year;
+
+  const evMap=_buildScheduleEventMap();
 
   const firstDay=new Date(year,month,1).getDay();
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
   const totalCells=Math.ceil((firstDay+daysInMonth)/7)*7;
 
-  // Day-of-week header strip
   let html=`<div style="display:grid;grid-template-columns:repeat(7,1fr);border-bottom:2px solid var(--border);">`;
   DAY_HDRS.forEach(d=>{
     html+=`<div style="padding:10px 0;font-size:10px;font-weight:800;color:var(--text-light);text-align:center;letter-spacing:.06em;text-transform:uppercase;">${d}</div>`;
   });
   html+=`</div>`;
 
-  // Grid cells
   html+=`<div style="display:grid;grid-template-columns:repeat(7,1fr);">`;
   let day=1,nextDay=1;
   for(let i=0;i<totalCells;i++){
@@ -6306,7 +6403,6 @@ function renderCalendar(){
     const evs=ds?evMap[ds]||[]:[];
     const hasEv=evs.length>0;
 
-    // Day number chip
     const dayNumStyle=isToday
       ?`display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#2E5DA6;color:#fff;font-weight:800;font-size:12px;`
       :`font-size:12px;font-weight:${isCur?'700':'400'};color:${isCur?'var(--text-dark)':'var(--text-light)'};opacity:${isCur?'1':'0.4'};`;
@@ -6314,39 +6410,30 @@ function renderCalendar(){
     const borderRight=((i+1)%7===0)?'':'border-right:1px solid var(--border);';
     const borderBottom=(i<totalCells-7)?'border-bottom:1px solid var(--border);':'';
     const todayBg=isToday?'background:rgba(45,107,182,0.05);':'';
-    const hoverAttr=hasEv&&ds?`onclick="calShowDay('${ds}')"`:  '';
 
-    // Event pills — up to 4, then "+N more"
-    const MAX=4;
-    let pills='';
-    evs.slice(0,MAX).forEach(ev=>{
-      const done=ev.status==='completed'||ev.status==='done';
-      const over=!done&&ev.due<todayStr;
-      const soon=!done&&!over&&ev.due<=addDays(todayStr,7);
-      const barColor=done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
-      const icon=ev.type==='service'?'↻':'▣';
-      const name=ev.label.length>18?ev.label.slice(0,17)+'…':ev.label;
-      pills+=`<div title="${ev.client}: ${ev.label} (${ev.agent||'Unassigned'})"
-        style="display:flex;align-items:center;gap:4px;padding:3px 6px;margin-bottom:3px;border-radius:5px;background:${barColor}18;border-left:3px solid ${barColor};cursor:pointer;overflow:hidden;">
-        <span style="font-size:9px;color:${barColor};flex-shrink:0;">${icon}</span>
-        <span style="font-size:10px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</span>
-      </div>`;
-    });
-    if(evs.length>MAX){
-      pills+=`<div style="font-size:10px;color:var(--text-light);padding:1px 6px;font-weight:600;">+${evs.length-MAX} more</div>`;
+    // Month cells stay capped (unlike Week, which shows every card) — still
+    // bigger/clickable cards than the old tiny pills, just fewer visible
+    // before "+N more" given the smaller per-cell footprint a whole month
+    // allows. Only current-month days that have no events get the light
+    // placeholder — a leading/trailing day from an adjacent month (isCur
+    // false) stays blank, same as before, since it's not really "this
+    // month's empty day."
+    const MAX=3;
+    let cards='';
+    if(isCur){
+      cards = evs.length ? evs.slice(0,MAX).map(ev=>_calEventCard(ev, todayStr)).join('') : _calEmptyPlaceholder();
+      if(evs.length>MAX) cards+=`<div onclick="calShowDay('${ds}')" style="font-size:10px;color:#2E5DA6;padding:2px 6px;font-weight:700;cursor:pointer;">+${evs.length-MAX} more</div>`;
     }
 
-    html+=`<div ${hoverAttr} style="min-height:110px;padding:8px 7px 6px;vertical-align:top;${borderRight}${borderBottom}${todayBg}${hasEv&&ds?'cursor:pointer;':''}" ${hasEv?`onmouseenter="this.style.background='rgba(45,107,182,0.04)'" onmouseleave="this.style.background='${isToday?'rgba(45,107,182,0.05)':'transparent'}'"`:''}}>
+    html+=`<div style="min-height:120px;padding:8px 7px 6px;vertical-align:top;${borderRight}${borderBottom}${todayBg}">
       <div style="margin-bottom:5px;"><span style="${dayNumStyle}">${cellDay}</span></div>
-      ${pills}
+      ${cards}
     </div>`;
   }
   html+=`</div>`;
 
   const wrap=_el('cal-grid-wrap');
   if(wrap) wrap.innerHTML=html;
-  const panel=_el('cal-day-panel');
-  if(panel) panel.style.display='none';
 }
 
 function addDays(dateStr, n){
