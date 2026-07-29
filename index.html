@@ -2030,9 +2030,25 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card-header">
           <div>
             <div class="card-title">🛑 Error Log</div>
-            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent first. Read-only — nothing here can be edited or deleted.</div>
+            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent 100 rows. Read-only — nothing here can be edited or deleted.</div>
           </div>
           <button class="btn btn-sm btn-outline" onclick="loadErrorLog()">↻ Refresh</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);">
+            Show:
+            <select id="errorLogRangeSelect" onchange="_renderErrorLog()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;color:var(--text-dark);background:#fff;">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="all">All time</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+            <input type="checkbox" id="errorLogGroupToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
+            Group by error type
+          </label>
+          <div id="errorLogCountNote" style="font-size:11px;color:var(--text-light);"></div>
         </div>
         <div class="card-body" style="padding:0;">
           <div id="errorLogResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to load.</div>
@@ -6925,6 +6941,12 @@ function renderPasswordMigrationStatus(){
 // ── Error log viewer (read-only capture, Super Admin/Owner only) ──
 // Fetches from /api/error-log, which only ever reads ops_error_log — this
 // function never writes anything, matching the read-only-by-design capture.
+// The date-range/group-by controls below are purely client-side display
+// filters over the same fetched list (_errorLogEntries) — no re-fetch, no
+// write, nothing sent back to the server. The table's own append-only
+// design (nothing here can edit or delete a row) is untouched.
+let _errorLogEntries = [];
+const _errorLogEsc = (s) => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 async function loadErrorLog(){
   const box = document.getElementById('errorLogResults'); if(!box) return;
   box.textContent = 'Loading…';
@@ -6934,15 +6956,48 @@ async function loadErrorLog(){
     const res = await fetch('/api/error-log', {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
     const data = await res.json();
     if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
-    const entries = Array.isArray(data.entries) ? data.entries : [];
-    if(!entries.length){ box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">No errors logged. ✓</div>'; return; }
-    const esc = (s) => String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-    const rows = entries.map(e => `
+    _errorLogEntries = Array.isArray(data.entries) ? data.entries : [];
+    _renderErrorLog();
+  }catch(err){
+    box.innerHTML = `<div style="padding:16px 4px;color:var(--red,#c0392b);">Failed to load error log: ${err.message}</div>`;
+  }
+}
+// Re-renders #errorLogResults from the already-fetched _errorLogEntries,
+// applying whatever the range-select/group-toggle controls are currently
+// set to. Called on load and on either control's onchange — never re-fetches.
+function _renderErrorLog(){
+  const box = document.getElementById('errorLogResults'); if(!box) return;
+  const countNote = document.getElementById('errorLogCountNote');
+  if(!_errorLogEntries.length){
+    box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">No errors logged. ✓</div>';
+    if(countNote) countNote.textContent = '';
+    return;
+  }
+  const rangeSel = document.getElementById('errorLogRangeSelect');
+  const rangeVal = rangeSel ? rangeSel.value : '30';
+  const grouped = !!document.getElementById('errorLogGroupToggle')?.checked;
+  const entryTs = (e) => new Date(e.timestamp || e.createdAt).getTime();
+
+  let filtered = _errorLogEntries;
+  if(rangeVal !== 'all'){
+    const cutoff = Date.now() - (Number(rangeVal) * 24*60*60*1000);
+    filtered = _errorLogEntries.filter(e => entryTs(e) >= cutoff);
+  }
+
+  if(countNote) countNote.textContent = `Showing ${filtered.length} of ${_errorLogEntries.length} loaded`;
+
+  if(!filtered.length){
+    box.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);">No errors in this range. ✓</div>';
+    return;
+  }
+
+  if(!grouped){
+    const rows = filtered.map(e => `
       <tr>
-        <td style="white-space:nowrap;padding:8px 14px;color:var(--text-light);font-size:12px;">${esc(new Date(e.timestamp || e.createdAt).toLocaleString())}</td>
-        <td style="padding:8px 14px;font-weight:700;">${esc(e.endpoint)}</td>
-        <td style="padding:8px 14px;">${esc(e.error)}</td>
-        <td style="padding:8px 14px;color:var(--text-light);">${esc(e.userName || e.userId || '—')}</td>
+        <td style="white-space:nowrap;padding:8px 14px;color:var(--text-light);font-size:12px;">${_errorLogEsc(new Date(e.timestamp || e.createdAt).toLocaleString())}</td>
+        <td style="padding:8px 14px;font-weight:700;">${_errorLogEsc(e.endpoint)}</td>
+        <td style="padding:8px 14px;">${_errorLogEsc(e.error)}</td>
+        <td style="padding:8px 14px;color:var(--text-light);">${_errorLogEsc(e.userName || e.userId || '—')}</td>
       </tr>`).join('');
     box.innerHTML = `
       <div style="overflow-x:auto;">
@@ -6956,9 +7011,38 @@ async function loadErrorLog(){
           <tbody>${rows}</tbody>
         </table>
       </div>`;
-  }catch(err){
-    box.innerHTML = `<div style="padding:16px 4px;color:var(--red,#c0392b);">Failed to load error log: ${err.message}</div>`;
+    return;
   }
+
+  // Grouped view — collapses identical (endpoint, error message) pairs into
+  // one row with a count and the most recent occurrence's timestamp.
+  const groups = new Map();
+  filtered.forEach(e => {
+    const key = (e.endpoint||'') + '|' + (e.error||'');
+    const g = groups.get(key);
+    const ts = entryTs(e);
+    if(!g) groups.set(key, { endpoint: e.endpoint, error: e.error, count: 1, mostRecent: ts });
+    else { g.count++; if(ts > g.mostRecent) g.mostRecent = ts; }
+  });
+  const groupRows = [...groups.values()].sort((a,b) => b.mostRecent - a.mostRecent).map(g => `
+    <tr>
+      <td style="white-space:nowrap;padding:8px 14px;color:var(--text-light);font-size:12px;">${_errorLogEsc(new Date(g.mostRecent).toLocaleString())}</td>
+      <td style="padding:8px 14px;font-weight:700;">${_errorLogEsc(g.endpoint)}</td>
+      <td style="padding:8px 14px;">${_errorLogEsc(g.error)}</td>
+      <td style="padding:8px 14px;font-weight:700;color:var(--text-dark);">×${g.count}</td>
+    </tr>`).join('');
+  box.innerHTML = `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="border-bottom:1px solid var(--border);text-align:left;">
+          <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Most Recent</th>
+          <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Endpoint</th>
+          <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Error</th>
+          <th style="padding:8px 14px;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">Count</th>
+        </tr></thead>
+        <tbody>${groupRows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ── Schema drift check (read-only, Super Admin/Owner only) ──
