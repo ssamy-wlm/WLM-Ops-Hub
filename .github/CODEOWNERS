@@ -1,0 +1,15 @@
+# Hard, GitHub-enforced review gate for the genuinely always-risky paths —
+# server-side logic, auth/session/permissions, and DB migrations. Independent
+# of any agent's own judgment about which PRs are "safe": with branch
+# protection's "Require review from Code Owners" enabled, nothing touching
+# these paths can merge — auto-merge or manual — without this account's
+# explicit approval.
+#
+# index.html/user.html/client.html are deliberately NOT listed here: each
+# mixes safe UI-only changes with sync/permission-touching changes in the
+# same file, so CODEOWNERS can't cleanly separate them by path alone — that
+# tiering stays a per-PR judgment call (see CLAUDE.md rule #10).
+
+/api/**                    @ssamy-wlm
+/lib/**                    @ssamy-wlm
+/supabase/migrations/**    @ssamy-wlm
