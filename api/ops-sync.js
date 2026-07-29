@@ -8,7 +8,7 @@
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
 // settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications?,
-// salesFunnel? },
+// salesFunnel?, salesFunnelGrants? },
 // tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids] },
 // restoreUserIds?: [ids] }
 //
@@ -53,6 +53,22 @@ import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
 // settings are further narrowed to tier === 'super' only.
 const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
 const PAYROLL_FIELDS = ['payRate', 'hours'];
+
+// Sales Funnel access level resolution — kept identical to (but deliberately
+// not imported from) api/ops-state.js's own copy, same duplicate-not-shared
+// convention as every other cross-file helper in this codebase. A row whose
+// own admin `level` is super/owner always resolves to 'owner'; otherwise an
+// explicit salesFunnelLevel wins, falling back to 'editor' for a legacy
+// salesFunnelAccess:true (from before the 3-tier upgrade) so nobody's access
+// silently changes — this is read-only, recomputed fresh every request,
+// never written back, so there is no migration step to run.
+const FUNNEL_SUPER_LEVELS = new Set(['super', 'owner']);
+function funnelLevelOf(row) {
+  if (FUNNEL_SUPER_LEVELS.has(row?.level)) return 'owner';
+  if (row?.salesFunnelLevel) return row.salesFunnelLevel;
+  if (row?.salesFunnelAccess === true) return 'editor';
+  return null;
+}
 
 function hasContent(v) { return v !== undefined && v !== null && v !== ''; }
 
@@ -1233,25 +1249,29 @@ export default async function handler(req, res) {
       applied.catalogSuggestions = n;
     }
 
-    // ── sales funnel: gated on a per-person salesFunnelAccess flag (checked
-    // against the caller's own users/admins row), NOT on tier — a member like
-    // a sales/account manager can be granted this same as an admin. Super
-    // Admin/CEO always has implicit access. Anyone granted access has full
-    // control over every entry (per Sarah — everyone shares one pipeline, no
-    // per-row ownership restriction), but identity is always server-forced:
-    // createdBy/createdByName/createdAt are stamped once on insert and never
-    // overwritten again; updatedBy/updatedByName/updatedAt refresh on every
-    // write, including an "Archive" action, which is nothing more than a
-    // normal write with archived:true in the payload — there is no separate
-    // delete/archive endpoint, and no code path here ever removes a row. ──
+    // ── sales funnel: gated on the caller's resolved Sales Funnel LEVEL
+    // (viewer/editor/owner — see funnelLevelOf() above), NOT on admin/member
+    // tier — a member like a sales/account manager can be granted this same
+    // as an admin. Viewer is read-only: Editor+ may write prospect changes
+    // (this includes "Archive," which is nothing more than a normal write
+    // with archived:true — there is no separate delete/archive endpoint,
+    // and no code path here ever removes a row). Anyone Editor+ has full
+    // control over every entry (per Sarah — everyone shares one pipeline,
+    // no per-row ownership restriction), but identity is always
+    // server-forced: createdBy/createdByName/createdAt are stamped once on
+    // insert and never overwritten again; updatedBy/updatedByName/
+    // updatedAt refresh on every write. ──
+    const funnelDir = await getDirectory(supabase);
+    const funnelCallerOwnRow = session.role === 'admin'
+      ? funnelDir.admins.find(a => a.id === session.id)
+      : funnelDir.users.find(u => u.id === session.id);
+    const callerFunnelLevel = tier === 'super' ? 'owner' : funnelLevelOf(funnelCallerOwnRow);
+
     if (Array.isArray(c.salesFunnel) && c.salesFunnel.length) {
-      const dir = await getDirectory(supabase);
-      const callerOwnRow = session.role === 'admin'
-        ? dir.admins.find(a => a.id === session.id)
-        : dir.users.find(u => u.id === session.id);
-      const hasFunnelAccess = tier === 'super' || callerOwnRow?.salesFunnelAccess === true;
-      if (!hasFunnelAccess) {
-        warnings.push('salesFunnel: dropped — caller does not have Sales Funnel access');
+      if (callerFunnelLevel !== 'editor' && callerFunnelLevel !== 'owner') {
+        warnings.push(callerFunnelLevel === 'viewer'
+          ? 'salesFunnel: dropped — viewer-level access is read-only'
+          : 'salesFunnel: dropped — caller does not have Sales Funnel access');
       } else {
         const incoming = c.salesFunnel.filter(validGeneric);
         const ids = incoming.map(r => r.id);
@@ -1281,6 +1301,49 @@ export default async function handler(req, res) {
           if (error) warnings.push(`salesFunnel(${inc.id}): ${error.message}`); else n++;
         }
         applied.salesFunnel = n;
+      }
+    }
+
+    // ── sales funnel grants: only Owner+ (tier 'super', or an explicit
+    // funnelLevel of 'owner' — Sarah AND any Owner-level person, per spec)
+    // may change someone ELSE's Sales Funnel level. Deliberately a separate
+    // top-level key, not routed through changes.users/changes.admins —
+    // those two tables are hard-gated to tier==='super' only (see the
+    // ADMIN_TABLES/tier==='super' checks above), which would block a
+    // non-super Owner-level grantee outright. This path touches ONLY the
+    // salesFunnelLevel key on the target's row — nothing else about that
+    // person's record can be changed through it. Refuses a target whose own
+    // stored level is already super/owner (funnelLevelOf() would resolve
+    // them to 'owner' regardless of what's written anyway) — the concrete
+    // enforcement behind "an Owner can never remove or downgrade Sarah,"
+    // extended to every other Super Admin/Owner-level account the same way
+    // (Sarah herself is the PRIMARY_ADMIN_EMAIL sentinel, not a real
+    // ops_admins row, so she never appears in the grantable list at all). ──
+    if (Array.isArray(c.salesFunnelGrants) && c.salesFunnelGrants.length) {
+      if (callerFunnelLevel !== 'owner') {
+        warnings.push('salesFunnelGrants: dropped — only a Sales Funnel Owner (or Super Admin) can change access levels');
+      } else {
+        const VALID_FUNNEL_LEVELS = new Set(['viewer', 'editor', 'owner']);
+        let n = 0;
+        for (const grant of (c.salesFunnelGrants || [])) {
+          if (!grant || !hasContent(grant.id) || (grant.kind !== 'user' && grant.kind !== 'admin')) continue;
+          if (grant.level !== null && !VALID_FUNNEL_LEVELS.has(grant.level)) {
+            warnings.push(`salesFunnelGrants(${grant.id}): invalid level`);
+            continue;
+          }
+          const table = grant.kind === 'admin' ? 'ops_admins' : 'ops_users';
+          const { data: currentRows } = await supabase.from(table).select('id, data').eq('id', grant.id);
+          const cur = currentRows?.[0]?.data;
+          if (!cur) { warnings.push(`salesFunnelGrants(${grant.id}): not found`); continue; }
+          if (grant.kind === 'admin' && FUNNEL_SUPER_LEVELS.has(cur.level)) {
+            warnings.push(`salesFunnelGrants(${grant.id}): dropped — cannot change access for a Super Admin/Owner-level account`);
+            continue;
+          }
+          const { error } = await supabase.from(table).update({ data: { ...cur, salesFunnelLevel: grant.level } }).eq('id', grant.id);
+          if (error) warnings.push(`salesFunnelGrants(${grant.id}): ${error.message}`);
+          else n++;
+        }
+        applied.salesFunnelGrants = n;
       }
     }
 

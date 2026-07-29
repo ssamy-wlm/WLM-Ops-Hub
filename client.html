@@ -647,11 +647,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
         <div>
           <div style="font-size:17px;font-weight:800;color:var(--text-dark);">🎯 Sales Funnel</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">New client intake — convert prospects to active clients</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Your pipeline for tracking leads and moving deals forward.</div>
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn btn-outline btn-sm" id="funnel-archived-toggle-btn" onclick="toggleFunnelArchivedView()">🗄️ Show Archived</button>
-          <button class="btn btn-primary btn-sm" onclick="openFunnelModal()">+ Add Prospect</button>
+          <button class="btn btn-primary btn-sm" id="funnel-add-btn" onclick="openFunnelModal()">+ Add Prospect</button>
         </div>
       </div>
       <div id="funnel-board" class="funnel-board-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;"></div>
@@ -1284,7 +1284,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <button class="btn btn-outline" onclick="closeModal('funnelModal')">Cancel</button>
       <button class="btn btn-outline" id="funnel-archive-btn" style="display:none;" onclick="archiveFunnelProspect(_el('fm-id').value)">🗄️ Archive</button>
       <button class="btn btn-green" id="funnel-convert-btn" style="display:none;" onclick="convertProspectToClient()">✅ Convert to Client</button>
-      <button class="btn btn-primary" onclick="saveFunnelProspect()">💾 Save Prospect</button>
+      <button class="btn btn-primary" id="funnel-save-btn" onclick="saveFunnelProspect()">💾 Save Prospect</button>
     </div>
   </div>
 </div>
@@ -1382,7 +1382,7 @@ function _mergeClientsLocalOntoCloud(cloudClients, localClients){
 // never here, never from a cached session object. This is the fix for the
 // live leak: a stale wl_admin_session left in localStorage from a previous
 // admin login on the same browser must never grant anything on its own.
-let SESSION = { role:'user', name:'', id:null, tier:'member', isAdmin:false, hasFunnelAccess:false };
+let SESSION = { role:'user', name:'', id:null, tier:'member', isAdmin:false, funnelLevel:null };
 
 function detectSession(){
   try{
@@ -1471,15 +1471,17 @@ function _applyViewerTier(tier){
   // My Work is still one click away via its own always-visible nav item.
 }
 
-// Sales Funnel access — a per-person flag (record.viewerHasSalesFunnelAccess
-// from api/ops-state.js), orthogonal to admin/member tier: a granted member
-// sees the funnel exactly like a granted admin does. Server-verified only,
-// same rule as _applyViewerTier() above — never re-derived client-side, and
-// never assumed true before the first successful pull resolves it (SESSION
-// starts with hasFunnelAccess:false).
-function _applyFunnelAccess(hasAccess){
-  SESSION.hasFunnelAccess = !!hasAccess;
-  document.querySelectorAll('.funnel-access-only').forEach(el=>{ el.style.display = SESSION.hasFunnelAccess?'':'none'; });
+// Sales Funnel access — a per-person LEVEL (record.viewerSalesFunnelLevel:
+// 'viewer'|'editor'|'owner'|null, from api/ops-state.js's funnelLevelOf()),
+// orthogonal to admin/member tier: a granted member sees the funnel exactly
+// like a granted admin does, at whatever level they were given. Server-
+// verified only, same rule as _applyViewerTier() above — never re-derived
+// client-side, and never assumed truthy before the first successful pull
+// resolves it (SESSION starts with funnelLevel:null).
+function _applyFunnelAccess(level){
+  SESSION.funnelLevel = level || null;
+  const hasAnyAccess = !!SESSION.funnelLevel; // viewer, editor, or owner — any of the three
+  document.querySelectorAll('.funnel-access-only').forEach(el=>{ el.style.display = hasAnyAccess?'':'none'; });
   // The Sales Funnel nav item lives inside .wlm-topbar-navrow, which is
   // itself admin-only (_applyViewerTier() already hid the WHOLE tab bar for
   // any non-admin/manager/super viewer, before this function ever runs) — a
@@ -1490,14 +1492,18 @@ function _applyFunnelAccess(hasAccess){
   // once the wrapper itself is being shown to a non-admin).
   const navrow = document.querySelector('.wlm-topbar-navrow');
   if(!navrow) return;
-  if(SESSION.hasFunnelAccess && !SESSION.isAdmin){
+  if(hasAnyAccess && !SESSION.isAdmin){
     navrow.style.display = '';
     navrow.querySelectorAll('.nav-item:not(.funnel-access-only)').forEach(el=>{ el.style.display='none'; });
-  } else if(!SESSION.hasFunnelAccess && !SESSION.isAdmin){
+  } else if(!hasAnyAccess && !SESSION.isAdmin){
     navrow.style.display = 'none';
   }
   // SESSION.isAdmin true: leave navrow exactly as _applyViewerTier() already set it.
 }
+// Editor or Owner may add/edit/archive/advance/convert prospects; Viewer may
+// only look. Checked fresh every time (never cached beyond SESSION), same
+// server-verified-only rule as everything else in this section.
+function _funnelCanWrite(){ return SESSION.funnelLevel==='editor' || SESSION.funnelLevel==='owner'; }
 
 // ═══════════════════════════════════════════════════════
 //  HELPERS
@@ -2500,7 +2506,7 @@ async function _pullClientsFromCloud(){
     // sees the funnel same as a granted admin), so it's its own function
     // rather than folded into _applyViewerTier() above. Server-verified only,
     // same rule as tier — never re-derived client-side.
-    _applyFunnelAccess(rec.viewerHasSalesFunnelAccess);
+    _applyFunnelAccess(rec.viewerSalesFunnelLevel);
     // Temporary diagnostic — see the matching comment in api/ops-state.js.
     // Prints the caller's own resolved identity so a stuck view-only report
     // can be confirmed/ruled out as a token-identity issue from the browser
@@ -2910,7 +2916,7 @@ function showPage(name, el){
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
-    if(!SESSION.hasFunnelAccess){ showToast('Access restricted — ask your Super Admin for Sales Funnel access','warn'); showPage('clients',_el('nav-clients')); return; }
+    if(!SESSION.funnelLevel){ showToast('Access restricted — ask your Super Admin for Sales Funnel access','warn'); showPage('clients',_el('nav-clients')); return; }
     renderFunnelBoard();
   }
   if(name==='notifications'){ renderNotifPage(); }
@@ -6027,6 +6033,8 @@ function _funnelAccountabilityLine(p){
 }
 function renderFunnelBoard(){
   const el=_el('funnel-board'); if(!el) return;
+  const canWrite=_funnelCanWrite();
+  const addBtn=_el('funnel-add-btn'); if(addBtn) addBtn.style.display=canWrite?'':'none';
   const all=db(CL_KEYS.funnel)||[];
   const prospects=all.filter(p=>_funnelShowArchived ? p.archived===true : p.archived!==true);
   el.innerHTML=Object.entries(FUNNEL_STAGES).map(([key,stage])=>{
@@ -6040,7 +6048,7 @@ function renderFunnelBoard(){
         ${p.referredBy?`<div style="font-size:9px;color:var(--text-light);margin-top:2px;">Ref: ${escHtmlClient(p.referredBy)}</div>`:''}
         ${_funnelShowArchived?'':_funnelFollowUpBadge(p)}
         <div style="font-size:9px;color:var(--text-light);margin-top:5px;">${_funnelAccountabilityLine(p)}</div>
-        ${_funnelShowArchived?'':`<div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
+        ${(_funnelShowArchived || !canWrite)?'':`<div style="display:flex;gap:4px;margin-top:7px;flex-wrap:wrap;">
           ${key!=='closed'?`<button class="btn btn-xs btn-green" onclick="event.stopPropagation();moveFunnelStage('${p.id}','next')">→ Advance</button>`:''}
           ${key==='closed'?`<button class="btn btn-xs btn-primary" onclick="event.stopPropagation();convertProspect('${p.id}')">✅ Convert</button>`:''}
           <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();archiveFunnelProspect('${p.id}')">🗄️ Archive</button>
@@ -6061,15 +6069,22 @@ function renderFunnelBoard(){
   const badge=_el('funnel-badge');
   if(badge){ badge.textContent=total; badge.style.display=total>0?'flex':'none'; }
 }
+const FUNNEL_MODAL_FIELD_IDS = ['fm-name','fm-contact','fm-email','fm-phone','fm-stage','fm-services','fm-referred','fm-assignee','fm-notes','fm-meeting-type','fm-next-steps','fm-followup-date'];
 function openFunnelModal(id){
+  const canWrite=_funnelCanWrite();
+  if(!id && !canWrite) return; // "+ Add Prospect" is hidden for Viewer, but refuse defensively if reached anyway
   const roster=getRoster();
   const aEl=_el('fm-assignee');
   aEl.innerHTML=`<option value="">— Select —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
-  _el('funnel-modal-title').textContent=id?'Edit Prospect':'Add Prospect';
+  _el('funnel-modal-title').textContent=id?(canWrite?'Edit Prospect':'View Prospect'):'Add Prospect';
   _el('fm-id').value=id||'';
   _el('funnel-convert-btn').style.display='none';
-  _el('funnel-archive-btn').style.display=id?'':'none';
+  _el('funnel-archive-btn').style.display=(id && canWrite)?'':'none';
+  _el('funnel-save-btn').style.display=canWrite?'':'none';
   _el('fm-accountability').textContent='';
+  // Viewer level: every field read-only, no Save/Archive/Convert — matches
+  // "can SEE the funnel/prospects. Cannot add, edit, archive, or grant."
+  FUNNEL_MODAL_FIELD_IDS.forEach(fid=>{ const f=_el(fid); if(f) f.disabled=!canWrite; });
   if(id){
     const p=(db(CL_KEYS.funnel)||[]).find(x=>x.id===id); if(!p) return;
     _el('fm-name').value=p.name||''; _el('fm-contact').value=p.contact||''; _el('fm-email').value=p.email||'';
@@ -6078,7 +6093,7 @@ function openFunnelModal(id){
     aEl.value=p.assigneeId||''; _el('fm-notes').value=p.notes||'';
     _el('fm-meeting-type').value=p.meetingType||''; _el('fm-next-steps').value=p.nextSteps||'';
     _el('fm-followup-date').value=p.followUpDate||'';
-    if(p.stage==='closed' && p.archived!==true) _el('funnel-convert-btn').style.display='';
+    if(p.stage==='closed' && p.archived!==true && canWrite) _el('funnel-convert-btn').style.display='';
     _el('funnel-archive-btn').textContent=p.archived===true?'🗄️ Archived':'🗄️ Archive';
     const accEl=_el('fm-accountability'); const line=_funnelAccountabilityLine(p);
     if(accEl) accEl.textContent=line;
@@ -6089,6 +6104,7 @@ function openFunnelModal(id){
   openModal('funnelModal');
 }
 function saveFunnelProspect(){
+  if(!_funnelCanWrite()) return; // defensive — the Save button is hidden for Viewer, server also rejects
   const name=_el('fm-name').value.trim();
   if(!name){ showToast('Business name required','warn'); return; }
   const id=_el('fm-id').value;
@@ -6110,6 +6126,7 @@ function saveFunnelProspect(){
   showToast(id?'Prospect updated ✓':'Prospect added ✓');
 }
 function moveFunnelStage(id){
+  if(!_funnelCanWrite()) return; // defensive — the Advance button is hidden for Viewer, server also rejects
   const stages=Object.keys(FUNNEL_STAGES);
   const arr=db(CL_KEYS.funnel)||[];
   const p=arr.find(x=>x.id===id); if(!p) return;
@@ -6138,7 +6155,7 @@ function convertProspectToClient(){ convertProspect(_el('fm-id').value); }
 // row: sets data.archived:true and pushes through the same sync path as any
 // other edit, so it shows up under "Show Archived" instead of disappearing.
 function archiveFunnelProspect(id){
-  if(!id) return;
+  if(!id || !_funnelCanWrite()) return; // defensive — the Archive button is hidden for Viewer, server also rejects
   const arr=db(CL_KEYS.funnel)||[];
   const p=arr.find(x=>x.id===id); if(!p) return;
   p.archived=true;

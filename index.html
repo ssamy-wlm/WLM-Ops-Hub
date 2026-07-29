@@ -2087,16 +2087,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <!-- ── SALES FUNNEL ACCESS (own screen, separate from Edit User/Edit
-           Admin) — Super Admin/Owner only, same visibility as the three
-           cards above. Server-side enforcement lives in api/ops-state.js/
-           api/ops-sync.js (a per-person salesFunnelAccess flag) — this card
-           is just the control surface for setting that flag; it never reads
-           or writes Sales Funnel data itself. ── -->
+           Admin) — visible to Super Admin/Owner AND any person granted
+           Sales Funnel Owner level specifically (see the
+           _mySalesFunnelLevel==='owner' check in applyAdminRoleRestrictions
+           below) — Google-Drive-style: Owners can manage other people's
+           access, not just Super Admin. Server-side enforcement lives in
+           api/ops-state.js/api/ops-sync.js (a 3-level salesFunnelLevel field
+           — viewer/editor/owner) — this card is just the control surface
+           for setting that field; it never reads or writes Sales Funnel
+           prospect data itself. ── -->
       <div class="card" id="salesFunnelAccessCard" style="margin-top:22px;display:none;">
         <div class="card-header">
           <div>
             <div class="card-title">🎯 Sales Funnel Access</div>
-            <div class="card-sub">Grant specific people access to the Sales Funnel — everyone with access shares one pipeline. Off by default for everyone except Super Admin/Owner.</div>
+            <div class="card-sub">Grant Viewer, Editor, or Owner access to the Sales Funnel — Owners can also grant access to others.</div>
           </div>
           <button class="btn btn-sm btn-outline" onclick="renderSalesFunnelAccessList()">↻ Refresh</button>
         </div>
@@ -3026,10 +3030,14 @@ function switchAdminTab(el, tab){
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
     if(_adminLevel==='super' || _adminLevel==='owner'){
-      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); renderSalesFunnelAccessList();
+      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus();
       const killSwitchCard=document.getElementById('security-kill-switch-card');
       if(killSwitchCard) killSwitchCard.style.display='block';
     }
+    // Sales Funnel Access: also rendered for a non-super admin who's been
+    // granted funnel-Owner specifically — same OR condition as the card's
+    // own visibility gate in applyAdminRoleRestrictions().
+    if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
@@ -6503,6 +6511,11 @@ function switchToEmployeeView(){ location.href = 'user.html'; }
 let _lastViewerTier = null;
 let _lastViewerLevel = null;
 let _lastPullOk = false;
+// This viewer's own resolved Sales Funnel level (viewer/editor/owner/null,
+// from api/ops-state.js's funnelLevelOf()) — used only to extend the Sales
+// Funnel Access card's visibility to a non-super-level admin who's been
+// granted funnel-Owner specifically (see applyAdminRoleRestrictions()).
+let _mySalesFunnelLevel = null;
 
 function setCloudStatus(msg, type='idle'){
   const el = document.getElementById('cloudSyncStatus');
@@ -6769,6 +6782,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _lastPullOk = true;
     _lastViewerTier = r.viewerTier ?? null;
     _lastViewerLevel = r.viewerLevel ?? null;
+    _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
     _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
@@ -6937,50 +6951,87 @@ function toggleNotificationSetting(key, checked){
   cloudAutoSync();
 }
 
-// ── Sales Funnel Access (own screen, Super Admin/Owner only) ──
-// Lists every active user/admin with a per-person salesFunnelAccess toggle.
-// Super Admin/Owner rows are shown as a static label — they always have
-// implicit access server-side (see api/ops-state.js), a toggle for them
-// would do nothing. Writes immediately on change, same shape as
-// toggleNotificationSetting() above — no batched multi-row Save step.
+// ── Sales Funnel Access (own screen, Owner+ only — Super Admin or anyone
+// granted funnel-Owner level) ──
+// Lists every active user/admin with a per-person 3-way level picker
+// (None/Viewer/Editor/Owner), Google-Drive-style. Super/Owner-level admin
+// rows are shown as a static label — they always resolve to 'owner'
+// server-side (see funnelLevelOf() in api/ops-state.js/api/ops-sync.js),
+// a picker for them would do nothing (and the grant endpoint refuses to
+// touch them anyway). Writes immediately on change via a direct one-off
+// fetch to /api/ops-sync's salesFunnelGrants path — NOT the generic
+// _opsDirty/cloudAutoSync() diffing used for batched record edits, since
+// this is a single explicit action, same shape as e.g.
+// signOutAccountEverywhere().
+// funnelLevel is the RESOLVED level, preferring the server's pre-computed
+// field (present when this viewer's own admins/users cache came back
+// redacted — i.e. a granted non-super Owner) and falling back to resolving
+// the raw stored fields directly (present when this viewer is tier-super,
+// whose cache is always the full unredacted record).
+function _resolveFunnelLevel(p){
+  if(p.funnelLevel !== undefined) return p.funnelLevel;
+  if(p.level==='super' || p.level==='owner') return 'owner';
+  if(p.salesFunnelLevel) return p.salesFunnelLevel;
+  if(p.salesFunnelAccess===true) return 'editor';
+  return null;
+}
 function renderSalesFunnelAccessList(){
   const list = document.getElementById('salesFunnelAccessList'); if(!list) return;
   const users = (dbGet(DB_KEYS.users)||[]).filter(u=>(u.status||'active')==='active');
   const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>(a.status||'active')==='active');
-  const toggleRow = (kind, p) => {
-    const isSuper = kind==='admin' && (p.level==='super' || p.level==='owner');
-    const checked = isSuper || p.salesFunnelAccess===true;
+  const LEVEL_OPTIONS = [['','None'],['viewer','Viewer'],['editor','Editor'],['owner','Owner']];
+  const pickerRow = (kind, p) => {
+    const isImplicitOwner = kind==='admin' && (p.level==='super' || p.level==='owner');
+    const level = _resolveFunnelLevel(p) || '';
     return `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
       <div style="min-width:0;">
         <div style="font-size:13px;font-weight:600;color:var(--text-dark);">${escHtml(p.name||'(unnamed)')}</div>
         <div style="font-size:11px;color:var(--text-light);">${escHtml(p.title||p.role||(kind==='admin'?'Admin':'Team member'))}</div>
       </div>
-      ${isSuper
-        ? `<div style="font-size:11px;color:var(--text-light);font-weight:600;white-space:nowrap;">Always has access</div>`
-        : `<label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0;">
-             <input type="checkbox" ${checked?'checked':''} onchange="toggleSalesFunnelAccess('${kind}','${p.id}',this.checked)" style="opacity:0;width:0;height:0;">
-             <span style="position:absolute;inset:0;background:${checked?'var(--blue,#2D6BB6)':'var(--bg2)'};border-radius:22px;transition:.15s;"></span>
-             <span style="position:absolute;top:2px;left:${checked?'20px':'2px'};width:18px;height:18px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25);"></span>
-           </label>`}
+      ${isImplicitOwner
+        ? `<div style="font-size:11px;color:var(--text-light);font-weight:600;white-space:nowrap;">Owner — always</div>`
+        : `<select class="form-select" style="font-size:12px;padding:5px 10px;width:auto;" onchange="setSalesFunnelLevel('${kind}','${p.id}',this.value)">
+             ${LEVEL_OPTIONS.map(([v,label])=>`<option value="${v}" ${level===v?'selected':''}>${label}</option>`).join('')}
+           </select>`}
     </div>`;
   };
   if(!users.length && !admins.length){
     list.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);font-size:13px;">No active users or admins yet.</div>';
     return;
   }
-  list.innerHTML = admins.map(a=>toggleRow('admin',a)).join('') + users.map(u=>toggleRow('user',u)).join('');
+  list.innerHTML = admins.map(a=>pickerRow('admin',a)).join('') + users.map(u=>pickerRow('user',u)).join('');
 }
-function toggleSalesFunnelAccess(kind, id, checked){
+async function setSalesFunnelLevel(kind, id, level){
   const key = kind==='admin' ? DB_KEYS.admins : DB_KEYS.users;
   const arr = dbGet(key)||[];
   const idx = arr.findIndex(p=>p.id===id);
   if(idx<0) return;
-  arr[idx].salesFunnelAccess = checked;
-  dbSet(key, arr);
-  renderSalesFunnelAccessList();
-  cloudAutoSync();
-  showToast(`${arr[idx].name||'Person'} ${checked?'granted':'removed from'} Sales Funnel access ✓`);
+  const name = arr[idx].name||'Person';
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: JSON.stringify({ changes: { salesFunnelGrants: [{ id, kind, level: level||null }] } })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || (Array.isArray(data.warnings) && data.warnings.some(w=>w.includes('salesFunnelGrants')))){
+      const reason = (data.warnings||[]).find(w=>w.includes('salesFunnelGrants')) || (data.error||('HTTP '+res.status));
+      showToast(`❌ Not saved: ${reason}`, 'error');
+      renderSalesFunnelAccessList(); // reset the dropdown to its last known-good value
+      return;
+    }
+    // Optimistic local update so the picker/label reflects the change
+    // immediately, without waiting for the next background pull.
+    arr[idx].salesFunnelLevel = level||null;
+    dbSet(key, arr);
+    renderSalesFunnelAccessList();
+    showToast(level ? `${name} set to ${level} ✓` : `${name} removed from Sales Funnel access ✓`);
+  }catch(e){
+    showToast('❌ Request failed: '+e.message, 'error');
+  }
 }
 
 // ── Password hash migration progress (read-only, Super Admin/Owner only) ──
@@ -8783,12 +8834,16 @@ function applyAdminRoleRestrictions(level, adminObj){
   const passwordMigrationCard = document.getElementById('passwordMigrationCard');
   if(passwordMigrationCard) passwordMigrationCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
-  // Sales Funnel Access permissions screen — same Super Admin/Owner-only
-  // visibility as the cards above. This card only edits the salesFunnelAccess
-  // flag on a person's own record; server-side enforcement of the funnel
-  // itself lives in api/ops-state.js/api/ops-sync.js, not here.
+  // Sales Funnel Access permissions screen — Super Admin/Owner-level admin,
+  // OR (Google-Drive-style) anyone granted Sales Funnel Owner level
+  // specifically, regardless of their own admin level. This is the one
+  // card whose visibility isn't purely admin-level-gated — a plain 'admin'
+  // level person granted funnel-Owner can reach it too. This card only
+  // writes the salesFunnelLevel field on a person's record; server-side
+  // enforcement of the funnel itself lives in api/ops-state.js/
+  // api/ops-sync.js, not here.
   const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
-  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner' || _mySalesFunnelLevel==='owner') ? 'block' : 'none';
 
   // ── Creative Manager: Tracker + Messages, plus view-only Summaries/Live
   //    Feed under Insights (permission project follow-up) — no Overview,
