@@ -477,6 +477,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <select class="form-select" id="filter-service" onchange="filterClients()" style="flex:1;min-width:130px;max-width:170px;font-size:11px;padding:7px 10px;">
             <option value="">All Services</option>
           </select>
+          <select class="form-select" id="filter-svc-status" onchange="filterClients()" style="flex:1;min-width:120px;max-width:150px;font-size:11px;padding:7px 10px;">
+            <option value="">All Statuses (Service)</option>
+            <option value="not_started">Not Started</option>
+            <option value="in_progress">In Progress</option>
+            <option value="stuck">Stuck</option>
+            <option value="done">Done</option>
+          </select>
+          <select class="form-select" id="filter-category" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
+            <option value="">All Categories</option>
+          </select>
           <select class="form-select admin-only" id="filter-proj-type" onchange="filterClients()" style="flex:1;min-width:130px;max-width:165px;font-size:11px;padding:7px 10px;">
             <option value="">All Bundle Types</option>
           </select>
@@ -616,6 +626,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-outline btn-sm admin-only" id="catalog-manage-bundles-btn" onclick="openBundleManagerModal()">🗂 Manage Bundles</button>
+          <button class="btn btn-outline btn-sm admin-only" id="catalog-manage-categories-btn" onclick="openCategoryManagerModal()">🏷 Manage Categories</button>
           <button class="btn btn-primary btn-sm admin-only" id="catalog-add-btn" onclick="openServiceCatalogModal()">+ Add Service</button>
           <button class="btn btn-outline btn-sm member-only" id="catalog-suggest-btn" onclick="openSuggestServiceModal()">💡 Suggest a Service</button>
         </div>
@@ -1093,6 +1104,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <select class="form-select" id="sc-bundle"><option value="">— No Bundle (standalone) —</option></select>
         <div style="font-size:10.5px;color:var(--text-light);margin-top:4px;">Optional — a standalone service with no bundle is valid.</div>
       </div>
+      <div class="form-group"><label class="form-label">Category</label>
+        <select class="form-select" id="sc-category"><option value="">— Uncategorized —</option></select>
+        <div style="font-size:10.5px;color:var(--text-light);margin-top:4px;">A different, complementary tag from Bundle — groups work like Clockify's "project" (e.g. SEO, Copywriting).</div>
+      </div>
       <div class="form-group"><label class="form-label">Default Frequency</label>
         <select class="form-select" id="sc-freq">
           <option value="monthly">Monthly</option>
@@ -1129,6 +1144,28 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('bundleManagerModal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- CATEGORY MANAGER MODAL — category is a different, complementary tag
+     from bundle (e.g. "Monthly Content Bundle" + "Copywriting" category) -->
+<div id="categoryManagerModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">Manage Categories</div></div>
+      <button class="modal-close" onclick="closeModal('categoryManagerModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group" style="display:flex;gap:8px;">
+        <input class="form-input" id="cm-new-name" placeholder="New category name…" style="flex:1;">
+        <button class="btn btn-primary btn-sm" onclick="submitAddCategory()">+ Add</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--text-light);margin:2px 0 10px;">Categories group work like Clockify's "project" tag (e.g. SEO, Copywriting, Content) — separate from bundle. Changes here apply to the catalog and new assignments only — existing client services are unchanged.</div>
+      <div id="category-manager-list" style="margin-top:6px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('categoryManagerModal')">Done</button>
     </div>
   </div>
 </div>
@@ -1546,30 +1583,48 @@ const DEFAULT_CATALOG=(()=>{
 // service. Editing this catalog never touches services already assigned to
 // a client: those are independent records with their own resolved
 // name/bundle/freq, written once at assignment time (see Job 1's model). ──
+// Categories are a complementary, DIFFERENT tag from bundle (a service can
+// be under "Monthly Content Bundle" AND tagged "Copywriting" as its
+// category) — same admin-editable-list shape/pattern as bundles
+// ({id,name}), on purpose, so Manage Categories mirrors Manage Bundles.
+const DEFAULT_CATEGORIES = ['SEO','Copywriting','Content','Social Media','Web Development','Analytics/Reporting','Ads/PPC','Reviews','Admin/Internal'];
 function _defaultCatalogShape(){
   return {
     bundles: BUNDLE_DEFS.map((b,i)=>({id:'bundle'+i, name:b.bundle})),
     services: DEFAULT_CATALOG,
+    categories: DEFAULT_CATEGORIES.map((name,i)=>({id:'cat'+i, name})),
   };
 }
 function getFullCatalog(){
   const stored=db(CL_KEYS.serviceCatalog);
-  if(stored && typeof stored==='object' && Array.isArray(stored.services) && Array.isArray(stored.bundles)) return stored;
+  if(stored && typeof stored==='object' && Array.isArray(stored.services) && Array.isArray(stored.bundles)){
+    // categories is a later addition — backfill the default seed list, in
+    // memory only (no write), for any catalog saved before this field
+    // existed. The next real edit (saveFullCatalog) persists it for real.
+    if(!Array.isArray(stored.categories)) stored.categories=_defaultCatalogShape().categories;
+    return stored;
+  }
   if(Array.isArray(stored)){
     // Legacy flat-array shape (pre-catalog-editor) — upgrade in place.
     const names=[...new Set(stored.map(s=>s.bundle).filter(Boolean))];
-    return { bundles: names.map((n,i)=>({id:'bundle'+i, name:n})), services: stored };
+    return { bundles: names.map((n,i)=>({id:'bundle'+i, name:n})), services: stored, categories: _defaultCatalogShape().categories };
   }
   return _defaultCatalogShape();
 }
 function getCatalog(){ return getFullCatalog().services; }
 function getCatalogBundles(){ return getFullCatalog().bundles; }
+function getCatalogCategories(){ return getFullCatalog().categories; }
 function _markCatalogDirty(){ try{ localStorage.setItem('wl_catalog_dirty','1'); }catch(e){} _scheduleCloudPush(); }
-function saveFullCatalog(bundles, services){
-  dbSave(CL_KEYS.serviceCatalog, {bundles, services});
+// categories is optional — omitted call sites (every pre-existing
+// bundle/service save) keep whatever's already stored, so this never needs
+// to touch every existing saveFullCatalog(bundles, services) call.
+function saveFullCatalog(bundles, services, categories){
+  const cats = categories!==undefined ? categories : getCatalogCategories();
+  dbSave(CL_KEYS.serviceCatalog, {bundles, services, categories:cats});
   _markCatalogDirty();
 }
 function getBundleNames(){ return getCatalogBundles().map(b=>b.name); }
+function getCategoryNames(){ return getCatalogCategories().map(c=>c.name); }
 function addBundle(name){
   const {bundles, services}=getFullCatalog();
   const trimmed=(name||'').trim();
@@ -1592,6 +1647,42 @@ function deleteBundle(id){
   const b=bundles.find(x=>x.id===id); if(!b) return;
   services.forEach(s=>{ if(s.bundle===b.name) s.bundle=null; });
   saveFullCatalog(bundles.filter(x=>x.id!==id), services);
+}
+function addCategory(name){
+  const {bundles, services, categories}=getFullCatalog();
+  const trimmed=(name||'').trim();
+  if(!trimmed) return null;
+  if(categories.some(c=>c.name.toLowerCase()===trimmed.toLowerCase())) return null;
+  const c={id:'cat'+uid(), name:trimmed};
+  saveFullCatalog(bundles, services, [...categories,c]);
+  return c;
+}
+function renameCategory(id,newName){
+  const {bundles, services, categories}=getFullCatalog();
+  const c=categories.find(x=>x.id===id); if(!c) return;
+  const oldName=c.name, trimmed=(newName||'').trim(); if(!trimmed) return;
+  c.name=trimmed;
+  // Existing client-service categories are resolved/frozen values (same
+  // non-retroactive rule as bundle) — bulk-updated on rename so a renamed
+  // category doesn't silently orphan every service already tagged with the
+  // old name, exactly like renameBundle does for svc.bundle above.
+  services.forEach(s=>{ if(s.category===oldName) s.category=trimmed; });
+  // _allClientServices() returns copies for display/filtering use — mutate
+  // the client's own services/locations arrays directly so the rename
+  // actually persists, then save once.
+  const clients=getClients();
+  clients.forEach(cl=>{
+    (cl.services||[]).forEach(s=>{ if(s.category===oldName) s.category=trimmed; });
+    (cl.locations||[]).forEach(loc=>(loc.services||[]).forEach(s=>{ if(s.category===oldName) s.category=trimmed; }));
+  });
+  saveClients(clients);
+  saveFullCatalog(bundles, services, categories);
+}
+function deleteCategory(id){
+  const {bundles, services, categories}=getFullCatalog();
+  const c=categories.find(x=>x.id===id); if(!c) return;
+  services.forEach(s=>{ if(s.category===c.name) s.category=null; });
+  saveFullCatalog(bundles, services, categories.filter(x=>x.id!==id));
 }
 function ensureCatalog(){
   const stored=db(CL_KEYS.serviceCatalog);
@@ -2821,6 +2912,13 @@ function populateServiceDropdown(){
     const cur=flt.value;
     flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
   }
+  // Category filter dropdown — sourced from the admin-editable category
+  // list (getCatalogCategories()), same pattern as bundles above.
+  const catFlt=_el('filter-category');
+  if(catFlt){
+    const cur=catFlt.value;
+    catFlt.innerHTML=`<option value="">All Categories</option>`+getCategoryNames().map(c=>`<option value="${escHtmlClient(c)}"${cur===c?' selected':''}>${escHtmlClient(c)}</option>`).join('');
+  }
   // Bundle Types dropdown: always offer the canonical bundle taxonomy, plus any
   // other type value (e.g. legacy "Recurring Service") actually present on a client.
   const ptSel=_el('filter-proj-type');
@@ -3057,6 +3155,8 @@ function filterClients(){
   const pjSt=_el('filter-proj-status')?.value||'';
   const mg=_el('filter-manager')?.value||'';
   const ag=_el('filter-assignee')?.value||'';
+  const svcStatus=_el('filter-svc-status')?.value||'';
+  const category=_el('filter-category')?.value||'';
   const sort=_el('filter-sort')?.value||'name';
   let list=getClients();
 
@@ -3106,6 +3206,29 @@ function filterClients(){
     );
   }
 
+  // Service status (self-service Not Started/In Progress/Stuck/Done field —
+  // distinct from client-level status filtered above) — matches any service
+  // on the client (or a franchise location's service) currently at this
+  // status. Absent workStatus reads as 'not_started', same fallback
+  // _svcStatus() uses everywhere else.
+  if(svcStatus){
+    list=list.filter(c=>
+      (c.services||[]).some(s=>_svcStatus(s)===svcStatus) ||
+      (c.locations||[]).some(loc=>(loc.services||[]).some(s=>_svcStatus(s)===svcStatus))
+    );
+  }
+
+  // Category — matches any service (or franchise location service) tagged
+  // with this category. A service with no category never matches a real
+  // category filter value (it only ever shows as "Uncategorized" in the row
+  // itself — see the category filter's populate comment above).
+  if(category){
+    list=list.filter(c=>
+      (c.services||[]).some(s=>s.category===category) ||
+      (c.locations||[]).some(loc=>(loc.services||[]).some(s=>s.category===category))
+    );
+  }
+
   // Sort
   list.sort((a,b)=>{
     if(sort==='name') return a.name.localeCompare(b.name);
@@ -3128,7 +3251,7 @@ function filterClients(){
 }
 
 function clearClientFilters(){
-  ['client-search','filter-status','filter-service','filter-proj-type','filter-proj-status','filter-manager','filter-assignee']
+  ['client-search','filter-status','filter-service','filter-svc-status','filter-category','filter-proj-type','filter-proj-status','filter-manager','filter-assignee']
     .forEach(id=>{ const el=_el(id); if(el) el.value=''; });
   _el('filter-sort').value='name';
   filterClients();
@@ -3144,13 +3267,18 @@ function renderClientFilterChips(){
   const ps=_el('filter-proj-status')?.value;
   const mg=_el('filter-manager')?.value;
   const ag=_el('filter-assignee')?.value;
+  const wsFlt=_el('filter-svc-status')?.value;
+  const catFlt=_el('filter-category')?.value;
   // Find label text for service
   const svcLabel = sv ? (_el('filter-service')?.querySelector(`option[value="${sv}"]`)?.textContent||sv) : '';
   const mgLabel  = mg ? (_el('filter-manager')?.querySelector(`option[value="${mg}"]`)?.textContent||mg) : '';
   const agLabel  = ag ? (_el('filter-assignee')?.querySelector(`option[value="${ag}"]`)?.textContent||ag) : '';
+  const wsLabel  = wsFlt ? (_el('filter-svc-status')?.querySelector(`option[value="${wsFlt}"]`)?.textContent||wsFlt) : '';
   if(q)  chips.push({label:'Search: "'+q+'"',       id:'client-search',   reset:''});
   if(st) chips.push({label:'Status: '+st,            id:'filter-status',   reset:''});
   if(sv) chips.push({label:'Service: '+svcLabel,     id:'filter-service',  reset:''});
+  if(wsFlt) chips.push({label:'Service Status: '+wsLabel, id:'filter-svc-status', reset:''});
+  if(catFlt) chips.push({label:'Category: '+catFlt,  id:'filter-category', reset:''});
   if(pt) chips.push({label:'Bundle Type: '+pt,      id:'filter-proj-type',reset:''});
   if(ps) chips.push({label:'Bundle Status: '+ps.replace('-',' '), id:'filter-proj-status', reset:''});
   if(mg) chips.push({label:'Manager: '+mgLabel,      id:'filter-manager',  reset:''});
@@ -3190,12 +3318,14 @@ function _currentFilterQuery(){
     projStatus: _el('filter-proj-status')?.value||'',
     manager:    _el('filter-manager')?.value||'',
     assignee:   _el('filter-assignee')?.value||'',
+    svcStatus:  _el('filter-svc-status')?.value||'',
+    category:   _el('filter-category')?.value||'',
     sort:       _el('filter-sort')?.value||'name',
   };
 }
 function saveCurrentFilter(){
   const q=_currentFilterQuery();
-  if(!(q.search||q.status||q.service||q.projType||q.projStatus||q.manager||q.assignee)){
+  if(!(q.search||q.status||q.service||q.projType||q.projStatus||q.manager||q.assignee||q.svcStatus||q.category)){
     showToast('Set at least one filter before saving','warn'); return;
   }
   const name=(prompt('Name this filter (e.g. "My overdue", "Sherine\'s clients"):')||'').trim();
@@ -3216,6 +3346,8 @@ function applySavedFilter(id){
   if(_el('filter-proj-status'))_el('filter-proj-status').value=q.projStatus||'';
   if(_el('filter-manager'))    _el('filter-manager').value=q.manager||'';
   if(_el('filter-assignee'))   _el('filter-assignee').value=q.assignee||'';
+  if(_el('filter-svc-status')) _el('filter-svc-status').value=q.svcStatus||'';
+  if(_el('filter-category'))   _el('filter-category').value=q.category||'';
   if(_el('filter-sort'))       _el('filter-sort').value=q.sort||'name';
   filterClients();
 }
@@ -3577,18 +3709,33 @@ function _serviceRow(c, svc, locationId){
   const subitemsDone=subitems.filter(si=>si.done).length;
   const subitemsBadge=subitems.length?`<span class="chip" style="background:var(--bg2);color:var(--text-light);margin-left:6px;" title="Sub-items completed">${subitemsDone}/${subitems.length}</span>`:'';
   const subitemsBtn=`<button class="btn btn-xs btn-outline" onclick="openServiceSubitemsModal('${c.id}','${svc.id}'${locArg})" title="Sub-items">${ICON_ADD}</button>`;
+  const categoryChip=svc.category?`<div style="font-size:9px;color:var(--text-light);">🏷 ${escHtmlClient(svc.category)}</div>`:'';
+  const workStatus=_svcStatus(svc);
+  const workStatusLabel=(SERVICE_STATUSES.find(s=>s.value===workStatus)||{}).label||workStatus;
+  const isStuck=workStatus==='stuck';
+  // Self-service Status dropdown — replaces the old standalone Mark Done
+  // button; selecting "Done" here routes through markServiceDone() so the
+  // due-date rollover/notification is identical either way (see
+  // setServiceStatus()). Read-only for anyone who can't edit this service
+  // (svcCanEdit — admin or the assignee) or once it's inactive, but still
+  // VISIBLE to everyone who can see the row at all, same as the Assigned To
+  // column — "Stuck" gets a distinct red treatment either way so a manager
+  // scanning this table (or Workload/My Team's Work) can spot it at a glance.
+  const statusCell=(svcCanEdit && !inactive)
+    ?`<select class="form-select" style="font-size:10.5px;padding:4px 6px;${isStuck?'border-color:var(--red);color:var(--red);font-weight:700;':''}" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','${locationId||''}',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===workStatus?' selected':''}>${s.label}</option>`).join('')}</select>`
+    :`<span class="chip" style="${isStuck?'background:rgba(224,85,85,.12);color:var(--red);font-weight:700;':'background:var(--bg2);color:var(--text-light);'}">${workStatusLabel}</span>`;
   return `
       <tr${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
+        <td>${statusCell}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
           ${inactive
             ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})" title="Reactivate">${ICON_UNDO}</button>`:''}${commentBtn}${subitemsBtn}`
-            :`<button class="btn btn-xs btn-primary" onclick="markServiceDone('${c.id}','${svc.id}'${locArg})" title="Mark done today, roll due date forward">${ICON_CHECK}</button>
-          <button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}'${locArg})" title="Edit">${ICON_EDIT}</button>
+            :`<button class="btn btn-xs btn-outline" onclick="editClientService('${c.id}','${svc.id}'${locArg})" title="Edit">${ICON_EDIT}</button>
           ${commentBtn}
           ${subitemsBtn}
           ${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="cancelClientService('${c.id}','${svc.id}'${locArg})" title="Cancel — hides from alerts, kept, reversible">${ICON_CANCEL}</button>
@@ -3611,7 +3758,7 @@ function _serviceTable(c, svcs, locationId){
   if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-title">No recurring services added yet</div></div>';
   return `<div style="overflow-x:auto;">
     <table class="service-table">
-      <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Actions</th></tr></thead>
+      <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>${visible.map(svc=>_serviceRow(c,svc,locationId!==undefined?locationId:svc._locationId)).join('')}</tbody>
     </table>
   </div>`;
@@ -4601,14 +4748,27 @@ function _buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes
   const assigneeId=assigneeIds[0]||'';
   const assigneeName=roster.find(u=>u.id===assigneeId)?.name||'';
   return {
-    // bundle is resolved from the catalog and frozen HERE, not re-derived on
-    // every render — so a later catalog edit (rename/delete a bundle or this
-    // service) never changes what's already assigned to this client.
+    // bundle/category are resolved from the catalog and frozen HERE, not
+    // re-derived on every render — so a later catalog edit (rename/delete a
+    // bundle, category, or this service) never changes what's already
+    // assigned to this client. category is a different, complementary tag
+    // from bundle (a service can carry both) — no bundleOverride-style
+    // param for it since no caller currently needs to supply one directly.
     name:svcName,
     catalogId: keepUncataloged?current.catalogId:catalogId,
     bundle: keepUncataloged?current.bundle:(bundleOverride!==undefined?bundleOverride:(catEntry?.bundle||null)),
+    category: keepUncataloged?current.category:(catEntry?.category||null),
     freq, due, lastDone,
-    assigneeIds, assigneeId, assigneeName, notes:notes||''
+    assigneeIds, assigneeId, assigneeName, notes:notes||'',
+    // Explicit initial value, set only at creation time (not a load-time
+    // backfill) — existing services predating this field simply have no
+    // status key at all, and every read site treats that the same as
+    // 'not_started' (see _svcStatus()).
+    // NOTE: "workStatus", not "status" — svc.status already means the
+    // cancelled/archived lifecycle state (_isInactiveService()); this is a
+    // deliberately different field for the self-service Not
+    // Started/In Progress/Stuck/Done tracking value.
+    workStatus: current?.workStatus || 'not_started',
   };
 }
 
@@ -5038,6 +5198,7 @@ function markServiceDone(clientId, serviceId, locationId){
   const doneDate=(dateEl && dateEl.value) ? dateEl.value : today();
   svc.lastDone=doneDate;
   svc.due=calcNextDue(svc.freq, doneDate);
+  svc.workStatus='done'; // Status Dropdown feature — "Done" via either path means the same thing (svc.status is a different, pre-existing field: cancelled/archived lifecycle state)
   updateClient(c);
   const forName=loc?`${c.name} — ${loc.name}`:c.name;
   if(!loc) syncServicesToProjects(clientId); // franchise services have no Bundles-tab mirror
@@ -5051,6 +5212,38 @@ function markServiceDone(clientId, serviceId, locationId){
   // being lost to cloud sync if the tab closes before the debounce timer fires.
   if(typeof _flushCloudPush==='function') _flushCloudPush();
   showToast(`✅ ${svc.name} marked done — next due: ${svc.due||'TBD'}`);
+}
+// ── Status Dropdown (Not Started / In Progress / Stuck / Done) — the
+// self-service replacement for the old standalone Mark Done button.
+// Selecting "Done" triggers the exact same completion logic (due-date
+// rollover, notification) as markServiceDone() always has — it just routes
+// through it instead of duplicating it. Every other status is a plain
+// field write with no due-date/notification side effect, since only
+// completing the work actually rolls the schedule forward. Self-service:
+// server-side this is authorized identically to any other edit on a
+// service already assigned to the caller (checkMemberClientWrite is
+// whole-service, not per-field — see api/ops-sync.js) — a member can set
+// this on their own assigned services, same as any other field.
+const SERVICE_STATUSES = [
+  { value:'not_started', label:'Not Started' },
+  { value:'in_progress', label:'In Progress' },
+  { value:'stuck',       label:'Stuck' },
+  { value:'done',        label:'Done' },
+];
+function _svcStatus(svc){ return svc?.workStatus || 'not_started'; }
+function setServiceStatus(clientId, serviceId, locationId, newStatus){
+  if(newStatus==='done'){ markServiceDone(clientId, serviceId, locationId); return; }
+  const c=getClient(clientId); if(!c) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  const svc=loc?(loc.services||[]).find(s=>s.id===serviceId):(c.services||[]).find(s=>s.id===serviceId);
+  if(!svc) return;
+  svc.workStatus=newStatus;
+  updateClient(c);
+  renderClientDetail(clientId, loc?'services':'projects');
+  renderMyWork();
+  if(typeof _flushCloudPush==='function') _flushCloudPush();
+  const label=(SERVICE_STATUSES.find(s=>s.value===newStatus)||{}).label||newStatus;
+  showToast(`${svc.name}: ${label}`);
 }
 
 // ── Editing the "mark as done on this date" input directly, WITHOUT clicking
@@ -5202,11 +5395,13 @@ function openServiceCatalogModal(id, presetBundleId){
   daEl.innerHTML=`<option value="">— None —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   const bundleEl=_el('sc-bundle');
   bundleEl.innerHTML=`<option value="">— No Bundle (standalone) —</option>`+getCatalogBundles().map(b=>`<option value="${b.name}">${b.name}</option>`).join('');
+  const catEl=_el('sc-category');
+  catEl.innerHTML=`<option value="">— Uncategorized —</option>`+getCategoryNames().map(c=>`<option value="${c}">${c}</option>`).join('');
   if(id){
     const s=getCatalog().find(x=>x.id===id); if(!s) return;
-    _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||'';
+    _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||''; catEl.value=s.category||'';
   } else {
-    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value='';
+    _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value=''; catEl.value='';
     const presetBundle = presetBundleId ? getCatalogBundles().find(b=>b.id===presetBundleId) : null;
     bundleEl.value = presetBundle ? presetBundle.name : '';
   }
@@ -5218,7 +5413,7 @@ function saveServiceCatalog(){
   if(!name){ showToast('Service name required','warn'); return; }
   const id=_el('sc-id').value;
   const {bundles, services}=getFullCatalog();
-  const data={name,bundle:_el('sc-bundle').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
+  const data={name,bundle:_el('sc-bundle').value||null,category:_el('sc-category').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
   if(id){ const s=services.find(x=>x.id===id); if(s) Object.assign(s,data); }
   else services.push({id:'svc'+uid(),...data});
   saveFullCatalog(bundles, services);
@@ -5331,6 +5526,50 @@ function deleteBundleConfirm(id,count){
   populateServiceDropdown();
   renderCatalog();
   showToast('Bundle deleted');
+}
+
+// ── Category Manager (admin) — same admin-editable-list pattern as Bundle
+// Manager above, minus the expand-to-see-services affordance: category
+// isn't a grouping the Catalog list itself organizes by (bundle already
+// does that), just a flat editable tag list. ──
+function openCategoryManagerModal(){
+  _el('cm-new-name').value='';
+  renderCategoryManagerList();
+  openModal('categoryManagerModal');
+}
+function renderCategoryManagerList(){
+  const el=_el('category-manager-list'); if(!el) return;
+  const categories=getCatalogCategories();
+  if(!categories.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-title">No categories yet</div></div>'; return; }
+  el.innerHTML=categories.map(c=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+      <input class="form-input" style="flex:1;padding:6px 10px;font-size:12px;" value="${escHtmlClient(c.name)}" onchange="renameCategoryFromInput('${c.id}',this.value)">
+      <button class="btn btn-xs btn-danger" onclick="deleteCategoryConfirm('${c.id}')">✕</button>
+    </div>`).join('');
+}
+function submitAddCategory(){
+  const name=_el('cm-new-name').value.trim();
+  if(!name){ showToast('Category name required','warn'); return; }
+  const c=addCategory(name);
+  if(!c){ showToast('A category with that name already exists','warn'); return; }
+  _el('cm-new-name').value='';
+  renderCategoryManagerList();
+  populateServiceDropdown();
+  showToast('Category added ✓');
+}
+function renameCategoryFromInput(id,newName){
+  if(!newName.trim()){ renderCategoryManagerList(); return; }
+  renameCategory(id,newName);
+  renderCategoryManagerList();
+  populateServiceDropdown();
+  showToast('Category renamed ✓');
+}
+function deleteCategoryConfirm(id){
+  if(!confirm('Delete this category? Services already tagged with it become Uncategorized (not deleted) — nothing already assigned to a client is removed.')) return;
+  deleteCategory(id);
+  renderCategoryManagerList();
+  populateServiceDropdown();
+  showToast('Category deleted');
 }
 
 // ── Suggest a Service (members) ─────────────────────────────────────────
@@ -5598,12 +5837,15 @@ function renderMyWork(){
           const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
           const svcSubitems=Array.isArray(svc.subitems)?svc.subitems:[];
           const svcSubitemsDone=svcSubitems.filter(si=>si.done).length;
+          const ws=_svcStatus(svc);
+          const wsStuck=ws==='stuck';
+          const wsLabel=(SERVICE_STATUSES.find(s=>s.value===ws)||{}).label||ws;
           return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
             <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
+            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}${svc.category?` · 🏷 ${escHtmlClient(svc.category)}`:''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
             <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}')">
-            <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}')">✅ Mark Done</button>
+            <select class="form-select" style="flex-shrink:0;font-size:10.5px;padding:4px 6px;${wsStuck?'border-color:var(--red);color:var(--red);font-weight:700;':''}" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
             <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
             <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceSubitemsModal('${c.id}','${svc.id}')" title="Sub-items">${ICON_ADD}</button>
           </div>`;
@@ -5630,12 +5872,14 @@ function renderMyWork(){
               const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
               const svcSubitems=Array.isArray(svc.subitems)?svc.subitems:[];
               const svcSubitemsDone=svcSubitems.filter(si=>si.done).length;
+              const ws=_svcStatus(svc);
+              const wsStuck=ws==='stuck';
               return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
                 <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
+                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}${svc.category?` · 🏷 ${escHtmlClient(svc.category)}`:''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
                 <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}','${loc.id}')">
-                <button class="btn btn-xs btn-primary" style="flex-shrink:0;" onclick="markServiceDone('${c.id}','${svc.id}','${loc.id}')">✅ Mark Done</button>
+                <select class="form-select" style="flex-shrink:0;font-size:10.5px;padding:4px 6px;${wsStuck?'border-color:var(--red);color:var(--red);font-weight:700;':''}" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','${loc.id}',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
                 <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}','${loc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
                 <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceSubitemsModal('${c.id}','${svc.id}','${loc.id}')" title="Sub-items">${ICON_ADD}</button>
               </div>`;

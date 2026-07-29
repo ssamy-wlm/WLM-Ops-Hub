@@ -1228,7 +1228,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Total Active</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟥 Stuck</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Assigned Steps</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);"></th>
               </tr>
             </thead>
             <tbody id="workloadTableBody"></tbody>
@@ -1269,7 +1271,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Total Active</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟥 Stuck</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Assigned Steps</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);"></th>
               </tr>
             </thead>
             <tbody id="myTeamsWorkTableBody"></tbody>
@@ -4456,6 +4460,37 @@ function _wlSvcAssignedTo(svc, personId, personName){
   return svc.assigneeId===personId || svc.assigneeId===personName ||
          svc.assigneeName===personName || svc.assignee===personName || svc.assignee===personId;
 }
+// Status Dropdown feature — own copy (zero-shared-code rule) of the same
+// Not Started/In Progress/Stuck/Done field client.html/user.html write to
+// each service. NOTE: "workStatus", not "status" — svc.status is a
+// separate, pre-existing field (cancelled/archived lifecycle state, see
+// _chIsInactiveService above) on the same shared client record.
+const SERVICE_STATUSES = [
+  { value:'not_started', label:'Not Started' },
+  { value:'in_progress', label:'In Progress' },
+  { value:'stuck',       label:'Stuck' },
+  { value:'done',        label:'Done' },
+];
+function _svcStatus(svc){ return svc?.workStatus || 'not_started'; }
+// Which people's Workload row is currently expanded to show their
+// per-service breakdown — purely local UI state, reset on every re-render
+// call, same pattern as _bmExpanded in client.html's Bundle Manager.
+let _workloadExpanded=new Set();
+function toggleWorkloadDetail(personId){
+  if(_workloadExpanded.has(personId)) _workloadExpanded.delete(personId); else _workloadExpanded.add(personId);
+  // My Team's Work rows are stored with an 'mtw_' prefix specifically so
+  // the two dashboards' expand state can't collide for the same person —
+  // re-render whichever table this toggle actually belongs to, or the
+  // other one silently never reflects the click.
+  if(String(personId).startsWith('mtw_')) renderMyTeamsWork();
+  else renderWorkloadDashboard();
+}
+function _svcBreakdownRow(person, clientName, s){
+  const ws=_svcStatus(s);
+  const wsLabel=(SERVICE_STATUSES.find(x=>x.value===ws)||{}).label||ws;
+  const wsStuck=ws==='stuck';
+  return { clientName, name:s.name||'(unnamed)', category:s.category||'Uncategorized', status:ws, statusLabel:wsLabel, stuck:wsStuck, due:s.due||'—' };
+}
 function renderWorkloadDashboard(){
   const body=document.getElementById('workloadTableBody');
   const empty=document.getElementById('workloadEmpty');
@@ -4463,25 +4498,29 @@ function renderWorkloadDashboard(){
   const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
   // Flatten every active client's top-level + franchise-location services
   // into one list, same as client.html's _allClientServices() does for its
-  // own due-date/alert/My Work views.
+  // own due-date/alert/My Work views. Keeps the owning client's name
+  // alongside each service so the per-service breakdown can show it.
   const allServices=[];
   clients.forEach(c=>{
-    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s));
-    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s)));
+    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push({svc:s, clientName:c.name}));
+    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push({svc:s, clientName:`${c.name} — ${loc.name}`})));
   });
 
   const rows=_timeOffRoster().map(person=>{
-    let ok=0, soon=0, overdue=0, steps=0;
-    allServices.forEach(s=>{
+    let ok=0, soon=0, overdue=0, steps=0, stuck=0;
+    const services=[];
+    allServices.forEach(({svc:s, clientName})=>{
       if(_wlSvcAssignedTo(s, person.id, person.name)){
         const status=_chSvcDueStatus(s);
         if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        if(_svcStatus(s)==='stuck') stuck++;
+        services.push(_svcBreakdownRow(person, clientName, s));
       }
       (s.subitems||[]).forEach(si=>{
         if(si.assigneeId===person.id || si.assigneeName===person.name) steps++;
       });
     });
-    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, steps, total:ok+soon+overdue };
+    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, stuck, steps, total:ok+soon+overdue, services };
   }).filter(r=>r.total>0 || r.steps>0)
     .sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
 
@@ -4490,14 +4529,29 @@ function renderWorkloadDashboard(){
     return;
   }
   if(empty) empty.style.display='none';
-  body.innerHTML=rows.map(r=>`
+  body.innerHTML=rows.map(r=>{
+    const expanded=_workloadExpanded.has(r.id);
+    const detailRows=r.services.map(s=>`
+      <tr style="background:var(--bg2,#f4f6f9);">
+        <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
+        <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
+        <td style="padding:8px 18px;font-size:11px;${s.stuck?'color:var(--red);font-weight:700;':'color:var(--text-light);'}">${s.statusLabel}</td>
+        <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
+      </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
+    return `
     <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
-    </tr>`).join('');
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);white-space:nowrap;" onclick="event.stopPropagation();toggleWorkloadDetail('${r.id}')">
+        <span style="font-size:11px;color:#2E5DA6;font-weight:700;cursor:pointer;">${expanded?'▾ Hide':'▸ Details'}</span>
+      </td>
+    </tr>
+    ${expanded?detailRows:''}`;
+  }).join('');
 }
 function openWorkloadPersonInTracker(personId, personName){
   // Same tab-switch-first-then-set-src ordering as openAdminTrackerToClient,
@@ -4552,21 +4606,24 @@ function renderMyTeamsWork(){
   const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
   const allServices=[];
   clients.forEach(c=>{
-    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s));
-    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push(s)));
+    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push({svc:s, clientName:c.name}));
+    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>allServices.push({svc:s, clientName:`${c.name} — ${loc.name}`})));
   });
   const rows=_timeOffRoster().filter(p=>managedIds.includes(p.id)).map(person=>{
-    let ok=0, soon=0, overdue=0, steps=0;
-    allServices.forEach(s=>{
+    let ok=0, soon=0, overdue=0, steps=0, stuck=0;
+    const services=[];
+    allServices.forEach(({svc:s, clientName})=>{
       if(_wlSvcAssignedTo(s, person.id, person.name)){
         const status=_chSvcDueStatus(s);
         if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        if(_svcStatus(s)==='stuck') stuck++;
+        services.push(_svcBreakdownRow(person, clientName, s));
       }
       (s.subitems||[]).forEach(si=>{
         if(si.assigneeId===person.id || si.assigneeName===person.name) steps++;
       });
     });
-    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, steps, total:ok+soon+overdue };
+    return { id:person.id, name:person.name||'(unnamed)', ok, soon, overdue, stuck, steps, total:ok+soon+overdue, services };
   }).sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
 
   if(!rows.length){
@@ -4574,14 +4631,29 @@ function renderMyTeamsWork(){
     return;
   }
   if(empty) empty.style.display='none';
-  body.innerHTML=rows.map(r=>`
+  body.innerHTML=rows.map(r=>{
+    const expanded=_workloadExpanded.has('mtw_'+r.id);
+    const detailRows=r.services.map(s=>`
+      <tr style="background:var(--bg2,#f4f6f9);">
+        <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
+        <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
+        <td style="padding:8px 18px;font-size:11px;${s.stuck?'color:var(--red);font-weight:700;':'color:var(--text-light);'}">${s.statusLabel}</td>
+        <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
+      </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
+    return `
     <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
-    </tr>`).join('');
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);white-space:nowrap;" onclick="event.stopPropagation();toggleWorkloadDetail('mtw_${r.id}')">
+        <span style="font-size:11px;color:#2E5DA6;font-weight:700;cursor:pointer;">${expanded?'▾ Hide':'▸ Details'}</span>
+      </td>
+    </tr>
+    ${expanded?detailRows:''}`;
+  }).join('');
 }
 
 // Per-admin "team activity" notification-type toggles — pushed/pulled via
