@@ -141,6 +141,18 @@ Don't relitigate them without an explicit decision from the user.
       explicit test/confirmation on the Vercel preview, unless told
       otherwise for that specific change.
     When in doubt about which tier a change falls into, ask before merging.
+    **GitHub auto-merge** (2026-07-29): enabled on a PR (via
+    `enable_pr_auto_merge`) only for the low-risk tier above, and only when
+    the diff touches nothing under `api/`, `lib/`, `supabase/migrations/`, or
+    any sync/auth/permission logic anywhere else — everything else stays
+    fully manual, exactly as before this. Branch protection on `main`
+    requires the Vercel status check to pass and requires review from Code
+    Owners (`.github/CODEOWNERS` — `api/`, `lib/`, `supabase/migrations/`
+    require the owner's explicit approval, hard-gated by GitHub itself,
+    independent of this agent's own judgment). `index.html`/`user.html`/
+    `client.html` aren't in CODEOWNERS — each mixes safe and risky changes in
+    the same file, so that tiering stays the judgment call above, same as
+    always. When in doubt, don't enable auto-merge.
 
 11. **No live Supabase/database access from this environment.** The Supabase
     MCP server requires an interactive OAuth approval step that a
