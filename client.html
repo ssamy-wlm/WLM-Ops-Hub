@@ -3515,6 +3515,18 @@ function renderClientDetail(clientId, tab){
       <div class="detail-tabs">${tabs}</div>
     </div>
     <div class="detail-body">${body}</div>`;
+  if(tab==='services' && SESSION.isAdmin) setTimeout(_maybeShowServicesTabTip,50);
+}
+// Two Services-tab action tips (inline reassign, mark done) share this one
+// screen — the tip engine only ever shows one chip at a time (see
+// _maybeShowTip), so firing both here would just have the second call
+// silently clobber the first before anyone saw it. Show whichever of the
+// two hasn't been dismissed yet, in a fixed priority order; the second one
+// simply appears on a later visit once the first is dismissed.
+function _maybeShowServicesTabTip(){
+  const dismissed=_getTourFlags().dismissedTips||[];
+  if(!dismissed.includes('clientInlineAssign')){ _maybeShowTip('clientInlineAssign','[id^="assign-cell-"]','Click here to reassign — check off everyone who should own this service.'); return; }
+  if(!dismissed.includes('clientMarkDone')){ _maybeShowTip('clientMarkDone','select[title="Status"]','Set a service to Done here — it rolls the due date forward automatically.'); }
 }
 
 // ── Overview Tab ──
@@ -4195,6 +4207,7 @@ function openClientModal(){
   const mgr=_el('cf-manager');
   if(mgr) mgr.innerHTML=`<option value="">— Select —</option>`+roster.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   openModal('clientModal');
+  setTimeout(()=>_maybeShowTip('clientAddClient','#clientModalTitle',"Fill in the basics here — you can add services and bundles once it's saved."),50);
 }
 
 function editClient(id){
@@ -4345,6 +4358,7 @@ function openProjectModal(clientId, projId){
     _el('pf-billing').value='one-time'; _el('pf-color').value=c.color||_hashClientColor(c.name);
   }
   openModal('projectModal');
+  if(!projId) setTimeout(()=>_maybeShowTip('clientAddBundle','#projectModalTitle','Bundles group related services under one due date and status — handy for packaged work.'),50);
 }
 
 function editProject(clientId,projId){ openProjectModal(clientId,projId); }
@@ -4775,6 +4789,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _updateSvcPlatformsVisibility('', []);
   }
   openModal('addServiceModal');
+  if(!entryId) setTimeout(()=>_maybeShowTip('clientAddService','#svc-modal-title','Pick from the Service Catalog, or type a new name to add it on the fly.'),50);
 }
 function editClientService(clientId,entryId,locationId){ openAddServiceModal(clientId,entryId,locationId); }
 
