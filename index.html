@@ -2025,12 +2025,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div><!-- /rm-biz-wrap -->
 
-      <!-- ── ERROR LOG (read-only capture) — Super Admin/Owner only ── -->
+      <!-- ── ERROR LOG — Super Admin/Owner only. Capture itself stays
+           read-only/passive; the one exception is the manually-triggered
+           "Clear old entries" archive control below (never automatic, never
+           on load — see api/error-log.js). ── -->
       <div class="card" id="errorLogCard" style="margin-top:22px;display:none;">
         <div class="card-header">
           <div>
             <div class="card-title">🛑 Error Log</div>
-            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent 100 rows. Read-only — nothing here can be edited or deleted.</div>
+            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent 100 rows. Capture is passive/read-only — the archive control below is the one manual exception.</div>
           </div>
           <button class="btn btn-sm btn-outline" onclick="loadErrorLog()">↻ Refresh</button>
         </div>
@@ -2048,7 +2051,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <input type="checkbox" id="errorLogGroupToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
             Group by error type
           </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+            <input type="checkbox" id="errorLogShowArchivedToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
+            Show archived
+          </label>
           <div id="errorLogCountNote" style="font-size:11px;color:var(--text-light);"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2);">
+          <span style="font-size:12px;color:var(--text-mid);">Clear entries older than:</span>
+          <input type="date" id="errorLogCutoffDate" class="form-input" style="width:auto;padding:5px 8px;font-size:12px;">
+          <button class="btn btn-sm btn-outline" onclick="previewArchiveErrorLog()">Preview & Clear…</button>
+          <span style="font-size:11px;color:var(--text-light);">Archived entries are hidden from the default view (never deleted) — toggle "Show archived" to see them.</span>
         </div>
         <div class="card-body" style="padding:0;">
           <div id="errorLogResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to load.</div>
@@ -7092,12 +7105,16 @@ function _renderErrorLog(){
   const rangeSel = document.getElementById('errorLogRangeSelect');
   const rangeVal = rangeSel ? rangeSel.value : '30';
   const grouped = !!document.getElementById('errorLogGroupToggle')?.checked;
+  const showArchived = !!document.getElementById('errorLogShowArchivedToggle')?.checked;
   const entryTs = (e) => new Date(e.timestamp || e.createdAt).getTime();
 
-  let filtered = _errorLogEntries;
+  // Archived entries are hidden by default (never deleted, never re-fetched
+  // just to hide them) — same purely client-side filter shape as the
+  // existing range/group controls.
+  let filtered = showArchived ? _errorLogEntries : _errorLogEntries.filter(e => !e.archivedAt);
   if(rangeVal !== 'all'){
     const cutoff = Date.now() - (Number(rangeVal) * 24*60*60*1000);
-    filtered = _errorLogEntries.filter(e => entryTs(e) >= cutoff);
+    filtered = filtered.filter(e => entryTs(e) >= cutoff);
   }
 
   if(countNote) countNote.textContent = `Showing ${filtered.length} of ${_errorLogEntries.length} loaded`;
@@ -7109,9 +7126,9 @@ function _renderErrorLog(){
 
   if(!grouped){
     const rows = filtered.map(e => `
-      <tr>
+      <tr${e.archivedAt?' style="opacity:.55;"':''}>
         <td style="white-space:nowrap;padding:8px 14px;color:var(--text-light);font-size:12px;">${_errorLogEsc(new Date(e.timestamp || e.createdAt).toLocaleString())}</td>
-        <td style="padding:8px 14px;font-weight:700;">${_errorLogEsc(e.endpoint)}</td>
+        <td style="padding:8px 14px;font-weight:700;">${_errorLogEsc(e.endpoint)}${e.archivedAt?' <span style="font-size:9px;font-weight:700;color:var(--text-light);background:var(--bg2);padding:1px 6px;border-radius:20px;">ARCHIVED</span>':''}</td>
         <td style="padding:8px 14px;">${_errorLogEsc(e.error)}</td>
         <td style="padding:8px 14px;color:var(--text-light);">${_errorLogEsc(e.userName || e.userId || '—')}</td>
       </tr>`).join('');
@@ -7159,6 +7176,52 @@ function _renderErrorLog(){
         <tbody>${groupRows}</tbody>
       </table>
     </div>`;
+}
+
+// ── Error Log cleanup — the ONE manual, admin-triggered exception to this
+// table's append-only design (see api/error-log.js + the migration that
+// drops its block-mutations trigger). Archives (never hard-deletes) rows
+// older than a chosen cutoff date. Always a dry-run preview (exact count
+// from the server, not just what's loaded in the viewer) followed by an
+// explicit confirm before the real archive call — never triggered on load,
+// never automatic. Super Admin/Owner only — same tier gate as the rest of
+// this card, also re-enforced server-side (api/error-log.js checks
+// tierOf(session)!=='super').
+async function previewArchiveErrorLog(){
+  const dateEl = document.getElementById('errorLogCutoffDate');
+  const cutoffDate = dateEl ? dateEl.value : '';
+  if(!cutoffDate){ showToast('Pick a cutoff date first'); return; }
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); return; }
+  try{
+    const res = await fetch('/api/error-log', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: JSON.stringify({ action:'preview', cutoffDate })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){ showToast(`❌ ${data.error||('HTTP '+res.status)}`, 'error'); return; }
+    if(!data.count){ showToast('No entries older than that date — nothing to clear.'); return; }
+    if(!confirm(`This will archive ${data.count} entr${data.count===1?'y':'ies'} older than ${cutoffDate}. Archived entries are hidden from the default view but never deleted — you can still see them with "Show archived". Continue?`)) return;
+    await _archiveErrorLogEntries(cutoffDate, token);
+  }catch(e){
+    showToast('❌ Request failed: '+e.message, 'error');
+  }
+}
+async function _archiveErrorLogEntries(cutoffDate, token){
+  try{
+    const res = await fetch('/api/error-log', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: JSON.stringify({ action:'archive', cutoffDate })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){ showToast(`❌ ${data.error||('HTTP '+res.status)}`, 'error'); return; }
+    showToast(`✓ Archived ${data.archivedCount} entr${data.archivedCount===1?'y':'ies'}`);
+    await loadErrorLog(); // re-fetch so the list reflects the new archived_at flags
+  }catch(e){
+    showToast('❌ Request failed: '+e.message, 'error');
+  }
 }
 
 // ── Schema drift check (read-only, Super Admin/Owner only) ──
