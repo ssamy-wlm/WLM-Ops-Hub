@@ -1547,6 +1547,39 @@ function timeAgo(ts){
   if(d<86400000) return Math.floor(d/3600000)+'h ago';
   return Math.floor(d/86400000)+'d ago';
 }
+// Sarah's rule: a service due date must never land on a Saturday or Sunday.
+// Deliberately asymmetric — Saturday moves BACK to the Friday before,
+// Sunday moves FORWARD to the Monday after, so neither ever crosses a full
+// weekend to land 2 days out. This is the ONE shared helper for that rule;
+// every place a due date is computed or manually set must route its result
+// through this — never re-implement the weekend check inline elsewhere.
+// Parses the 'YYYY-MM-DD' string into plain y/m/d integers and builds a
+// LOCAL-time Date from them (not `new Date(dateStr)`, which parses as UTC
+// midnight and can read back a different calendar day's weekday in a
+// negative-UTC-offset timezone) — this is the one place in the file where
+// getting the weekday exactly right matters, so it deliberately avoids that
+// existing UTC/local ambiguity rather than inheriting it.
+function adjustOffWeekend(dateStr){
+  if(!dateStr) return dateStr;
+  const parts=String(dateStr).slice(0,10).split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>Number.isNaN(n))) return dateStr;
+  const [y,m,dd]=parts;
+  const d=new Date(y, m-1, dd);
+  const day=d.getDay(); // 0=Sun...6=Sat
+  if(day===6) d.setDate(d.getDate()-1);      // Saturday -> Friday before
+  else if(day===0) d.setDate(d.getDate()+1); // Sunday -> Monday after
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// Same unambiguous local-date parse as adjustOffWeekend() — used by the
+// Service Schedule calendar's defensive weekend skip.
+function _isWeekendDate(dateStr){
+  if(!dateStr) return false;
+  const parts=String(dateStr).slice(0,10).split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>Number.isNaN(n))) return false;
+  const [y,m,dd]=parts;
+  const day=new Date(y, m-1, dd).getDay();
+  return day===0 || day===6;
+}
 function calcNextDue(freq, from){
   // Always roll forward until the date is in the future
   const base = from ? new Date(from) : new Date();
@@ -1562,7 +1595,7 @@ function calcNextDue(freq, from){
     d.setDate(d.getDate()+7);
     while(d <= now) d.setDate(d.getDate()+7);
   }
-  return d.toISOString().slice(0,10);
+  return adjustOffWeekend(d.toISOString().slice(0,10));
 }
 function daysUntil(dateStr){
   if(!dateStr) return null;
@@ -4844,6 +4877,12 @@ function _buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes
   const roster=getRoster();
   // If lastDone is set and no due date given, auto-calculate it.
   if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
+  // calcNextDue() above already weekend-adjusts, but a due date can also
+  // reach here typed directly into the Add/Edit modal (or Quick Add) rather
+  // than computed — Sarah's no-weekend rule applies identically either way,
+  // so re-run the same shared adjustment on whatever due ends up set here.
+  // Idempotent on an already-adjusted weekday date.
+  if(due) due=adjustOffWeekend(due);
   // The Edit dropdown's UNCATALOGED_SENTINEL option means the admin left an
   // uncatalogued service's name/bundle exactly as it was (see
   // openAddServiceModal) — never derive name/catalogId/bundle from the
@@ -4906,7 +4945,11 @@ function saveClientService(){
       // franchise services don't get a Bundles-tab mirror, see renderServices()).
       if(!loc){
         const proj=(c.projects||[]).find(p=>p.serviceId===entryId);
-        if(proj){ proj.due=due||''; proj.lastDone=lastDone; }
+        // data.due (not the raw `due` read from the input) — data.due is the
+        // weekend-adjusted value actually saved onto the service itself;
+        // using the raw value here would let the mirror's due diverge from
+        // the service's whenever the two differ (rule: never let them).
+        if(proj){ proj.due=data.due||''; proj.lastDone=lastDone; }
       }
     }
   } else {
@@ -4917,14 +4960,14 @@ function saveClientService(){
     assigneeIds.forEach(id=>{
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`Service assigned: ${data.name}`,
-        body:`You're handling "${data.name}" (${freq}) for ${forName}. Next due: ${due||'TBD'}.`,
+        body:`You're handling "${data.name}" (${freq}) for ${forName}. Next due: ${data.due||'TBD'}.`,
         forUser:id, fromUser:SESSION.name });
     });
     if(c.managerId && !assigneeIds.includes(c.managerId)){
       const namesLabel=assigneeIds.map(id=>roster.find(u=>u.id===id)?.name).filter(Boolean).join(', ');
       pushNotif({ icon:'🔁', color:'rgba(147,51,234,.1)',
         title:`New service added for ${forName}`,
-        body:`"${data.name}" (${freq}) assigned to ${namesLabel||'someone'}. Next due: ${due||'TBD'}.`,
+        body:`"${data.name}" (${freq}) assigned to ${namesLabel||'someone'}. Next due: ${data.due||'TBD'}.`,
         forUser:c.managerId, fromUser:SESSION.name });
     }
   }
@@ -6454,6 +6497,11 @@ function _buildScheduleEventMap(){
     const color=c.color||_hashClientColor(c.name);
     _allClientServices(c).forEach(svc=>{
       if(!svc.due) return;
+      // Defensive only — every due-date write already routes through
+      // adjustOffWeekend() so a service due date should never actually BE a
+      // Saturday/Sunday, but the calendar itself must also never place one
+      // there even if stale/imported data somehow still carried one.
+      if(_isWeekendDate(svc.due)) return;
       if(serviceF && (svc.name||'').trim().toLowerCase()!==serviceF.trim().toLowerCase()) return;
       if(bundleF && !_serviceMatchesBundle(svc,bundleF)) return;
       if(!_passesDueFilter(svc.due, dueF, todayStr)) return;
@@ -6520,6 +6568,13 @@ function _calDayCell(evs, todayStr, maxVisible, ds){
 // Every day cell in either view is capped at this many visible cards before
 // showing "+N more" — keeps a busy day compact instead of scrolling forever.
 const CAL_MAX_VISIBLE_PER_DAY=2;
+// Week starts Monday (Sarah's rule — no work is ever scheduled on a
+// weekend, so the week reads Mon-Fri as the "work" columns followed by a
+// visually de-emphasized Sat/Sun) — shared by both Week and Month so the
+// two views can never drift on day order or column sizing.
+const CAL_DAY_HDRS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const CAL_GRID_COLS='repeat(5,1fr) repeat(2,0.55fr)'; // Mon-Fri wide, Sat/Sun narrower
+function _calIsWeekendCol(i){ return i===5 || i===6; } // index within CAL_DAY_HDRS (Sat, Sun)
 
 function renderCalendar(){
   if(_calMode==='week') _renderWeekGrid(); else _renderMonthGrid();
@@ -6529,10 +6584,12 @@ function renderCalendar(){
 
 function _renderWeekGrid(){
   const todayStr=today();
-  const DAY_HDRS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const DAY_HDRS=CAL_DAY_HDRS;
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const weekStart=new Date(_calAnchor);
-  weekStart.setDate(weekStart.getDate()-weekStart.getDay()); // back up to Sunday
+  // Back up to Monday — getDay() is 0=Sun..6=Sat, so (day+6)%7 is how many
+  // days back to the most recent Monday (0 for Monday itself, 6 for Sunday).
+  weekStart.setDate(weekStart.getDate()-((weekStart.getDay()+6)%7));
   const weekEnd=new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
   const label=_el('cal-month-label');
   if(label){
@@ -6553,27 +6610,31 @@ function _renderWeekGrid(){
   // columns different widths than the header grid's, so SUN/MON/... no
   // longer sat above the right day. One shared grid guarantees every
   // column is exactly the same width in both rows, always.
-  let html=`<div style="display:grid;grid-template-columns:repeat(7,1fr);">`;
+  let html=`<div style="display:grid;grid-template-columns:${CAL_GRID_COLS};">`;
   days.forEach((d,i)=>{
     const isToday=_dateStr(d)===todayStr;
-    html+=`<div style="padding:10px 0;text-align:center;border-bottom:2px solid var(--border);${i<6?'border-right:1px solid var(--border);':''}${isToday?'background:rgba(45,107,182,0.05);':''}">
-      <div style="font-size:10px;font-weight:800;color:var(--text-light);letter-spacing:.06em;text-transform:uppercase;">${DAY_HDRS[i]}</div>
+    const weekend=_calIsWeekendCol(i);
+    html+=`<div style="padding:10px 0;text-align:center;border-bottom:2px solid var(--border);${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);':(isToday?'background:rgba(45,107,182,0.05);':'')}">
+      <div style="font-size:${weekend?'9px':'10px'};font-weight:800;color:var(--text-light);letter-spacing:.06em;text-transform:uppercase;${weekend?'opacity:.55;':''}">${DAY_HDRS[i]}</div>
       <div style="margin-top:3px;">${isToday
         ?`<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#2E5DA6;color:#fff;font-weight:800;font-size:13px;">${d.getDate()}</span>`
-        :`<span style="font-size:14px;font-weight:700;color:var(--text-dark);">${d.getDate()}</span>`}</div>
+        :`<span style="font-size:${weekend?'12px':'14px'};font-weight:700;color:var(--text-dark);${weekend?'opacity:.55;':''}">${d.getDate()}</span>`}</div>
     </div>`;
   });
   days.forEach((d,i)=>{
     const ds=_dateStr(d);
     const isToday=ds===todayStr;
+    const weekend=_calIsWeekendCol(i);
     const evs=evMap[ds]||[];
     // align-self:start — without it, a grid item stretches to fill its
     // row's height by default, so one busy day would force every OTHER
     // day in the same week row (including empty ones) to stretch just as
     // tall, showing as a big empty box. Capping each day's card count
     // (see _calDayCell) plus this keeps every day only as tall as its own
-    // actual content.
-    html+=`<div style="padding:8px 6px;align-self:start;${i<6?'border-right:1px solid var(--border);':''}${isToday?'background:rgba(45,107,182,0.03);':''}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
+    // actual content. Weekend columns (no work is ever due there — see
+    // adjustOffWeekend()) are grayed out to signal "nothing scheduled here"
+    // even before checking whether the day actually has events.
+    html+=`<div style="padding:8px 6px;align-self:start;${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.03);':'')}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
   });
   html+=`</div>`;
   const wrap=_el('cal-grid-wrap');
@@ -6584,13 +6645,15 @@ function _renderMonthGrid(){
   const year=_calAnchor.getFullYear(), month=_calAnchor.getMonth();
   const todayStr=today();
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const DAY_HDRS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const DAY_HDRS=CAL_DAY_HDRS;
   const label=_el('cal-month-label');
   if(label) label.textContent=MONTHS[month]+' '+year;
 
   const evMap=_buildScheduleEventMap();
 
-  const firstDay=new Date(year,month,1).getDay();
+  // Monday-start offset: getDay() is 0=Sun..6=Sat, so shift so 0=Mon..6=Sun
+  // (matches CAL_DAY_HDRS ordering and _renderWeekGrid()'s week start).
+  const firstDay=(new Date(year,month,1).getDay()+6)%7;
   const daysInMonth=new Date(year,month+1,0).getDate();
   const prevDays=new Date(year,month,0).getDate();
   const totalCells=Math.ceil((firstDay+daysInMonth)/7)*7;
@@ -6599,9 +6662,10 @@ function _renderMonthGrid(){
   // container — same 2026-07-29 alignment fix as _renderWeekGrid() above;
   // two independent 7-column grids can size their columns differently and
   // drift out of alignment with each other.
-  let html=`<div style="display:grid;grid-template-columns:repeat(7,1fr);">`;
-  DAY_HDRS.forEach(d=>{
-    html+=`<div style="padding:10px 0;font-size:10px;font-weight:800;color:var(--text-light);text-align:center;letter-spacing:.06em;text-transform:uppercase;border-bottom:2px solid var(--border);">${d}</div>`;
+  let html=`<div style="display:grid;grid-template-columns:${CAL_GRID_COLS};">`;
+  DAY_HDRS.forEach((d,i)=>{
+    const weekend=_calIsWeekendCol(i);
+    html+=`<div style="padding:10px 0;font-size:${weekend?'9px':'10px'};font-weight:800;color:var(--text-light);text-align:center;letter-spacing:.06em;text-transform:uppercase;border-bottom:2px solid var(--border);${weekend?'background:var(--bg2);opacity:.55;':''}">${d}</div>`;
   });
   let day=1,nextDay=1;
   for(let i=0;i<totalCells;i++){
@@ -6622,7 +6686,8 @@ function _renderMonthGrid(){
 
     const borderRight=((i+1)%7===0)?'':'border-right:1px solid var(--border);';
     const borderBottom=(i<totalCells-7)?'border-bottom:1px solid var(--border);':'';
-    const todayBg=isToday?'background:rgba(45,107,182,0.05);':'';
+    const weekend=_calIsWeekendCol(i%7);
+    const todayBg=weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.05);':'');
 
     // Only current-month days that have no events get the light
     // placeholder — a leading/trailing day from an adjacent month (isCur
@@ -6632,6 +6697,8 @@ function _renderMonthGrid(){
 
     // align-self:start (see _renderWeekGrid()'s comment) — keeps an empty
     // or light day from stretching to match a busier day in the same row.
+    // Weekend columns (Sat/Sun) grayed out same as _renderWeekGrid() — no
+    // work is ever due there (see adjustOffWeekend()).
     html+=`<div style="padding:8px 7px 6px;align-self:start;${borderRight}${borderBottom}${todayBg}">
       <div style="margin-bottom:5px;"><span style="${dayNumStyle}">${cellDay}</span></div>
       ${cellBody}
