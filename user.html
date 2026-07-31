@@ -385,6 +385,9 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .tour-overlay{position:fixed;inset:0;z-index:9600;pointer-events:none;}
 .tour-spotlight{position:fixed;border-radius:10px;box-shadow:0 0 0 4000px rgba(15,23,42,.55);pointer-events:none;transition:top .2s,left .2s,width .2s,height .2s;}
 .tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
+.tour-popover-arrow{position:absolute;width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;}
+.tour-popover-arrow.arrow-up{top:-8px;border-bottom:8px solid #fff;}
+.tour-popover-arrow.arrow-down{bottom:-8px;border-top:8px solid #fff;}
 .tour-learnmore-toggle{display:inline-block;border:none;background:none;padding:0;margin-bottom:10px;color:var(--accent,#2E5DA6);font-size:12px;font-weight:600;cursor:pointer;}
 .tour-popover-learnmore{font-size:12.5px;line-height:1.5;color:var(--text-mid);background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:12px;}
 .tour-popover button{pointer-events:auto;}
@@ -1303,15 +1306,34 @@ function _maybeShowTip(id, selector, text){
   if((flags.dismissedTips||[]).includes(id)) return;
   const anchor = document.querySelector(selector);
   if(!anchor) return;
+  // Unlike the tour (_renderTourStep, which scrolls its target into view
+  // before measuring — see the fold/scroll-container fix noted there), this
+  // never did — a target scrolled out of view within its own list (e.g. the
+  // star icon on a client card several rows down) got measured at whatever
+  // stale position it happened to be at, so the chip landed disconnected
+  // from any actually-visible control ("floats over the middle of the
+  // list"). 'center' (not 'nearest') since these anchors sit inside a
+  // scrollable content list, not a short nav menu.
+  anchor.scrollIntoView({block:'center'});
   document.querySelectorAll('.tip-chip').forEach(el=>el.remove()); // max one visible at a time
   const rect = anchor.getBoundingClientRect();
   const chip = document.createElement('div');
   chip.className = 'tip-chip';
   chip.dataset.tipId = id;
-  chip.style.top = (rect.bottom+8)+'px';
-  chip.style.left = Math.max(8, Math.min(rect.left, window.innerWidth-286))+'px';
+  chip.style.visibility = 'hidden';
   chip.innerHTML = `<span>💡 ${text}</span><button onclick="_dismissTip('${id}')" aria-label="Dismiss tip">✕</button>`;
   document.body.appendChild(chip);
+  // Measure after appending (real height, since content length varies),
+  // then flip above the anchor if there isn't room below — same reasoning
+  // as the tour popover's fix.
+  const chipH = chip.offsetHeight, chipW = chip.offsetWidth;
+  const GAP=8, MARGIN=8;
+  const top = (window.innerHeight-rect.bottom >= chipH+GAP+MARGIN)
+    ? rect.bottom+GAP
+    : Math.max(MARGIN, rect.top-chipH-GAP);
+  chip.style.top = top+'px';
+  chip.style.left = Math.max(MARGIN, Math.min(rect.left, window.innerWidth-chipW-MARGIN))+'px';
+  chip.style.visibility = 'visible';
 }
 function _dismissTip(id){
   const flags = _getTourFlags();
@@ -1414,11 +1436,10 @@ function _renderTourStep(){
   const overlay = document.createElement('div');
   overlay.id = 'tour-overlay';
   overlay.className = 'tour-overlay';
-  const popTop = Math.min(rect.bottom+14, window.innerHeight-200);
-  const popLeft = Math.min(Math.max(8, rect.left), window.innerWidth-336);
   overlay.innerHTML = `
     <div class="tour-spotlight" style="top:${rect.top-6}px;left:${rect.left-6}px;width:${rect.width+12}px;height:${rect.height+12}px;"></div>
-    <div class="tour-popover" style="top:${popTop}px;left:${popLeft}px;">
+    <div class="tour-popover" style="visibility:hidden;">
+      <div class="tour-popover-arrow"></div>
       <div class="tour-popover-text">${step.tip}</div>
       ${step.learnMore ? `<button type="button" class="tour-learnmore-toggle" onclick="_toggleTourLearnMore(this)">Learn more ▾</button>
       <div class="tour-popover-learnmore" style="display:none;">${step.learnMore}</div>` : ''}
@@ -1432,6 +1453,48 @@ function _renderTourStep(){
       <div class="tour-progress">${_tourIndex+1} / ${_tourSteps.length}</div>
     </div>`;
   document.body.appendChild(overlay);
+  // Position AFTER appending — the previous version clamped the top offset
+  // to a fixed `window.innerHeight-200` ceiling whenever a target sat near
+  // or below the fold. That clamp collapsed every below-the-fold step onto
+  // the exact same coordinates regardless of which target it was actually
+  // for (reproduced: Company Overview/Credentials/Messages/Time Off — the
+  // last four sidebar items — all landing on identical {top:500,left:10}
+  // on a 700px-tall viewport), which is the "floats in the bottom-left
+  // corner disconnected from its target" bug. Fixed by measuring the
+  // popover's real size (only knowable once it's in the DOM) and flipping
+  // it ABOVE the target when there isn't enough room below, instead of
+  // clamping to a ceiling that ignores the target's own position.
+  _positionTourPopover(overlay, rect);
+}
+// Shared by the tour popover — placed below the target by default, flipped
+// above when there isn't room, always horizontally clamped to the viewport,
+// with an arrow pointing back at the target so the anchor relationship
+// stays visible even in the flipped/clamped case.
+function _positionTourPopover(overlay, rect){
+  const pop = overlay.querySelector('.tour-popover');
+  const arrow = overlay.querySelector('.tour-popover-arrow');
+  const GAP=14, MARGIN=8;
+  const popW = pop.offsetWidth, popH = pop.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  let top, placeAbove;
+  if(spaceBelow >= popH+GAP+MARGIN){ top = rect.bottom+GAP; placeAbove=false; }
+  else if(spaceAbove >= popH+GAP+MARGIN){ top = rect.top-popH-GAP; placeAbove=true; }
+  else { // neither fits fully (very short viewport) — best-effort clamp
+    top = Math.max(MARGIN, Math.min(rect.bottom+GAP, window.innerHeight-popH-MARGIN));
+    placeAbove = top < rect.top;
+  }
+  const left = Math.min(Math.max(MARGIN, rect.left), window.innerWidth-popW-MARGIN);
+  pop.style.top = top+'px';
+  pop.style.left = left+'px';
+  pop.style.visibility = 'visible';
+  // Arrow horizontally tracks the target's own center, clamped to stay
+  // within the popover's rounded corners; direction matches which side the
+  // popover actually landed on.
+  const targetCenterX = rect.left + rect.width/2;
+  const arrowLeft = Math.min(Math.max(16, targetCenterX-left), popW-16);
+  arrow.style.left = arrowLeft+'px';
+  arrow.classList.add(placeAbove ? 'arrow-down' : 'arrow-up');
 }
 function _toggleTourLearnMore(btn){
   const box = btn.nextElementSibling;
