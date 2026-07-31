@@ -2784,8 +2784,16 @@ function loadMyAssignments(){
     // browser for the read-only Tracker view (see rule #4) — it only
     // surfaces more of what's already visible, in one more place.
     if(ns.scope==='client' && clientHasWork){
-      const otherTrackerSvcs=_allServicesForClient(c).filter(s=>!myTrackerSvcs.includes(s));
-      const otherIdxSvcs=(c.recurringServices||[]).filter(s=>!myIdxSvcs.includes(s));
+      // Bug fix: _allServicesForClient()/myTrackerSvcs come from two SEPARATE
+      // calls, each re-mapping fresh {...s} objects — .includes(s) here was
+      // comparing by object reference, which never matched, so a viewer's
+      // OWN assigned services always slipped through into "Other work...
+      // (not assigned to you)" too, showing every assigned service twice.
+      // Compare by id instead.
+      const myTrackerSvcIds=new Set(myTrackerSvcs.map(s=>s.id));
+      const myIdxSvcIds=new Set(myIdxSvcs.map(s=>s.id));
+      const otherTrackerSvcs=_allServicesForClient(c).filter(s=>!myTrackerSvcIds.has(s.id));
+      const otherIdxSvcs=(c.recurringServices||[]).filter(s=>!myIdxSvcIds.has(s.id));
       const otherAll=[
         ...otherTrackerSvcs.map(s=>({ name:s.name, due:s.due||'', freq:s.freqLabel||s.freq||'monthly' })),
         ...otherIdxSvcs.map(s=>({ name:s.name, due:s.nextDueDate||'', freq:s.freqLabel||s.freq||s.frequency||'monthly' })),
