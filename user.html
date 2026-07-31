@@ -2241,12 +2241,21 @@ function userMarkServiceDone(clientId, svcId){
 // service: server-side this authorizes identically to any other write on a
 // service already assigned to the caller (checkMemberClientWrite is
 // whole-service, not per-field).
+// color/bg use the app's existing semantic CSS vars (--red/--green/--accent)
+// so a status color can never drift from client.html/index.html's own
+// copies or the rest of the app. --accent (unlike --text/--text-mid) is
+// deliberately NOT overridden by the navy theme (see its comment above),
+// so "In Progress" stays a recognizable blue in either theme, matching how
+// --red/--green already stay stable. Text label always renders alongside
+// the color (never color alone), so this stays readable for color-blind
+// users.
 const SERVICE_STATUSES = [
-  { value:'not_started', label:'Not Started' },
-  { value:'in_progress', label:'In Progress' },
-  { value:'stuck',       label:'Stuck' },
-  { value:'done',        label:'Done' },
+  { value:'not_started', label:'Not Started', color:'var(--text-light)', bg:'var(--cool-grey)' },
+  { value:'in_progress', label:'In Progress',  color:'var(--accent)',    bg:'var(--bg2)' },
+  { value:'stuck',       label:'Stuck',        color:'var(--red)',       bg:'rgba(224,85,85,.12)' },
+  { value:'done',        label:'Done',         color:'var(--green)',    bg:'rgba(34,160,107,.12)' },
 ];
+function _svcStatusMeta(value){ return SERVICE_STATUSES.find(s=>s.value===value)||SERVICE_STATUSES[0]; }
 function _svcStatus(svc){ return svc?.workStatus || 'not_started'; }
 function userSetServiceStatus(clientId, svcId, newStatus){
   if(newStatus==='done'){ userMarkServiceDone(clientId, svcId); return; }
@@ -2838,7 +2847,7 @@ function loadMyAssignments(){
               ${(() => { const mine=(s.subitems||[]).filter(si=>_isMySubitem(si,myId,myName)); return mine.length?`<div style="font-size:10px;color:#2E5DA6;margin-top:2px;">📌 Your steps: ${mine.map(si=>escHtmlUser(si.text||'')).join(', ')}</div>`:''; })()}
             </div>
             <input type="date" id="sdone-${c.id}-${s.id}" value="${todayStr}" max="${todayStr}" style="flex-shrink:0;padding:5px 7px;border:1px solid rgba(45,107,182,.2);border-radius:7px;font-size:10px;color:var(--text-mid);outline:none;">
-            ${(() => { const ws=_svcStatus(s); const wsStuck=ws==='stuck'; return `<select onchange="userSetServiceStatus('${c.id}','${s.id}',this.value)" title="Status" style="flex-shrink:0;padding:5px 7px;border-radius:7px;font-size:10px;border:1px solid ${wsStuck?'#e05555':'rgba(45,107,182,.2)'};color:${wsStuck?'#e05555':'var(--text-mid)'};font-weight:${wsStuck?'700':'400'};outline:none;">${SERVICE_STATUSES.map(st=>`<option value="${st.value}"${st.value===ws?' selected':''}>${st.label}</option>`).join('')}</select>`; })()}
+            ${(() => { const ws=_svcStatus(s); const wsMeta=_svcStatusMeta(ws); return `<select onchange="userSetServiceStatus('${c.id}','${s.id}',this.value)" title="Status" style="flex-shrink:0;padding:5px 7px;border-radius:7px;font-size:10px;border:1px solid ${wsMeta.color};color:${wsMeta.color};font-weight:700;outline:none;">${SERVICE_STATUSES.map(st=>`<option value="${st.value}"${st.value===ws?' selected':''}>${st.label}</option>`).join('')}</select>`; })()}
             <button onclick="openServiceUpdatesModal('${c.id}','${s.id}')" title="Updates" style="flex-shrink:0;padding:6px 10px;background:#fff;color:#2E5DA6;border:1px solid rgba(45,107,182,.25);border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">💬${Array.isArray(s.updates)&&s.updates.length?(' '+s.updates.length):''}</button>
             <button onclick="openServiceSubitemsModal('${c.id}','${s.id}')" title="Sub-items" style="flex-shrink:0;padding:6px 10px;background:#fff;color:#2E5DA6;border:1px solid rgba(45,107,182,.25);border-radius:7px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">➕${Array.isArray(s.subitems)&&s.subitems.length?(' '+s.subitems.filter(si=>si.done).length+'/'+s.subitems.length):''}</button>
           </div>
