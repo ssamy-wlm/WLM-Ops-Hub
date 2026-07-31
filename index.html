@@ -4521,12 +4521,19 @@ function _wlSvcAssignedTo(svc, personId, personName){
 // each service. NOTE: "workStatus", not "status" — svc.status is a
 // separate, pre-existing field (cancelled/archived lifecycle state, see
 // _chIsInactiveService above) on the same shared client record.
+// color/bg use the app's existing semantic CSS vars (--red/--green/--accent)
+// so a status color can never drift from client.html/user.html's own copies
+// or the rest of the app — same values, independently defined per the
+// zero-shared-code rule. Every status renders with both its color AND its
+// text label (never color alone), so this stays readable for color-blind
+// users.
 const SERVICE_STATUSES = [
-  { value:'not_started', label:'Not Started' },
-  { value:'in_progress', label:'In Progress' },
-  { value:'stuck',       label:'Stuck' },
-  { value:'done',        label:'Done' },
+  { value:'not_started', label:'Not Started', color:'var(--text-light)', bg:'var(--cool-grey)' },
+  { value:'in_progress', label:'In Progress',  color:'var(--accent)',    bg:'var(--bg2)' },
+  { value:'stuck',       label:'Stuck',        color:'var(--red)',       bg:'rgba(224,85,85,.12)' },
+  { value:'done',        label:'Done',         color:'var(--green)',    bg:'rgba(34,160,107,.12)' },
 ];
+function _svcStatusMeta(value){ return SERVICE_STATUSES.find(s=>s.value===value)||SERVICE_STATUSES[0]; }
 function _svcStatus(svc){ return svc?.workStatus || 'not_started'; }
 // Which people's Workload row is currently expanded to show their
 // per-service breakdown — purely local UI state, reset on every re-render
@@ -4543,9 +4550,8 @@ function toggleWorkloadDetail(personId){
 }
 function _svcBreakdownRow(person, clientName, s){
   const ws=_svcStatus(s);
-  const wsLabel=(SERVICE_STATUSES.find(x=>x.value===ws)||{}).label||ws;
-  const wsStuck=ws==='stuck';
-  return { clientName, name:s.name||'(unnamed)', category:s.category||'Uncategorized', status:ws, statusLabel:wsLabel, stuck:wsStuck, due:s.due||'—' };
+  const wsMeta=_svcStatusMeta(ws);
+  return { clientName, name:s.name||'(unnamed)', category:s.category||'Uncategorized', status:ws, statusLabel:wsMeta.label, statusColor:wsMeta.color, stuck:ws==='stuck', due:s.due||'—' };
 }
 function renderWorkloadDashboard(){
   const body=document.getElementById('workloadTableBody');
@@ -4591,7 +4597,7 @@ function renderWorkloadDashboard(){
       <tr style="background:var(--bg2,#f4f6f9);">
         <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
-        <td style="padding:8px 18px;font-size:11px;${s.stuck?'color:var(--red);font-weight:700;':'color:var(--text-light);'}">${s.statusLabel}</td>
+        <td style="padding:8px 18px;font-size:11px;color:${s.statusColor};font-weight:700;">${s.statusLabel}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
       </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
@@ -4693,7 +4699,7 @@ function renderMyTeamsWork(){
       <tr style="background:var(--bg2,#f4f6f9);">
         <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
-        <td style="padding:8px 18px;font-size:11px;${s.stuck?'color:var(--red);font-weight:700;':'color:var(--text-light);'}">${s.statusLabel}</td>
+        <td style="padding:8px 18px;font-size:11px;color:${s.statusColor};font-weight:700;">${s.statusLabel}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
       </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
