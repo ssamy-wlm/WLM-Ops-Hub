@@ -163,6 +163,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .notif-dropdown-list{max-height:340px;overflow-y:auto;}
 .notif-dropdown-item{display:flex;align-items:flex-start;gap:9px;padding:9px 14px;border-bottom:1px solid var(--border);}
 .notif-dropdown-item:last-child{border-bottom:none;}
+.notif-dropdown-item.clickable{cursor:pointer;}
+.notif-dropdown-item.clickable:hover{background:rgba(45,107,182,.09);}
 .notif-dropdown-footer{padding:9px 14px;text-align:center;border-top:1px solid var(--border);}
 .notif-dropdown-footer a{font-size:11px;font-weight:700;color:#2E5DA6;text-decoration:none;cursor:pointer;}
 .content{padding:28px 32px;flex:1;}
@@ -2507,9 +2509,16 @@ function _getAssignNotifs(){
     // created ONLY server-side in api/ops-sync.js, already scoped to this
     // person by /api/ops-state; mapped to the same shape as the two legacy,
     // local-only sources above so they render in the same banner/list.
+    // context.clientId/serviceId (set server-side in api/ops-sync.js for
+    // assignment/serviceUpdate/serviceDone notifications) is what makes a
+    // notification click-through-able — carried through here so
+    // renderNotifDropdown() can build a deep link from it. A notification
+    // with no context (or a type that never set one) simply has no
+    // clientId/serviceId, which is exactly what "not clickable" checks for.
     const opsNotifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({
       id:n.id, ts:new Date(n.createdAt).getTime(), read:!!n.read,
       title:n.title, body:n.body, icon:NOTIF_TYPE_ICON_USER[n.type]||'🔔', _server:true,
+      clientId:n.context?.clientId||null, serviceId:n.context?.serviceId||null,
     }));
     // Merge, deduplicate by id
     const combined = [...userAlerts, ...allNotifs, ...opsNotifs];
@@ -2551,15 +2560,43 @@ function renderNotifDropdown(){
     list.innerHTML = '<div style="padding:18px;text-align:center;font-size:12px;color:var(--text-light);">No notifications yet.</div>';
     return;
   }
-  list.innerHTML = notifs.slice(0,10).map(n=>`
-    <div class="notif-dropdown-item" style="${!n.read?'background:rgba(45,107,182,.06);':''}">
+  // Click-through (Assmaa's ask): a notification with a resolvable
+  // clientId navigates the embedded Tracker straight to that client/
+  // service, reusing the exact same iframe-src deep-link mechanism
+  // openTrackerTo() already uses elsewhere — see _notifClickThrough().
+  // A notification with no clientId (most local/legacy ones — see
+  // _getAssignNotifs()) just isn't clickable at all; never errors.
+  list.innerHTML = notifs.slice(0,10).map(n=>{
+    const clickable = !!n.clientId;
+    const onclick = clickable ? `onclick="_notifClickThrough('${n.clientId}','${n.serviceId||''}')"` : '';
+    return `
+    <div class="notif-dropdown-item${clickable?' clickable':''}" ${onclick} style="${!n.read?'background:rgba(45,107,182,.06);':''}">
       <span style="font-size:15px;flex-shrink:0;">${n.icon||'🔔'}</span>
       <div style="flex:1;min-width:0;">
         <div style="font-size:11.5px;font-weight:${!n.read?'700':'600'};color:var(--text-dark);">${n.title||''}</div>
         ${n.body?`<div style="font-size:10.5px;color:var(--text-mid);margin-top:1px;">${n.body}</div>`:''}
         <div style="font-size:9.5px;color:var(--text-light);margin-top:2px;">${n.ts?new Date(n.ts).toLocaleString():''}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+// Navigates the embedded Tracker (client.html iframe) straight to the
+// notification's client/service — same iframe-src deep-link mechanism as
+// openTrackerTo()/openTrackerPage() above, just with an added openService
+// param (see client.html's _openDeepLinkFromUrl()). Never called for a
+// notification with no clientId (renderNotifDropdown only wires onclick
+// when one exists), so this never needs its own "no target" fallback.
+function _notifClickThrough(clientId, serviceId){
+  if(!clientId) return;
+  closeNotifDropdown();
+  const params = new URLSearchParams();
+  params.set('usermode','1');
+  params.set('openClient', clientId);
+  if(serviceId) params.set('openService', serviceId);
+  params.set('v', Date.now());
+  const frame = document.getElementById('trackerFrame');
+  if(frame) frame.src = 'client.html?' + params.toString();
+  showSection('tracker', document.getElementById('nav-tracker'));
 }
 
 function updateAssignmentsBadge(){
