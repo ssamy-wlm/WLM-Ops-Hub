@@ -3861,7 +3861,7 @@ function _serviceRow(c, svc, locationId){
     ?`<select class="form-select" style="font-size:10.5px;padding:4px 6px;${isStuck?'border-color:var(--red);color:var(--red);font-weight:700;':''}" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','${locationId||''}',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===workStatus?' selected':''}>${s.label}</option>`).join('')}</select>`
     :`<span class="chip" style="${isStuck?'background:rgba(224,85,85,.12);color:var(--red);font-weight:700;':'background:var(--bg2);color:var(--text-light);'}">${workStatusLabel}</span>`;
   return `
-      <tr${inactive?' style="opacity:.6;"':''}>
+      <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
         <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
@@ -4230,9 +4230,15 @@ function _openDeepLinkFromUrl(){
     if(!clientId) return;
     const projId=params.get('openProject');
     const taskId=params.get('openTask');
+    // Notification click-through (Assmaa's ask) — a notification references
+    // a service, not a project/task, so it needs its own tab (Services, not
+    // Bundles) and its own row to highlight. Only used when there's no
+    // projId, so this never changes the existing project/task deep-link's
+    // behavior above.
+    const svcId=params.get('openService');
     if(!getClient(clientId)) return;
     openClientDetail(clientId);
-    renderClientDetail(clientId,'projects');
+    renderClientDetail(clientId, svcId&&!projId?'services':'projects');
     setTimeout(()=>{
       if(projId){
         const block=document.querySelector(`[data-proj-id="${projId}"]`);
@@ -4245,6 +4251,15 @@ function _openDeepLinkFromUrl(){
       }
       if(taskId){
         const row=document.getElementById('task-row-'+taskId);
+        if(row){
+          row.scrollIntoView({behavior:'smooth',block:'center'});
+          row.style.transition='background .3s';
+          row.style.background='rgba(45,107,182,.18)';
+          setTimeout(()=>{ row.style.background=''; },2200);
+        }
+      }
+      if(svcId){
+        const row=document.querySelector(`[data-svc-id="${svcId}"]`);
         if(row){
           row.scrollIntoView({behavior:'smooth',block:'center'});
           row.style.transition='background .3s';
@@ -6317,18 +6332,26 @@ function runScheduledAlerts(){
       const urgency=days!==null&&days<0?'OVERDUE':days===0?'Due TODAY':days<=3?'Due in '+days+'d':'Upcoming';
       // Notify every assigned person (not just the first/legacy assigneeId)
       const svcAssigneeIds=_svcAssigneeIds(svc);
+      // clientId/serviceId: this notification is entirely client-side/local
+      // (wl_client_notifications/wl_user_assignments, never ops_notifications
+      // — see the scheduled-alert doc comment above), but c/svc are already
+      // right here at generation time, so attaching them costs nothing and
+      // lets user.html's notification dropdown click-through (same
+      // clientId-driven "clickable" check #191 added for stored
+      // assignment-type notifications) work for these too, with no separate
+      // code path.
       svcAssigneeIds.forEach(id=>{
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`[${urgency}] ${svc.name}`,
           body:`Service for ${c.name} is due ${svc.due}. Please action this.`,
-          forUser:id, fromUser:'System' });
+          forUser:id, fromUser:'System', clientId:c.id, serviceId:svc.id });
       });
       // Notify the account manager if not already one of the assignees
       if(c.managerId && !svcAssigneeIds.includes(c.managerId)){
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`Service alert for ${c.name}: ${svc.name}`,
           body:`${urgency} — due ${svc.due}. Assigned to ${_svcAssigneeNames(svc)||'no one'}.`,
-          forUser:c.managerId, fromUser:'System' });
+          forUser:c.managerId, fromUser:'System', clientId:c.id, serviceId:svc.id });
       }
     });
   });
