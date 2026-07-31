@@ -6332,18 +6332,26 @@ function runScheduledAlerts(){
       const urgency=days!==null&&days<0?'OVERDUE':days===0?'Due TODAY':days<=3?'Due in '+days+'d':'Upcoming';
       // Notify every assigned person (not just the first/legacy assigneeId)
       const svcAssigneeIds=_svcAssigneeIds(svc);
+      // clientId/serviceId: this notification is entirely client-side/local
+      // (wl_client_notifications/wl_user_assignments, never ops_notifications
+      // — see the scheduled-alert doc comment above), but c/svc are already
+      // right here at generation time, so attaching them costs nothing and
+      // lets user.html's notification dropdown click-through (same
+      // clientId-driven "clickable" check #191 added for stored
+      // assignment-type notifications) work for these too, with no separate
+      // code path.
       svcAssigneeIds.forEach(id=>{
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`[${urgency}] ${svc.name}`,
           body:`Service for ${c.name} is due ${svc.due}. Please action this.`,
-          forUser:id, fromUser:'System' });
+          forUser:id, fromUser:'System', clientId:c.id, serviceId:svc.id });
       });
       // Notify the account manager if not already one of the assignees
       if(c.managerId && !svcAssigneeIds.includes(c.managerId)){
         pushNotif({ icon:'⏰', color:'rgba(217,119,6,.1)',
           title:`Service alert for ${c.name}: ${svc.name}`,
           body:`${urgency} — due ${svc.due}. Assigned to ${_svcAssigneeNames(svc)||'no one'}.`,
-          forUser:c.managerId, fromUser:'System' });
+          forUser:c.managerId, fromUser:'System', clientId:c.id, serviceId:svc.id });
       }
     });
   });

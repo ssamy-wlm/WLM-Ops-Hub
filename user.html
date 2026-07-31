@@ -2494,9 +2494,11 @@ function _getAssignNotifs(){
     // wl_client_notifications: EVERY pushNotif() call in client.html writes
     // here unconditionally — this is the admin's own notification-center feed
     // (forUser:'admin' for "Service done"/"Admin marked complete"/progress
-    // updates/etc.), not a per-person stream. It carries no clientId/
-    // serviceId/assigneeId to match against — only forUser (a specific
-    // person's id) or the literal string 'admin'. Filtering on forUser here
+    // updates/etc.), not a per-person stream. Most entries carry no clientId/
+    // serviceId to match against (only the due-soon scheduled alerts from
+    // runScheduledAlerts() do, deliberately — see its own comment) — only
+    // forUser (a specific person's id) or the literal string 'admin' is
+    // reliably present on all of them. Filtering on forUser here
     // reuses the exact same field that already makes userAlerts correctly
     // scoped above; this drops every admin-broadcast entry (the actual leak
     // — a person otherwise saw agency-wide notifications for clients/
