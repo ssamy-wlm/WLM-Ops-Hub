@@ -277,6 +277,24 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
 .admin-notif-dot{width:8px;height:8px;background:var(--red,#e05555);border-radius:50%;position:absolute;top:5px;right:5px;border:2px solid var(--card);display:none;}
 .admin-notif-panel{display:none;position:absolute;top:44px;right:0;width:340px;max-height:420px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:200;color:var(--text-dark);text-align:left;}
 .admin-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+/* Permanent "?" help panel (Help System PR 3) — same round-button look as
+   .admin-notif-btn, but a full-height right-side drawer instead of a small
+   dropdown, since it holds every accessible section's tip+learn-more, not
+   just a short list. */
+.help-panel-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.25);z-index:9500;}
+.help-panel-overlay.open{display:block;}
+.help-panel{position:fixed;top:0;right:0;height:100vh;width:380px;max-width:92vw;background:var(--card);box-shadow:-8px 0 28px rgba(0,0,0,.18);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s;}
+.help-panel-overlay.open .help-panel{transform:translateX(0);}
+.help-panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.help-panel-body{flex:1;overflow-y:auto;padding:6px 10px;}
+.help-panel-footer{padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;}
+.help-section{border-bottom:1px solid var(--border);}
+.help-section-header{display:flex;align-items:center;justify-content:space-between;padding:11px 8px;cursor:pointer;font-weight:700;font-size:13px;color:var(--text-dark);}
+.help-section-header .chev{transition:transform .15s;color:var(--text-light);font-size:11px;}
+.help-section.open .chev{transform:rotate(90deg);}
+.help-section-body{display:none;padding:0 8px 12px;font-size:12px;color:var(--text-mid);line-height:1.55;}
+.help-section.open .help-section-body{display:block;}
+.help-section-tip{margin-bottom:6px;font-weight:600;color:var(--text-dark);}
 .admin-sidebar-hamburger{display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:14px;cursor:pointer;color:var(--text-dark);}
 .admin-content{flex:1;padding:28px 32px;}
 @media(max-width:900px){
@@ -1114,6 +1132,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="admin-topbar-right" style="position:relative;">
         <span class="admin-level-badge" id="admin-level-badge"></span>
+        <div id="help-btn" onclick="toggleHelpPanel()" class="admin-notif-btn" title="Help">?</div>
         <div id="admin-notif-btn" onclick="toggleAdminNotifPanel()" class="admin-notif-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           <div id="admin-notif-dot" class="admin-notif-dot"></div>
@@ -1131,6 +1150,21 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
              never see this. -->
         <button class="btn btn-outline btn-sm" id="adminModeSwitchBtn" onclick="switchToEmployeeView()" style="display:none;">⇄ Switch to Employee view</button>
         <button class="btn btn-outline btn-sm" onclick="logout()">Sign out</button>
+      </div>
+    </div>
+
+    <!-- Permanent "?" help panel (Help System PR 3) — role-aware accordion
+         sourced entirely from HELP_CONTENT, see toggleHelpPanel()/renderHelpPanel(). -->
+    <div id="help-panel-overlay" class="help-panel-overlay" onclick="if(event.target===this) closeHelpPanel()">
+      <div class="help-panel">
+        <div class="help-panel-header">
+          <div style="font-weight:800;font-size:15px;color:var(--text-dark);">Help</div>
+          <button onclick="closeHelpPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-light);">✕</button>
+        </div>
+        <div id="help-panel-body" class="help-panel-body"></div>
+        <div class="help-panel-footer">
+          <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
+        </div>
       </div>
     </div>
 
@@ -4855,6 +4889,62 @@ const ADMIN_TOUR_STEPS = [
   HELP_CONTENT.bizSettings,
   { label: 'Notifications', sel: '#admin-notif-btn', tip: "This bell lets you know when something needs you — a message, a time-off request, a new assignment.", learnMore: null },
 ];
+// Permanent "?" help panel (Help System PR 3) — sourced entirely from
+// HELP_CONTENT above, no separate copy. Unlike ADMIN_TOUR_STEPS, 'archive'
+// IS included here (see the HELP_CONTENT comment: it has no tour step of
+// its own but should still surface when that screen is open). The
+// notification bell is left out — it isn't a page-section/"screen" this
+// panel can detect as "current", and it already has its own one-line
+// caption in the tour.
+// NOTE: 'ptoLedger' ("Time off ledger", nested under the Users dropdown)
+// has no entry in the approved content doc and is deliberately left out of
+// this list rather than guessing copy for it — flagged back per the build
+// spec's own instruction for exactly this case.
+const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','users','archive','timeoff','payroll','summaries','livefeed','library','messages','bizSettings'];
+function _currentAdminHelpKey(){
+  const active = document.querySelector('#adminApp .page-section.active');
+  return active ? active.id.replace(/^admin-/,'') : '';
+}
+function toggleHelpPanel(){
+  const overlay = document.getElementById('help-panel-overlay'); if(!overlay) return;
+  if(overlay.classList.contains('open')){ closeHelpPanel(); return; }
+  renderHelpPanel();
+  overlay.classList.add('open');
+}
+function closeHelpPanel(){ document.getElementById('help-panel-overlay')?.classList.remove('open'); }
+// Re-renders fresh every time the panel opens — same _isVisibleForTour()
+// role-visibility check the tour above already uses (an element hidden via
+// applyAdminRoleRestrictions() stays in the DOM, so "not found" alone isn't
+// enough — see that function's own comment), so a manager-role account
+// never sees a gated section like Payroll or Users listed here either, and
+// the list stays correct if role/managedUserIds change mid-session.
+function renderHelpPanel(){
+  const body = document.getElementById('help-panel-body'); if(!body) return;
+  const currentKey = _currentAdminHelpKey();
+  body.innerHTML = ADMIN_HELP_SECTION_KEYS.map(key=>{
+    const entry = HELP_CONTENT[key]; if(!entry) return '';
+    if(!_isVisibleForTour(document.querySelector(entry.sel))) return '';
+    const isCurrent = key===currentKey;
+    return `<div class="help-section${isCurrent?' open':''}" data-help-key="${key}">
+      <div class="help-section-header" onclick="_toggleHelpSection('${key}')">
+        <span>${entry.label}</span>
+        <span class="chev">▸</span>
+      </div>
+      <div class="help-section-body">
+        <div class="help-section-tip">${entry.tip}</div>
+        ${entry.learnMore?`<div class="help-section-learnmore">${entry.learnMore}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+// Strict accordion — opening one section closes every other, matching the
+// build spec's "(accordion)" note rather than letting several stay open.
+function _toggleHelpSection(key){
+  document.querySelectorAll('#help-panel-body .help-section').forEach(s=>{
+    if(s.dataset.helpKey===key) s.classList.toggle('open');
+    else s.classList.remove('open');
+  });
+}
 let _tourIndex = 0;
 function startTour(){
   _tourIndex = 0;

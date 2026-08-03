@@ -167,6 +167,25 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .notif-dropdown-item.clickable:hover{background:rgba(45,107,182,.09);}
 .notif-dropdown-footer{padding:9px 14px;text-align:center;border-top:1px solid var(--border);}
 .notif-dropdown-footer a{font-size:11px;font-weight:700;color:#2E5DA6;text-decoration:none;cursor:pointer;}
+/* Permanent "?" help panel (Help System PR 3) — own copy of index.html's
+   identical feature (zero-shared-code rule). Same round-button look as
+   .notif-btn, but a full-height right-side drawer instead of a small
+   dropdown, since it holds every accessible section's tip+learn-more, not
+   just a short list. */
+.help-panel-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.25);z-index:9500;}
+.help-panel-overlay.open{display:block;}
+.help-panel{position:fixed;top:0;right:0;height:100vh;width:380px;max-width:92vw;background:var(--card);box-shadow:-8px 0 28px rgba(0,0,0,.18);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s;}
+.help-panel-overlay.open .help-panel{transform:translateX(0);}
+.help-panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.help-panel-body{flex:1;overflow-y:auto;padding:6px 10px;}
+.help-panel-footer{padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;}
+.help-section{border-bottom:1px solid var(--border);}
+.help-section-header{display:flex;align-items:center;justify-content:space-between;padding:11px 8px;cursor:pointer;font-weight:700;font-size:13px;color:var(--text-dark);}
+.help-section-header .chev{transition:transform .15s;color:var(--text-light);font-size:11px;}
+.help-section.open .chev{transform:rotate(90deg);}
+.help-section-body{display:none;padding:0 8px 12px;font-size:12px;color:var(--text-mid);line-height:1.55;}
+.help-section.open .help-section-body{display:block;}
+.help-section-tip{margin-bottom:6px;font-weight:600;color:var(--text-dark);}
 .content{padding:28px 32px;flex:1;}
 .card{background:var(--card);border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);transition:box-shadow .2s;}
 .card:hover{box-shadow:var(--shadow-md);}
@@ -508,6 +527,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
       </div>
       <div class="topbar-right">
+        <div class="notif-btn" id="help-btn" onclick="toggleHelpPanel()" title="Help">?</div>
         <div class="notif-btn" id="notifBtn" onclick="toggleNotifDropdown(event)">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div>
           <div id="notifDropdownPanel" class="notif-dropdown" style="display:none;" onclick="event.stopPropagation()">
             <div class="notif-dropdown-header">
@@ -533,6 +553,22 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <button class="btn header-signout-btn" onclick="logout()">↩ Sign Out</button>
       </div>
     </div>
+
+    <!-- Permanent "?" help panel (Help System PR 3) — role-aware accordion
+         sourced entirely from HELP_CONTENT, see toggleHelpPanel()/renderHelpPanel(). -->
+    <div id="help-panel-overlay" class="help-panel-overlay" onclick="if(event.target===this) closeHelpPanel()">
+      <div class="help-panel">
+        <div class="help-panel-header">
+          <div style="font-weight:800;font-size:15px;color:var(--text-dark);">Help</div>
+          <button onclick="closeHelpPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-light);">✕</button>
+        </div>
+        <div id="help-panel-body" class="help-panel-body"></div>
+        <div class="help-panel-footer">
+          <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
+        </div>
+      </div>
+    </div>
+
     <div class="content">
 
       <!-- ── OPERATIONS ── -->
@@ -1413,6 +1449,62 @@ function _employeeTourSteps(){
   if(_dualRoleAdminId) steps.push(EMPLOYEE_TOUR_STEP_MODE_SWITCH);
   steps.push(EMPLOYEE_TOUR_STEP_BELL);
   return steps;
+}
+// Permanent "?" help panel (Help System PR 3) — own copy of index.html's
+// identical feature (zero-shared-code rule), sourced entirely from
+// HELP_CONTENT above, no separate copy. Sidebar order, but NOT the same
+// order HELP_CONTENT happens to be declared in — this follows the real
+// nav order (Operations group, then Resources, then Team & HR), same as a
+// user reading top-to-bottom down the sidebar would expect.
+// Three live, reachable screens have no entry in the approved content doc
+// and are deliberately left out of this list rather than guessing copy —
+// flagged back per the build spec's own instruction for exactly this case:
+//   - 'operations' (Operations, the default landing page)
+//   - 'profile' (reached via the ⚙️ topbar icon, not a sidebar nav item)
+//   - 'library' (Weblight media library, external link — index.html's
+//     admin copy of this same link DOES have an entry; this employee-side
+//     copy doesn't)
+const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','tracker','reports','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
+function _currentEmployeeHelpKey(){
+  const active = document.querySelector('#userApp .page-section.active');
+  return active ? active.id.replace(/^sec-/,'') : '';
+}
+function toggleHelpPanel(){
+  const overlay = document.getElementById('help-panel-overlay'); if(!overlay) return;
+  if(overlay.classList.contains('open')){ closeHelpPanel(); return; }
+  renderHelpPanel();
+  overlay.classList.add('open');
+}
+function closeHelpPanel(){ document.getElementById('help-panel-overlay')?.classList.remove('open'); }
+// Re-renders fresh every time the panel opens — same _isVisibleForTour()
+// role-visibility check the tour above already uses, so this stays correct
+// if role/dual-mode state changes mid-session.
+function renderHelpPanel(){
+  const body = document.getElementById('help-panel-body'); if(!body) return;
+  const currentKey = _currentEmployeeHelpKey();
+  body.innerHTML = EMPLOYEE_HELP_SECTION_KEYS.map(key=>{
+    const entry = HELP_CONTENT[key]; if(!entry) return '';
+    if(!_isVisibleForTour(document.querySelector(entry.sel))) return '';
+    const isCurrent = key===currentKey;
+    return `<div class="help-section${isCurrent?' open':''}" data-help-key="${key}">
+      <div class="help-section-header" onclick="_toggleHelpSection('${key}')">
+        <span>${entry.label}</span>
+        <span class="chev">▸</span>
+      </div>
+      <div class="help-section-body">
+        <div class="help-section-tip">${entry.tip}</div>
+        ${entry.learnMore?`<div class="help-section-learnmore">${entry.learnMore}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+// Strict accordion — opening one section closes every other, matching the
+// build spec's "(accordion)" note rather than letting several stay open.
+function _toggleHelpSection(key){
+  document.querySelectorAll('#help-panel-body .help-section').forEach(s=>{
+    if(s.dataset.helpKey===key) s.classList.toggle('open');
+    else s.classList.remove('open');
+  });
 }
 let _tourIndex = 0;
 let _tourSteps = EMPLOYEE_TOUR_STEPS_BASE;
