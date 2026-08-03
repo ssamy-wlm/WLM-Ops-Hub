@@ -277,10 +277,13 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
 .admin-notif-dot{width:8px;height:8px;background:var(--red,#e05555);border-radius:50%;position:absolute;top:5px;right:5px;border:2px solid var(--card);display:none;}
 .admin-notif-panel{display:none;position:absolute;top:44px;right:0;width:340px;max-height:420px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:200;color:var(--text-dark);text-align:left;}
 .admin-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-/* Permanent "?" help panel (Help System PR 3) — same round-button look as
-   .admin-notif-btn, but a full-height right-side drawer instead of a small
-   dropdown, since it holds every accessible section's tip+learn-more, not
-   just a short list. */
+/* Permanent "?" help panel (Help System PR 3) — a full-height right-side
+   drawer, since it holds every accessible section's tip+learn-more, not
+   just a short list. The trigger button is deliberately its OWN style
+   (not .admin-notif-btn) so it reads as a distinct "?" help icon next to
+   the bell, not another notification-style icon blending into the row. */
+.help-icon-btn{width:34px;height:34px;border-radius:50%;background:var(--blue-tint);border:2px solid var(--accent);color:var(--accent);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;font-weight:800;position:relative;flex-shrink:0;}
+.help-icon-btn:hover{background:var(--accent);color:#fff;}
 .help-panel-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.25);z-index:9500;}
 .help-panel-overlay.open{display:block;}
 .help-panel{position:fixed;top:0;right:0;height:100vh;width:380px;max-width:92vw;background:var(--card);box-shadow:-8px 0 28px rgba(0,0,0,.18);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s;}
@@ -1132,7 +1135,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="admin-topbar-right" style="position:relative;">
         <span class="admin-level-badge" id="admin-level-badge"></span>
-        <div id="help-btn" onclick="toggleHelpPanel()" class="admin-notif-btn" title="Help">?</div>
+        <div id="help-btn" onclick="toggleHelpPanel()" class="help-icon-btn" title="Help">?</div>
         <div id="admin-notif-btn" onclick="toggleAdminNotifPanel()" class="admin-notif-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           <div id="admin-notif-dot" class="admin-notif-dot"></div>
