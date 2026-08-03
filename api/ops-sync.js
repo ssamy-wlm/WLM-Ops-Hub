@@ -293,7 +293,7 @@ let _notifSettingsCache; // per-request cache, avoids re-querying ops_settings p
 export async function getNotificationSettings(supabase) {
   if (_notifSettingsCache) return _notifSettingsCache;
   const { data } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
-  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true, ...(data?.data || {}) };
+  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true, submittedForReview: true, ...(data?.data || {}) };
   return _notifSettingsCache;
 }
 
@@ -544,6 +544,39 @@ export function collectServiceDoneEvents(client, curClient, incClient) {
   return events;
 }
 
+// "Submit for review" on Done (My Work redesign follow-on) — reviewSubmittedAt
+// is a flag/timestamp layered ON TOP of workStatus:'done', never a 5th
+// SERVICE_STATUSES value (see submitServiceForReview() in each frontend —
+// Done stays the status; this is a separate recorded event). Same current-
+// vs-incoming, same-request diff pattern as collectServiceDoneEvents: fires
+// once per service whose reviewSubmittedAt newly became truthy in THIS
+// write, so a resave of an already-submitted service (or any other edit to
+// it) produces zero events.
+export function collectSubmittedForReviewEvents(client, curClient, incClient) {
+  const events = [];
+  const scanServices = (curList, incList, locationName) => {
+    const curById = new Map((curList || []).filter(s => s?.id).map(s => [s.id, s]));
+    (incList || []).forEach(s => {
+      if (!s?.id) return;
+      const prev = curById.get(s.id);
+      if (s.reviewSubmittedAt && s.reviewSubmittedAt !== prev?.reviewSubmittedAt) {
+        events.push({
+          serviceId: s.id, serviceName: s.name, locationName,
+          assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
+          submittedBy: s.reviewSubmittedBy, submittedByName: s.reviewSubmittedByName,
+        });
+      }
+    });
+  };
+  scanServices(curClient.services, incClient.services, null);
+  const curLocs4 = curClient.locations || [], incLocs4 = incClient.locations || [];
+  incLocs4.forEach(loc => {
+    const curLoc = curLocs4.find(l => l.id === loc.id);
+    scanServices(curLoc?.services, loc.services, loc.name);
+  });
+  return events;
+}
+
 let _directoryCache; // per-request cache — users/admins are fetched at most once per request
 async function getDirectory(supabase) {
   if (_directoryCache) return _directoryCache;
@@ -647,6 +680,71 @@ async function fireServiceDoneNotifications(supabase, events, warnings) {
           recipientName: person?.name || '', recipientEmail: person?.email || '',
           title, body, link: '',
           context: { clientId: ev.clientId, serviceId: ev.serviceId, subitemId: ev.subitemId || null },
+        });
+      });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// "Submit for review" reviewer resolution — deliberately NOT
+// resolveNotifyRecipients(): that function's no-manager-configured fallback
+// notifies whichever ops_admins rows happen to have level 'super'/'owner',
+// which is not necessarily Sarah — she is the PRIMARY_ADMIN_EMAIL sentinel
+// (session id 'primary-admin', see api/ops-auth.js), with no row in
+// ops_admins at all, so she'd never be reached by an admins-array scan.
+// Instead: try the assignee's configured manager (users[].managerId) same
+// as resolveNotifyRecipients does, and ALWAYS additionally include Sarah by
+// her literal sentinel id — this is what makes "manager AND Super Admin"
+// (manager resolves) collapse correctly into "Super Admin only" (it
+// doesn't) without ever double-guessing who counts as "super". Returns
+// managerResolved so the caller can report/log which path a given event
+// took, per the task's explicit ask to "report that path".
+export function resolveReviewRecipients(assigneeId, users, admins) {
+  const out = [];
+  let managerResolved = false;
+  const user = users.find(u => u.id === assigneeId);
+  // No `user` match at all covers "assignee is an admin" (admins have no
+  // managerId concept here) exactly as much as "no managerId configured" —
+  // both are simply "the manager lookup found nothing", same as the
+  // resolveNotifyRecipients pattern above.
+  if (user && user.managerId && user.managerId !== assigneeId) {
+    const asAdmin = admins.find(a => a.id === user.managerId);
+    const asUser = users.find(u => u.id === user.managerId);
+    if (asAdmin) { out.push({ id: user.managerId, kind: 'admin' }); managerResolved = true; }
+    else if (asUser) { out.push({ id: user.managerId, kind: 'user' }); managerResolved = true; }
+  }
+  out.push({ id: 'primary-admin', kind: 'admin' });
+  const seen = new Set();
+  return { recipients: out.filter(r => (seen.has(r.id) ? false : seen.add(r.id))), managerResolved };
+}
+
+// "Submit for review" on Done (My Work redesign follow-on) — notifies the
+// resolved reviewer(s) (see resolveReviewRecipients above), never the
+// submitter themselves.
+async function fireSubmittedForReviewNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    if (!ev.assigneeId) return;
+    const { recipients, managerResolved } = resolveReviewRecipients(ev.assigneeId, users, admins);
+    if (!managerResolved) warnings.push(`submittedForReview(${ev.serviceId}): no manager resolved for assignee ${ev.assigneeId} — Super Admin notified only`);
+    recipients
+      .filter(r => r.id !== ev.submittedBy)
+      .forEach(r => {
+        // The primary-admin sentinel (Sarah) has no ops_admins row, so
+        // personOf() can't look her up — same literal id/email/name
+        // api/ops-auth.js's login path already uses for her.
+        const isPrimary = r.id === 'primary-admin';
+        const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
+        rows.push({
+          type: 'submittedForReview', recipientId: r.id, recipientKind: r.kind,
+          recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+          recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+          title: `Submitted for review: ${ev.serviceName}`,
+          body: `${ev.submittedByName || 'Someone'} submitted "${ev.serviceName}"${ev.locationName ? ' — ' + ev.locationName : ''} for ${ev.clientName} for review.`,
+          link: '',
+          context: { clientId: ev.clientId, serviceId: ev.serviceId },
         });
       });
   });
@@ -1079,6 +1177,7 @@ export default async function handler(req, res) {
       const assignmentEvents = [];
       const serviceUpdateEvents = [];
       const doneEvents = [];
+      const reviewEvents = [];
 
       if (isAdmin) {
         applied.clients = await upsertRows(supabase, 'ops_clients', incoming, warnings, true);
@@ -1103,6 +1202,13 @@ export default async function handler(req, res) {
             const cur = byId.get(inc.id);
             if (!cur) continue;
             doneEvents.push(...collectServiceDoneEvents(inc, cur.data, inc));
+          }
+        }
+        if (notifSettings.submittedForReview) {
+          for (const inc of incoming) {
+            const cur = byId.get(inc.id);
+            if (!cur) continue;
+            reviewEvents.push(...collectSubmittedForReviewEvents(inc, cur.data, inc));
           }
         }
       } else {
@@ -1134,6 +1240,9 @@ export default async function handler(req, res) {
           if (notifSettings.done) {
             doneEvents.push(...collectServiceDoneEvents(inc, cur.data, inc));
           }
+          if (notifSettings.submittedForReview) {
+            reviewEvents.push(...collectSubmittedForReviewEvents(inc, cur.data, inc));
+          }
         }
         applied.clients = n;
       }
@@ -1141,6 +1250,7 @@ export default async function handler(req, res) {
       await fireAssignmentNotifications(supabase, assignmentEvents, warnings);
       await fireServiceUpdateNotifications(supabase, serviceUpdateEvents, warnings);
       await fireServiceDoneNotifications(supabase, doneEvents, warnings);
+      await fireSubmittedForReviewNotifications(supabase, reviewEvents, warnings);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);

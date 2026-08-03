@@ -6892,7 +6892,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 // triggering action happens; this file only ever pulls them (cloudPullAll
 // above) and pushes back a `read` toggle — never creates or infers one from
 // local state.
-const NOTIF_TYPE_ICON_ADMIN = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝' };
+const NOTIF_TYPE_ICON_ADMIN = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤' };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
   const dot = document.getElementById('admin-notif-dot');
