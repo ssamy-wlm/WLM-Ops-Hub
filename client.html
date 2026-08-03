@@ -6083,6 +6083,21 @@ async function refreshMyWork(btn){
   catch(e){ showToast('Could not refresh — showing last known data','warn'); }
   finally{ renderMyWork(); if(btn){ btn.disabled=false; btn.textContent='↺ Refresh'; } }
 }
+// Restores the comment/sub-item access #193 moved off the row, as compact
+// count badges instead of inline buttons — pure display, wired to the
+// EXACT SAME openServiceUpdatesModal()/openServiceSubitemsModal() openers
+// the Services tab already uses (Monday feature packs #1/#2), never a new
+// inline panel. Hidden entirely at zero count, same as every other "only
+// show if present" badge in this file (e.g. the Services-tab sub-items
+// completed chip this reuses the icon convention from).
+function _myWorkBadges(clientId, svc, locationId){
+  const updates=Array.isArray(svc.updates)?svc.updates:[];
+  const subitems=Array.isArray(svc.subitems)?svc.subitems:[];
+  const commentBadge=updates.length?`<span onclick="event.stopPropagation();openServiceUpdatesModal('${clientId}','${svc.id}','${locationId||''}')" style="cursor:pointer;background:rgba(0,0,0,.06);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;margin-left:6px;display:inline-flex;align-items:center;gap:3px;" title="Comments — click to view">${ICON_COMMENT} ${updates.length}</span>`:'';
+  const doneCount=subitems.filter(si=>si.done).length;
+  const subitemBadge=subitems.length?`<span onclick="event.stopPropagation();openServiceSubitemsModal('${clientId}','${svc.id}','${locationId||''}')" style="cursor:pointer;background:rgba(0,0,0,.06);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;margin-left:6px;display:inline-flex;align-items:center;gap:3px;" title="Sub-items — click to view">${ICON_ADD} ${doneCount}/${subitems.length}</span>`:'';
+  return commentBadge+subitemBadge;
+}
 // The one table every recurring-service assignment renders into (Monday
 // mockup redesign) — replaces the old per-project/per-franchise nested card
 // treatment below. Stat counts are computed here, from services only, per
@@ -6109,7 +6124,7 @@ function _myWorkServicesTable(items){
   const rows=items.map(({c,svc,locationId,locationName})=>`
     <tr onclick="openMyWorkItemInTracker('${c.id}')" style="cursor:pointer;">
       <td>
-        <div style="font-weight:700;color:var(--text-dark);">${escHtmlClient(svc.name)}</div>
+        <div style="font-weight:700;color:var(--text-dark);">${escHtmlClient(svc.name)}${_myWorkBadges(c.id,svc,locationId)}</div>
         <div style="font-size:10px;color:var(--text-light);margin-top:2px;">
           <span onclick="event.stopPropagation();toggleEmployeeFavorite('${c.id}');renderMyWork();" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
           ${escHtmlClient(c.name)}${locationName?` (${escHtmlClient(locationName)})`:''} · ${escHtmlClient(svc.freqLabel||svc.freq||'monthly')}
@@ -6199,7 +6214,14 @@ function renderMyWork(){
   });
   if(allMyServices.length) found=true;
   const servicesTableHtml=allMyServices.length?_myWorkServicesTable(allMyServices):'';
-  const taskCardsHtml=html;
+  // Clearly labeled as its own, separate/older grouping (owner request) —
+  // an employee scanning this page should never mistake an ad-hoc project
+  // task card for a row that belongs in the services table above.
+  const taskCardsHtml=html?`
+    <div style="margin:22px 0 10px;">
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Project Tasks</div>
+      <div style="font-size:11px;color:var(--text-light);margin-top:1px;">A separate, older grouping — ad-hoc bundle/project tasks assigned to you, not recurring services</div>
+    </div>${html}`:'';
   html='';
   // ── "Your Assigned Steps" — sub-items assigned to this person on a
   // service they are NOT otherwise assigned to (already covered above via
@@ -6224,7 +6246,7 @@ function renderMyWork(){
     found=true;
     html+=`
       <div class="card" style="margin-bottom:14px;">
-        <div class="card-header" style="padding-bottom:12px;"><div><div class="card-title">Your Assigned Steps</div><div class="card-sub">Sub-items assigned to you on services you're not otherwise assigned to</div></div></div>
+        <div class="card-header" style="padding-bottom:12px;"><div><div class="card-title">Your Assigned Steps (from other services)</div><div class="card-sub">A separate, older grouping — sub-items assigned to you on services you're not otherwise assigned to, so they don't already appear in the table above</div></div></div>
         <div class="card-body">
           ${myStepEntries.map(({c,svc,si,locationId,locationName})=>`
             <div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border);">
