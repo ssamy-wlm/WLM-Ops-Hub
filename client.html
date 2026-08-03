@@ -2718,7 +2718,7 @@ function pushNotif(notif){
 // into CL_KEYS.notifications' storage, so the pre-existing local-only alert
 // system above (service-due reminders, etc.) is untouched; the two are only
 // combined at RENDER time, in _allNotifs() below, into one visual list.
-const NOTIF_TYPE_ICON = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝' };
+const NOTIF_TYPE_ICON = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤' };
 function getOpsNotifs(){ return db(CL_KEYS.opsNotifications)||[]; }
 function _allNotifs(){
   const local = getNotifs().map(n=>({...n, _server:false}));
@@ -5370,6 +5370,10 @@ function markServiceDone(clientId, serviceId, locationId){
   svc.lastDone=doneDate;
   svc.due=calcNextDue(svc.freq, doneDate);
   svc.workStatus='done'; // Status Dropdown feature — "Done" via either path means the same thing (svc.status is a different, pre-existing field: cancelled/archived lifecycle state)
+  // A fresh Done always starts a fresh review cycle — clear any submission
+  // flag left over from a PREVIOUS cycle so "Submit for review" reappears
+  // instead of silently staying hidden behind a stale prior submission.
+  svc.reviewSubmittedAt=''; svc.reviewSubmittedBy=''; svc.reviewSubmittedByName='';
   updateClient(c);
   const forName=loc?`${c.name} — ${loc.name}`:c.name;
   if(!loc) syncServicesToProjects(clientId); // franchise services have no Bundles-tab mirror
@@ -5422,6 +5426,9 @@ function setServiceStatus(clientId, serviceId, locationId, newStatus){
   const svc=loc?(loc.services||[]).find(s=>s.id===serviceId):(c.services||[]).find(s=>s.id===serviceId);
   if(!svc) return;
   svc.workStatus=newStatus;
+  // Moving away from Done invalidates whatever review state went with that
+  // Done cycle — same reasoning as the reset in markServiceDone() above.
+  svc.reviewSubmittedAt=''; svc.reviewSubmittedBy=''; svc.reviewSubmittedByName='';
   updateClient(c);
   // Re-render whatever tab is actually open (same pattern as
   // _refreshOpenServiceViews()) — never assume Services vs. Bundles from
@@ -5433,6 +5440,34 @@ function setServiceStatus(clientId, serviceId, locationId, newStatus){
   if(typeof _flushCloudPush==='function') _flushCloudPush();
   const label=(SERVICE_STATUSES.find(s=>s.value===newStatus)||{}).label||newStatus;
   showToast(`${svc.name}: ${label}`);
+}
+// "Submit for review" (My Work redesign follow-on) — a flag/timestamp
+// layered on top of workStatus:'done', never a 5th SERVICE_STATUSES value:
+// Done stays the status; reviewSubmittedAt/reviewSubmittedBy/
+// reviewSubmittedByName are a separate recorded event next to it. An
+// explicit action only (never auto-fired by markServiceDone above) — the
+// employee has to choose to submit. Same write path as any other service
+// field edit (updateClient -> saveClients -> immediate flush, same
+// reasoning as markServiceDone: a discrete click shouldn't risk being lost
+// to the debounce window); server-side this authorizes identically to any
+// other field on a service already assigned to the caller
+// (checkMemberClientWrite is whole-service, not per-field) — a member can
+// submit their OWN assigned service's review, never someone else's.
+function submitServiceForReview(clientId, serviceId, locationId){
+  const c=getClient(clientId); if(!c) return;
+  const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
+  const svc=loc?(loc.services||[]).find(s=>s.id===serviceId):(c.services||[]).find(s=>s.id===serviceId);
+  if(!svc) return;
+  if(_svcStatus(svc)!=='done'){ showToast('Mark this service Done first','warn'); return; }
+  if(svc.reviewSubmittedAt) return; // already submitted this cycle — no-op, not a re-submit
+  svc.reviewSubmittedAt=new Date().toISOString();
+  svc.reviewSubmittedBy=SESSION.id||'';
+  svc.reviewSubmittedByName=SESSION.name||'';
+  updateClient(c);
+  if(_activeClientId===clientId) renderClientDetail(clientId, _activeDetailTab);
+  renderMyWork();
+  if(typeof _flushCloudPush==='function') _flushCloudPush();
+  showToast(`📤 ${svc.name} submitted for review`);
 }
 
 // ── Editing the "mark as done on this date" input directly, WITHOUT clicking
@@ -6005,10 +6040,19 @@ function _myWorkStatusCell(clientId, svcId, locationId, svc){
   // click anywhere in it (including the decorative dot) would silently eat
   // "open this row in the Tracker" clicks that just happened to land near
   // the status label instead of directly on the dropdown.
-  return `<span style="display:inline-flex;align-items:center;gap:6px;">
+  const dropdown=`<span style="display:inline-flex;align-items:center;gap:6px;">
     <span style="width:7px;height:7px;border-radius:50%;background:${meta.color};flex-shrink:0;display:inline-block;"></span>
     <select title="Status" onclick="event.stopPropagation();" onchange="event.stopPropagation();setServiceStatus('${clientId}','${svcId}','${locationId||''}',this.value)" style="border:none;background:transparent;font-size:11px;font-weight:600;color:${meta.color};cursor:pointer;padding:0;outline:none;">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
   </span>`;
+  // "Submit for review" only ever appears at/after Done — never a silent
+  // auto-submit, and never a 5th status value alongside SERVICE_STATUSES:
+  // Done stays the status, reviewSubmittedAt is a separate flag rendered
+  // next to it (see submitServiceForReview()).
+  if(ws!=='done') return dropdown;
+  const reviewHtml=svc.reviewSubmittedAt
+    ?`<span style="font-size:9px;color:var(--text-light);" title="Submitted by ${escHtmlClient(svc.reviewSubmittedByName||'')} · ${new Date(svc.reviewSubmittedAt).toLocaleString()}">✓ Submitted for review</span>`
+    :`<button class="btn btn-xs btn-outline" style="font-size:9px;padding:2px 7px;" onclick="event.stopPropagation();submitServiceForReview('${clientId}','${svcId}','${locationId||''}')">📤 Submit for review</button>`;
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">${dropdown}${reviewHtml}</span>`;
 }
 // svc.notes is the only per-service free-text field that exists — there is
 // no separate "next steps" field on a service (that field only exists on

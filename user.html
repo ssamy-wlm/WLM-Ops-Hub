@@ -2227,6 +2227,10 @@ function userMarkServiceDone(clientId, svcId){
     localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(existing.slice(0,500)));
     logActivity('client', notif.fromUser, notif.title, notif.body);
     svc.workStatus='done'; // Status Dropdown feature — same completion event as before, just also reflected in the new field
+    // A fresh Done always starts a fresh review cycle — clear any submission
+    // flag left over from a PREVIOUS cycle (own copy of client.html's same
+    // reset, zero-shared-code rule).
+    svc.reviewSubmittedAt=''; svc.reviewSubmittedBy=''; svc.reviewSubmittedByName='';
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
     if(typeof cloudPushData==='function') cloudPushData();
     else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
@@ -2268,6 +2272,9 @@ function userSetServiceStatus(clientId, svcId, newStatus){
     const c = clients.find(x=>x.id===clientId); if(!c) return;
     const svc = _findServiceById(c, svcId); if(!svc) return;
     svc.workStatus = newStatus;
+    // Moving away from Done invalidates whatever review state went with
+    // that Done cycle — same reasoning as the reset in userMarkServiceDone() above.
+    svc.reviewSubmittedAt=''; svc.reviewSubmittedBy=''; svc.reviewSubmittedByName='';
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
     if(typeof cloudPushData==='function') cloudPushData();
     else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
@@ -2275,6 +2282,32 @@ function userSetServiceStatus(clientId, svcId, newStatus){
     const label=(SERVICE_STATUSES.find(s=>s.value===newStatus)||{}).label||newStatus;
     showToast(`${svc.name}: ${label}`);
   }catch(e){ showToast('Could not save — try again','warn'); }
+}
+// "Submit for review" (My Work redesign follow-on) — own copy of
+// client.html's identical feature (zero-shared-code rule). A flag/timestamp
+// layered on top of workStatus:'done', never a 5th SERVICE_STATUSES value —
+// Done stays the status, reviewSubmittedAt/By/ByName are a separate
+// recorded event next to it. Explicit action only, never auto-fired by
+// userMarkServiceDone above. Server-side this authorizes identically to any
+// other field on a service already assigned to the caller
+// (checkMemberClientWrite is whole-service, not per-field) — a member can
+// submit their OWN assigned service's review, never someone else's.
+function userSubmitServiceForReview(clientId, svcId){
+  try{
+    const clients = _getAssignClients();
+    const c = clients.find(x=>x.id===clientId); if(!c) return;
+    const svc = _findServiceById(c, svcId); if(!svc) return;
+    if(_svcStatus(svc)!=='done'){ showToast('Mark this service Done first','warn'); return; }
+    if(svc.reviewSubmittedAt) return; // already submitted this cycle — no-op, not a re-submit
+    svc.reviewSubmittedAt = new Date().toISOString();
+    svc.reviewSubmittedBy = currentUser?.id||'';
+    svc.reviewSubmittedByName = currentUser?.name||'';
+    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
+    if(typeof cloudPushData==='function') cloudPushData();
+    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
+    loadMyAssignments();
+    showToast(`📤 ${svc.name} submitted for review`);
+  }catch(e){ showToast('Could not submit — try again','warn'); }
 }
 
 // ── Service Updates / Comments thread (Monday feature pack #1) ──
@@ -2497,7 +2530,7 @@ function userUpdateProgress(clientId, projId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
-const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝' };
+const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤' };
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';
@@ -2735,10 +2768,19 @@ function _myWorkStatusCell(item){
   // client.html's copy of this function for why (a wide status cell would
   // otherwise eat "open this row in the Tracker" clicks that land near the
   // label instead of directly on the dropdown).
-  return `<span style="display:inline-flex;align-items:center;gap:6px;">
+  const dropdown=`<span style="display:inline-flex;align-items:center;gap:6px;">
     <span style="width:7px;height:7px;border-radius:50%;background:${meta.color};flex-shrink:0;display:inline-block;"></span>
     <select title="Status" onclick="event.stopPropagation();" onchange="event.stopPropagation();userSetServiceStatus('${item.clientId}','${item.svcId}',this.value)" style="border:none;background:transparent;font-size:11px;font-weight:600;color:${meta.color};cursor:pointer;padding:0;outline:none;">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
   </span>`;
+  // "Submit for review" only ever appears at/after Done — never a silent
+  // auto-submit, and never a 5th status value alongside SERVICE_STATUSES:
+  // Done stays the status, reviewSubmittedAt is a separate flag rendered
+  // next to it (see userSubmitServiceForReview()).
+  if(ws!=='done') return dropdown;
+  const reviewHtml=item.reviewSubmittedAt
+    ?`<span style="font-size:9px;color:var(--text-light);" title="Submitted by ${escHtmlUser(item.reviewSubmittedByName||'')} · ${new Date(item.reviewSubmittedAt).toLocaleString()}">✓ Submitted for review</span>`
+    :`<button class="btn btn-xs btn-outline" style="font-size:9px;padding:2px 7px;" onclick="event.stopPropagation();userSubmitServiceForReview('${item.clientId}','${item.svcId}')">📤 Submit for review</button>`;
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">${dropdown}${reviewHtml}</span>`;
 }
 // Same field resolution as client.html: there is no separate "next steps"
 // field on a service — only .notes exists (a service-level "nextSteps"
@@ -2951,6 +2993,8 @@ function loadMyAssignments(){
           due, lastDone:s.lastDone||'', freq:s.freqLabel||s.freq||'monthly',
           category:s.category||'', notes:s.notes||'', locationName:s._locationName||'',
           hasStatus:true, statusValue:_svcStatus(s),
+          reviewSubmittedAt:s.reviewSubmittedAt||'', reviewSubmittedByName:s.reviewSubmittedByName||'',
+          updates:Array.isArray(s.updates)?s.updates:[], subitems:Array.isArray(s.subitems)?s.subitems:[],
         });
       });
     }
