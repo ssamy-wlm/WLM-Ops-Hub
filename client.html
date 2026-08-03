@@ -613,9 +613,15 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 
     <!-- ═══ PAGE: MY WORK ═══ -->
     <div id="page-my-work" class="page-section">
-      <div style="margin-bottom:18px;">
-        <div style="font-size:17px;font-weight:800;color:var(--text-dark);">✅ My Work</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Tasks, sub-projects and services assigned to you</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">My work</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Tasks assigned to you from the production tracker</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="showPage('clients',_el('nav-clients'))">🔗 Tracker</button>
+          <button class="btn btn-primary btn-sm" id="myWorkRefreshBtn" onclick="refreshMyWork(this)">↺ Refresh</button>
+        </div>
       </div>
       <div id="my-work-list"></div>
     </div>
@@ -5960,11 +5966,135 @@ function renderSchedule(){
 // ═══════════════════════════════════════════════════════
 //  MY WORK PAGE
 // ═══════════════════════════════════════════════════════
+// Small stable hash → one of a fixed palette, same idea as _hashClientColor
+// but its own copy (category isn't a client, and zero-shared-code applies
+// between files too) — svc.category is free text, not a fixed enum, so a
+// hardcoded name->color lookup would silently go grey the moment someone
+// types a new category. Same six colors reused for Category pills app-wide
+// in this file's My Work table.
+const MYWORK_CATEGORY_PALETTE=[
+  {bg:'#FDECC8',text:'#B4770A'},{bg:'#DCEBFB',text:'#2E5DA6'},{bg:'#FBD9DC',text:'#C0392B'},
+  {bg:'#E3F5EA',text:'#1F8A53'},{bg:'#EDE3FB',text:'#6B3FA0'},{bg:'#FEF3C7',text:'#92660B'},
+];
+function _myWorkCategoryPill(category){
+  if(!category) return '<span style="color:var(--text-light);">—</span>';
+  let hash=0; for(let i=0;i<category.length;i++) hash=(hash*31+category.charCodeAt(i))|0;
+  const p=MYWORK_CATEGORY_PALETTE[Math.abs(hash)%MYWORK_CATEGORY_PALETTE.length];
+  return `<span style="background:${p.bg};color:${p.text};padding:2px 9px;border-radius:9px;font-size:10px;font-weight:700;white-space:nowrap;">${escHtmlClient(category)}</span>`;
+}
+// Reuses _svcDueStatus (ok/soon/overdue) — the SAME rule every other due dot
+// in this file already uses (Overview alerts, Services tab, Bundles tab) —
+// never a second, competing due-color rule for this one table.
+function _myWorkDuePill(svc){
+  if(!svc.due) return '<span style="color:var(--text-light);">—</span>';
+  const status=_svcDueStatus(svc);
+  const meta={ok:{bg:'rgba(34,160,107,.12)',text:'var(--green)'},soon:{bg:'rgba(217,119,6,.12)',text:'var(--orange)'},overdue:{bg:'rgba(224,85,85,.12)',text:'var(--red)'}}[status];
+  const days=daysUntil(svc.due);
+  const dateLabel=new Date(svc.due+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const suffix=status==='overdue'?'overdue':(days===0?'today':days+'d');
+  return `<span style="background:${meta.bg};color:${meta.text};padding:2px 9px;border-radius:9px;font-size:10px;font-weight:700;white-space:nowrap;">${dateLabel} · ${suffix}</span>`;
+}
+// Dot + native <select> (not two separate elements) — keeps the exact same
+// inline-editable status control every other Tracker view already uses
+// (setServiceStatus, same write path, same markServiceDone-on-"Done" rule),
+// just restyled to read as a colored label instead of a bordered dropdown.
+function _myWorkStatusCell(clientId, svcId, locationId, svc){
+  const ws=_svcStatus(svc); const meta=_svcStatusMeta(ws);
+  // stopPropagation lives on the <select> itself, not the whole cell — the
+  // cell can span a good chunk of the row's width, and swallowing every
+  // click anywhere in it (including the decorative dot) would silently eat
+  // "open this row in the Tracker" clicks that just happened to land near
+  // the status label instead of directly on the dropdown.
+  return `<span style="display:inline-flex;align-items:center;gap:6px;">
+    <span style="width:7px;height:7px;border-radius:50%;background:${meta.color};flex-shrink:0;display:inline-block;"></span>
+    <select title="Status" onclick="event.stopPropagation();" onchange="event.stopPropagation();setServiceStatus('${clientId}','${svcId}','${locationId||''}',this.value)" style="border:none;background:transparent;font-size:11px;font-weight:600;color:${meta.color};cursor:pointer;padding:0;outline:none;">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
+  </span>`;
+}
+// svc.notes is the only per-service free-text field that exists — there is
+// no separate "next steps" field on a service (that field only exists on
+// Sales Funnel prospects, an unrelated feature). Read-only here; the notes
+// field is still editable from the service's own Edit modal, reached via
+// "Open in Tracker" below.
+function _myWorkNotesCell(svc){
+  const text=svc.notes||'';
+  if(!text) return '<span style="color:var(--text-light);">—</span>';
+  const truncated=text.length>60?text.slice(0,60)+'…':text;
+  return `<span style="color:var(--text-mid);font-size:11px;" title="${escHtmlClient(text)}">${escHtmlClient(truncated)}</span>`;
+}
+// "Open in the Tracker" for a My Work row — jumps to the Client & Production
+// Tracker page, opens that client's detail panel, and lands on the Services
+// tab (where the full edit modal, comment thread and sub-items live). Not a
+// toggle like the grid's own openClientDetail() — a My Work row always means
+// "go look at this," never "collapse whatever's already open."
+function openMyWorkItemInTracker(clientId){
+  showPage('clients', _el('nav-clients'));
+  const panel=_el('client-detail-panel'); if(!panel) return;
+  panel.style.display='block';
+  renderClientDetail(clientId,'services');
+  setTimeout(()=>panel.scrollIntoView({behavior:'smooth',block:'nearest'}),50);
+}
+async function refreshMyWork(btn){
+  if(btn){ btn.disabled=true; btn.textContent='↺ Refreshing…'; }
+  try{ await _pullClientsFromCloud(); }
+  catch(e){ showToast('Could not refresh — showing last known data','warn'); }
+  finally{ renderMyWork(); if(btn){ btn.disabled=false; btn.textContent='↺ Refresh'; } }
+}
+// The one table every recurring-service assignment renders into (Monday
+// mockup redesign) — replaces the old per-project/per-franchise nested card
+// treatment below. Stat counts are computed here, from services only, per
+// the approved mockup ("Tasks" = assigned recurring services, not ad-hoc
+// project tasks — those stay in their own cards further down).
+function _myWorkServicesTable(items){
+  const t=today();
+  const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
+  const in30=new Date(); in30.setDate(in30.getDate()+30); const in30s=in30.toISOString().slice(0,10);
+  const clientIds=new Set(items.map(i=>i.c.id));
+  // Same raw date-window rule user.html's stat cards already use (not the
+  // done-this-cycle-aware _svcDueStatus the pill below uses) — a due-soon
+  // service someone already marked done still counts here, exactly as it
+  // already does in the shipped employee My Work stats.
+  let dueWeek=0, dueMonth=0;
+  items.forEach(({svc})=>{
+    if(!svc.due) return;
+    const isOver=svc.due<t;
+    const isSoon=!isOver&&svc.due<=in7s;
+    const isMonth=!isOver&&svc.due<=in30s;
+    if(isOver||isSoon) dueWeek++;
+    if(isOver||isMonth) dueMonth++;
+  });
+  const rows=items.map(({c,svc,locationId,locationName})=>`
+    <tr onclick="openMyWorkItemInTracker('${c.id}')" style="cursor:pointer;">
+      <td>
+        <div style="font-weight:700;color:var(--text-dark);">${escHtmlClient(svc.name)}</div>
+        <div style="font-size:10px;color:var(--text-light);margin-top:2px;">
+          <span onclick="event.stopPropagation();toggleEmployeeFavorite('${c.id}');renderMyWork();" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
+          ${escHtmlClient(c.name)}${locationName?` (${escHtmlClient(locationName)})`:''} · ${escHtmlClient(svc.freqLabel||svc.freq||'monthly')}
+        </div>
+      </td>
+      <td>${_myWorkCategoryPill(svc.category)}</td>
+      <td>${_myWorkDuePill(svc)}</td>
+      <td>${_myWorkStatusCell(c.id,svc.id,locationId,svc)}</td>
+      <td>${_myWorkNotesCell(svc)}</td>
+    </tr>`).join('');
+  return `
+    <div class="stat-row" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+      <div class="stat-card"><div class="stat-label">Tasks</div><div class="stat-value">${items.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value">${clientIds.size}</div></div>
+      <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" style="color:var(--orange);">${dueWeek}</div></div>
+      <div class="stat-card"><div class="stat-label">Due This Month</div><div class="stat-value" style="color:#2E5DA6;">${dueMonth}</div></div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="service-table">
+        <thead><tr><th>Service / Client</th><th>Category</th><th>Due</th><th>Status</th><th>Notes / Next Steps</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:10px;color:var(--text-light);margin-top:10px;">Click any row to open it in the Tracker. Due-date color: green on track · amber due soon · red overdue.</div>`;
+}
 function renderMyWork(){
   const el=_el('my-work-list'); if(!el) return;
   const myId=SESSION.id||SESSION.name;
   let html=''; let found=false;
-  const t=today();
   // Favorited clients' work cards float to the top here too (Feature 6) —
   // same per-viewer favorites list as the Tracker grid above.
   const myWorkClients=[...getClients()].sort((a,b)=>{
@@ -5972,14 +6102,22 @@ function renderMyWork(){
     if(af&&!bf) return -1; if(!af&&bf) return 1;
     return 0;
   });
+  // Recurring services now render in ONE unified table below
+  // (_myWorkServicesTable) instead of nested inside each project's card, and
+  // collected once per client/franchise-location — independent of the
+  // ad-hoc project-task loop right below, which only ever cared about tasks.
+  const allMyServices=[];
   myWorkClients.forEach(c=>{
+    (c.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name)).forEach(svc=>allMyServices.push({c,svc,locationId:'',locationName:''}));
+    (c.locations||[]).forEach(loc=>{
+      (loc.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name)).forEach(svc=>allMyServices.push({c,svc,locationId:loc.id,locationName:loc.name}));
+    });
     (c.projects||[]).forEach(p=>{
       const myTasks=(p.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>t.assigneeId===myId||t.assigneeName===SESSION.name).map(t=>({...t,_spName:sp.name,_spId:sp.id})));
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).includes(myId));
-      const mySvcs=(c.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name));
       const onProject=(p.users||[]).includes(myId);
-      if(!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!mySvcs.length&&!onProject) return;
+      if(!myTasks.length&&!mySubTasks.length&&!mySubs.length&&!onProject) return;
       found=true;
       html+=`
         <div class="card" style="margin-bottom:14px;">
@@ -6012,65 +6150,13 @@ function renderMyWork(){
         html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Sub-Items</div>`;
         html+=mySubs.map(sp=>renderSubprojectRow(c.id,p.id,sp,true)).join('');
       }
-      if(mySvcs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:9px 0 5px;">My Recurring Services</div>`;
-        html+=mySvcs.map(svc=>{
-          const cls=svc.due&&svc.due<t?'overdue':'ok';
-          const days=daysUntil(svc.due);
-          const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
-          const svcSubitems=Array.isArray(svc.subitems)?svc.subitems:[];
-          const svcSubitemsDone=svcSubitems.filter(si=>si.done).length;
-          const ws=_svcStatus(svc);
-          const wsMeta=_svcStatusMeta(ws);
-          const wsLabel=wsMeta.label;
-          return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
-            <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-            <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}${svc.category?` · 🏷 ${escHtmlClient(svc.category)}`:''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
-            <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}')">
-            <select class="form-select" style="flex-shrink:0;font-size:10.5px;padding:4px 6px;border-color:${wsMeta.color};color:${wsMeta.color};font-weight:700;" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
-            <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
-            <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceSubitemsModal('${c.id}','${svc.id}')" title="Sub-items">${ICON_ADD}</button>
-          </div>`;
-        }).join('');
-      }
       html+=`</div></div>`;
     });
-    // Franchise services — rendered once per franchise, not nested inside the
-    // projects loop above (a franchise service isn't tied to any one project).
-    (c.locations||[]).forEach(loc=>{
-      const mySvcs=(loc.services||[]).filter(s=>_svcAssignedTo(s,myId,SESSION.name));
-      if(!mySvcs.length) return;
-      found=true;
-      html+=`
-        <div class="card" style="margin-bottom:14px;">
-          <div class="card-header" style="padding-bottom:12px;">
-            <div><div class="card-title">${c.name} · ${loc.name} <span style="font-size:10px;color:var(--text-light);">(Franchise)</span></div></div>
-          </div>
-          <div class="card-body">
-            <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;">My Recurring Services</div>
-            ${mySvcs.map(svc=>{
-              const cls=svc.due&&svc.due<t?'overdue':'ok';
-              const days=daysUntil(svc.due);
-              const dl=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Today!':days+'d');
-              const svcSubitems=Array.isArray(svc.subitems)?svc.subitems:[];
-              const svcSubitemsDone=svcSubitems.filter(si=>si.done).length;
-              const ws=_svcStatus(svc);
-              const wsMeta=_svcStatusMeta(ws);
-              return `<div class="alert-item alert-${cls}" style="margin-bottom:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <div class="alert-icon">${cls==='overdue'?'🔴':'🟢'}</div>
-                <div class="alert-body" style="flex:1;min-width:140px;"><div class="alert-title">${svc.name}${svcSubitems.length?` <span class="chip" style="background:var(--bg2);color:var(--text-light);" title="Sub-items completed">${svcSubitemsDone}/${svcSubitems.length}</span>`:''}</div>
-                <div class="alert-meta">Due: ${svc.due||'—'} · ${svc.freq} ${dl?'('+dl+')':''}${svc.category?` · 🏷 ${escHtmlClient(svc.category)}`:''}</div>${_mySubitemHint(svc,myId,SESSION.name)}</div>
-                <input type="date" id="svcdone-${c.id}-${svc.id}" value="${t}" max="${t}" class="form-input" style="width:auto;padding:3px 6px;font-size:10px;flex-shrink:0;" onchange="onSvcDoneDateChange('${c.id}','${svc.id}','${loc.id}')">
-                <select class="form-select" style="flex-shrink:0;font-size:10.5px;padding:4px 6px;border-color:${wsMeta.color};color:${wsMeta.color};font-weight:700;" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','${loc.id}',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===ws?' selected':''}>${s.label}</option>`).join('')}</select>
-                <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceUpdatesModal('${c.id}','${svc.id}','${loc.id}')" title="Updates">${ICON_COMMENT}${Array.isArray(svc.updates)&&svc.updates.length?` ${svc.updates.length}`:''}</button>
-                <button class="btn btn-xs btn-outline" style="flex-shrink:0;" onclick="openServiceSubitemsModal('${c.id}','${svc.id}','${loc.id}')" title="Sub-items">${ICON_ADD}</button>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>`;
-    });
   });
+  if(allMyServices.length) found=true;
+  const servicesTableHtml=allMyServices.length?_myWorkServicesTable(allMyServices):'';
+  const taskCardsHtml=html;
+  html='';
   // ── "Your Assigned Steps" — sub-items assigned to this person on a
   // service they are NOT otherwise assigned to (already covered above via
   // the inline "your steps" hint on services in mySvcs). Explicitly
@@ -6109,7 +6195,7 @@ function renderMyWork(){
     el.innerHTML='<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No work assigned to you yet</div><div class="empty-state-sub">Your tasks and services will appear here once an admin assigns them.</div></div>';
     return;
   }
-  el.innerHTML=html;
+  el.innerHTML=servicesTableHtml+taskCardsHtml+html;
 }
 
 // ═══════════════════════════════════════════════════════
