@@ -2809,11 +2809,24 @@ function openMyWorkItemInTracker(clientId){ openTrackerTo(clientId); }
 // page shell (already correctly computed from projCount/dueWeekCount/
 // dueMonthCount at the bottom of loadMyAssignments); this only builds the
 // table beneath them.
+// Restores the comment/sub-item access #193 moved off the row, as compact
+// count badges instead of inline buttons — pure display, wired to the
+// EXACT SAME openServiceUpdatesModal()/openServiceSubitemsModal() openers
+// this file already uses (own copy of client.html's identical badges,
+// zero-shared-code rule). Hidden entirely at zero count.
+function _myWorkBadges(item){
+  const updates=Array.isArray(item.updates)?item.updates:[];
+  const subitems=Array.isArray(item.subitems)?item.subitems:[];
+  const commentBadge=updates.length?`<span onclick="event.stopPropagation();openServiceUpdatesModal('${item.clientId}','${item.svcId}')" style="cursor:pointer;background:rgba(45,107,182,.08);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;margin-left:6px;" title="Comments — click to view">💬 ${updates.length}</span>`:'';
+  const doneCount=subitems.filter(si=>si.done).length;
+  const subitemBadge=subitems.length?`<span onclick="event.stopPropagation();openServiceSubitemsModal('${item.clientId}','${item.svcId}')" style="cursor:pointer;background:rgba(45,107,182,.08);color:var(--text-light);padding:1px 6px;border-radius:6px;font-size:9px;font-weight:700;margin-left:6px;" title="Sub-items — click to view">➕ ${doneCount}/${subitems.length}</span>`:'';
+  return commentBadge+subitemBadge;
+}
 function _myWorkServicesTable(items){
   const rows=items.map(item=>`
     <tr onclick="openMyWorkItemInTracker('${item.clientId}')" style="cursor:pointer;">
       <td>
-        <div style="font-weight:700;color:var(--text-dark);">${escHtmlUser(item.name)}</div>
+        <div style="font-weight:700;color:var(--text-dark);">${escHtmlUser(item.name)}${_myWorkBadges(item)}</div>
         <div style="font-size:10px;color:var(--text-light);margin-top:2px;">
           <span onclick="event.stopPropagation();toggleEmployeeFavorite('${item.clientId}')" style="cursor:pointer;" title="${isEmployeeFavorite(item.clientId)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(item.clientId)?'⭐':'☆'}</span>
           ${escHtmlUser(item.clientName)}${item.locationName?` (Franchise · ${escHtmlUser(item.locationName)})`:''} · ${escHtmlUser(item.freq||'monthly')}
@@ -3064,6 +3077,17 @@ function loadMyAssignments(){
     if(clientHasWork) clientIds.add(c.id);
   });
 
+  // Clearly labeled as its own, separate/older grouping (owner request) —
+  // an employee scanning this page should never mistake an ad-hoc project
+  // task card (or the opt-in "other work on this client" box) for a row
+  // that belongs in the services table above.
+  const taskCardsHtml=html?`
+    <div style="margin:22px 0 10px;">
+      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Project Tasks</div>
+      <div style="font-size:11px;color:var(--text-light);margin-top:1px;">A separate, older grouping — ad-hoc bundle/project tasks assigned to you, not recurring services</div>
+    </div>${html}`:'';
+  html='';
+
   // ── "Your Assigned Steps" — sub-items assigned to this person on a
   // service they are NOT otherwise assigned to (services they ARE assigned
   // to already show their own steps inline above, via the "your steps"
@@ -3084,7 +3108,8 @@ function loadMyAssignments(){
   if(myStepEntries.length){
     found=true;
     html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;padding:11px 16px;">
-      <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;letter-spacing:.07em;">Your Assigned Steps</div>
+      <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Your Assigned Steps (from other services)</div>
+      <div style="font-size:10px;color:var(--text-light);margin:2px 0 7px;">A separate, older grouping — sub-items assigned to you on services you're not otherwise assigned to, so they don't already appear in the table above</div>
       ${myStepEntries.map(({c,s,si})=>`
         <div style="display:flex;align-items:center;gap:9px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
           <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked,'${c.id}','${s.id}')" style="flex-shrink:0;width:15px;height:15px;">
@@ -3102,7 +3127,7 @@ function loadMyAssignments(){
 
   const list=document.getElementById('my-assignments-list');
   if(list){
-    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+html):`<div style="text-align:center;padding:60px;color:var(--text-light);">
+    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+taskCardsHtml+html):`<div style="text-align:center;padding:60px;color:var(--text-light);">
       <div style="font-size:40px;margin-bottom:12px;">📋</div>
       <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No work assigned yet</div>
       <div style="font-size:12px;">When an admin assigns a task to you from the production tracker, it'll appear here automatically.</div>
