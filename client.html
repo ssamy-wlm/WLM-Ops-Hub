@@ -2677,35 +2677,6 @@ function _rptIsOverdue(s, t){
   if(s.lastDone&&s.lastDone>=s.due) return false; // already satisfied this due cycle
   return true;
 }
-// Expected occurrences year-to-date, from frequency alone — weekly ≈ weeks
-// elapsed this year, monthly = months elapsed, yearly = 1 (once/year), and
-// one-time = 1 once its (this-year) due date has arrived, else 0. Unknown or
-// missing frequency is excluded (0) rather than guessed.
-function _rptExpectedYTD(s, curYear, dayOfYear, monthOfYear, t){
-  if(s.freq==='weekly') return Math.max(1, Math.ceil(dayOfYear/7));
-  if(s.freq==='monthly') return monthOfYear;
-  if(s.freq==='yearly') return 1;
-  if(s.freq==='one-time') return (s.due&&s.due.slice(0,4)===String(curYear)&&s.due<=t) ? 1 : 0;
-  return 0;
-}
-// How many of those expected YTD cycles a service has actually satisfied. A
-// service that isn't currently overdue is, by construction, caught up on
-// every cycle expected so far — the app always rolls `due` forward past
-// `lastDone` when a service is marked done (see saveClientService()), so
-// "not overdue" reliably means nothing outstanding. An overdue service only
-// ever has ONE stored `due` date (the oldest unmet cycle — it never advances
-// on its own), so the number of cycles piled up since then is inferred from
-// how many freq-lengths have elapsed — still fully derived from stored
-// fields, no completion-history log required.
-function _rptCompletedYTD(s, expected, t){
-  if(expected<=0) return 0;
-  if(!_rptIsOverdue(s,t)) return expected;
-  const cycleDays = s.freq==='weekly'?7:s.freq==='monthly'?30:s.freq==='yearly'?365:null;
-  if(cycleDays==null) return 0; // one-time, overdue, never done
-  const daysLate = Math.floor((new Date(t)-new Date(s.due))/86400000);
-  const missed = Math.max(1, Math.floor(daysLate/cycleDays)+1);
-  return Math.max(0, expected-missed);
-}
 function _rptPctColor(pct){ return pct===null?'var(--text-light)':pct>=80?'#22A06B':pct>=40?'#d97706':'#e05555'; }
 
 // ═══════════════════════════════════════════════════════
@@ -2815,8 +2786,6 @@ function renderReports(){
   const curYear=now.getFullYear();
   const t=today();
   const thisMonthStr=`${curYear}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const dayOfYear=Math.floor((new Date(t)-new Date(curYear,0,1))/86400000)+1;
-  const monthOfYear=now.getMonth()+1;
 
   // Populate year filter
   const yrSel=_el('rpt-year');
@@ -2850,14 +2819,17 @@ function renderReports(){
     const doneOfDueThisMonth=dueThisMonthSvcs.filter(s=>s.lastDone&&s.lastDone.startsWith(thisMonthStr));
     const monthPct=dueThisMonthSvcs.length?Math.round(doneOfDueThisMonth.length/dueThisMonthSvcs.length*100):null;
 
-    // ── Metric 2: This Year — cumulative completed YTD ÷ expected occurrences YTD ──
-    let expectedSum=0, completedSum=0;
-    svcs.forEach(s=>{
-      const exp=_rptExpectedYTD(s,curYear,dayOfYear,monthOfYear,t);
-      expectedSum+=exp;
-      completedSum+=_rptCompletedYTD(s,exp,t);
-    });
-    const yearPct=expectedSum>0?Math.round(completedSum/expectedSum*100):null;
+    // ── Metric 2: This Year — active services completed at least once this
+    // calendar year ÷ total active services. Counts SERVICES, not frequency-
+    // weighted occurrences (the previous version multiplied weekly services
+    // by weeks-elapsed and monthly by months-elapsed, producing confusing
+    // denominators like "55 of 55" or "113 of 113" that had nothing to do
+    // with headcount) — and only counts a REAL completion (lastDone dated
+    // this year), never crediting a service just because it isn't currently
+    // overdue.
+    const completedThisYearSvcs=svcs.filter(s=>s.lastDone&&s.lastDone.slice(0,4)===String(curYear));
+    const yearTotal=svcs.length;
+    const yearPct=yearTotal>0?Math.round(completedThisYearSvcs.length/yearTotal*100):null;
 
     // ── Metric 3: Health — overdue vs upcoming, right now ──
     const overdueSvcs=svcs.filter(s=>_rptIsOverdue(s,t));
@@ -2883,8 +2855,8 @@ function renderReports(){
       ?`<div style="font-size:20px;font-weight:900;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No work due this month</div>`
       :`<div style="font-size:20px;font-weight:900;color:${_rptPctColor(monthPct)};">${monthPct}%</div><div style="font-size:9px;color:var(--text-mid);">${doneOfDueThisMonth.length} of ${dueThisMonthSvcs.length} done</div>`;
     const yearMetric=yearPct===null
-      ?`<div style="font-size:20px;font-weight:900;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No work due yet</div>`
-      :`<div style="font-size:20px;font-weight:900;color:${_rptPctColor(yearPct)};">${yearPct}%</div><div style="font-size:9px;color:var(--text-mid);">${completedSum} of ${expectedSum} expected</div>`;
+      ?`<div style="font-size:20px;font-weight:900;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No active services</div>`
+      :`<div style="font-size:20px;font-weight:900;color:${_rptPctColor(yearPct)};">${yearPct}%</div><div style="font-size:9px;color:var(--text-mid);">${completedThisYearSvcs.length} of ${yearTotal}</div>`;
     const healthMetric=healthTotal===0
       ?`<div style="font-size:14px;font-weight:800;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No active services</div>`
       :`<div style="font-size:14px;font-weight:800;color:${overdueSvcs.length?'#e05555':'#22A06B'};">${overdueSvcs.length?overdueSvcs.length+' overdue':'On track'}</div>
@@ -2913,7 +2885,7 @@ function renderReports(){
             <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">This Month</div>
             ${monthMetric}
           </div>
-          <div style="background:var(--bg);border-radius:10px;padding:10px 12px;text-align:center;" title="Cumulative services completed this calendar year ÷ expected occurrences year-to-date, based on each service's frequency.">
+          <div style="background:var(--bg);border-radius:10px;padding:10px 12px;text-align:center;" title="Active services completed at least once this calendar year ÷ total active services. Real completions only.">
             <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">This Year</div>
             ${yearMetric}
           </div>
