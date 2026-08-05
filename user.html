@@ -200,6 +200,13 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .stat-label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
 .stat-value{font-family:'Poppins',sans-serif;font-size:28px;background:linear-gradient(135deg,var(--text-dark),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent;}
 .stat-sub{font-size:12px;color:var(--text-light);margin-top:4px;}
+/* My Work stat row — compact tiles, deliberately its OWN class rather than
+   reusing .stat-card (which stays as-is for the Overview page etc.) — the
+   real-user complaint was specifically that these read as "big chunky
+   boxes"; this is a smaller, denser tile for this one row only. */
+.mywork-stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;}
+.mywork-stat-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;}
+.mywork-stat-value{font-family:'Poppins',sans-serif;font-size:19px;font-weight:800;color:var(--text-dark);}
 /* My Work services table (Monday mockup redesign) — own copy of client.html's
    .service-table, hand-matched rather than shared (zero-shared-code rule). */
 .service-table{width:100%;border-collapse:collapse;}
@@ -925,12 +932,12 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           </label>
         </div>
 
-        <!-- Stats row -->
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
-          <div class="stat-card"><div class="stat-label">Tasks</div><div class="stat-value" id="as-proj-count" style="font-size:24px;">0</div></div>
-          <div class="stat-card"><div class="stat-label">Clients</div><div class="stat-value" id="as-client-count" style="font-size:24px;">0</div></div>
-          <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="as-due-week-count" style="font-size:24px;color:var(--orange);">0</div></div>
-          <div class="stat-card"><div class="stat-label">Due This Month</div><div class="stat-value" id="as-due-month-count" style="font-size:24px;color:#2E5DA6;">0</div></div>
+        <!-- Stats row — compact tiles (see .mywork-stat above) -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+          <div class="mywork-stat"><div class="mywork-stat-label">Tasks</div><div class="mywork-stat-value" id="as-proj-count">0</div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Clients</div><div class="mywork-stat-value" id="as-client-count">0</div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Due This Week</div><div class="mywork-stat-value" id="as-due-week-count" style="color:var(--orange);">0</div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Due This Month</div><div class="mywork-stat-value" id="as-due-month-count" style="color:#2E5DA6;">0</div></div>
         </div>
 
         <div id="my-assignments-list">
