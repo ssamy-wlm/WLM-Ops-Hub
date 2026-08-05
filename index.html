@@ -4516,7 +4516,11 @@ function renderClientHealthDashboard(){
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
     </tr>`).join('');
 }
-function openAdminTrackerToClient(clientId){
+// serviceId is optional (Client Health's row click never passes one; the
+// admin notification click-through below does) — resolves the exact
+// service by id in client.html's own _openDeepLinkFromUrl(), never by
+// name, so two same-named services on the same client never collide.
+function openAdminTrackerToClient(clientId, serviceId){
   // Switch tabs FIRST — switchAdminTab('tracker') runs loadAdminTrackerFrame(),
   // which either sets the iframe's first-ever src or resets its internal SPA
   // state back to the default clients view. Setting our deep-link src AFTER
@@ -4526,6 +4530,7 @@ function openAdminTrackerToClient(clientId){
   switchAdminTab(trackerNavEl, 'tracker');
   const params = new URLSearchParams();
   params.set('openClient', clientId);
+  if(serviceId) params.set('openService', serviceId);
   params.set('v', Date.now());
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
@@ -6991,7 +6996,14 @@ function refreshAdminNotifBadge(){
 function toggleAdminNotifPanel(){
   const p = document.getElementById('admin-notif-panel');
   if(!p) return;
-  const opening = p.style.display==='none';
+  // getComputedStyle, not p.style.display — the panel starts hidden via
+  // the .admin-notif-panel CSS class (display:none), not an inline style,
+  // so p.style.display is '' (not 'none') until this function's own first
+  // call sets it. Checking the inline style meant the FIRST click always
+  // read opening=false and closed an already-closed panel — a real click
+  // did nothing until a second click. Discovered while wiring the
+  // click-through fix below, which depends on this panel actually opening.
+  const opening = getComputedStyle(p).display==='none';
   p.style.display = opening ? 'block' : 'none';
   if(opening) renderAdminNotifPanel();
 }
@@ -7013,6 +7025,16 @@ function readAdminNotif(id){
   const notifs = dbGet(DB_KEYS.notifications)||[];
   const n = notifs.find(x=>x.id===id);
   if(n && !n.read){ n.read=true; dbSet(DB_KEYS.notifications, notifs); refreshAdminNotifBadge(); renderAdminNotifPanel(); cloudAutoSync(); }
+  // Click-through — reuses the exact same client.html deep-link mechanism
+  // user.html's notification dropdown uses (openTrackerToClient/
+  // openAdminTrackerToClient just being this portal's own copy of the same
+  // iframe-src pattern), resolving by exact serviceId, never by name. A
+  // notification with no resolvable context.clientId (most local/legacy
+  // ones) simply doesn't navigate — never an error.
+  if(n?.context?.clientId){
+    document.getElementById('admin-notif-panel').style.display='none';
+    openAdminTrackerToClient(n.context.clientId, n.context.serviceId||null);
+  }
 }
 function markAllAdminNotifsRead(){
   const notifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({...n, read:true}));
