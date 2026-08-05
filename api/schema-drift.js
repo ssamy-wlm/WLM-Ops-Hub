@@ -56,6 +56,7 @@ const EXPECTED_TABLES = [
 // itself is already flagged missing above, to avoid double-reporting.
 const EXPECTED_COLUMNS = [
   { table: 'ops_org_links', column: 'deleted_at', migration: '20260713120000_org_links_deleted_at.sql' },
+  { table: 'ops_error_log', column: 'archived_at', migration: '20260805120000_ops_error_log_archive_guard.sql' },
 ];
 
 export default async function handler(req, res) {
