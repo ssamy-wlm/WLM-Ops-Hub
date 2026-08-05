@@ -463,8 +463,28 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 /* ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ──────────
    Fixed-position — never shifts surrounding layout, and leaves zero DOM/CSS
    weight once dismissed/finished (elements are simply removed). ── */
-.tip-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:7px 8px 7px 13px;font-size:11.5px;color:var(--text-dark);box-shadow:0 6px 18px rgba(0,0,0,.14);max-width:270px;position:fixed;z-index:9500;}
-.tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;}
+/* pointer-events:none — root cause of the Workload person-click bug: this
+   chip is positioned as rect.bottom+8 below whatever it's anchoring on
+   (see _maybeShowTip()), with no clearance reserved from content that
+   follows immediately after (e.g. #workload-tip-anchor sits directly above
+   the Workload table). The margin between the two is only a few px in the
+   best case, and depends on exact font-metric/zoom/browser rendering, so it
+   silently overlapped the table's Person column in production — confirmed
+   directly: Playwright's own click-actionability check reports "tip-chip
+   subtree intercepts pointer events" when the two are pinned to overlap.
+   The Details toggle (the table's last, far-right column) sat outside the
+   narrow 270px-wide chip and was never affected — exactly matching "Details
+   works, the person-click doesn't." pointer-events:none here means the chip
+   is still fully visible but never captures a click meant for whatever's
+   beneath/around it; the dismiss button opts back in below so it stays
+   clickable. */
+.tip-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:7px 8px 7px 13px;font-size:11.5px;color:var(--text-dark);box-shadow:0 6px 18px rgba(0,0,0,.14);max-width:270px;position:fixed;z-index:9500;pointer-events:none;}
+.tip-chip button{background:none;border:none;cursor:pointer;color:var(--text-light);font-size:13px;line-height:1;padding:2px 4px;flex-shrink:0;pointer-events:auto;}
+/* Workload/My Team's Work person rows — hover highlight makes the
+   navigate-to-Tracker click target obvious and visually distinct from the
+   "▸ Details" toggle's own dedicated click zone (which already has its own
+   text label marking it as a separate action). */
+.workload-person-row:hover{background:var(--bg2,#f4f6f9);}
 .tour-overlay{position:fixed;inset:0;z-index:9600;pointer-events:none;}
 .tour-spotlight{position:fixed;border-radius:10px;box-shadow:0 0 0 4000px rgba(15,23,42,.55);pointer-events:none;transition:top .2s,left .2s,width .2s,height .2s;}
 .tour-popover{position:fixed;background:#fff;border-radius:14px;padding:16px 18px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 14px 34px rgba(0,0,0,.28);pointer-events:none;transition:top .2s,left .2s;}
@@ -4635,7 +4655,7 @@ function renderWorkloadDashboard(){
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
       </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
-    <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
+    <tr class="workload-person-row" style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
@@ -4737,7 +4757,7 @@ function renderMyTeamsWork(){
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
       </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
-    <tr style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
+    <tr class="workload-person-row" style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
