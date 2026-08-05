@@ -398,7 +398,23 @@ code reaches production) — the first being `ops_notifications`. See the
   drift-check gate, an in-app schema-drift check surfaced in Business
   Setup, hardening `api/ops-state.js` so one query's schema error can't
   500 the whole batch, and/or a stricter merge-sequencing rule — no
-  decision made yet, flagged here so it isn't lost.
+  decision made yet, flagged here so it isn't lost. **Third instance
+  (2026-08-05):** `20260730093000_ops_error_log_archive.sql` (PR #187,
+  drops `ops_error_log`'s append-only trigger so the archive control can set
+  `archived_at`) merged but was never applied to production — the archive
+  button in Business Setup errored with the live append-only exception.
+  Superseded by `20260805120000_ops_error_log_archive_guard.sql`, which also
+  narrows the exception (blocks DELETE and any UPDATE to `id`/`data`/
+  `created_at`; permits only an `archived_at`-only UPDATE) instead of
+  dropping the trigger outright as the first attempt did. `archived_at` has
+  been added to `api/schema-drift.js`'s `EXPECTED_COLUMNS` so a missing
+  apply shows up as "pending" in the Business Setup panel instead of only
+  surfacing as a live error — this repo's own schema-drift check is the
+  fast way to confirm there's nothing pending before merging any future
+  migration; keep its `EXPECTED_TABLES`/`EXPECTED_COLUMNS` lists in sync by
+  hand alongside every migration that adds a table or bolts on a column,
+  same as this entry does. No decision made yet on the CI-run/pre-merge
+  automation options above — this remains a manual, must-remember step.
 - **Franchise permission-matching**: `index.html`'s member-permission logic
   and `user.html` don't yet look inside `client.locations[]` — a team member
   assigned only to a franchise service may not be recognized as "assigned to
