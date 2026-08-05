@@ -13,3 +13,4 @@
 /api/**                    @ssamy-wlm
 /lib/**                    @ssamy-wlm
 /supabase/migrations/**    @ssamy-wlm
+/.github/workflows/**      @ssamy-wlm

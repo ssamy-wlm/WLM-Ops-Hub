@@ -163,16 +163,23 @@ Don't relitigate them without an explicit decision from the user.
 
 12. **A PR adding a file under `supabase/migrations/` may not be merged
     until that migration is confirmed applied against the live Supabase
-    project.** There is no CI step that applies migrations automatically —
-    per rule #6 and rule #11, nothing here auto-applies schema changes, and
-    this agent has no live DB access to do it either. This means the
-    sequencing is manual and must be deliberate: apply the migration
-    yourself (Supabase SQL editor/dashboard) as part of reviewing the PR,
-    *before* clicking merge — not after. Two outages so far
-    (`ops_notifications`, then `ops_org_links.deleted_at`, both documented
-    below) came from exactly this step being skipped. The Business Setup
-    schema-drift check (see below, once built) is the fast way to confirm
-    there's nothing pending before you merge.
+    project.** As of 2026-08-05 this is enforced, not just a rule to
+    remember: `.github/workflows/supabase-migrations.yml` runs a read-only
+    `supabase db push --dry-run` against production on every PR and fails
+    the check if anything committed to `main` hasn't been applied yet, then
+    auto-applies on every push to `main` and re-verifies itself. See
+    `supabase/MIGRATIONS.md` for the one-time setup this depends on and
+    exactly how it works. This agent still has no live DB access (rule #11)
+    — the workflow is what closes that gap now, not this agent doing the
+    apply by hand. Three outages happened before this existed
+    (`ops_notifications`, `ops_org_links.deleted_at`, then
+    `ops_error_log.archived_at`, all documented below) from exactly this
+    step being skipped or merged mid-flight. The Business Setup schema-drift
+    check (`api/schema-drift.js`) still exists as a secondary, human-facing,
+    in-app view — the CI workflow doesn't depend on it and doesn't require
+    its hand-maintained `EXPECTED_TABLES`/`EXPECTED_COLUMNS` lists to be kept
+    in sync, which is itself one of the reasons the old approach missed
+    things.
 
 ## Current state (as of 2026-07-10)
 
@@ -412,34 +419,69 @@ Business Setup, which included Platforms & Tools with no additional gate;
 moving it into the Super-Admin-only tab means she loses the ability to
 add/edit platforms, even though she still creates users day-to-day.
 
+**Migration-apply pipeline (2026-08-05) — closes the recurring "migration
+merged but never applied to prod" failure, after a third instance
+(`ops_error_log.archived_at`, PR #187/#202).** Investigated the actual
+deploy pipeline first: there was no CI at all in this repo (`.github/`
+held only `CODEOWNERS`), no `supabase/config.toml`, no Supabase CLI
+dependency anywhere — migrations had never been anything but a hand-copied
+SQL-editor step. Built `.github/workflows/supabase-migrations.yml`
+(two jobs: a read-only `supabase db push --dry-run` against prod on every
+PR that fails the check if anything committed to `main` isn't applied yet;
+a real `supabase db push` on every push to `main` that self-verifies
+afterward) plus `supabase/MIGRATIONS.md`, the setup/runbook doc. The
+apply job only triggers `on: push: branches: [main]` — that trigger is
+structurally disjoint from what triggers a Vercel *preview* build (a PR/
+branch push), which is the load-bearing safety property for this app's
+shared prod/preview database (rule #4-adjacent constraint, see
+`supabase/MIGRATIONS.md`).
+
+Verified for real, not just read — spun up a local Postgres 16 instance
+(stubbing the `auth`/`storage` schemas and `anon`/`authenticated`/
+`service_role` roles a real Supabase project provisions by default, which
+vanilla Postgres doesn't) and ran the actual CLI against it repeatedly:
+full first-time replay of all 10 migrations, idempotent re-run (confirmed
+`"Remote database is up to date"`, zero statements executed), a dummy
+pending migration correctly detected and blocked by the PR-check script and
+then correctly applied and self-verified by the merge-job script (exact
+script bodies extracted from the committed YAML, not retyped), and the
+`ops_error_log_archive_guard` trigger's actual behavior (archived_at-only
+UPDATE succeeds, DELETE fails, UPDATE touching `data`/`created_at` fails,
+`ops_feed`/`ops_time_off_ledger` untouched, still on the original shared
+`ops_block_mutations` function).
+
+That local replay surfaced a real, previously-unknown landmine: migration
+`20260629130000_ops_hub_core_schema.sql` (abandoned scaffolding, superseded
+before ever being used by app code — see `api/schema-drift.js`'s own
+comment on this) both creates AND seeds one row into
+`ops_settings_singleton`, and the very next migration
+(`20260630120000_ops_hub_document_schema.sql`) tries to drop that table but
+**refuses if it has any rows** — so a naive first-time full replay would
+have stopped there with a "refusing to drop" error on Sarah's very first
+bootstrap attempt. No data at risk (the guard did exactly its job), but
+without knowing this in advance it would have looked like the pipeline was
+broken. `supabase/MIGRATIONS.md` documents the fix: `supabase migration
+repair --status applied 20260629120000 20260629130000` marks those two
+abandoned files as already-handled (skip, don't run) before the real first
+`db push` — verified locally that this exact sequence produces a clean,
+complete bootstrap with no errors.
+
+**Not yet done — requires Sarah, live DB access this agent doesn't have**:
+generating the `SUPABASE_DB_URL` GitHub secret, running the one-time
+`migration repair` + bootstrap `db push` by hand, enabling the new check as
+a required branch-protection status check, and confirming the
+`ops_error_log_archive_guard` trigger matches on the real live database
+(exact verification SQL is in `supabase/MIGRATIONS.md`). Held for approval
+per this PR's own review gate — not merged until confirmed.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
-- **Pending Supabase migrations reaching prod before they're applied**: two
-  outages so far (`ops_notifications`, then `ops_org_links.deleted_at` —
-  see above) from a migration file merging in the same PR as code that
-  depends on its schema, with no step that guarantees the migration is
-  actually run against production before that code goes live. Options were
-  proposed to the user (2026-07-13) — a CI-run auto-apply step, a pre-merge
-  drift-check gate, an in-app schema-drift check surfaced in Business
-  Setup, hardening `api/ops-state.js` so one query's schema error can't
-  500 the whole batch, and/or a stricter merge-sequencing rule — no
-  decision made yet, flagged here so it isn't lost. **Third instance
-  (2026-08-05):** `20260730093000_ops_error_log_archive.sql` (PR #187,
-  drops `ops_error_log`'s append-only trigger so the archive control can set
-  `archived_at`) merged but was never applied to production — the archive
-  button in Business Setup errored with the live append-only exception.
-  Superseded by `20260805120000_ops_error_log_archive_guard.sql`, which also
-  narrows the exception (blocks DELETE and any UPDATE to `id`/`data`/
-  `created_at`; permits only an `archived_at`-only UPDATE) instead of
-  dropping the trigger outright as the first attempt did. `archived_at` has
-  been added to `api/schema-drift.js`'s `EXPECTED_COLUMNS` so a missing
-  apply shows up as "pending" in the Business Setup panel instead of only
-  surfacing as a live error — this repo's own schema-drift check is the
-  fast way to confirm there's nothing pending before merging any future
-  migration; keep its `EXPECTED_TABLES`/`EXPECTED_COLUMNS` lists in sync by
-  hand alongside every migration that adds a table or bolts on a column,
-  same as this entry does. No decision made yet on the CI-run/pre-merge
-  automation options above — this remains a manual, must-remember step.
+- **Pending Supabase migrations reaching prod before they're applied** —
+  **RESOLVED 2026-08-05**, see the "Current state" entry below for the full
+  writeup. Three outages (`ops_notifications`, `ops_org_links.deleted_at`,
+  `ops_error_log.archived_at`) came from this before a CI pipeline existed
+  to close it. Left here as a pointer rather than deleted so the history of
+  why this got built isn't lost.
 - **Franchise permission-matching**: `index.html`'s member-permission logic
   and `user.html` don't yet look inside `client.locations[]` — a team member
   assigned only to a franchise service may not be recognized as "assigned to
