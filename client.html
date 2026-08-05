@@ -2746,9 +2746,13 @@ const NOTIF_TYPE_ICON = { assignment:'📌', timeOff:'🗓️', message:'💬', 
 function getOpsNotifs(){ return db(CL_KEYS.opsNotifications)||[]; }
 function _allNotifs(){
   const local = getNotifs().map(n=>({...n, _server:false}));
+  // context.clientId/serviceId (set server-side in api/ops-sync.js) is what
+  // makes a notification click-through-able (readNotif()) — this mapping
+  // used to drop it, same bug user.html's _getAssignNotifs() had.
   const server = getOpsNotifs().map(n=>({
     id:n.id, ts:new Date(n.createdAt).getTime(), read:!!n.read,
     title:n.title, body:n.body, icon:NOTIF_TYPE_ICON[n.type]||'🔔', _server:true,
+    clientId:n.context?.clientId||null, serviceId:n.context?.serviceId||null,
   }));
   return [...local, ...server].sort((a,b)=>(b.ts||0)-(a.ts||0));
 }
@@ -2795,18 +2799,30 @@ function renderNotifPage(){
     </div>`).join('');
 }
 function readNotif(id){
+  let clientId=null, serviceId=null;
   if(String(id).startsWith('notif_')){
     const server = getOpsNotifs();
     const n = server.find(x=>x.id===id);
-    if(n){ n.read=true; dbSave(CL_KEYS.opsNotifications, server); _scheduleCloudPush(); }
+    if(n){
+      n.read=true; dbSave(CL_KEYS.opsNotifications, server); _scheduleCloudPush();
+      clientId=n.context?.clientId||null; serviceId=n.context?.serviceId||null;
+    }
   } else {
     const notifs=getNotifs();
     const n=notifs.find(x=>x.id===id); if(n) n.read=true;
     dbSave(CL_KEYS.notifications,notifs);
+    if(n){ clientId=n.clientId||null; serviceId=n.serviceId||null; }
   }
   refreshNotifBadge();
   renderNotifPanel();
   renderNotifPage();
+  // Click-through — a notification with no resolvable clientId (most local
+  // notifications never carried one, and still don't for types other than
+  // the due-soon alerts) simply doesn't navigate; never an error.
+  if(clientId){
+    _el('notif-panel')?.classList.remove('open');
+    _navigateToServiceInTracker(clientId, serviceId);
+  }
 }
 function renderReports(){
   const el=_el('reports-body'); if(!el) return;
@@ -3531,11 +3547,26 @@ function renderSavedFilterChips(){
 function openClientDetail(id, cardEl){
   const panel=_el('client-detail-panel');
   // Clicking an already-open client's card again collapses it back in place.
+  // This toggle is only correct for a literal repeat click on the same
+  // card — a DELIBERATE navigation (notification click-through, any other
+  // deep link) must never hit it, or the target client's panel silently
+  // collapses instead of opening/switching tab when it happens to already
+  // be the open one (root cause of notifications "landing on the wrong
+  // place" when clicked from within client.html itself — see
+  // _forceOpenClientDetail()/_navigateToServiceInTracker() below).
   if(_activeClientId===id && panel.style.display!=='none'){
     _activeClientId=null;
     panel.style.display='none';
     return;
   }
+  _forceOpenClientDetail(id, cardEl);
+}
+// Unconditionally opens/re-renders a client's detail panel — never toggles
+// closed, regardless of whether this client is already the open one. The
+// one entry point every deliberate navigation (notification click-through,
+// any future deep link) must use instead of openClientDetail()'s toggle.
+function _forceOpenClientDetail(id, cardEl){
+  const panel=_el('client-detail-panel');
   _activeClientId=id;
   _activeDetailTab='overview'; // a fresh open always starts on Overview
   panel.style.display='block';
@@ -4268,7 +4299,16 @@ function _openDeepLinkFromUrl(){
     // behavior above.
     const svcId=params.get('openService');
     if(!getClient(clientId)) return;
-    openClientDetail(clientId);
+    // _forceOpenClientDetail() — NOT openClientDetail() — this is a
+    // deliberate navigation (from a notification, or any future deep link)
+    // and must never hit openClientDetail()'s "already open -> toggle
+    // closed" branch. That toggle firing here was the actual root cause of
+    // a notification appearing to "land on the wrong place": if the
+    // target client happened to already be the open one (e.g. clicked from
+    // within client.html's own notification bell — see readNotif() —
+    // rather than through a fresh iframe reload), openClientDetail(id)
+    // collapsed the panel shut instead of switching to the right tab/row.
+    _forceOpenClientDetail(clientId);
     renderClientDetail(clientId, svcId&&!projId?'services':'projects');
     setTimeout(()=>{
       if(projId){
@@ -4280,26 +4320,41 @@ function _openDeepLinkFromUrl(){
           if(exp) exp.classList.add('open');
         }
       }
-      if(taskId){
-        const row=document.getElementById('task-row-'+taskId);
-        if(row){
-          row.scrollIntoView({behavior:'smooth',block:'center'});
-          row.style.transition='background .3s';
-          row.style.background='rgba(45,107,182,.18)';
-          setTimeout(()=>{ row.style.background=''; },2200);
-        }
-      }
-      if(svcId){
-        const row=document.querySelector(`[data-svc-id="${svcId}"]`);
-        if(row){
-          row.scrollIntoView({behavior:'smooth',block:'center'});
-          row.style.transition='background .3s';
-          row.style.background='rgba(45,107,182,.18)';
-          setTimeout(()=>{ row.style.background=''; },2200);
-        }
-      }
+      if(taskId) _highlightRow(document.getElementById('task-row-'+taskId));
+      if(svcId) _highlightRow(document.querySelector(`[data-svc-id="${svcId}"]`));
     },300);
   }catch(e){}
+}
+// Shared by every deep-link/notification-navigation target — briefly
+// highlights the row that was scrolled to, so the click-through has a
+// visible landing spot regardless of which kind of target it is (task,
+// service, project block).
+function _highlightRow(row){
+  if(!row) return;
+  row.scrollIntoView({behavior:'smooth',block:'center'});
+  row.style.transition='background .3s';
+  row.style.background='rgba(45,107,182,.18)';
+  setTimeout(()=>{ row.style.background=''; },2200);
+}
+// Same-document notification click-through (client.html's own bell/
+// notifications page — see readNotif()) — a notification clicked from
+// WITHIN client.html itself, unlike one clicked from user.html/index.html
+// (which reloads this whole document via the iframe's src, going through
+// _openDeepLinkFromUrl() above instead). Reuses the exact same
+// force-open + exact-id-match + highlight logic, just invoked directly
+// instead of parsed from a URL, so the two paths can never drift apart —
+// in particular, resolving by svc.id (never by name) is what correctly
+// distinguishes same-named services (e.g. two "Blogging" services with
+// different ids), and _forceOpenClientDetail (never the toggling
+// openClientDetail) is what keeps this from collapsing the panel shut when
+// the target client is already open.
+function _navigateToServiceInTracker(clientId, serviceId){
+  if(!clientId || !getClient(clientId)) return;
+  _forceOpenClientDetail(clientId);
+  renderClientDetail(clientId, 'services');
+  setTimeout(()=>{
+    if(serviceId) _highlightRow(document.querySelector(`[data-svc-id="${serviceId}"]`));
+  },300);
 }
 
 // ═══════════════════════════════════════════════════════
