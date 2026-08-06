@@ -1,0 +1,100 @@
+name: Supabase migrations
+
+# Closes a root-cause gap: this repo had NO mechanism — automated or
+# otherwise — that applied supabase/migrations/*.sql to production. Every
+# migration was a hand-copy-paste-into-the-SQL-editor step that a human had
+# to remember, and remembering failed silently three times (ops_notifications,
+# ops_org_links.deleted_at, ops_error_log.archived_at — see CLAUDE.md). This
+# workflow makes that failure mode loud instead of silent, and where safe,
+# removes the manual step entirely.
+#
+# Two independent jobs, deliberately scoped to different GitHub events:
+#
+#   check-prod-current (on pull_request) — READ-ONLY. Runs `supabase db push
+#   --dry-run` against the live production database and fails the check if
+#   anything committed to main hasn't been applied yet. This never writes
+#   anything, so it is safe to run on every PR with zero risk to the shared
+#   prod/preview database (see CLAUDE.md — previews are NOT a sandbox here).
+#   It also means a PR can't be merged "blind" while prod is already behind
+#   for any reason, not just this PR's own changes.
+#
+#   apply-on-merge (on push to main only) — the only job that writes. Runs
+#   the real `supabase db push`, then immediately re-runs the same dry-run
+#   check to confirm prod is now caught up. If the apply itself fails, or the
+#   post-apply check still finds something pending, the job goes red on the
+#   commit — loud, not silent.
+#
+# `push: branches: [main]` never fires for a PR/branch push, which is what
+# triggers a Vercel PREVIEW build. Vercel previews and this workflow's write
+# path are structurally disjoint — a preview deploy can never trigger a
+# migration apply. This is the load-bearing safety property for the
+# shared-prod/preview-DB constraint.
+#
+# Requires exactly one secret: SUPABASE_DB_URL — a direct Postgres connection
+# string (NOT the transaction-mode pooler on :6543) with permission to run
+# DDL. See supabase/MIGRATIONS.md for the one-time setup this workflow
+# depends on before it can run safely for the first time.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check-prod-current:
+    name: Check production is current (read-only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dry-run against production
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -o pipefail
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set — see supabase/MIGRATIONS.md. Failing loudly rather than silently skipping the check."
+            exit 1
+          fi
+          OUTPUT=$(npx --yes supabase@latest db push --dry-run --db-url "$SUPABASE_DB_URL" 2>&1) || true
+          echo "$OUTPUT"
+          LAST_JSON=$(echo "$OUTPUT" | grep -o '{.*}' | tail -1)
+          UP_TO_DATE=$(echo "$LAST_JSON" | jq -r '.upToDate // "unknown"' 2>/dev/null || echo "unknown")
+          if [ "$UP_TO_DATE" != "true" ]; then
+            echo "::error::Production has migration(s) that are NOT yet applied — merging is blocked until this is resolved. Either the apply-on-merge job from an earlier push hasn't run/succeeded yet, or something needs manual attention. See supabase/MIGRATIONS.md."
+            echo "$LAST_JSON" | jq -r '.migrations[]? as $m | "  pending: " + $m' 2>/dev/null || true
+            exit 1
+          fi
+          echo "Production schema is caught up with every committed migration."
+
+  apply-on-merge:
+    name: Apply pending migrations to production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply any pending migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -o pipefail
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set — see supabase/MIGRATIONS.md. Failing loudly rather than silently skipping the apply."
+            exit 1
+          fi
+          npx --yes supabase@latest db push --yes --db-url "$SUPABASE_DB_URL"
+      - name: Confirm production is now caught up
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -o pipefail
+          OUTPUT=$(npx --yes supabase@latest db push --dry-run --db-url "$SUPABASE_DB_URL" 2>&1) || true
+          echo "$OUTPUT"
+          LAST_JSON=$(echo "$OUTPUT" | grep -o '{.*}' | tail -1)
+          UP_TO_DATE=$(echo "$LAST_JSON" | jq -r '.upToDate // "unknown"' 2>/dev/null || echo "unknown")
+          if [ "$UP_TO_DATE" != "true" ]; then
+            echo "::error::Apply step ran but production is still not caught up — needs manual attention now, not silently later. See supabase/MIGRATIONS.md."
+            exit 1
+          fi
+          echo "Production schema confirmed caught up after apply."
