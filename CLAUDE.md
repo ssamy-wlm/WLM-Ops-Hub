@@ -387,6 +387,31 @@ on it, without a step that guarantees it's actually applied before that
 code reaches production) — the first being `ops_notifications`. See the
 "pending Supabase migrations" gap below for the fix under consideration.
 
+**Admin Controls tab (2026-08-05):** a new top-level tab in `index.html`,
+visible only to Super Admin (`tier==='super'`, currently David + Sarah),
+consolidating 7 admin/system panels that had accumulated across Business
+Setup and Users: Error Log, Pending Migrations (schema drift), Password
+Security Migration, Sales Funnel Access, Platforms & Tools, Import Clients
+(one-time), and Email Notifications. Each panel moved verbatim — same ids,
+same endpoints, same behavior, no rebuild — the nav item and page-section
+are new, the panels themselves are not. Visibility is server-enforced by
+each panel's own endpoint (`api/error-log.js`, `api/schema-drift.js`,
+`api/import-legacy-data.js` already require `tierOf(session)==='super'`;
+`api/ops-state.js` already nulls `passwordMigrationStatus` for any non-super
+tier) — the nav-item hiding is the same "UX convenience, not the actual
+security boundary" pattern already used for every other role-gated nav item
+here, not a new security mechanism. Two access-narrowing side effects of
+strict `tier==='super'` gating on the whole tab, flagged to Sarah rather
+than silently decided: (1) Sales Funnel Access previously also let a
+non-super admin granted Sales Funnel Owner level manage funnel access
+(Google-Drive-style carve-out — see `_mySalesFunnelLevel`); that carve-out
+is preserved on the card's own individual visibility check, but the tab's
+own nav item is strict Super Admin only, so a non-super Funnel Owner has no
+path to the screen anymore. (2) `production_manager` (Abby) previously kept
+Business Setup, which included Platforms & Tools with no additional gate;
+moving it into the Super-Admin-only tab means she loses the ability to
+add/edit platforms, even though she still creates users day-to-day.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied**: two

@@ -1137,6 +1137,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <!-- Messages -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'messages')" id="admin-nav-messages"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span>Messages<span class="admin-msg-nav-badge" id="admin-msg-badge" style="display:none;">0</span></div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'bizSettings')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Business setup</div>
+      <!-- Admin Controls — Super Admin only (tier==='super'), server-enforced
+           by every panel's own endpoint (api/error-log.js, api/schema-drift.js,
+           api/import-legacy-data.js all already check tierOf(session)!=='super').
+           Hidden by default (inline display:none) and only ever revealed in
+           applyAdminRoleRestrictions() for level==='super'||'owner' — fails
+           closed if that JS never runs, unlike most other nav items here. -->
+      <div class="admin-nav-item" id="admin-nav-admincontrols" onclick="switchAdminTab(this,'adminControls')" style="display:none;"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="16" r="1.5"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>Admin Controls</div>
     </div>
   </nav>
 
@@ -1453,41 +1460,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="cloudSyncStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">☁️ Checking status…</div>
         </div>
       </div>
-
-      <!-- ── IMPORT CLIENTS (Phase 5, one-time) — Super Admin/Owner only ── -->
-      <div class="card" id="importClientsCard" style="margin-top:22px;display:none;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">📥 Import Clients (one-time)</div>
-            <div class="card-sub">Bulk-load the recovered client roster into Supabase. Insert-only — never touches or deletes an existing client.</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
-            <input type="file" id="importClientsFileInput" accept="application/json" onchange="_onImportClientsFileChosen(event)">
-            <button class="btn btn-sm btn-outline" id="importClientsDryRunBtn" onclick="runClientImportDryRun()" disabled>Run Dry Run</button>
-            <button class="btn btn-sm btn-danger" id="importClientsConfirmBtn" onclick="confirmClientImport()" disabled title="Enabled after a successful dry run">Confirm Import</button>
-          </div>
-          <div id="importClientsResults" style="font-size:13px;color:var(--text-mid);"></div>
-        </div>
-      </div>
-
-      <!-- ── EMAIL NOTIFICATIONS ── -->
-      <div class="card" style="margin-top:22px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">✉️ Email Notifications</div>
-            <div class="card-sub">Test the assignment-email integration (powered by Resend)</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <div id="emailTestStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">Send a test email to confirm RESEND_API_KEY is configured correctly on the server.</div>
-          <div style="display:grid;grid-template-columns:2fr auto;gap:10px;">
-            <input class="form-input" id="emailTestTo" type="email" placeholder="you@weblightmedia.com">
-            <button class="btn btn-sm btn-primary" onclick="sendTestAssignmentEmail()">Send Test Email</button>
-          </div>
-        </div>
-      </div>
+      <!-- Import Clients and Email Notifications moved to the Admin Controls
+           tab (Super Admin only) — see admin-adminControls below. -->
     </div>
 
     <!-- ══ LIVE FEED ══ -->
@@ -1935,25 +1909,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
       </div>
-      <!-- ── PLATFORMS & TOOLS ── -->
-      <div class="card" style="margin-bottom:18px;">
-        <div class="card-header">
-          <div><div class="card-title">🛠 Platforms & Tools</div><div class="card-sub">All apps your team uses — these populate the credentials section when creating users</div></div>
-          <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
-        </div>
-        <div class="card-body">
-          <div style="font-size:12px;color:var(--text-mid);margin-bottom:14px;line-height:1.5;">
-            Add every platform or tool your team uses. Each one will appear as an editable credential field when a new user is created, so you can assign logins per person.
-          </div>
-          <div id="platformsList" style="display:flex;flex-direction:column;gap:8px;">
-            <!-- rows injected by renderPlatformsList() -->
-          </div>
-          <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
-            <button class="btn btn-primary btn-sm" onclick="savePlatforms()">Save Platforms ✓</button>
-            <span id="platforms-saved-badge" style="font-size:11px;color:var(--green);display:none;">✓ Saved</span>
-          </div>
-        </div>
-      </div>
+      <!-- Platforms & Tools moved to the Admin Controls tab (Super Admin
+           only) — see admin-adminControls below. -->
 
       <!-- ── MANAGEMENT ROADMAP (Sarah & David only) ── -->
       <div id="rm-biz-wrap" style="display:none;margin-top:18px;">
@@ -2079,6 +2036,39 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div><!-- /rm-biz-wrap -->
 
+      <!-- Error Log, Pending Migrations, Password Security Migration, and
+           Sales Funnel Access moved to the Admin Controls tab (Super Admin
+           only) — see admin-adminControls below. -->
+
+    </div>
+
+    <!-- ── ADMIN CONTROLS — Super Admin only (tier==='super', currently
+         David + Sarah). Consolidates 7 admin/system panels previously
+         scattered across Business Setup and Users: each one moved here
+         verbatim (same ids, same endpoints, same behavior) — this is a
+         relocation, not a rebuild. Visibility is server-enforced by each
+         panel's own endpoint (api/error-log.js, api/schema-drift.js,
+         api/import-legacy-data.js all already require tierOf(session)===
+         'super'; api/ops-state.js already nulls out passwordMigrationStatus
+         for any non-super tier) — the nav-item/tab hiding below is the same
+         "UX convenience, not the actual security boundary" pattern already
+         used for every other role-gated nav item in this file (see
+         RESTRICTED_ADMIN_ROLES above).
+         Note: Sales Funnel Access previously also let a non-super admin
+         granted Sales Funnel Owner level manage funnel access (Google-Drive-
+         style carve-out — see _mySalesFunnelLevel). That card's own
+         individual display-gate (kept exactly as-is below) still honors
+         that carve-out, but this tab's own nav item does not — it's strict
+         tier==='super' only, per the task's explicit "Super Admin only"
+         requirement. A non-super Funnel Owner therefore loses their path to
+         this screen now that it sits behind a Super-Admin-only tab; flagged
+         for Sarah rather than silently deciding either way. ── -->
+    <div id="admin-adminControls" class="page-section">
+      <div style="margin-bottom:18px;">
+        <div style="font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);">Admin Controls</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">System diagnostics and admin-only tools.</div>
+      </div>
+
       <!-- ── ERROR LOG — Super Admin/Owner only. Capture itself stays
            read-only/passive; the one exception is the manually-triggered
            "Clear old entries" archive control below (never automatic, never
@@ -2176,6 +2166,60 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── PLATFORMS & TOOLS ── -->
+      <div class="card" style="margin-top:22px;">
+        <div class="card-header">
+          <div><div class="card-title">🛠 Platforms & Tools</div><div class="card-sub">All apps your team uses — these populate the credentials section when creating users</div></div>
+          <button class="btn btn-primary btn-sm" onclick="addPlatformRow()">+ Add Platform</button>
+        </div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:14px;line-height:1.5;">
+            Add every platform or tool your team uses. Each one will appear as an editable credential field when a new user is created, so you can assign logins per person.
+          </div>
+          <div id="platformsList" style="display:flex;flex-direction:column;gap:8px;">
+            <!-- rows injected by renderPlatformsList() -->
+          </div>
+          <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary btn-sm" onclick="savePlatforms()">Save Platforms ✓</button>
+            <span id="platforms-saved-badge" style="font-size:11px;color:var(--green);display:none;">✓ Saved</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── IMPORT CLIENTS (Phase 5, one-time) — Super Admin/Owner only ── -->
+      <div class="card" id="importClientsCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📥 Import Clients (one-time)</div>
+            <div class="card-sub">Bulk-load the recovered client roster into Supabase. Insert-only — never touches or deletes an existing client.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+            <input type="file" id="importClientsFileInput" accept="application/json" onchange="_onImportClientsFileChosen(event)">
+            <button class="btn btn-sm btn-outline" id="importClientsDryRunBtn" onclick="runClientImportDryRun()" disabled>Run Dry Run</button>
+            <button class="btn btn-sm btn-danger" id="importClientsConfirmBtn" onclick="confirmClientImport()" disabled title="Enabled after a successful dry run">Confirm Import</button>
+          </div>
+          <div id="importClientsResults" style="font-size:13px;color:var(--text-mid);"></div>
+        </div>
+      </div>
+
+      <!-- ── EMAIL NOTIFICATIONS ── -->
+      <div class="card" style="margin-top:22px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">✉️ Email Notifications</div>
+            <div class="card-sub">Test the assignment-email integration (powered by Resend)</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="emailTestStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">Send a test email to confirm RESEND_API_KEY is configured correctly on the server.</div>
+          <div style="display:grid;grid-template-columns:2fr auto;gap:10px;">
+            <input class="form-input" id="emailTestTo" type="email" placeholder="you@weblightmedia.com">
+            <button class="btn btn-sm btn-primary" onclick="sendTestAssignmentEmail()">Send Test Email</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -2527,7 +2571,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="font-size:11px;color:var(--text-light);margin-top:-8px;margin-bottom:14px;">New users default to a 2-month probation. Clear both dates to skip probation.</div>
       <div class="section-divider">Credentials & Platform Access</div>
       <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;line-height:1.5;">
-        ✏️ Enter the login credentials for each platform this user will have access to. Leave blank to skip. Platforms are managed in <strong>Business Setup → Platforms & Tools</strong>.
+        ✏️ Enter the login credentials for each platform this user will have access to. Leave blank to skip. Platforms are managed in <strong>Admin Controls → Platforms & Tools</strong>.
       </div>
       <div id="newUserCredRows" style="display:flex;flex-direction:column;gap:8px;">
         <!-- rows injected by renderNewUserCredRows() on modal open -->
@@ -3097,13 +3141,20 @@ function switchAdminTab(el, tab){
   if(tab==='bizSettings'){
     loadRoadmap(); renderNotificationSettingsUI();
     if(_adminLevel==='super' || _adminLevel==='owner'){
-      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus();
       const killSwitchCard=document.getElementById('security-kill-switch-card');
       if(killSwitchCard) killSwitchCard.style.display='block';
     }
-    // Sales Funnel Access: also rendered for a non-super admin who's been
-    // granted funnel-Owner specifically — same OR condition as the card's
-    // own visibility gate in applyAdminRoleRestrictions().
+  }
+  // Admin Controls — loads the same four panels' data that used to load on
+  // bizSettings (Error Log, Pending Migrations/schema drift, Password
+  // Security Migration, Sales Funnel Access), unchanged aside from which tab
+  // triggers them. Sales Funnel Access keeps its own OR condition (also
+  // rendered for a non-super admin granted funnel-Owner specifically) —
+  // same gate as the card's own visibility in applyAdminRoleRestrictions().
+  if(tab==='adminControls'){
+    if(_adminLevel==='super' || _adminLevel==='owner'){
+      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus();
+    }
     if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
@@ -4901,8 +4952,11 @@ const HELP_CONTENT = {
     tip: "Direct notes tagged to a client or bundle.",
     learnMore: "Keep client-specific conversations attached to the right record instead of scattered in email." },
   bizSettings: { label: 'Business setup', sel: '.admin-nav-item[onclick*="\'bizSettings\'"]',
-    tip: "Org-wide settings: the org chart, service catalog, and error logs.",
-    learnMore: "Edit the company structure chart, manage the Service Catalog (the source of truth for bundles/services), check pending-migration and error logs, and replay the tour." },
+    tip: "Org-wide settings: company info, the org chart, and the Service Catalog.",
+    learnMore: "Edit the company structure chart, manage the Service Catalog (the source of truth for bundles/services), and replay the tour. Diagnostics and other admin-only tools (error log, pending migrations, platforms, etc.) live under Admin Controls." },
+  adminControls: { label: 'Admin Controls', sel: '.admin-nav-item[onclick*="\'adminControls\'"]',
+    tip: "System diagnostics and admin-only tools — Super Admin only.",
+    learnMore: "Error Log, Pending Migrations, Password Security Migration, Sales Funnel Access, Platforms & Tools, Import Clients, and Email Notifications — all in one place, visible only to Super Admin." },
 };
 // Sidebar order, per the build spec — 'archive' intentionally excluded (see
 // the HELP_CONTENT comment above). The bell keeps its original one-liner,
@@ -4925,7 +4979,7 @@ const ADMIN_TOUR_STEPS = [
 // has no entry in the approved content doc and is deliberately left out of
 // this list rather than guessing copy for it — flagged back per the build
 // spec's own instruction for exactly this case.
-const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','users','archive','timeoff','payroll','summaries','livefeed','library','messages','bizSettings'];
+const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','users','archive','timeoff','payroll','summaries','livefeed','library','messages','bizSettings','adminControls'];
 function _currentAdminHelpKey(){
   const active = document.querySelector('#adminApp .page-section.active');
   return active ? active.id.replace(/^admin-/,'') : '';
@@ -8666,7 +8720,7 @@ function renderNewUserCredRows(){
   if(!wrap) return;
   const platforms = getPlatforms();
   if(!platforms.length){
-    wrap.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No platforms configured yet. Add them in Business Setup → Platforms & Tools.</div>';
+    wrap.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No platforms configured yet. Add them in Admin Controls → Platforms & Tools.</div>';
     return;
   }
   wrap.innerHTML = platforms.map(p=>`
@@ -9015,6 +9069,16 @@ function applyAdminRoleRestrictions(level, adminObj){
     levelBadge.style.background = info.color+'22';
     levelBadge.style.color = info.color;
   }
+
+  // Admin Controls tab nav item — strict Super Admin/Owner only. Inline
+  // display:none is the default in the HTML (fails closed if this JS never
+  // runs); this is the only place it's ever revealed. Same "nav-hide is UX
+  // convenience, the real boundary is server-side" pattern as every other
+  // role-gated nav item — each panel inside this tab is independently
+  // server-enforced by its own endpoint regardless of whether this nav item
+  // is visible.
+  const adminControlsNav = document.getElementById('admin-nav-admincontrols');
+  if(adminControlsNav) adminControlsNav.style.display = (level==='super' || level==='owner') ? '' : 'none';
 
   // One-time Phase 5 client importer — Super Admin/Owner only.
   const importCard = document.getElementById('importClientsCard');
