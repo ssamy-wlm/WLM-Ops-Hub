@@ -721,14 +721,16 @@ export function resolveReviewRecipients(assigneeId, users, admins) {
 // "Submit for review" on Done (My Work redesign follow-on) — notifies the
 // resolved reviewer(s) (see resolveReviewRecipients above), never the
 // submitter themselves.
-async function fireSubmittedForReviewNotifications(supabase, events, warnings) {
+async function fireSubmittedForReviewNotifications(supabase, events, warnings, notices) {
   if (!events.length) return;
   const { users, admins } = await getDirectory(supabase);
   const rows = [];
   events.forEach(ev => {
     if (!ev.assigneeId) return;
     const { recipients, managerResolved } = resolveReviewRecipients(ev.assigneeId, users, admins);
-    if (!managerResolved) warnings.push(`submittedForReview(${ev.serviceId}): no manager resolved for assignee ${ev.assigneeId} — Super Admin notified only`);
+    // Correct, expected fallback — the review still goes out, just to Super
+    // Admin instead of an unresolved manager. Not a failure of anything.
+    if (!managerResolved) notices.push(`submittedForReview(${ev.serviceId}): no manager resolved for assignee ${ev.assigneeId} — Super Admin notified only`);
     recipients
       .filter(r => r.id !== ev.submittedBy)
       .forEach(r => {
@@ -751,13 +753,16 @@ async function fireSubmittedForReviewNotifications(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
-async function fireTimeOffNotification(supabase, request, warnings) {
+async function fireTimeOffNotification(supabase, request, warnings, notices) {
   const { users, admins } = await getDirectory(supabase);
   const requester = users.find(u => String(u.name || '').toLowerCase() === String(request.userName || '').toLowerCase());
   const recipients = requester
     ? resolveNotifyRecipients(requester.id, users, admins)
     : [];
-  if (!recipients.length) { warnings.push(`notifications: could not resolve user "${request.userName}" for time-off decision notification`); return; }
+  // The time-off approve/deny write itself already succeeded — this is only
+  // the notification side finding nobody to notify, same "expected, not a
+  // failure" shape as the review fallback above.
+  if (!recipients.length) { notices.push(`notifications: could not resolve user "${request.userName}" for time-off decision notification`); return; }
   const decision = request.status === 'approved' ? 'approved' : 'denied';
   const rows = recipients.map(r => {
     const person = personOf(r.id, r.kind, { users, admins });
@@ -772,12 +777,14 @@ async function fireTimeOffNotification(supabase, request, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
-async function fireMessageNotification(supabase, message, warnings) {
+async function fireMessageNotification(supabase, message, warnings, notices) {
   const { users, admins } = await getDirectory(supabase);
   const toEmail = String(message.to || '').toLowerCase();
   const person = users.find(u => String(u.email || '').toLowerCase() === toEmail)
     || admins.find(a => String(a.email || '').toLowerCase() === toEmail);
-  if (!person) { warnings.push(`notifications: could not resolve recipient "${message.to}" for message notification`); return; }
+  // The message write itself already succeeded — same "notification side
+  // found nobody to notify" shape as the two fallbacks above.
+  if (!person) { notices.push(`notifications: could not resolve recipient "${message.to}" for message notification`); return; }
   const kind = users.includes(person) ? 'user' : 'admin';
   await insertNotifications(supabase, [{
     type: 'message', recipientId: person.id, recipientKind: kind,
@@ -864,7 +871,16 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'ops-sync', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   const { changes, tombstones, restoreUserIds } = req.body || {};
-  const warnings = [];
+  const warnings = []; // genuine per-row write failures ONLY — logged as an error every time
+  // Informational/expected fallbacks — a notification correctly went out via
+  // a fallback path (e.g. Super Admin instead of an unresolved manager), or
+  // correctly went nowhere because no valid recipient exists yet. The write
+  // this notification was attached to still succeeded; nothing failed. Rides
+  // in the response JSON same as warnings, but never triggers logError — see
+  // the PR that added this split for why a normal, expected event (e.g. a
+  // member with no managerId submitting for review) was being logged as an
+  // ops_error_log write-warning identically to a real failure.
+  const notices = [];
   const rejected = []; // clear, explicit rejections (member out-of-scope client edits) — always surfaced
   const applied = {};
 
@@ -1250,7 +1266,7 @@ export default async function handler(req, res) {
       await fireAssignmentNotifications(supabase, assignmentEvents, warnings);
       await fireServiceUpdateNotifications(supabase, serviceUpdateEvents, warnings);
       await fireServiceDoneNotifications(supabase, doneEvents, warnings);
-      await fireSubmittedForReviewNotifications(supabase, reviewEvents, warnings);
+      await fireSubmittedForReviewNotifications(supabase, reviewEvents, warnings, notices);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);
@@ -1265,7 +1281,7 @@ export default async function handler(req, res) {
       const notifSettings = await getNotificationSettings(supabase);
       if (notifSettings.message) {
         for (const m of incomingMsgs) {
-          if (!existingIds.has(m.id)) await fireMessageNotification(supabase, m, warnings);
+          if (!existingIds.has(m.id)) await fireMessageNotification(supabase, m, warnings, notices);
         }
       }
     }
@@ -1295,7 +1311,7 @@ export default async function handler(req, res) {
           // decision — never on the initial pending-request creation, and
           // never re-fired if an admin re-saves the same already-decided status.
           const isNewDecision = cur && cur.status !== inc.status && (inc.status === 'approved' || inc.status === 'denied');
-          if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, inc, warnings);
+          if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, inc, warnings, notices);
           continue;
         }
         if (!cur) {
@@ -1480,12 +1496,17 @@ export default async function handler(req, res) {
     // Every failed cloud write already lives in `warnings` (per-row, never
     // thrown) — record them here too, once per request, so they surface to
     // an admin instead of only ever showing up in a response nobody reads.
+    // notices[] deliberately never reaches logError — those are expected,
+    // already-successful fallback outcomes (see where notices is declared
+    // above), not failures. A normal event (e.g. a member with no
+    // managerId submitting for review) must not look identical to a real
+    // per-row write failure in the error log.
     if (warnings.length) {
-      await logError({ endpoint: 'ops-sync', error: `${warnings.length} write warning(s)`, session, extra: { warnings, rejected } });
+      await logError({ endpoint: 'ops-sync', error: `${warnings.length} write warning(s)`, session, extra: { warnings, notices, rejected } });
     }
-    return res.status(200).json({ ok: true, applied, warnings, rejected });
+    return res.status(200).json({ ok: true, applied, warnings, notices, rejected });
   } catch (err) {
-    await logError({ endpoint: 'ops-sync', error: err, session, extra: { warnings, rejected } });
-    return res.status(500).json({ error: err.message || 'Sync failed', warnings, rejected });
+    await logError({ endpoint: 'ops-sync', error: err, session, extra: { warnings, notices, rejected } });
+    return res.status(500).json({ error: err.message || 'Sync failed', warnings, notices, rejected });
   }
 }
