@@ -2415,10 +2415,41 @@ function _opsDirty(table, localArr){
 }
 // Never let an empty/missing result from the server blank out real local
 // data — see index.html's copy of this same fix for the full rationale.
-function _applyServerArray(table, arr, saveFn){
-  if(!Array.isArray(arr) || !arr.length) return;
-  saveFn(arr);
-  _opsSetSnapshot(table, arr);
+//
+// Never let a pull clobber a locally-dirty record either. A pull can fire
+// at any moment independent of the 1.5s debounced push (_scheduleCloudPush)
+// — the 30s poll, the visibilitychange handler on tab refocus, or
+// _initialTierResolve()'s on-load retries. If one lands inside that 1.5s
+// window, a whole-array overwrite here would put back whatever the LOCAL
+// edit just removed/changed (the server hasn't seen it yet) AND reset the
+// dirty snapshot to the server's stale copy — clearing the flag that the
+// pending debounced push relies on, so it sends nothing. That's the exact
+// mechanism behind services silently reverting: delete a service, tab
+// refocus fires a pull before the debounce elapses, and the delete is both
+// undone on screen and never actually pushed.
+//
+// getFn reads the CURRENT local array for this table (the same store
+// saveFn writes) — optional only for backward compatibility with any call
+// site that doesn't pass one; every call site in this file does.
+function _applyServerArray(table, serverArr, saveFn, getFn){
+  if(!Array.isArray(serverArr) || !serverArr.length) return;          // unchanged empty-guard
+  const local = typeof getFn==='function' ? (getFn()||[]) : [];
+  const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
+  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); return; } // unchanged fast path
+  // Keep the LOCAL copy of every still-dirty record instead of the server's
+  // (stale, pre-edit) one; take everything else from the server as normal.
+  const merged = serverArr.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const serverIds = new Set(serverArr.map(r=>r.id));
+  // A dirty record the server doesn't have at all yet (e.g. brand new,
+  // not-yet-pushed) must not be dropped just because it's missing from the
+  // server's response.
+  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
+  saveFn(merged);
+  // Snapshot to the SERVER array, not the merged one — this is what keeps a
+  // preserved edit "dirty" against the next _opsDirty() check, so its
+  // pending debounced push still fires and the edit actually persists
+  // instead of silently sitting local-only forever.
+  _opsSetSnapshot(table, serverArr);
 }
 // Same principle for a singleton value (not an array) — only null/undefined
 // counts as "nothing to apply" (see index.html's identical copy).
@@ -2581,8 +2612,8 @@ async function _pullClientsFromCloud(){
     // console, without needing live DB access. Remove alongside that field
     // once the discrepancy is resolved.
     console.log('[WLM Tracker] resolved viewer — id:', rec.viewerId, '| tier:', rec.viewerTier, '| level:', rec.viewerLevel);
-    _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr));
-    _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr));
+    _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr), getClients);
+    _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr), ()=>db(CL_KEYS.liveFeed)||[]);
     _applyServerValue(v=>dbSave(CL_KEYS.tourFlags, v), rec.tourFlags);
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,
     // so a plain truthy check doesn't catch it; parse and check length instead.
@@ -2591,13 +2622,13 @@ async function _pullClientsFromCloud(){
     if(rec.serviceCatalog && localStorage.getItem('wl_catalog_dirty')!=='1'){
       dbSave(CL_KEYS.serviceCatalog, rec.serviceCatalog);
     }
-    _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr));
-    _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr));
+    _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr), ()=>db(CL_KEYS.catalogSuggestions)||[]);
+    _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr), getOpsNotifs);
     // Sales Funnel: omitted entirely from the response (not just an empty
     // array) when access isn't granted — see api/ops-state.js — so this is a
     // no-op for anyone without access, same "never let an absent/empty
     // result blank out real local data" guard as every other synced table.
-    _applyServerArray('salesFunnel', rec.salesFunnel, arr=>dbSave(CL_KEYS.funnel, arr));
+    _applyServerArray('salesFunnel', rec.salesFunnel, arr=>dbSave(CL_KEYS.funnel, arr), ()=>db(CL_KEYS.funnel)||[]);
     if(typeof refreshNotifBadge==='function') refreshNotifBadge();
     return true;
   }catch(e){ console.warn('[WLM Tracker] Cloud pull failed —', e.message); return false; }
