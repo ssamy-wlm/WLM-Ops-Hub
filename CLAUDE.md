@@ -408,16 +408,24 @@ each panel's own endpoint (`api/error-log.js`, `api/schema-drift.js`,
 tier) — the nav-item hiding is the same "UX convenience, not the actual
 security boundary" pattern already used for every other role-gated nav item
 here, not a new security mechanism. Two access-narrowing side effects of
-strict `tier==='super'` gating on the whole tab, flagged to Sarah rather
+strict `tier==='super'` gating on the whole tab were flagged to Sarah rather
 than silently decided: (1) Sales Funnel Access previously also let a
 non-super admin granted Sales Funnel Owner level manage funnel access
-(Google-Drive-style carve-out — see `_mySalesFunnelLevel`); that carve-out
-is preserved on the card's own individual visibility check, but the tab's
-own nav item is strict Super Admin only, so a non-super Funnel Owner has no
-path to the screen anymore. (2) `production_manager` (Abby) previously kept
-Business Setup, which included Platforms & Tools with no additional gate;
-moving it into the Super-Admin-only tab means she loses the ability to
-add/edit platforms, even though she still creates users day-to-day.
+(Google-Drive-style carve-out — see `_mySalesFunnelLevel`) — **resolved
+2026-08-05, same day, via Sarah's explicit follow-up**: the nav item's gate
+is now `tier==='super' OR _mySalesFunnelLevel==='owner'`, and everything
+inside the tab except the Sales Funnel Access card itself is wrapped in
+two `#admin-controls-super-only-wrap[-2]` containers shown only for
+`tier==='super'` — so a non-super Funnel Owner who opens the tab sees
+Sales Funnel Access (and the tab is relabeled "Sales Funnel Access" for
+them) and nothing else; every other panel's endpoint still independently
+requires `tierOf(session)==='super'` server-side regardless of what this
+wrapper shows, so this is scoping, not a new security boundary. (2)
+`production_manager` (Abby) previously kept Business Setup, which included
+Platforms & Tools with no additional gate; moving it into the
+Super-Admin-only tab means she loses the ability to add/edit platforms,
+even though she still creates users day-to-day — this one was accepted
+as-is (no follow-up requested).
 
 **Migration-apply pipeline (2026-08-05) — closes the recurring "migration
 merged but never applied to prod" failure, after a third instance

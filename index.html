@@ -2056,18 +2056,27 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          RESTRICTED_ADMIN_ROLES above).
          Note: Sales Funnel Access previously also let a non-super admin
          granted Sales Funnel Owner level manage funnel access (Google-Drive-
-         style carve-out — see _mySalesFunnelLevel). That card's own
-         individual display-gate (kept exactly as-is below) still honors
-         that carve-out, but this tab's own nav item does not — it's strict
-         tier==='super' only, per the task's explicit "Super Admin only"
-         requirement. A non-super Funnel Owner therefore loses their path to
-         this screen now that it sits behind a Super-Admin-only tab; flagged
-         for Sarah rather than silently deciding either way. ── -->
+         style carve-out — see _mySalesFunnelLevel). Per Sarah's explicit
+         follow-up decision, that carve-out is preserved end-to-end: the
+         tab's nav item is visible to Super Admin/Owner OR a non-super Sales
+         Funnel Owner, but everything inside except the Sales Funnel Access
+         card itself is wrapped in #admin-controls-super-only-wrap, shown
+         ONLY for level==='super'||'owner' — a non-super Funnel Owner who
+         opens this tab sees Sales Funnel Access and nothing else. Server-
+         side enforcement (already tierOf(session)==='super' on every other
+         panel's endpoint) is unchanged and remains authoritative regardless
+         of what this client-side wrapper shows. ── -->
     <div id="admin-adminControls" class="page-section">
       <div style="margin-bottom:18px;">
-        <div style="font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);">Admin Controls</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">System diagnostics and admin-only tools.</div>
+        <div style="font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);" id="admin-controls-title">Admin Controls</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;" id="admin-controls-desc">System diagnostics and admin-only tools.</div>
       </div>
+
+      <!-- Wraps every panel EXCEPT Sales Funnel Access — Super Admin/Owner
+           only. A non-super Sales Funnel Owner who reaches this tab (see
+           the nav-item gate) must see nothing in here; toggled in
+           applyAdminRoleRestrictions() alongside the panels it contains. -->
+      <div id="admin-controls-super-only-wrap" style="display:none;">
 
       <!-- ── ERROR LOG — Super Admin/Owner only. Capture itself stays
            read-only/passive; the one exception is the manually-triggered
@@ -2143,6 +2152,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      </div><!-- /admin-controls-super-only-wrap (part 1) -->
+
       <!-- ── SALES FUNNEL ACCESS (own screen, separate from Edit User/Edit
            Admin) — visible to Super Admin/Owner AND any person granted
            Sales Funnel Owner level specifically (see the
@@ -2165,6 +2176,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="salesFunnelAccessList" style="padding:6px 20px;"></div>
         </div>
       </div>
+
+      <div id="admin-controls-super-only-wrap-2" style="display:none;">
 
       <!-- ── PLATFORMS & TOOLS ── -->
       <div class="card" style="margin-top:22px;">
@@ -2220,6 +2233,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
       </div>
+
+      </div><!-- /admin-controls-super-only-wrap-2 -->
     </div>
 
     <!-- ── MESSAGES ── -->
@@ -9102,15 +9117,44 @@ function applyAdminRoleRestrictions(level, adminObj){
     levelBadge.style.color = info.color;
   }
 
-  // Admin Controls tab nav item — strict Super Admin/Owner only. Inline
+  // Admin Controls tab nav item — visible to Super Admin/Owner, OR a
+  // non-super admin granted Sales Funnel Owner level (same OR condition as
+  // the Sales Funnel Access card itself, below) — otherwise that person
+  // would have no path left to reach Sales Funnel Access at all now that it
+  // lives inside this tab (per Sarah's explicit follow-up decision). Inline
   // display:none is the default in the HTML (fails closed if this JS never
   // runs); this is the only place it's ever revealed. Same "nav-hide is UX
   // convenience, the real boundary is server-side" pattern as every other
   // role-gated nav item — each panel inside this tab is independently
   // server-enforced by its own endpoint regardless of whether this nav item
   // is visible.
+  const isSuperAdmin = (level==='super' || level==='owner');
   const adminControlsNav = document.getElementById('admin-nav-admincontrols');
-  if(adminControlsNav) adminControlsNav.style.display = (level==='super' || level==='owner') ? '' : 'none';
+  if(adminControlsNav) adminControlsNav.style.display = (isSuperAdmin || _mySalesFunnelLevel==='owner') ? '' : 'none';
+
+  // Everything inside Admin Controls EXCEPT Sales Funnel Access is wrapped
+  // in these two containers, Super Admin/Owner only — so a non-super Sales
+  // Funnel Owner who reaches this tab (via the OR condition above) sees
+  // ONLY the Sales Funnel Access card and nothing else: not Error Log, not
+  // Pending Migrations, not Password Security, not Platforms & Tools, not
+  // Import Clients, not Email Notifications. This is a client-side display
+  // choice only — every one of those panels' own endpoints already
+  // independently requires tierOf(session)==='super' server-side (or, for
+  // Platforms & Tools, has no write endpoint of its own to begin with), so
+  // this wrapper is UX scoping, not the security boundary.
+  const adminControlsTitle = document.getElementById('admin-controls-title');
+  const adminControlsDesc = document.getElementById('admin-controls-desc');
+  const superOnlyWrap = document.getElementById('admin-controls-super-only-wrap');
+  const superOnlyWrap2 = document.getElementById('admin-controls-super-only-wrap-2');
+  if(superOnlyWrap) superOnlyWrap.style.display = isSuperAdmin ? '' : 'none';
+  if(superOnlyWrap2) superOnlyWrap2.style.display = isSuperAdmin ? '' : 'none';
+  if(!isSuperAdmin && _mySalesFunnelLevel==='owner'){
+    if(adminControlsTitle) adminControlsTitle.textContent = 'Sales Funnel Access';
+    if(adminControlsDesc) adminControlsDesc.textContent = 'Grant Viewer, Editor, or Owner access to the Sales Funnel.';
+  } else if(adminControlsTitle && adminControlsDesc){
+    adminControlsTitle.textContent = 'Admin Controls';
+    adminControlsDesc.textContent = 'System diagnostics and admin-only tools.';
+  }
 
   // One-time Phase 5 client importer — Super Admin/Owner only.
   const importCard = document.getElementById('importClientsCard');
