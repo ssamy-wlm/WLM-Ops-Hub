@@ -10993,5 +10993,75 @@ window.addEventListener('scroll', ()=>{
 function scrollToTop(){ window.scrollTo({top:0,behavior:'smooth'}); }
 </script>
 <button id="scrollTopBtn" class="scroll-top-btn" onclick="scrollToTop()" title="Back to top" aria-label="Back to top">↑</button>
+
+<script>
+// ── Session-activity ping (feeds a later "time in app" dashboard PR) ──────
+// Tiny, self-contained, fire-and-forget. NEVER touches app data, sync, or
+// the load/pull path (CLAUDE.md rule #2 — this is instrumentation, not a
+// diff-on-load) — it only watches #adminApp/#userApp's own 'visible' class
+// from the outside via MutationObserver, rather than hooking into every
+// individual login/restore code path (doLogin, the primary-admin shortcut,
+// restoreAdminSession's inline restore, showAdminApp/showUserApp,
+// switchToUserView, logout — all of which toggle that same class). Staying
+// decoupled this way means it keeps working correctly even if a new
+// login/restore path is added later without anyone remembering to wire a
+// ping into it specifically.
+// A dropped ping is fine — every call is wrapped so a network failure or a
+// dead endpoint can never surface as an app error or block anything.
+(function(){
+  const HEARTBEAT_MS = 60000;
+  let started = false;
+  let heartbeatTimer = null;
+  // Captured once when a session-segment starts, reused for every heartbeat
+  // AND the final 'end' ping — deliberately NOT re-read from localStorage on
+  // every call. logout() clears wl_ops_token_admin/member SYNCHRONOUSLY,
+  // but the MutationObserver below only reacts to that same logout() call's
+  // classList change on the next microtask — by the time it fires, the
+  // token is already gone from storage. Re-reading storage fresh at 'end'
+  // time would silently no-op the exact ping meant to report the logout.
+  let sessionToken = null;
+
+  function _sessionPingToken(){
+    try{ return localStorage.getItem('wl_ops_token_admin') || localStorage.getItem('wl_ops_token_member'); }
+    catch(e){ return null; }
+  }
+  function _sendPing(event, token){
+    if(!token) return; // nobody's logged in — nothing to report
+    try{
+      fetch('/api/session-ping', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+        body: JSON.stringify({ event, client_ts:new Date().toISOString() }),
+        keepalive: event==='end', // best-effort delivery even as the page unloads
+      }).catch(()=>{});
+    }catch(e){}
+  }
+  function _isAppVisible(){
+    const admin=document.getElementById('adminApp'), user=document.getElementById('userApp');
+    return !!((admin&&admin.classList.contains('visible')) || (user&&user.classList.contains('visible')));
+  }
+  function _checkVisibility(){
+    const visible=_isAppVisible();
+    if(visible && !started){
+      sessionToken=_sessionPingToken();
+      if(!sessionToken) return; // visible but no token yet (mid-restore) — wait for the next mutation
+      started=true;
+      _sendPing('start', sessionToken);
+      if(!heartbeatTimer) heartbeatTimer=setInterval(()=>{ if(!document.hidden) _sendPing('heartbeat', sessionToken); }, HEARTBEAT_MS);
+    } else if(!visible && started){
+      started=false;
+      _sendPing('end', sessionToken);
+      sessionToken=null;
+      if(heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer=null; }
+    }
+  }
+  ['adminApp','userApp'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) new MutationObserver(_checkVisibility).observe(el, {attributes:true, attributeFilter:['class']});
+  });
+  document.addEventListener('DOMContentLoaded', _checkVisibility);
+  window.addEventListener('pagehide', ()=>{ if(started) _sendPing('end', sessionToken); });
+})();
+</script>
 </body>
 </html>
