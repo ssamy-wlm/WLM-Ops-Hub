@@ -1207,11 +1207,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card">
           <div class="card-header">
             <div>
-              <div class="card-title">Team Progress</div>
-              <div class="card-sub">Bundles &amp; clients by assignee</div>
+              <div class="card-title">Team Assessment</div>
+              <div class="card-sub">% done, overdue/at-risk, and completion trend — every employee &amp; admin against their assigned work</div>
             </div>
           </div>
-          <div class="card-body" id="ov-team-progress" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
+          <div class="card-body" id="ov-team-assessment" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Recent Activity</div></div>
@@ -7753,73 +7753,158 @@ function refreshAdminOverview(){
   const elAC=document.getElementById('ov-active-clients'); if(elAC) elAC.textContent=activeClients.length||0;
   const elTot=document.getElementById('ov-total-reports'); if(elTot) elTot.textContent=activeProjects||0;
 
-  // Build user → projects map from clients DB
-  const userProjMap = {}; // userId → [{clientName, clientColor, projName, progress, status, due, type}]
-  allClients.forEach(client=>{
-    (client.projects||[]).forEach(proj=>{
-      if(proj.status==='cancelled') return;
-      (proj.users||[]).forEach(uid=>{
-        if(!userProjMap[uid]) userProjMap[uid]=[];
-        userProjMap[uid].push({
-          clientName:  client.name||'Unknown Client',
-          clientColor: client.color||'var(--text)',
-          projName:    proj.name||'Unnamed Bundle',
-          progress:    typeof proj.progress==='number' ? proj.progress : null,
-          status:      proj.status||'in-progress',
-          due:         proj.due||null,
-          type:        proj.type||''
-        });
-      });
-    });
-  });
+  // "Done" feed-event detector — shared by the Team Assessment trend below
+  // AND Recent Activity further down, hoisted here so both read the exact
+  // same signal. desc-prefix matched against every real completion-type
+  // pushNotif()/logActivity() call site in client.html/user.html (traced,
+  // not guessed — see Recent Activity's own PR for the full trace).
+  const DONE_DESC_PREFIXES = ['Service done:','Task done:','Bundle complete:','Sub-project complete:'];
+  function _isDoneActivity(e){
+    const d = e.desc||'';
+    return DONE_DESC_PREFIXES.some(p=>d.startsWith(p));
+  }
+  const allFeed = dbGet(DB_KEYS.feed)||[];
 
-  // Team Progress card
-  const progressContainer = document.getElementById('ov-team-progress');
-  if(progressContainer){
-    const uids = Object.keys(userProjMap);
-    if(!uids.length){
-      progressContainer.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No projects assigned to team members yet.</div>';
+  // Team Assessment — per-person productivity dashboard (replaces the old
+  // "Team Progress" bundles-by-assignee list). Read-only aggregation only.
+  //
+  // % done and overdue/at-risk counts deliberately reuse Workload's exact
+  // roster (_timeOffRoster — users + admins, deduped), assignee resolution
+  // (_wlSvcAssigneeIds/_wlSvcAssignedTo), service universe (active clients'
+  // c.services[] + c.locations[].services[]), and _chSvcDueStatus/
+  // _chIsDoneThisCycle — the same helpers Client Health/Workload already
+  // use, hand-reused within this file (zero-shared-code rule: no import,
+  // no shared module) so these numbers can never drift from Workload's.
+  //
+  // FLAG: c.recurringServices[] — a separate, legacy index.html-only
+  // service array (see its own comment where it's defined) — is NOT
+  // included here, same as Workload doesn't include it today. Including it
+  // here while Workload doesn't would make this dashboard's overdue counts
+  // NOT match Workload for anyone with legacy recurringServices, which
+  // would break this task's own acceptance criterion ("Overdue counts
+  // match the Workload view for the same person") — so this dashboard
+  // intentionally carries the same known gap Workload already has, rather
+  // than silently fixing one screen and not the other.
+  //
+  // FLAG: the task brief describes _chIsDoneThisCycle-based % done as "the
+  // same honest definition the fixed Progress Report uses." Traced
+  // Progress Report's actual fixed formula (client.html, the "This Year"
+  // fix) and it is NOT the same predicate: Progress Report's "This Year" is
+  // "services with a real lastDone dated this calendar year ÷ total active
+  // services" (cumulative, calendar-year), while _chIsDoneThisCycle is
+  // "lastDone exists AND not currently overdue" (a snapshot of whether the
+  // CURRENT cycle is caught up — no calendar-year window at all). Built
+  // exactly what was specified (_chIsDoneThisCycle — that instruction was
+  // explicit and unambiguous), but flagging that the resulting %s will NOT
+  // numerically match Progress Report's "This Year" % for the same person
+  // on preview — they measure two different things, not the same metric
+  // under a different name.
+  //
+  // Completed-over-time trend: the ONLY completion history that exists
+  // anywhere is these same "done" feed events — a service record itself
+  // keeps just one current lastDone, never a log of past completions.
+  // On-time completion rate is deliberately OMITTED, not faked: every
+  // completion event's own detail text shows the NEXT due date rolled
+  // forward AFTER completion (e.g. "...marked done. Next due: 2026-09-05"),
+  // never the due date that completion actually satisfied — confirmed by
+  // reading every pushNotif() call site that fires on completion. With
+  // neither the feed event nor the post-completion service record
+  // retaining the due date a completion was measured against, there is no
+  // real data to compare a completion timestamp to, so this metric cannot
+  // be built honestly yet.
+  const taContainer = document.getElementById('ov-team-assessment');
+  if(taContainer){
+    const taClients = _getClientDB().filter(c=>(c.status||'active')==='active');
+    const taAllServices = [];
+    taClients.forEach(c=>{
+      (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s));
+      (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s)));
+    });
+    const taAdmins = dbGet(DB_KEYS.admins)||[];
+    const taToday = new Date().toISOString().slice(0,10);
+
+    const TA_WEEKS = 10;
+    function _taWeekStartKey(d){
+      const dt = new Date(d); const day = (dt.getDay()+6)%7; // Mon=0..Sun=6
+      dt.setDate(dt.getDate()-day); dt.setHours(0,0,0,0);
+      return dt.toISOString().slice(0,10);
+    }
+    const taWeekKeys = []; // oldest -> newest, TA_WEEKS entries
+    { const cur=new Date(); for(let i=TA_WEEKS-1;i>=0;i--){ const d=new Date(cur); d.setDate(d.getDate()-i*7); taWeekKeys.push(_taWeekStartKey(d)); } }
+    // Name -> [weekKey,...] for every "done" event in the trailing window.
+    // e.user is a NAME, not a stable id (same as every other feed event —
+    // Recent Activity has the same constraint) — matched case-insensitively
+    // against the roster, the same fuzzy-name fallback already used by
+    // _wlSvcAssignedTo/_timeOffRoster elsewhere in this file.
+    const taDoneWeeksByName = {};
+    allFeed.forEach(e=>{
+      if(e.type!=='client' || !_isDoneActivity(e)) return;
+      // e.time (ISO string, logActivity) or e.ts (epoch ms, client.html's
+      // direct pushNotif->feed write) — both real shapes, see Recent
+      // Activity below for the same fallback.
+      const rawTs = e.time||e.ts; if(!rawTs) return;
+      const wk = _taWeekStartKey(rawTs);
+      if(!taWeekKeys.includes(wk)) return;
+      const key = (e.user||'').trim().toLowerCase(); if(!key) return;
+      (taDoneWeeksByName[key]=taDoneWeeksByName[key]||[]).push(wk);
+    });
+
+    function _taPctColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
+
+    const taRows = _timeOffRoster().map(person=>{
+      const admin = taAdmins.find(a=>a.id===person.id);
+      const roleLabel = admin ? _getLevelInfo(admin.level).label : (person.role||'Contractor');
+      let ok=0, soon=0, overdue=0, done=0;
+      taAllServices.forEach(s=>{
+        if(!_wlSvcAssignedTo(s, person.id, person.name)) return;
+        const status=_chSvcDueStatus(s);
+        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        if(_chIsDoneThisCycle(s,taToday)) done++;
+      });
+      const total = ok+soon+overdue;
+      const pctDone = total ? Math.round(done/total*100) : null;
+      const nameKey = (person.name||'').trim().toLowerCase();
+      const doneWeeks = taDoneWeeksByName[nameKey]||[];
+      const weekCounts = taWeekKeys.map(wk=>doneWeeks.filter(w=>w===wk).length);
+      const maxWeek = Math.max(1, ...weekCounts);
+      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pctDone, weekCounts, maxWeek };
+    }).filter(r=>r.total>0)
+      // Most-overdue-first — same tie-break chain as Workload's own sort,
+      // reused verbatim so "sorted the same way" isn't a coincidence.
+      .sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
+
+    if(!taRows.length){
+      taContainer.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No assigned service work yet.</div>';
     } else {
-      const statusColors={'in-progress':'var(--btn)','active':'#2e9e6e','pending':'var(--accent)','complete':'#2e9e6e','on-hold':'var(--orange)','review':'var(--accent)'};
-      const statusLabels={'in-progress':'In Progress','active':'Active','pending':'Pending','complete':'Complete','on-hold':'On Hold','review':'In Review'};
-      progressContainer.innerHTML = uids.map(uid=>{
-        const user    = allUsers.find(u=>u.id===uid)||{};
-        const name    = user.name||uid;
-        const title   = user.title||'';
-        const initials= name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
-        const projs   = userProjMap[uid];
-        const doneCount = projs.filter(p=>p.status==='complete').length;
-        const activeCount = projs.length - doneCount;
+      taContainer.innerHTML = taRows.map(r=>{
+        const initials = r.name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+        const pctColor = _taPctColor(r.pctDone);
+        const pctLabel = r.pctDone==null ? '—' : r.pctDone+'%';
+        const sparkline = r.weekCounts.map(c=>{
+          const h = Math.max(3, Math.round((c/r.maxWeek)*22));
+          return `<div title="${c} completed this week" style="width:5px;height:22px;display:flex;align-items:flex-end;">
+            <div style="width:100%;height:${h}px;background:${c>0?'var(--btn)':'var(--bg2)'};border-radius:1px;"></div>
+          </div>`;
+        }).join('');
         return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
           <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
             <div class="avatar" style="width:32px;height:32px;font-size:11px;flex-shrink:0;">${initials}</div>
             <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${name}</div>
-              ${title?`<div style="font-size:11px;color:var(--text-light);">${title}</div>`:''}
+              <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.name}</div>
+              <div style="font-size:11px;color:var(--text-light);">${r.roleLabel}</div>
             </div>
-            <div style="font-size:11px;color:var(--text-light);flex-shrink:0;">${activeCount} active${doneCount?` · ${doneCount} done`:''}</div>
+            <div style="text-align:right;flex-shrink:0;">
+              <div style="font-size:15px;font-weight:800;color:${pctColor};">${pctLabel}</div>
+              <div style="font-size:9px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">done</div>
+            </div>
           </div>
-          ${projs.map(p=>{
-            const pct = p.progress!=null ? Math.min(100,Math.max(0,Math.round(p.progress))) : null;
-            const sc  = statusColors[p.status]||'var(--text-light)';
-            const sl  = statusLabels[p.status]||p.status;
-            const dueStr = p.due ? new Date(p.due).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
-            const isOverdue = p.due && new Date(p.due)<now && p.status!=='complete';
-            return `<div style="margin-bottom:10px;padding-left:41px;">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap;">
-                <div style="font-size:12.5px;font-weight:600;color:var(--text-dark);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.projName}</div>
-                ${dueStr?`<span style="font-size:10px;color:${isOverdue?'var(--red)':'var(--text-light)'};flex-shrink:0;">${isOverdue?'⚠ ':''}${dueStr}</span>`:''}
-                <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;background:${sc}18;color:${sc};flex-shrink:0;">${sl}</span>
-              </div>
-              <div style="font-size:11px;color:var(--text-light);margin-bottom:5px;">${p.clientName}${p.type&&p.type!==p.projName?' · '+p.type:''}</div>
-              ${pct!=null?`<div style="display:flex;align-items:center;gap:8px;">
-                <div style="flex:1;height:4px;background:var(--bg2);border-radius:2px;">
-                  <div style="height:4px;background:linear-gradient(90deg,${p.clientColor||'var(--btn)'},var(--accent));border-radius:2px;width:${pct}%;transition:width .3s;"></div>
-                </div>
-                <span style="font-size:10px;color:var(--text-light);flex-shrink:0;min-width:28px;text-align:right;">${pct}%</span>
-              </div>`:''}
-            </div>`;
-          }).join('')}
+          <div style="display:flex;align-items:center;gap:14px;padding-left:41px;">
+            <div style="font-size:11px;color:var(--text-light);white-space:nowrap;">
+              <span style="font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span> overdue${r.soon>0?` · <span style="font-weight:700;color:var(--orange);">${r.soon}</span> at risk`:''}
+            </div>
+            <div style="flex:1;"></div>
+            <div style="display:flex;gap:2px;align-items:flex-end;height:22px;flex-shrink:0;" title="Completions, last ${TA_WEEKS} weeks">${sparkline}</div>
+          </div>
         </div>`;
       }).join('');
     }
@@ -7850,12 +7935,6 @@ function refreshAdminOverview(){
   // be, from this data. Falls back to done-first / everything else in
   // original (already newest-first) order, per this task's own fallback
   // instruction for exactly this case.
-  const DONE_DESC_PREFIXES = ['Service done:','Task done:','Bundle complete:','Sub-project complete:'];
-  function _isDoneActivity(e){
-    const d = e.desc||'';
-    return DONE_DESC_PREFIXES.some(p=>d.startsWith(p));
-  }
-  const allFeed   = dbGet(DB_KEYS.feed)||[];
   const actEvents = allFeed
     .filter(e=>e.type==='client' && e.user!=='System')
     .sort((a,b)=>(_isDoneActivity(b)?1:0)-(_isDoneActivity(a)?1:0)) // stable: preserves newest-first within each group
@@ -7878,7 +7957,7 @@ function refreshAdminOverview(){
       activityEl.innerHTML = actEvents.map(e=>{
         const icon  = actIcons[e.type]||'📌';
         const color = actColors[e.type]||'var(--bg2)';
-        const when  = _timeSince(e.timestamp||e.time);
+        const when  = _timeSince(e.time||e.ts);
         const sub   = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
         return `<div style="padding:9px 0;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;">
           <div style="width:30px;height:30px;border-radius:8px;background:${color}18;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${icon}</div>
