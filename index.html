@@ -8588,19 +8588,21 @@ function savePayrollWeek(){
   });
   const weekStart=mon.toISOString().slice(0,10);
   const weekEnd=fri.toISOString().slice(0,10);
-  const record={id:Date.now(),weekStart,weekEnd,entries,total,savedAt:new Date().toISOString(),savedBy:'Admin'};
+  // String id — Date.now() alone can collide on rapid saves, and this must
+  // never be the same value twice since (unlike the old behavior) it's
+  // never used to find-and-replace a prior record, only to target a single
+  // record for delete.
+  const record={id:Date.now()+'-'+Math.random().toString(36).slice(2,7),weekStart,weekEnd,entries,total,savedAt:new Date().toISOString(),savedBy:'Admin'};
   let saved=dbGet('wl_saved_payrolls')||[];
-  // Replace existing record for same week instead of adding a duplicate
-  const existIdx=saved.findIndex(p=>p.weekStart===weekStart&&p.weekEnd===weekEnd);
-  if(existIdx>-1){
-    record.id=saved[existIdx].id; // keep original id
-    saved[existIdx]=record;
-    showToast('Payroll updated ✓ — $'+total.toFixed(2)+' total (previous save replaced)');
-  } else {
-    saved.unshift(record);
-    showToast('Payroll week saved ✓ — $'+total.toFixed(2)+' total');
-  }
-  dbSet('wl_saved_payrolls',saved.slice(0,52)); // keep 1 year
+  // Always append a new record — never look up or replace an existing
+  // same-week save. Multiple saves per week (e.g. one team-wide run, then a
+  // single-member correction) must coexist, each its own record; the
+  // previous find-and-replace here is exactly what silently wiped an
+  // entire week's saved entries down to whichever rows were on screen for
+  // the LATEST save.
+  saved.unshift(record);
+  showToast('Payroll saved ✓ — $'+total.toFixed(2)+' total');
+  dbSet('wl_saved_payrolls',saved); // no cap — a new save must never evict a prior one
   renderSavedPayrolls();
   cloudAutoSync(true);
   logActivity('admin','Admin','Saved payroll for week of '+weekStart,'$'+total.toFixed(2));
@@ -8608,7 +8610,14 @@ function savePayrollWeek(){
 
 function deletePayrollRecord(id){
   if(!confirm('Delete this saved payroll record?')) return;
-  const saved=(dbGet('wl_saved_payrolls')||[]).filter(p=>p.id!==id);
+  // String-compare: id arrives as a string from the (now always-quoted)
+  // onclick call site, but records saved before this change still carry
+  // their original numeric Date.now() id, untouched, exactly as saved —
+  // this store is intentionally never migrated/backfilled. Comparing
+  // String(p.id) to String(id) is what lets delete keep working correctly
+  // for BOTH old numeric-id records and new string-id records, with the
+  // stored id itself never rewritten either way.
+  const saved=(dbGet('wl_saved_payrolls')||[]).filter(p=>String(p.id)!==String(id));
   dbSet('wl_saved_payrolls',saved);
   renderSavedPayrolls();
   cloudAutoSync(true);
@@ -8627,10 +8636,10 @@ function renderSavedPayrolls(){
     return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div><div style="font-size:13px;font-weight:700;color:var(--text-dark);">Week ${p.weekStart} → ${p.weekEnd}</div>
-        <div style="font-size:11px;color:var(--text-light);">Saved ${new Date(p.savedAt).toLocaleDateString()}</div></div>
+        <div style="font-size:11px;color:var(--text-light);">Saved ${new Date(p.savedAt).toLocaleString()}</div></div>
         <div style="display:flex;align-items:center;gap:12px;">
           <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${p.total.toFixed(2)}</div>
-          <button class="btn btn-sm btn-danger" onclick="deletePayrollRecord(${p.id})" title="Delete this record" style="font-size:11px;padding:4px 10px;">✕ Delete</button>
+          <button class="btn btn-sm btn-danger" onclick="deletePayrollRecord('${p.id}')" title="Delete this record" style="font-size:11px;padding:4px 10px;">✕ Delete</button>
         </div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No hours logged</span>'}</div>
