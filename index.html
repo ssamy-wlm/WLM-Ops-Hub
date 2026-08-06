@@ -6752,10 +6752,42 @@ function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(tabl
 // least one row; an empty/missing result leaves local data AND its snapshot
 // untouched, so the next push still correctly re-offers what's stored
 // locally instead of concluding "nothing changed."
-function _applyServerArray(table, arr, saveFn){
-  if(!Array.isArray(arr) || !arr.length) return;
-  saveFn(arr);
-  _opsSetSnapshot(table, arr);
+//
+// Never let a pull clobber a locally-dirty record either — this is the
+// second, previously-missing half of pull safety (the comment this replaces
+// only covered empty responses; a non-empty response full of stale
+// pre-edit rows was still a real risk). A pull can fire at any moment
+// independent of the debounced push — the 30s poll, a tab-refocus pull, or
+// an on-load retry. If one lands before a local edit's debounced push has
+// gone out, a whole-array overwrite here would put back whatever the edit
+// just removed/changed AND reset the dirty snapshot to the server's stale
+// copy — clearing the flag the pending push relies on, so it sends
+// nothing. That's the exact mechanism behind an edit (e.g. a deleted
+// service) silently reverting: it comes back on screen AND never actually
+// gets persisted.
+//
+// getFn reads the CURRENT local array for this table (the same store
+// saveFn writes) — optional only for backward compatibility with any call
+// site that doesn't pass one; every call site in this file does.
+function _applyServerArray(table, serverArr, saveFn, getFn){
+  if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  const local = typeof getFn==='function' ? (getFn()||[]) : [];
+  const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
+  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); return; } // unchanged fast path
+  // Keep the LOCAL copy of every still-dirty record instead of the server's
+  // (stale, pre-edit) one; take everything else from the server as normal.
+  const merged = serverArr.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const serverIds = new Set(serverArr.map(r=>r.id));
+  // A dirty record the server doesn't have at all yet (e.g. brand new,
+  // not-yet-pushed) must not be dropped just because it's missing from the
+  // server's response.
+  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
+  saveFn(merged);
+  // Snapshot to the SERVER array, not the merged one — this is what keeps a
+  // preserved edit "dirty" against the next _opsDirty() check, so its
+  // pending debounced push still fires and the edit actually persists
+  // instead of silently sitting local-only forever.
+  _opsSetSnapshot(table, serverArr);
 }
 // Same principle for singleton settings — a value's key can be present in
 // the response with a null value (role-hidden for this caller, or simply no
@@ -6988,18 +7020,18 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
     _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
-    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
-    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
-    _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr));
-    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
-    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr));
-    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr));
-    _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr));
-    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
-    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
-    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr));
-    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr));
-    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr));
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[]);
+    _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr), _getClientDB);
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[]);
+    _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr), ()=>dbGet(DB_KEYS.roadmapTasks)||[]);
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[]);
+    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[]);
+    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
+    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
