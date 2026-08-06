@@ -7810,9 +7810,41 @@ function refreshAdminOverview(){
     }
   }
 
-  // Recent Activity — last 25 feed events excluding nav noise
+  // Recent Activity — service-work events only, done items surfaced first.
+  //
+  // type:'client' is the only feed type that's actually work on a client's
+  // service — pushed by client.html's/user.html's pushNotif()/logActivity()
+  // mirror (service done/assigned, task done/assigned, bundle/sub-project
+  // complete, progress updates). type:'report' is deliberately EXCLUDED,
+  // not kept as originally specified — traced every logActivity('report',
+  // ...) call site (index.html only) and they're all admin-generated
+  // (weekly/monthly/yearly summary generation, broadcast announcements),
+  // never anything about a specific client's service; including them would
+  // reintroduce the exact "admin account changes" noise this change is
+  // meant to cut. Also excludes automated due-date reminder alerts within
+  // type:'client' (pushed with fromUser:'System', i.e. e.user==='System')
+  // — those are the system nudging someone to do work, not a record of work
+  // actually done.
+  //
+  // FLAG: no "submitted for review" feed event exists anywhere in the
+  // codebase — submitServiceForReview() (client.html) never calls
+  // pushNotif(), so that action leaves no trace in ops_feed at all.
+  // "Done" CAN be identified (matched below by the exact desc prefix every
+  // completion-type pushNotif()/logActivity() call uses, verified against
+  // every real call site in client.html and user.html); "submitted" cannot
+  // be, from this data. Falls back to done-first / everything else in
+  // original (already newest-first) order, per this task's own fallback
+  // instruction for exactly this case.
+  const DONE_DESC_PREFIXES = ['Service done:','Task done:','Bundle complete:','Sub-project complete:'];
+  function _isDoneActivity(e){
+    const d = e.desc||'';
+    return DONE_DESC_PREFIXES.some(p=>d.startsWith(p));
+  }
   const allFeed   = dbGet(DB_KEYS.feed)||[];
-  const actEvents = allFeed.filter(e=>e.type!=='nav').slice(0,25);
+  const actEvents = allFeed
+    .filter(e=>e.type==='client' && e.user!=='System')
+    .sort((a,b)=>(_isDoneActivity(b)?1:0)-(_isDoneActivity(a)?1:0)) // stable: preserves newest-first within each group
+    .slice(0,30);
   const activityEl = document.getElementById('ov-activity-list');
   if(activityEl){
     if(!actEvents.length){
