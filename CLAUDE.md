@@ -68,6 +68,12 @@ Don't relitigate them without an explicit decision from the user.
    `index.html`, and `user.html` do not import from each other and share no
    JS module. Any fix or feature that needs to exist in more than one of them
    must be hand-duplicated in each file separately — there is no shortcut.
+   Concrete recurring-bug example: PR #188's no-weekend-due-date rule was
+   added to `client.html`'s rollover only; `user.html`'s independently-
+   written `userMarkServiceDone()` kept producing weekend due dates for
+   months until PR #209. **When fixing any shared-behavior bug, grep all
+   three files for the pattern before considering it done** — don't assume
+   a fix in one portal covers the others.
 
 4. **Role/tier is server-side only, from a signed token.** `lib/opsSession.js`
    issues and verifies a signed session token (`signSession`/`verifySession`)
@@ -179,9 +185,46 @@ Don't relitigate them without an explicit decision from the user.
     in-app view — the CI workflow doesn't depend on it and doesn't require
     its hand-maintained `EXPECTED_TABLES`/`EXPECTED_COLUMNS` lists to be kept
     in sync, which is itself one of the reasons the old approach missed
-    things.
+    things. **Hard rule going forward:** no task involving a schema/
+    migration change is "done" until the migration is confirmed applied on
+    production AND the Business Setup schema-drift panel shows 0 pending —
+    a merged migration file alone is not enough (see the three outages this
+    caused, documented below).
 
 ## Current state (as of 2026-07-10)
+
+**Client & data counts (as of 2026-08-06):** 86 clients total — 83 active,
+3 inactive (Built-Rite Closets, Hebron Veterinary Hospital, Wisdom and
+Youth — deactivated via the app, intentional; clients are never deleted,
+only active/inactive). 276 services total. Frequencies in use: monthly
+(177), yearly (93), one-time (4), weekly (2) — **no quarterly services
+exist**, which is why `client.html`'s missing `calcNextDue()` quarterly
+case (see Deferred/known gaps below) is currently harmless.
+
+**Architecture facts confirmed this session (2026-08-06):**
+- `ops_error_log`, `ops_feed`, `ops_time_off_ledger` are append-only via DB
+  triggers. `ops_feed` and `ops_time_off_ledger` use the **shared**
+  `ops_block_mutations()` function (hard-blocks all UPDATE/DELETE, no
+  exceptions). `ops_error_log` uses its **own dedicated**
+  `ops_error_log_archive_guard()` function (see the Migration-apply
+  pipeline entry below): blocks DELETE, blocks UPDATE to `id`/`data`/
+  `created_at`, but permits an UPDATE that only changes `archived_at` (soft-
+  archive cleanup). Never modify the shared function when changing
+  error-log behavior — that would weaken the PTO ledger's and feed's
+  tamper-proofing too.
+- **Sales Funnel access model:** a `salesFunnelLevel` field
+  (`'viewer'|'editor'|'owner'|null`) on each user/admin record. Legacy
+  `salesFunnelAccess:true` resolves to `'editor'`. `tier==='super'` (Super
+  Admin/Owner) always resolves to `'owner'` regardless of any stored field.
+  Michael Eruzione (`u_1783268590854`) is a non-super `'owner'` grant (the
+  Google-Drive-style carve-out — see the Admin Controls entry below).
+  Enforced in `api/ops-state.js` + `api/ops-sync.js`.
+- **No-weekend due-date rule:** Saturday → Friday (−1), Sunday → Monday
+  (+1), via `adjustOffWeekend()`. Must be applied on every due-date
+  computation path in **all three portals** — see rule #3's concrete
+  example above and the recurring-rollover entry below.
+- **Sub-item shape** (tasks nested under a service/project item):
+  `{id, ts, done, text, assigneeId, assigneeName}`.
 
 **Client data:** 85 active clients live in production, generated from the
 authoritative CSV mapping and verified 100% match (client count, per-client
@@ -511,6 +554,57 @@ Flagged, not fixed (out of scope): `client.html`'s own `calcNextDue()` has
 no `quarterly` case at all — a quarterly-freq service marked done via the
 admin Tracker wouldn't advance its due date, a separate pre-existing gap.
 
+**Session fixes catalogue (through 2026-08-06)** — bug fixes from this
+session not otherwise given their own entry above; don't re-investigate
+these:
+- **My Work duplicate services (PR #189):** a reference-equality bug in the
+  "everything on clients I'm assigned to" view was double-listing services.
+  Fixed by comparing on ID instead of object reference.
+- **Notification click-through (PRs #191, #198):** notifications now deep-
+  link to the exact service by ID, for every notification type, for both
+  employees and admins. The earlier "wrong target" regression was a
+  toggle-close bug plus a missing admin-side click-through handler.
+- **Workload person-click (PR #201):** the one-time contextual tip chip
+  (`_maybeShowTip`) was missing `pointer-events:none`, so it silently
+  intercepted clicks meant for the Person column in the Workload table.
+  Long-running click-through bug, now closed.
+- **Status colors (PR #192):** all four `workStatus` states are color-coded
+  everywhere (green=done, red=stuck, blue=in progress, gray=not started)
+  via one shared `_svcStatusMeta()` helper per portal.
+- **My Work employee redesign (PRs #193, #200):** services collapsed into
+  one table plus compact stat tiles. Project Tasks and "Your Assigned
+  Steps" were deliberately kept as separate cards, not merged in.
+- **Progress Reports "This Year" count (PR #199):** recovered a fix that
+  got orphaned when PR #197 merged mid-flight.
+- **Error-log archive guard (PR #202):** see the architecture facts and
+  Migration-apply pipeline entries above/below.
+- **Weekend rollover in `user.html` (PR #209):** the team-member "Done"
+  path now weekend-adjusts too — see the dedicated entry above.
+
+**Data corrections & notable records, this session (direct SQL / in-app
+actions, verified):**
+- Grade.us Recipient Lists → Sherine; Web Page Edits → WebLight (Done,
+  Copywriting, Assmaa); AI Report → HSCM (Done, SEO, Assmaa).
+- Leese Flooring `projects[]` cleaned (removed a duplicate GBP mirror and an
+  orphan `Grade_Us_12` entry, synced FAQ/Town Pages) — now in sync with
+  `services[]`.
+- Russ Hudson: "Course Home Page Management" → Assmaa; new "Monthly
+  Practice Video Editing & Email Prep" service → Assmaa; "Upcoming Course
+  Postings" sub-item added.
+- 53 weekend-landing services bulk-moved off Sat/Sun; a later health audit
+  found 3 more that had rolled back onto Saturday (Windsor Learning Center,
+  Shapiro Auctions, Fern Wood Flooring — see the recurring-rollover entry
+  above) — root cause was the `user.html` gap, fixed in PR #209; those 3
+  were manually re-moved to Friday in the meantime.
+- Fern Wood Flooring FAQ → Assmaa. **Naming trap:** this client is "Fern
+  Wood Flooring" (with a space) — NOT "Fernwood." Watch for this on future
+  work; a lookup by the wrong spelling will silently miss the record.
+- RastaRant added (new client + 3 website services, assigned to Abby).
+  Shopify password intentionally **not** stored in-app — kept in Business
+  Setup credentials / the team's password manager, per existing convention.
+- Michael Eruzione set to Sales Funnel `owner` (see the architecture facts
+  entry above for what that grants).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
@@ -541,3 +635,33 @@ admin Tracker wouldn't advance its due date, a separate pre-existing gap.
 - The pre-existing local-only notification system in `client.html` (service-
   due alerts, etc.) was left as-is, not migrated onto the new synced
   `ops_notifications` table — the two are merged only at render time.
+- **3 clients have a services/projects count mismatch** — AMPM (2/3), CRN
+  (12/13), HSCM (20/21) — orphan project mirrors left over from the
+  original client migration (PR #74). Sarah confirmed this is intentional;
+  leave alone.
+- **5 services reference malformed bundle names** ("SEO Project", "Monthly
+  Content", "Website Development") missing the "Bundle" suffix the Service
+  Catalog otherwise uses. Cosmetic drift, low priority, not fixed.
+- **Assignment fields are inconsistent** (`assignee`/`assigneeId`/
+  `assigneeIds`) on ~40 services — same person referenced via different
+  legacy field names, not conflicting data. Sarah explicitly decided to
+  **hold** on a bulk normalization pass — works fine as-is, self-corrects
+  whenever a service is next edited, not worth the bulk-write risk.
+- **HSCM has two "Facebook" services** (`_7`, `_15`) and **two "Blogging"
+  services** (a `svc...` one and a `svms...` one) — possibly genuine
+  duplicates. Flagged, not touched, pending a decision.
+
+## Open items — parked, pending someone else's action
+
+- **Migration pipeline bootstrap (Sarah):** add the `SUPABASE_DB_URL`
+  GitHub secret and run the one-time `migration repair` + bootstrap
+  `db push` per `supabase/MIGRATIONS.md` (see rule #12 and the
+  Migration-apply pipeline entry above). Until this runs, the pipeline is
+  merged-but-inert and every PR's `check-prod-current` shows red by design
+  — that is expected, not a bug, and should not be re-investigated.
+- **Run the Error Log cleanup once (Sarah):** ~602 stale entries exist
+  (mostly one fixed 2026-07-13 bug, plus a 2026-07-24 Supabase SSL outage).
+  The archive/clear control (PR #202) now works correctly; a cutoff around
+  2026-07-25 keeps the ~10 genuinely recent entries visible.
+- **Retire the standalone "Training Time" service on WebLight Media** once
+  Assmaa moves its content into sub-items instead — waiting on her.
