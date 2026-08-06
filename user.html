@@ -2291,6 +2291,43 @@ function userMarkTaskDone(clientId, projId, spId, taskId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
+// No-weekend-due-dates rule (Sarah, see CLAUDE.md): a due date must never
+// land on Sat/Sun — Sat rolls back to Fri, Sun rolls forward to Mon. This is
+// user.html's OWN copy of client.html's adjustOffWeekend() — zero shared
+// code between the three frontends (CLAUDE.md rule #3), so the rule has to
+// be hand-duplicated here too. It wasn't, until now: userMarkServiceDone()
+// below computed svc.due directly via setMonth/setDate/setFullYear with no
+// weekend check at all, so a recurring service marked done from the team
+// portal (not the admin Tracker) could roll forward straight onto a
+// Saturday/Sunday every cycle — the actual root cause of 3 services
+// repeatedly landing on Sat 2026-09-05 (see the client.html investigation).
+// Same unambiguous local-date parse as client.html's copy — builds a LOCAL
+// Date from the y/m/d parts rather than `new Date(dateStr)` (which parses
+// as UTC midnight and can read back a different weekday in a
+// negative-UTC-offset timezone).
+function adjustOffWeekend(dateStr){
+  if(!dateStr) return dateStr;
+  const parts=String(dateStr).slice(0,10).split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>Number.isNaN(n))) return dateStr;
+  const [y,m,dd]=parts;
+  const d=new Date(y, m-1, dd);
+  const day=d.getDay(); // 0=Sun...6=Sat
+  if(day===6) d.setDate(d.getDate()-1);      // Saturday -> Friday before
+  else if(day===0) d.setDate(d.getDate()+1); // Sunday -> Monday after
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// user.html's own next-due helper — every due-date computation in this file
+// funnels through here so none can bypass the weekend adjustment above.
+// Keeps this file's existing 'quarterly' support (client.html's own
+// calcNextDue doesn't have a quarterly case — untouched, out of scope here).
+function calcNextDue(freq, from){
+  const d = new Date(from);
+  if(freq==='weekly') d.setDate(d.getDate()+7);
+  else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
+  else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
+  else d.setMonth(d.getMonth()+1);
+  return adjustOffWeekend(d.toISOString().slice(0,10));
+}
 // Mark a recurring tracker service (c.services[]) done from the team portal —
 // rolls the due date forward and keeps the mirrored project in sync.
 function userMarkServiceDone(clientId, svcId){
@@ -2303,12 +2340,7 @@ function userMarkServiceDone(clientId, svcId){
     const doneStr = (dateEl && dateEl.value) ? dateEl.value : todayStr;
     svc.lastDone = doneStr;
     const freq = svc.freq||'monthly';
-    const d = new Date(doneStr);
-    if(freq==='weekly') d.setDate(d.getDate()+7);
-    else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);
-    else if(freq==='quarterly') d.setMonth(d.getMonth()+3);
-    else d.setMonth(d.getMonth()+1);
-    svc.due = d.toISOString().slice(0,10);
+    svc.due = calcNextDue(freq, doneStr);
     const proj = (c.projects||[]).find(p=>p.serviceId===svcId);
     if(proj){ proj.due=svc.due; proj.lastDone=svc.lastDone; }
     localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));

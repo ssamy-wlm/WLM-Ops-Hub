@@ -482,6 +482,35 @@ a required branch-protection status check, and confirming the
 (exact verification SQL is in `supabase/MIGRATIONS.md`). Held for approval
 per this PR's own review gate — not merged until confirmed.
 
+**No-weekend due dates — recurring rollover gap closed (2026-08-06).** PR
+#188 added the rule that a due date must never land on Sat/Sun
+(`adjustOffWeekend()` in `client.html`, Sat→Fri −1, Sun→Mon +1) and routed
+every due-date computation in `client.html` through it, including its
+`calcNextDue()` recurring-rollover helper. Three monthly services still
+rolled forward onto Saturday 2026-09-05 on a later health audit (The
+Windsor Learning Center, Shapiro Auctions, Fern Wood Flooring) — root cause
+was **not** a gap in `client.html`; every path there was already correctly
+adjusted. It was `user.html`'s own, independently-written
+`userMarkServiceDone()` (the team-member portal's "Mark Done"/Status-
+dropdown completion path) — zero-shared-code (rule #3) meant PR #188's fix
+in `client.html` never touched this separate implementation, which computed
+`svc.due` via raw `setMonth`/`setDate`/`setFullYear` + `toISOString()` with
+no weekend check at all. Any recurring service marked done by a team member
+from My Work (not an admin via the Tracker) could roll onto a weekend every
+cycle. Fixed by adding `user.html`'s own `adjustOffWeekend()` +
+`calcNextDue()` (hand-duplicated, matching `client.html`'s logic, keeping
+this file's existing `quarterly` case that `client.html`'s copy doesn't
+have) and funneling `userMarkServiceDone()`'s rollover through it — the
+project mirror (`proj.due=svc.due`) already copied from the now-corrected
+value in the same write. Verified end-to-end with Playwright (real "Done"
+status-dropdown click, frozen clock, stateful ops-sync/ops-state mock
+echoing the accepted write back) for both the Saturday→Friday and
+Sunday→Monday cases, plus direct unit checks against the extracted
+functions. Pure client-side JS — no migration/prod-state change involved.
+Flagged, not fixed (out of scope): `client.html`'s own `calcNextDue()` has
+no `quarterly` case at all — a quarterly-freq service marked done via the
+admin Tracker wouldn't advance its due date, a separate pre-existing gap.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
@@ -490,6 +519,12 @@ per this PR's own review gate — not merged until confirmed.
   `ops_error_log.archived_at`) came from this before a CI pipeline existed
   to close it. Left here as a pointer rather than deleted so the history of
   why this got built isn't lost.
+- **`client.html`'s `calcNextDue()` has no `quarterly` case**: found while
+  fixing the no-weekend recurring-rollover gap (2026-08-06, see above) — a
+  quarterly-freq service marked done via the admin Tracker wouldn't advance
+  its due date at all (falls through every `if`/`else if`, `d` stays equal
+  to `base`). `user.html`'s own separate `calcNextDue()` already handles
+  `quarterly` correctly. Out of scope for that fix, flagged here instead.
 - **Franchise permission-matching**: `index.html`'s member-permission logic
   and `user.html` don't yet look inside `client.locations[]` — a team member
   assigned only to a franchise service may not be recognized as "assigned to
