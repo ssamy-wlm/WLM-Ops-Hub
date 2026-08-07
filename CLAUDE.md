@@ -632,6 +632,33 @@ task's exact five reported cases via Playwright with live-shaped data —
 Sherine/Michael/Abby (all real-zero-done) now show 0%, Assmaa (12/21) shows
 57%, David (0 assigned) shows 0%/"—" and still appears.
 
+**Overview follow-up: layout gap + "at risk" wording (2026-08-07).**
+Two more fixes on top of the entry above, same page. (1) Once Team
+Assessment's roster render became unbounded (previous entry), CSS Grid's
+default `align-items:stretch` made the Recent Activity `.card` stretch to
+match Team Assessment's height every row, while Recent Activity's own
+content stayed capped at a fixed `max-height:460px;overflow-y:auto` — a
+small nested scrollbar floating inside a big empty gap whenever the roster
+was much taller than the activity feed. Fixed by adding
+`align-items:start` to the shared grid container (each card now sizes to
+its own content) and removing the fixed max-height/overflow — if the page
+needs to scroll, the whole page scrolls now, never a box inside a box. (2)
+The per-person "N overdue · N at risk" label was replaced with plain
+"due in X days" language (Sarah: "at risk" wasn't actionable and the count
+didn't map to an obvious window): most-overdue not-done dated service ->
+"overdue by X days" (red); none overdue, soonest upcoming is today ->
+"due today" (amber); soonest upcoming later -> "due in X days" (amber if
+≤7 days, neutral otherwise); no not-done dated services -> "nothing due".
+A small "N due this week" count rides alongside when non-zero. Built via
+a new local `_taDueLabel()`/`_taDaysBetween()` pair, reusing the exact
+same not-done/dated service classification `_taSvcDueStatus()` already
+computes — the label can never drift from the % done or overdue bucket
+counts shown next to it. Verified against the task's own live data
+reference (Sherine: 43 not-done, 0 overdue, 28 due within 7 days, soonest
+due today) via Playwright — reproduces "due today" exactly, plus separate
+overdue/due-soon/nothing-due cases, and confirmed zero "at risk" text
+remains anywhere on the page.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

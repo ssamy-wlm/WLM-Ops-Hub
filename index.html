@@ -1203,19 +1203,27 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
         <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
       </div>
-      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:18px;">
+      <!-- align-items:start — without it, CSS Grid's default stretch makes
+           both cards match the taller one's height every row, so once Team
+           Assessment renders its full (now-unbounded) roster, Recent
+           Activity's card container stretched to match while its own
+           content stayed a short, fixed-height 460px scroll box — a nested
+           scrollbar floating in a big empty gap. Each card now sizes to its
+           own content; if the page overall needs to scroll, the page
+           scrolls, not a box inside it (2026-08-07). -->
+      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start;">
         <div class="card">
           <div class="card-header">
             <div>
               <div class="card-title">Team Assessment</div>
-              <div class="card-sub">% done, overdue/at-risk, and completion trend — every employee &amp; admin against their assigned work</div>
+              <div class="card-sub">% done, when their next work is due, and completion trend — every employee &amp; admin against their assigned work</div>
             </div>
           </div>
           <div class="card-body" id="ov-team-assessment"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Recent Activity</div></div>
-          <div class="card-body" id="ov-activity-list" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No recent activity.</div></div>
+          <div class="card-body" id="ov-activity-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No recent activity.</div></div>
         </div>
       </div>
     </div>
@@ -7904,16 +7912,47 @@ function refreshAdminOverview(){
       const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
       return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
     }
+    // Plain-integer day count between two 'YYYY-MM-DD' strings (later minus
+    // earlier) — parsed via Date.UTC so this never drifts with local
+    // timezone offset the way `new Date(dateStr)` on a bare date string can.
+    function _taDaysBetween(earlier, later){
+      const p = s => { const [y,m,d]=s.slice(0,10).split('-').map(Number); return Date.UTC(y,m-1,d); };
+      return Math.round((p(later)-p(earlier))/86400000);
+    }
+    // "due in X days" label (2026-08-07, replaces the old "N overdue · N at
+    // risk" wording — Sarah: "at risk" isn't actionable and the number
+    // doesn't map to an obvious window). Built from the same not-done,
+    // dated services already being bucketed above — most-overdue service
+    // wins if any are overdue, else the single soonest upcoming one.
+    function _taDueLabel(overdueDates, upcomingDates, todayStr){
+      if(overdueDates.length){
+        const mostOverdue = overdueDates.reduce((a,b)=>a<b?a:b); // earliest date = most overdue
+        const days = _taDaysBetween(mostOverdue, todayStr);
+        return { text:`overdue by ${days} day${days===1?'':'s'}`, color:'var(--red)' };
+      }
+      if(!upcomingDates.length) return { text:'nothing due', color:'var(--text-light)' };
+      const soonest = upcomingDates.reduce((a,b)=>a<b?a:b);
+      if(soonest===todayStr) return { text:'due today', color:'var(--orange)' };
+      const days = _taDaysBetween(todayStr, soonest);
+      return { text:`due in ${days} day${days===1?'':'s'}`, color: days<=7?'var(--orange)':'var(--text-light)' };
+    }
 
     const taRows = _timeOffRoster().map(person=>{
       const admin = taAdmins.find(a=>a.id===person.id);
       const roleLabel = admin ? _getLevelInfo(admin.level).label : (person.role||'Contractor');
       let ok=0, soon=0, overdue=0, done=0;
+      const overdueDates=[], upcomingDates=[]; let dueThisWeek=0;
       taAllServices.forEach(s=>{
         if(!_wlSvcAssignedTo(s, person.id, person.name)) return;
         const status=_taSvcDueStatus(s, taToday);
         if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
-        if(s.workStatus==='done') done++;
+        if(s.workStatus==='done'){ done++; return; }
+        if(!s.due) return;
+        if(s.due<taToday) overdueDates.push(s.due);
+        else {
+          upcomingDates.push(s.due);
+          if(s.due<=(()=>{ const d=new Date(); d.setDate(d.getDate()+CH_DUE_SOON_DAYS); return d.toISOString().slice(0,10); })()) dueThisWeek++;
+        }
       });
       const total = ok+soon+overdue;
       // 0 assigned services -> null (renders as "—"), never a false 100%
@@ -7923,7 +7962,8 @@ function refreshAdminOverview(){
       const doneWeeks = taDoneWeeksByName[nameKey]||[];
       const weekCounts = taWeekKeys.map(wk=>doneWeeks.filter(w=>w===wk).length);
       const maxWeek = Math.max(1, ...weekCounts);
-      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pctDone, weekCounts, maxWeek };
+      const dueLabel = _taDueLabel(overdueDates, upcomingDates, taToday);
+      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pctDone, weekCounts, maxWeek, dueLabel, dueThisWeek };
     })
       // No total>0 filter — a person with zero assigned services still
       // shows (0%/"—"), per Sarah's explicit acceptance criterion, instead
@@ -7958,8 +7998,8 @@ function refreshAdminOverview(){
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:14px;padding-left:41px;">
-            <div style="font-size:11px;color:var(--text-light);white-space:nowrap;">
-              <span style="font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span> overdue${r.soon>0?` · <span style="font-weight:700;color:var(--orange);">${r.soon}</span> at risk`:''}
+            <div style="font-size:11px;white-space:nowrap;">
+              <span style="font-weight:700;color:${r.dueLabel.color};">${r.dueLabel.text}</span>${r.dueThisWeek>0?` <span style="color:var(--text-light);">· ${r.dueThisWeek} due this week</span>`:''}
             </div>
             <div style="flex:1;"></div>
             <div style="display:flex;gap:2px;align-items:flex-end;height:22px;flex-shrink:0;" title="Completions, last ${TA_WEEKS} weeks">${sparkline}</div>
