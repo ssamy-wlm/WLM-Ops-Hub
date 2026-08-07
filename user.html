@@ -2321,6 +2321,11 @@ function adjustOffWeekend(dateStr){
 // Keeps this file's existing 'quarterly' support (client.html's own
 // calcNextDue doesn't have a quarterly case — untouched, out of scope here).
 function calcNextDue(freq, from){
+  // Per Request has no cadence — no due date is ever computed here either,
+  // so a per-request service marked Done from My Work can never come back
+  // as due-soon/overdue. (freq==='one-time' still falls into the +1-month
+  // else branch below — a separate, pre-existing bug, out of scope here.)
+  if(freq==='per-request') return '';
   const d = new Date(from);
   if(freq==='weekly') d.setDate(d.getDate()+7);
   else if(freq==='yearly') d.setFullYear(d.getFullYear()+1);

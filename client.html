@@ -879,7 +879,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <select class="form-select" id="pf-billing">
             <option value="one-time">One-Time</option>
             <option value="monthly">Monthly</option>
+            <option value="quarterly">Quarterly</option>
             <option value="yearly">Yearly</option>
+            <option value="per-request">Per Request</option>
           </select>
         </div>
         <div class="form-group"><label class="form-label">Status</label>
@@ -931,7 +933,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <select class="form-select" id="sp-billing">
           <option value="one-time">One-Time</option>
           <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
           <option value="yearly">Yearly</option>
+          <option value="per-request">Per Request</option>
         </select>
       </div>
       <div class="form-group"><label class="form-label">Status</label>
@@ -1099,9 +1103,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="form-group"><label class="form-label">Frequency</label>
         <select class="form-select" id="svc-freq" onchange="onSvcFreqChange()">
           <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
           <option value="yearly">Yearly</option>
           <option value="weekly">Weekly</option>
           <option value="one-time">One-Time</option>
+          <option value="per-request">Per Request</option>
         </select>
       </div>
       <div class="form-group">
@@ -1154,8 +1160,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="form-group"><label class="form-label">Default Frequency</label>
         <select class="form-select" id="sc-freq">
           <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
           <option value="yearly">Yearly</option>
           <option value="one-time">One-Time</option>
+          <option value="per-request">Per Request</option>
         </select>
       </div>
       <div class="form-group"><label class="form-label">Default Assigned Member</label>
@@ -1238,8 +1246,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="form-group"><label class="form-label">Frequency</label>
         <select class="form-select" id="ss-freq">
           <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
           <option value="yearly">Yearly</option>
           <option value="one-time">One-Time</option>
+          <option value="per-request">Per Request</option>
         </select>
       </div>
       <div class="form-group"><label class="form-label">Note to the admin (optional)</label><textarea class="form-input" id="ss-note" rows="2" placeholder="Why this service/edit is needed…" style="resize:vertical;"></textarea></div>
@@ -1585,6 +1595,9 @@ function _isWeekendDate(dateStr){
   return day===0 || day===6;
 }
 function calcNextDue(freq, from){
+  // Per Request has no cadence at all — no due date is ever computed, so it
+  // can never show as due-soon or overdue anywhere that reads svc.due.
+  if(freq==='per-request') return '';
   // Always roll forward until the date is in the future
   const base = from ? new Date(from) : new Date();
   const now  = new Date(today());
@@ -1592,6 +1605,9 @@ function calcNextDue(freq, from){
   if(freq==='monthly'){
     d.setMonth(d.getMonth()+1);
     while(d <= now) d.setMonth(d.getMonth()+1);
+  } else if(freq==='quarterly'){
+    d.setMonth(d.getMonth()+3);
+    while(d <= now) d.setMonth(d.getMonth()+3);
   } else if(freq==='yearly'){
     d.setFullYear(d.getFullYear()+1);
     while(d <= now) d.setFullYear(d.getFullYear()+1);
@@ -4845,7 +4861,7 @@ function _updateDueHint(dueVal){
 function autoCalcNextDue(){
   const lastDone = _el('svc-lastdone')?.value;
   const freq     = _el('svc-freq')?.value;
-  if(!freq || freq==='one-time') return;
+  if(!freq || freq==='one-time' || freq==='per-request') return;
   const base = lastDone || today();
   const next = calcNextDue(freq, base);
   _el('svc-due').value = next;
@@ -4855,6 +4871,15 @@ function onSvcLastDoneChange(){
   autoCalcNextDue();
 }
 function onSvcFreqChange(){
+  const freq = _el('svc-freq')?.value;
+  // Per Request has no cadence — clear any due date already in the form
+  // (typed directly, or left over from switching away from a frequency
+  // that had one) so the modal never shows a stale due for it.
+  if(freq==='per-request'){
+    if(_el('svc-due')) _el('svc-due').value='';
+    _updateDueHint('');
+    return;
+  }
   // Only recalc if lastDone is set; otherwise just update hint on existing due
   const lastDone = _el('svc-lastdone')?.value;
   if(lastDone) autoCalcNextDue();
@@ -4977,7 +5002,11 @@ function _buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes
   const catEntry=cat.find(s=>s.id===catalogId);
   const roster=getRoster();
   // If lastDone is set and no due date given, auto-calculate it.
-  if(!due && lastDone && freq && freq!=='one-time') due=calcNextDue(freq, lastDone);
+  if(!due && lastDone && freq && freq!=='one-time' && freq!=='per-request') due=calcNextDue(freq, lastDone);
+  // Per Request must never carry a due date — force-clear even if a stale
+  // value was typed into the form or left over from switching an existing
+  // service's frequency away from something with a due date already set.
+  if(freq==='per-request') due='';
   // calcNextDue() above already weekend-adjusts, but a due date can also
   // reach here typed directly into the Add/Edit modal (or Quick Add) rather
   // than computed — Sarah's no-weekend rule applies identically either way,
@@ -5149,8 +5178,10 @@ function addQuickAddServiceRow(){
     <select class="form-select" style="font-size:12px;padding:6px 8px;" onchange="renderQuickAddPreview()">${bundleOpts}</select>
     <select class="form-select" style="font-size:12px;padding:6px 8px;" onchange="renderQuickAddPreview()">
       <option value="monthly">Monthly</option>
+      <option value="quarterly">Quarterly</option>
       <option value="yearly">Yearly</option>
       <option value="one-time">One-time</option>
+      <option value="per-request">Per Request</option>
     </select>
     <input class="form-input" placeholder="Assignee name(s), comma-separated" oninput="renderQuickAddPreview()" style="font-size:12px;padding:6px 8px;">
     <button class="btn btn-xs btn-danger" onclick="removeQuickAddServiceRow('${rowId}')" title="Remove this service">✕</button>`;
