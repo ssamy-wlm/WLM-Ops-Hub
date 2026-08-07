@@ -605,6 +605,33 @@ actions, verified):**
 - Michael Eruzione set to Sales Funnel `owner` (see the architecture facts
   entry above for what that grants).
 
+**Overview "Team Assessment" % done was reading the wrong signal
+(2026-08-06).** The per-person completion metric on the Overview page
+(shipped in PR #207) computed % done from `_chIsDoneThisCycle` — Client
+Health's "has a `lastDone` AND isn't currently overdue" heuristic, i.e. a
+snapshot of whether the current cycle *looks* caught up, not whether the
+person ever actually marked anything done. Confirmed live: Sherine, 43
+assigned services, 0 ever marked `workStatus==='done'`, showed 97% — every
+one of her services simply has a far-future due date, so the heuristic read
+each one as "done" regardless of real status. Fixed to Sarah's explicit
+formula: `workStatus==='done'` count ÷ total assigned (a service with no
+`workStatus` set counts as NOT done, never excluded from the denominator).
+A person with 0 assigned services now shows 0%/"—" and still appears in the
+list, instead of the previous 100%-with-nothing-assigned bug. Overdue/at-risk
+bucketing got its own local `_taSvcDueStatus()` (workStatus-aware) rather
+than editing the shared `_chSvcDueStatus` — that function also drives
+Client Health, which wasn't reported as wrong and stayed untouched. Layout:
+the card's `max-height`/`overflow-y:auto` was removed so the full roster
+renders stacked, no inner scrollbar (the roster itself was already dynamic
+— `_timeOffRoster()` reads live `ops_users`/`ops_admins`, so a new hire
+appears automatically with no code change). Recent Activity restyled in the
+same PR: dropped the per-type boxed icon (dead code anyway, since the feed
+here is already filtered to `type:'client'` only) for a single small green
+checkmark, one stacked line per event instead of two. Verified against the
+task's exact five reported cases via Playwright with live-shaped data —
+Sherine/Michael/Abby (all real-zero-done) now show 0%, Assmaa (12/21) shows
+57%, David (0 assigned) shows 0%/"—" and still appears.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

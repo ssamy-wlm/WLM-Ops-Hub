@@ -1211,7 +1211,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <div class="card-sub">% done, overdue/at-risk, and completion trend — every employee &amp; admin against their assigned work</div>
             </div>
           </div>
-          <div class="card-body" id="ov-team-assessment" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
+          <div class="card-body" id="ov-team-assessment"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Recent Activity</div></div>
@@ -7800,13 +7800,27 @@ function refreshAdminOverview(){
   // Team Assessment — per-person productivity dashboard (replaces the old
   // "Team Progress" bundles-by-assignee list). Read-only aggregation only.
   //
-  // % done and overdue/at-risk counts deliberately reuse Workload's exact
-  // roster (_timeOffRoster — users + admins, deduped), assignee resolution
-  // (_wlSvcAssigneeIds/_wlSvcAssignedTo), service universe (active clients'
-  // c.services[] + c.locations[].services[]), and _chSvcDueStatus/
-  // _chIsDoneThisCycle — the same helpers Client Health/Workload already
-  // use, hand-reused within this file (zero-shared-code rule: no import,
-  // no shared module) so these numbers can never drift from Workload's.
+  // % done: count of assigned services with workStatus==='done' ÷ total
+  // assigned services (Sarah's explicit decision, 2026-08-06). A service
+  // with no workStatus set counts as NOT done — it's in the denominator,
+  // never excluded. This dashboard originally shipped computing % done from
+  // _chIsDoneThisCycle (Client Health's "has a lastDone AND isn't currently
+  // overdue" heuristic — a snapshot of whether the CURRENT cycle looks
+  // caught up, not whether the person ever actually marked anything done).
+  // That produced misleadingly high numbers for anyone whose services
+  // simply have far-future due dates regardless of real completion —
+  // confirmed live: Sherine, 43 assigned / 0 ever marked done, showed 97%.
+  // Fixed to read the real workStatus field instead; see _taSvcDueStatus
+  // below for the matching due-status bucketing (also workStatus-aware now,
+  // via its own local copy rather than editing the shared _chSvcDueStatus —
+  // that function also drives Client Health, which nobody reported as wrong
+  // and is out of scope here).
+  //
+  // Roster (_timeOffRoster — users + admins, deduped), assignee resolution
+  // (_wlSvcAssigneeIds/_wlSvcAssignedTo), and service universe (active
+  // clients' c.services[] + c.locations[].services[]) are unchanged — same
+  // helpers Client Health/Workload already use, hand-reused within this
+  // file (zero-shared-code rule: no import, no shared module).
   //
   // FLAG: c.recurringServices[] — a separate, legacy index.html-only
   // service array (see its own comment where it's defined) — is NOT
@@ -7817,20 +7831,6 @@ function refreshAdminOverview(){
   // match the Workload view for the same person") — so this dashboard
   // intentionally carries the same known gap Workload already has, rather
   // than silently fixing one screen and not the other.
-  //
-  // FLAG: the task brief describes _chIsDoneThisCycle-based % done as "the
-  // same honest definition the fixed Progress Report uses." Traced
-  // Progress Report's actual fixed formula (client.html, the "This Year"
-  // fix) and it is NOT the same predicate: Progress Report's "This Year" is
-  // "services with a real lastDone dated this calendar year ÷ total active
-  // services" (cumulative, calendar-year), while _chIsDoneThisCycle is
-  // "lastDone exists AND not currently overdue" (a snapshot of whether the
-  // CURRENT cycle is caught up — no calendar-year window at all). Built
-  // exactly what was specified (_chIsDoneThisCycle — that instruction was
-  // explicit and unambiguous), but flagging that the resulting %s will NOT
-  // numerically match Progress Report's "This Year" % for the same person
-  // on preview — they measure two different things, not the same metric
-  // under a different name.
   //
   // Completed-over-time trend: the ONLY completion history that exists
   // anywhere is these same "done" feed events — a service record itself
@@ -7883,24 +7883,51 @@ function refreshAdminOverview(){
 
     function _taPctColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
 
+    // % done was previously computed from _chIsDoneThisCycle (Client
+    // Health's "has a lastDone AND isn't currently overdue" heuristic) —
+    // that answers "is this person's CURRENT cycle caught up", not "did
+    // they actually mark this done", so someone who never marks anything
+    // done but simply has far-future due dates showed a near-100% rate
+    // (confirmed live: Sherine — 43 assigned, 0 ever marked done — showed
+    // 97%). Sarah's decided formula is the literal, honest one: count only
+    // services with workStatus==='done' as done, over ALL assigned
+    // services (services with no workStatus set count as NOT done, not
+    // excluded). Deliberately a LOCAL due-status helper (_taSvcDueStatus),
+    // not a change to the shared _chSvcDueStatus — that function also
+    // drives Client Health, which is out of scope for this fix and not
+    // reported as wrong; changing it here would have silently changed
+    // Client Health's overdue/at-risk counts too.
+    function _taSvcDueStatus(svc, todayStr){
+      if(svc.workStatus==='done') return 'ok'; // completed this cycle — not overdue/at-risk
+      if(!svc.due) return 'ok';
+      if(svc.due<todayStr) return 'overdue';
+      const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
+      return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
+    }
+
     const taRows = _timeOffRoster().map(person=>{
       const admin = taAdmins.find(a=>a.id===person.id);
       const roleLabel = admin ? _getLevelInfo(admin.level).label : (person.role||'Contractor');
       let ok=0, soon=0, overdue=0, done=0;
       taAllServices.forEach(s=>{
         if(!_wlSvcAssignedTo(s, person.id, person.name)) return;
-        const status=_chSvcDueStatus(s);
+        const status=_taSvcDueStatus(s, taToday);
         if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
-        if(_chIsDoneThisCycle(s,taToday)) done++;
+        if(s.workStatus==='done') done++;
       });
       const total = ok+soon+overdue;
+      // 0 assigned services -> null (renders as "—"), never a false 100%
+      // (the David-type bug: nothing assigned still showed 100% before).
       const pctDone = total ? Math.round(done/total*100) : null;
       const nameKey = (person.name||'').trim().toLowerCase();
       const doneWeeks = taDoneWeeksByName[nameKey]||[];
       const weekCounts = taWeekKeys.map(wk=>doneWeeks.filter(w=>w===wk).length);
       const maxWeek = Math.max(1, ...weekCounts);
       return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pctDone, weekCounts, maxWeek };
-    }).filter(r=>r.total>0)
+    })
+      // No total>0 filter — a person with zero assigned services still
+      // shows (0%/"—"), per Sarah's explicit acceptance criterion, instead
+      // of being silently hidden from the roster.
       // Most-overdue-first — same tie-break chain as Workload's own sort,
       // reused verbatim so "sorted the same way" isn't a coincidence.
       .sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
@@ -7976,8 +8003,6 @@ function refreshAdminOverview(){
     if(!actEvents.length){
       activityEl.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No recent activity.</div>';
     } else {
-      const actIcons  = {blocker:'🚧',goal:'🎯',login:'👤',report:'📄',client:'🏢',admin:'🔧',message:'💬',timeoff:'🏖'};
-      const actColors = {blocker:'var(--red)',goal:'#2e9e6e',login:'var(--text-light)',report:'var(--accent)',client:'var(--btn)',admin:'var(--text-mid)',message:'var(--btn)',timeoff:'#9333ea'};
       function _timeSince(ts){
         if(!ts) return '';
         const diff = Math.floor((Date.now()-new Date(ts).getTime())/1000);
@@ -7986,16 +8011,18 @@ function refreshAdminOverview(){
         if(diff<86400) return Math.floor(diff/3600)+'h ago';
         return Math.floor(diff/86400)+'d ago';
       }
+      // Restyled (2026-08-06): one stacked line per item, no boxed icon —
+      // every event here is already filtered to type:'client' (real
+      // service work, see the filter above), so a single small green
+      // checkmark replaces the old per-type icon/color lookup rather than
+      // varying by event subtype.
       activityEl.innerHTML = actEvents.map(e=>{
-        const icon  = actIcons[e.type]||'📌';
-        const color = actColors[e.type]||'var(--bg2)';
-        const when  = _timeSince(e.time||e.ts);
-        const sub   = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
-        return `<div style="padding:9px 0;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;">
-          <div style="width:30px;height:30px;border-radius:8px;background:${color}18;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${icon}</div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:12.5px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.desc||''}</div>
-            <div style="font-size:11px;color:var(--text-light);margin-top:1px;">${sub}</div>
+        const when = _timeSince(e.time||e.ts);
+        const sub  = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;">
+          <span style="color:var(--green);font-size:13px;flex-shrink:0;" title="Done">✓</span>
+          <div style="flex:1;min-width:0;font-size:12.5px;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            <span style="font-weight:600;">${e.desc||''}</span><span style="color:var(--text-light);font-weight:400;"> — ${sub}</span>
           </div>
         </div>`;
       }).join('');
