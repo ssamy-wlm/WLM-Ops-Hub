@@ -1279,6 +1279,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <div class="form-group"><label class="form-label">Primary Font</label><input class="form-input" id="nm-font" placeholder="e.g. Playfair Display, Nunito"></div>
         <div class="form-group"><label class="form-label">Secondary Font</label><input class="form-input" id="nm-font2" placeholder="e.g. Nunito Sans"></div>
         <div class="form-group full"><label class="form-label">Tone of Voice</label><input class="form-input" id="nm-tone" placeholder="e.g. Professional, friendly, informative"></div>
+        <div class="form-group full"><label class="form-label">Service Areas</label><textarea class="form-input" id="nm-service-areas" rows="3" placeholder="One area per line, e.g.&#10;Downtown&#10;North Side&#10;Suburbs" style="resize:vertical;"></textarea></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -4271,7 +4272,8 @@ function renderBrand(c){
     ${c.brandDetails?`<div class="section-label">Style Guide</div><div class="notes-block">${escHtmlClient(c.brandDetails)}</div>`:''}
     <div class="section-label">Notes</div>
     ${c.notes?`<div class="notes-block">${escHtmlClient(c.notes)}</div>`:'<div style="font-size:13px;color:var(--text-light);">No notes added yet.</div>'}
-    ${c.toneOfVoice?`<div class="section-label" style="margin-top:13px;">Tone of Voice</div><div class="notes-block">${escHtmlClient(c.toneOfVoice)}</div>`:''}`;
+    ${c.toneOfVoice?`<div class="section-label" style="margin-top:13px;">Tone of Voice</div><div class="notes-block">${escHtmlClient(c.toneOfVoice)}</div>`:''}
+    ${(c.serviceAreas||[]).length?`<div class="section-label" style="margin-top:13px;">Service Areas</div><div style="display:flex;flex-wrap:wrap;gap:6px;">${c.serviceAreas.map(a=>`<span style="display:inline-flex;padding:4px 11px;border-radius:20px;background:var(--card);border:1px solid var(--border);font-size:11px;color:var(--text-dark);">${escHtmlClient(a)}</span>`).join('')}</div>`:''}`;
 }
 
 function toggleProjectBlock(header){
@@ -5669,6 +5671,7 @@ function openNotesModal(clientId){
   _el('nm-font').value=c.primaryFont||'';
   _el('nm-font2').value=c.secondaryFont||'';
   _el('nm-tone').value=c.toneOfVoice||'';
+  _el('nm-service-areas').value=(c.serviceAreas||[]).join('\n');
   openModal('notesModal');
 }
 function saveNotes(){
@@ -5682,6 +5685,13 @@ function saveNotes(){
   c.primaryFont=_el('nm-font').value;
   c.secondaryFont=_el('nm-font2').value;
   c.toneOfVoice=_el('nm-tone').value;
+  // Only touch serviceAreas if the field actually exists in the DOM — a
+  // missing element (never expected in practice, since this is the same
+  // form openNotesModal() just populated, but the same defensive rule as
+  // payroll's fallback: never let an absent field blank-overwrite a real
+  // existing value) leaves whatever was already on the record untouched.
+  const saEl=_el('nm-service-areas');
+  if(saEl) c.serviceAreas=saEl.value.split('\n').map(s=>s.trim()).filter(Boolean);
   saveClients(clients);
   closeModal('notesModal');
   renderClientDetail(clientId,'brand-notes');
