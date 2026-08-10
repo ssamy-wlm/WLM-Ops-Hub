@@ -9040,9 +9040,22 @@ function _timeOffRoster(){
   return [...users, ...admins];
 }
 
+// Weekday count, inclusive of both endpoints (2026-08-08 fix). The loop
+// itself was already correct — the actual bug was `new Date(start)`/
+// `new Date(end)` on a bare 'YYYY-MM-DD' string, which JS parses as UTC
+// midnight. In any negative-UTC-offset timezone (e.g. US Eastern), that
+// UTC instant reads back as the PREVIOUS calendar day locally, so
+// `.getDay()` silently misclassified the actual start date's weekday —
+// confirmed live: 2026-08-10 (a real Monday) was read as Sunday and
+// dropped, undercounting the reported Aug 10-13 range as 3 instead of 4.
+// Fixed the same way `adjustOffWeekend()`/`calcNextDue()` already do
+// elsewhere in this codebase: parse the y/m/d integers directly and build
+// a LOCAL Date from them, never `new Date(dateStr)`.
 function _calcBusinessDays(start,end){
   if(!start||!end) return 0;
-  let days=0; const d=new Date(start); const endD=new Date(end);
+  const parse = s => { const [y,m,dd]=String(s).slice(0,10).split('-').map(Number); return new Date(y,m-1,dd); };
+  const d = parse(start); const endD = parse(end);
+  let days=0;
   while(d<=endD){ if(d.getDay()!==0 && d.getDay()!==6) days++; d.setDate(d.getDate()+1); }
   return days;
 }
