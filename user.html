@@ -3521,15 +3521,29 @@ function _isOnProbation(u){
   return u.probationEnd > today;
 }
 
+// Sick-overflow auto-spill into vacation — own copy of index.html's
+// _applySickSpill() (2026-08-11, zero-shared-code rule). Pure calculation,
+// no ledger write: once sick usage exceeds entitlement, the excess is
+// shown as coming out of vacation instead, capped at whatever vacation
+// actually has remaining — never a negative-vacation side effect.
+function _applySickSpill(usedSickRaw, usedVacationRaw, entSick, entVacation){
+  const overflow = Math.max(0, usedSickRaw - entSick);
+  if(overflow<=0) return { usedSick: usedSickRaw, usedVacation: usedVacationRaw };
+  const vacRemaining = Math.max(0, entVacation - usedVacationRaw);
+  const spill = Math.min(overflow, vacRemaining);
+  return { usedSick: usedSickRaw - spill, usedVacation: usedVacationRaw + spill };
+}
+
 function getMyTimeOffBalance(year){
   year = year || new Date().getFullYear();
   const onProbation = _isOnProbation(currentUser);
   const allMine = (dbGet(DB_KEYS.timeOffLedger)||[]).filter(e=>e.employeeId===currentUser?.id);
   const thisYear = allMine.filter(e=>e.startDate && new Date(e.startDate).getFullYear()===year);
   const sum = type => thisYear.filter(e=>e.type===type).reduce((s,e)=>s+(Number(e.days)||0),0);
-  const usedSick = sum('sick'), usedVacation = sum('vacation');
+  const usedSickRaw = sum('sick'), usedVacationRaw = sum('vacation');
   const entSick     = onProbation ? 0 : TIME_OFF_ENTITLEMENT.sick;
   const entVacation = onProbation ? 0 : TIME_OFF_ENTITLEMENT.vacation;
+  const { usedSick, usedVacation } = _applySickSpill(usedSickRaw, usedVacationRaw, entSick, entVacation);
   return {
     onProbation,
     sick:     { used: usedSick,     entitlement: entSick,     remaining: entSick - usedSick },
