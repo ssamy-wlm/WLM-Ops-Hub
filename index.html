@@ -1737,7 +1737,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <textarea class="form-textarea" id="tol-note" rows="2" placeholder="Reason, or note explaining a correction…"></textarea>
           </div>
           <div id="tol-error" style="display:none;padding:10px 14px;background:rgba(224,85,85,.08);border:1px solid rgba(224,85,85,.25);border-radius:8px;font-size:13px;color:var(--red);margin-bottom:12px;"></div>
-          <button class="btn btn-primary" onclick="logTimeOffEntry()">Log Time Off →</button>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary" id="tol-submit-btn" onclick="logTimeOffEntry()">Log Time Off →</button>
+            <button class="btn btn-outline" id="tol-cancel-edit-btn" onclick="cancelEditTimeOffEntry()" style="display:none;">Cancel edit</button>
+          </div>
         </div>
       </div>
 
@@ -8536,12 +8539,52 @@ function logTimeOffEntry(){
   }
 
   const ledger = dbGet(DB_KEYS.timeOffLedger)||[];
+
+  // Edit mode: reverse the original entry (same shape undoTimeOffEntry()
+  // builds) THEN tag the new entry/entries as its correction — the original
+  // is never touched, only reversed + superseded, same as a plain Undo.
+  let editedFromEntry = null;
+  if(_tolEditingEntryId){
+    editedFromEntry = ledger.find(e=>e.id===_tolEditingEntryId);
+    if(!editedFromEntry){ fail('The entry being edited no longer exists — reload and try again.'); return; }
+    if(editedFromEntry.isReversal){ fail('Cannot edit a reversal entry.'); return; }
+    if(ledger.some(e=>e.reversalOf===_tolEditingEntryId)){ fail('That entry was already reversed/edited elsewhere — reload to see the latest state.'); return; }
+    const reversal = {
+      id: 'tolrev_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+      employeeId: editedFromEntry.employeeId,
+      employeeName: editedFromEntry.employeeName,
+      type: editedFromEntry.type,
+      startDate: editedFromEntry.startDate,
+      endDate: editedFromEntry.endDate,
+      days: -editedFromEntry.days,
+      daysManuallySet: true,
+      isReversal: true,
+      reversalOf: editedFromEntry.id,
+      note: `Reversed for edit (${editedFromEntry.startDate}${editedFromEntry.endDate!==editedFromEntry.startDate?' → '+editedFromEntry.endDate:''})`,
+      loggedBy,
+      loggedAt: new Date().toISOString(),
+      status: 'approved',
+    };
+    ledger.unshift(reversal);
+    newEntries.forEach(e=>{ e.correctionOf = editedFromEntry.id; });
+  }
+
   newEntries.forEach(e=>ledger.unshift(e));
   dbSet(DB_KEYS.timeOffLedger, ledger);
 
   const totalDays = newEntries.reduce((s,e)=>s+e.days,0);
-  logActivity('timeoff', loggedBy, `Logged ${type} time off for ${person.name}`, `${totalDays} day(s) across ${newEntries.length} entry/entries${note?' — '+note:''}`);
-  showToast(`✅ Logged ${totalDays} ${type} day(s) for ${person.name}`);
+  if(editedFromEntry){
+    logActivity('timeoff', loggedBy, `Edited time off for ${person.name}`, `Was ${editedFromEntry.days} day(s) (${editedFromEntry.startDate}${editedFromEntry.endDate!==editedFromEntry.startDate?' → '+editedFromEntry.endDate:''}) — now ${totalDays} day(s)${note?' — '+note:''}`);
+    showToast(`✅ Entry updated — ${editedFromEntry.days} day(s) reversed, ${totalDays} day(s) now active for ${person.name}`);
+  } else {
+    logActivity('timeoff', loggedBy, `Logged ${type} time off for ${person.name}`, `${totalDays} day(s) across ${newEntries.length} entry/entries${note?' — '+note:''}`);
+    showToast(`✅ Logged ${totalDays} ${type} day(s) for ${person.name}`);
+  }
+  cloudAutoSync();
+
+  _tolEditingEntryId = null;
+  const submitBtn = document.getElementById('tol-submit-btn'); if(submitBtn) submitBtn.textContent = 'Log Time Off →';
+  const cancelEditBtn = document.getElementById('tol-cancel-edit-btn'); if(cancelEditBtn) cancelEditBtn.style.display = 'none';
 
   document.getElementById('tol-start').value='';
   document.getElementById('tol-end').value='';
@@ -8582,6 +8625,14 @@ function renderAdminTimeOffLedger(){
   const list = document.getElementById('tolHistoryList');
   if(list){
     const entries = (dbGet(DB_KEYS.timeOffLedger)||[]).slice().sort((a,b)=>new Date(b.loggedAt)-new Date(a.loggedAt));
+    // Reversal detection — an entry is "reversed" purely by another entry
+    // existing that points reversalOf at it (never a flag on the entry
+    // itself, since the original is immutable and can't be touched after
+    // the fact). This is display-only: the balance math elsewhere already
+    // nets to the right number just from summing every entry's `days`
+    // (the reversal's negative days cancels the original) — no separate
+    // "is this reversed" branch needed there.
+    const isSuperAdminViewer = _adminLevel==='super' || _adminLevel==='owner';
     list.innerHTML = entries.length ? entries.map(e=>{
       const typeColor = e.type==='sick' ? 'var(--red)' : 'var(--btn)';
       const typeBg    = e.type==='sick' ? 'rgba(224,85,85,.1)' : 'rgba(45,107,182,.1)';
@@ -8591,17 +8642,133 @@ function renderAdminTimeOffLedger(){
           ? `${e.startDate} (${e.days} day(s))`
           : `${e.startDate} → ${e.endDate} (${e.days} day(s))`;
       const loggedAt = e.loggedAt ? new Date(e.loggedAt).toLocaleString() : '';
-      return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
+      const reversedBy = entries.find(x=>x.reversalOf===e.id);
+      const isReversed = !!reversedBy;
+      const rowStyle = isReversed ? 'opacity:.55;text-decoration:line-through;' : '';
+      let marker = '';
+      if(e.isReversal){
+        marker = `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:rgba(45,107,182,.1);color:var(--btn);margin-left:6px;">↩ REVERSAL</span>`;
+      } else if(e.correctionOf){
+        marker = `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:rgba(46,158,110,.1);color:var(--green);margin-left:6px;">✎ CORRECTED ENTRY</span>`;
+      } else if(isReversed){
+        marker = `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:rgba(224,85,85,.1);color:var(--red);margin-left:6px;">REVERSED</span>`;
+      }
+      // Undo/Edit only make sense on a normal, still-active, non-reversal
+      // entry — never on a reversal/correction entry itself, and never on
+      // one that's already been reversed (reverse it again would just add
+      // noise, not further correct anything). Super Admin/Owner only —
+      // matches the same tier this file already enforces client-side for
+      // every other super-only control; server-side enforcement is
+      // unchanged (api/ops-sync.js already restricts ALL ops_time_off_ledger
+      // writes, including these, to tier==='super').
+      const canAct = isSuperAdminViewer && !e.isReversal && !isReversed;
+      const actions = canAct ? `
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-sm btn-outline" onclick="startEditTimeOffEntry('${e.id}')">✎ Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="undoTimeOffEntry('${e.id}')">↩ Undo</button>
+        </div>` : '';
+      return `<div style="padding:14px 0;border-bottom:1px solid var(--border);${rowStyle}">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(e.employeeName||'Unknown')}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtml(e.employeeName||'Unknown')}${marker}</div>
           <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:${typeBg};color:${typeColor};">${(e.type||'').toUpperCase()}</span>
         </div>
         <div style="font-size:12px;color:var(--text-mid);margin-top:4px;">${dateLabel}</div>
         ${e.note?`<div style="font-size:12px;color:var(--text-mid);margin-top:4px;background:var(--bg);padding:8px 10px;border-radius:8px;">${escHtml(e.note)}</div>`:''}
         <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Logged by ${escHtml(e.loggedBy||'Admin')} · ${loggedAt}</div>
+        ${actions}
       </div>`;
     }).join('') : '<div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No time off logged yet.</div>';
   }
+}
+
+// ── Undo / Edit a time-off ledger entry — reversing entries, never a
+// mutation of the original (ops_time_off_ledger is append-only by DB
+// trigger, see CLAUDE.md; api/ops-sync.js already restricts ALL writes to
+// this table, including these, to tier==='super' server-side — this
+// client-side gate is UX convenience, not the real boundary, same pattern
+// as every other super-only control in this file). Undo: one new entry
+// with negated days, reversalOf pointing at the original. Edit: reverse
+// the original the same way, THEN add a fresh corrected entry (through the
+// exact same logTimeOffEntry() path/day-count logic every normal entry
+// uses) tagged correctionOf the original — see logTimeOffEntry()'s
+// _tolEditingEntryId branch below. Net effect either way: the original
+// stays on the record forever, unedited; the SUM of days across the
+// original + its reversal (+ a correction, if editing) already nets to
+// the right balance with zero changes needed to getTimeOffBalance()'s
+// plain summation. ──
+let _tolEditingEntryId = null;
+
+function undoTimeOffEntry(id){
+  if(_adminLevel!=='super' && _adminLevel!=='owner'){ showToast('Super Admin only'); return; }
+  const ledger = dbGet(DB_KEYS.timeOffLedger)||[];
+  const entry = ledger.find(e=>e.id===id);
+  if(!entry) return;
+  if(entry.isReversal){ showToast('Cannot undo a reversal entry itself'); return; }
+  if(ledger.some(e=>e.reversalOf===id)){ showToast('Already reversed'); return; }
+  if(!confirm(`Undo this ${entry.type} entry for ${entry.employeeName} (${entry.days} day(s), ${entry.startDate}${entry.endDate!==entry.startDate?' → '+entry.endDate:''})?\n\nThis adds a reversing entry — the original stays on the permanent record.`)) return;
+  const loggedBy = (typeof _getCurrentUserName==='function') ? _getCurrentUserName() : 'Admin';
+  const reversal = {
+    id: 'tolrev_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+    employeeId: entry.employeeId,
+    employeeName: entry.employeeName,
+    type: entry.type,
+    startDate: entry.startDate,
+    endDate: entry.endDate,
+    days: -entry.days,
+    daysManuallySet: true, // negated value, never re-derived from the date range
+    isReversal: true,
+    reversalOf: entry.id,
+    note: `Reversal of ${entry.startDate}${entry.endDate!==entry.startDate?' → '+entry.endDate:''} entry`,
+    loggedBy,
+    loggedAt: new Date().toISOString(),
+    status: 'approved',
+  };
+  ledger.unshift(reversal);
+  dbSet(DB_KEYS.timeOffLedger, ledger);
+  logActivity('timeoff', loggedBy, `Undid time off for ${entry.employeeName}`, `${entry.startDate} → ${entry.endDate} · ${entry.days} day(s) reversed`);
+  cloudAutoSync();
+  showToast(`✅ Reversed ${entry.days} day(s) for ${entry.employeeName}`);
+  renderAdminTimeOffLedger();
+}
+
+function startEditTimeOffEntry(id){
+  if(_adminLevel!=='super' && _adminLevel!=='owner'){ showToast('Super Admin only'); return; }
+  const ledger = dbGet(DB_KEYS.timeOffLedger)||[];
+  const entry = ledger.find(e=>e.id===id);
+  if(!entry) return;
+  if(entry.isReversal){ showToast('Cannot edit a reversal entry'); return; }
+  if(ledger.some(e=>e.reversalOf===id)){ showToast('Already reversed — cannot edit'); return; }
+  _tolEditingEntryId = id;
+  const empSel = document.getElementById('tol-employee'); if(empSel) empSel.value = entry.employeeId;
+  const typeSel = document.getElementById('tol-type'); if(typeSel) typeSel.value = entry.type;
+  const noteEl = document.getElementById('tol-note'); if(noteEl) noteEl.value = entry.note||'';
+  if(entry.daysManuallySet){
+    _tolSetMode('manual');
+    const daysEl = document.getElementById('tol-manual-days'); if(daysEl) daysEl.value = entry.days;
+    const dateEl = document.getElementById('tol-manual-date'); if(dateEl) dateEl.value = entry.startDate;
+  } else {
+    _tolSetMode('range');
+    const startEl = document.getElementById('tol-start'); if(startEl) startEl.value = entry.startDate;
+    const endEl = document.getElementById('tol-end'); if(endEl) endEl.value = entry.endDate;
+  }
+  _tolPreviewDays();
+  const btn = document.getElementById('tol-submit-btn'); if(btn) btn.textContent = 'Save Changes (reverses original) →';
+  const cancelBtn = document.getElementById('tol-cancel-edit-btn'); if(cancelBtn) cancelBtn.style.display = 'inline-block';
+  document.getElementById('admin-ptoLedger')?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function cancelEditTimeOffEntry(){
+  _tolEditingEntryId = null;
+  const btn = document.getElementById('tol-submit-btn'); if(btn) btn.textContent = 'Log Time Off →';
+  const cancelBtn = document.getElementById('tol-cancel-edit-btn'); if(cancelBtn) cancelBtn.style.display = 'none';
+  document.getElementById('tol-start').value='';
+  document.getElementById('tol-end').value='';
+  document.getElementById('tol-manual-days').value='';
+  document.getElementById('tol-manual-date').value='';
+  document.getElementById('tol-note').value='';
+  _tolSpecificDays = [];
+  _tolRenderSpecificDaysList();
+  const dp = document.getElementById('tol-days-preview'); if(dp) dp.textContent='';
 }
 
 // ═══════════════════════════════════════════════════════════

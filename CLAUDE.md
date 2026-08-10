@@ -696,6 +696,58 @@ mode (pick arbitrary individual dates, each always worth 1 day) has no
 weekend restriction at all — a deliberately different, existing model from
 the date-range calc this task fixed, not the reported bug.
 
+**Time-off ledger edit/undo — implemented as reversing entries, append-only
+protection untouched (2026-08-10).** Sarah wanted a way to edit or undo a
+time-off log entry; `ops_time_off_ledger` stays fully append-only (DB
+trigger blocks UPDATE/DELETE, see rule above) — no exception was carved
+into it for this, unlike the earlier `ops_error_log_archive_guard` narrow
+exception. Instead, Undo/Edit in `index.html`'s Time Off Ledger (Super
+Admin/Owner only — same tier `api/ops-sync.js` already restricts ALL
+`ops_time_off_ledger` writes to, confirmed by reading `insertNewOnly()`:
+every write is `.upsert(..., {onConflict:'id', ignoreDuplicates:true})`,
+which is INSERT-ON-CONFLICT-DO-NOTHING at the SQL level — never an UPDATE,
+even before the trigger would catch one) are pure accounting-style
+reversing entries:
+- **Undo** appends one new entry: same employee/type/dates, `days` negated,
+  `isReversal:true`, `reversalOf:<originalId>`. The original is never
+  touched.
+- **Edit** = Undo (reverse the original) + a fresh entry with the edited
+  values via the exact same `logTimeOffEntry()` path every normal entry
+  uses (so it gets the already-fixed weekday-inclusive day count for free),
+  tagged `correctionOf:<originalId>` for the audit chain.
+- Balance math (`getTimeOffBalance()`/`getMyTimeOffBalance()`) needed
+  **zero changes** — both already just sum every entry's `days` for the
+  year, so a reversal's negative value cancels its original automatically.
+  UI-side, an entry is detected as "reversed" purely by another entry
+  existing with `reversalOf` pointing at it (never a flag mutated on the
+  original) — rendered struck-through with a REVERSED badge, and its
+  Undo/Edit buttons disappear (can't reverse an already-reversed entry).
+
+**Verified, not assumed, that no UPDATE/DELETE is ever issued**: read
+`insertNewOnly()`'s actual Supabase call (confirmed INSERT-ON-CONFLICT-
+DO-NOTHING), then reproduced the exact write sequence (original + reversal
++ correction, all three via plain INSERT) against a real local Postgres
+with the actual `ops_time_off_ledger` append-only trigger installed —
+all three inserts succeeded, and a direct UPDATE/DELETE attempt against
+the same table both failed with the trigger's exception, confirming the
+protection this feature relies on is real and unweakened. Playwright (23
+checks): logged a 4-day entry, undid it (2 ledger rows, original
+unchanged at days=4, reversal at days=-4, balance drops **4 used → 0
+used**), then edited a separate 3-day entry to 5 days (reversal -3 +
+correction +5, balance shows **5 used**, not 3+5=8 — confirms no double-
+counting), confirmed a non-super admin sees no Undo/Edit buttons and a
+direct function call is refused client-side, and confirmed every captured
+`ops-sync` call across the whole flow carried no delete/tombstone request.
+
+Found and fixed alongside (small, in the same function touched):
+`logTimeOffEntry()` never called `cloudAutoSync()` after writing — every
+other similar admin write action in this file does. Left unpushed, a
+reversal/correction would sync only on the next 30s pull-driven dirty
+check rather than immediately; added the same explicit push call the
+undo/edit paths need anyway, applying it to the plain "Log Time Off" path
+too for consistency (same effect either way, just immediate instead of
+next accidental catch-up).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
