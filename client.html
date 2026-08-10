@@ -551,6 +551,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <option value="">All Due Dates</option>
           <option value="overdue">Overdue</option>
           <option value="soon">Due Soon (7d)</option>
+          <option value="month">Due This Month</option>
           <option value="upcoming">Upcoming</option>
         </select>
         <select class="form-select" id="schedule-client-filter" onchange="renderScheduleView()" style="width:160px;font-size:11px;padding:7px 10px;">
@@ -6020,8 +6021,16 @@ function _scheduleDueBucket(due, t){
   if(due<=in7) return 'soon';
   return 'upcoming';
 }
+// "Due This Month" is a calendar-month membership test, independent of the
+// overdue/soon/upcoming buckets above — a service already overdue or due
+// within 7 days can still fall inside the current month, so this can't be
+// folded into _scheduleDueBucket's single mutually-exclusive result.
+function _dueInCurrentMonth(due, t){
+  return !!due && due.slice(0,7)===t.slice(0,7);
+}
 function _passesDueFilter(due, filterValue, t){
   if(!filterValue) return true;
+  if(filterValue==='month') return _dueInCurrentMonth(due,t);
   return _scheduleDueBucket(due,t)===filterValue;
 }
 // Does this service belong to the given catalog bundle name? Recurring

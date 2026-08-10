@@ -1241,7 +1241,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <button class="btn btn-outline btn-sm" onclick="renderClientHealthDashboard()">↺ Refresh</button>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px;">
         <div class="card" style="padding:14px 18px;">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">On Track</div>
           <div style="font-size:26px;font-weight:800;color:var(--green);" id="ch-total-ok">0</div>
@@ -1254,6 +1254,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Overdue</div>
           <div style="font-size:26px;font-weight:800;color:var(--red);" id="ch-total-overdue">0</div>
         </div>
+        <div class="card" style="padding:14px 18px;" title="Due later this month — not yet within the 7-day Due Soon window">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Pending</div>
+          <div style="font-size:26px;font-weight:800;color:var(--accent);" id="ch-total-pending">0</div>
+        </div>
+        <div class="card" style="padding:14px 18px;" title="All work landing this calendar month — Pending + Due Soon + Overdue services that fall in this month">
+          <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Due This Month</div>
+          <div style="font-size:26px;font-weight:800;color:var(--accent);" id="ch-total-duemonth">0</div>
+        </div>
       </div>
       <div class="card">
         <div class="card-body" style="padding:0;">
@@ -1264,6 +1272,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟢 On Track</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🟡 Due Soon</th>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">🔴 Overdue</th>
+                <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);" title="Due later this month — not yet within the 7-day Due Soon window">🔵 Pending</th>
               </tr>
             </thead>
             <tbody id="clientHealthTableBody"></tbody>
@@ -4569,33 +4578,57 @@ function _saveClientDB(arr){ try{ localStorage.setItem(_CL_DB_KEY,JSON.stringify
 const CH_DUE_SOON_DAYS = 7;
 function _chIsInactiveService(s){ return s.status==='cancelled'||s.status==='archived'; }
 function _chIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
+// 'pending' (new, 2026-08-10): not done this cycle, not overdue, not due
+// within CH_DUE_SOON_DAYS, but its due date still falls somewhere in the
+// CURRENT calendar month — i.e. real upcoming workload that the old ok/
+// soon/overdue split hid inside "ok" just because it wasn't within 7 days
+// yet. per-request/one-time never carry a due date that means anything
+// here (per-request never has one at all; one-time isn't a recurring
+// cadence this rollup tracks) — treated as 'ok', same as no due date.
 function _chSvcDueStatus(svc){
   const t=new Date().toISOString().slice(0,10);
   if(_chIsDoneThisCycle(svc,t)) return 'ok';
-  if(!svc.due) return 'ok';
+  if(!svc.due || svc.freq==='per-request' || svc.freq==='one-time') return 'ok';
   if(svc.due<t) return 'overdue';
   const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
-  return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
+  if(svc.due<=soon.toISOString().slice(0,10)) return 'soon';
+  return svc.due.slice(0,7)===t.slice(0,7) ? 'pending' : 'ok';
+}
+// "Due This Month" headline count — deliberately NOT the same number as the
+// 'pending' bucket above. It's the full superset: pending + whichever slice
+// of 'soon'/'overdue' also happens to land in the current calendar month
+// (both of those buckets can span into next month too, e.g. a 7-day soon
+// window crossing a month boundary, or an overdue service from last month).
+function _chIsDueThisMonth(svc, t){
+  if(_chIsDoneThisCycle(svc,t)) return false;
+  if(!svc.due || svc.freq==='per-request' || svc.freq==='one-time') return false;
+  return svc.due.slice(0,7)===t.slice(0,7);
 }
 function renderClientHealthDashboard(){
   const body=document.getElementById('clientHealthTableBody');
   const empty=document.getElementById('clientHealthEmpty');
   if(!body) return;
   const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
-  let totalOk=0, totalSoon=0, totalOverdue=0;
+  const t=new Date().toISOString().slice(0,10);
+  let totalOk=0, totalSoon=0, totalOverdue=0, totalPending=0, totalDueThisMonth=0;
   const rows=clients.map(c=>{
     const svcs=(c.services||[]).filter(s=>!_chIsInactiveService(s));
-    let ok=0, soon=0, overdue=0;
+    let ok=0, soon=0, overdue=0, pending=0;
     svcs.forEach(s=>{
       const status=_chSvcDueStatus(s);
-      if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+      if(status==='ok') ok++;
+      else if(status==='soon') soon++;
+      else if(status==='pending') pending++;
+      else overdue++;
+      if(_chIsDueThisMonth(s,t)) totalDueThisMonth++;
     });
-    totalOk+=ok; totalSoon+=soon; totalOverdue+=overdue;
-    return { id:c.id, name:c.name||'(unnamed)', ok, soon, overdue, total:svcs.length };
+    totalOk+=ok; totalSoon+=soon; totalOverdue+=overdue; totalPending+=pending;
+    return { id:c.id, name:c.name||'(unnamed)', ok, soon, overdue, pending, total:svcs.length };
   }).sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||a.name.localeCompare(b.name));
 
   const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
   set('ch-total-ok',totalOk); set('ch-total-soon',totalSoon); set('ch-total-overdue',totalOverdue);
+  set('ch-total-pending',totalPending); set('ch-total-duemonth',totalDueThisMonth);
 
   if(!rows.length){
     body.innerHTML=''; if(empty) empty.style.display='block';
@@ -4608,6 +4641,7 @@ function renderClientHealthDashboard(){
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:var(--green);">${r.ok}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.pending>0?'var(--accent)':'var(--text-light)'};">${r.pending}</span></td>
     </tr>`).join('');
 }
 // serviceId is optional (Client Health's row click never passes one; the
@@ -4707,7 +4741,11 @@ function renderWorkloadDashboard(){
     allServices.forEach(({svc:s, clientName})=>{
       if(_wlSvcAssignedTo(s, person.id, person.name)){
         const status=_chSvcDueStatus(s);
-        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        // 'pending' (due later this month, not yet soon/overdue) folds into
+        // 'ok' here — this dashboard's 3-bucket view predates 'pending' and
+        // isn't part of this change's scope; without this, the catch-all
+        // else below would silently miscount it as overdue.
+        if(status==='ok'||status==='pending') ok++; else if(status==='soon') soon++; else overdue++;
         if(_svcStatus(s)==='stuck') stuck++;
         services.push(_svcBreakdownRow(person, clientName, s));
       }
@@ -4810,7 +4848,11 @@ function renderMyTeamsWork(){
     allServices.forEach(({svc:s, clientName})=>{
       if(_wlSvcAssignedTo(s, person.id, person.name)){
         const status=_chSvcDueStatus(s);
-        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        // 'pending' (due later this month, not yet soon/overdue) folds into
+        // 'ok' here — this dashboard's 3-bucket view predates 'pending' and
+        // isn't part of this change's scope; without this, the catch-all
+        // else below would silently miscount it as overdue.
+        if(status==='ok'||status==='pending') ok++; else if(status==='soon') soon++; else overdue++;
         if(_svcStatus(s)==='stuck') stuck++;
         services.push(_svcBreakdownRow(person, clientName, s));
       }
