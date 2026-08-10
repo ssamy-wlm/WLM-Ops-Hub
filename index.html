@@ -1239,7 +1239,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Client Health</div>
           <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every active client's services, rolled up by due status — click a client to open it in the Tracker</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="renderClientHealthDashboard()">↺ Refresh</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="assignFromCatalogDefaults()" title="Fill each unassigned service from its Service Catalog entry's Default Assignee, where one is set — never overwrites an existing assignee">🗂 Assign from catalog defaults</button>
+          <button class="btn btn-outline btn-sm" onclick="renderClientHealthDashboard()">↺ Refresh</button>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:18px;">
         <div class="card" style="padding:14px 18px;">
@@ -4618,6 +4621,66 @@ function _chSvcIsUnassigned(svc){
   return _wlSvcAssigneeIds(svc).length===0 &&
     !(svc.assigneeName||'').trim() &&
     !(Array.isArray(svc.assignedUserIds)&&svc.assignedUserIds.length);
+}
+// ── "Assign from catalog defaults" (user-triggered only — see the button's
+// onclick; NEVER called on page load or from any sync/pull path, same
+// banned-pattern rule as everything else in CLAUDE.md's disabled-functions
+// list) ──────────────────────────────────────────────────────────────────
+// Reads the Service Catalog straight out of localStorage under the same
+// key client.html's own getFullCatalog() writes/reads (wl_service_catalog)
+// — no shared module, just the same key name by convention, per the
+// zero-shared-code rule.
+function _chGetCatalogServices(){
+  try{
+    const stored=JSON.parse(localStorage.getItem('wl_service_catalog')||'null');
+    if(stored && Array.isArray(stored.services)) return stored.services;
+    if(Array.isArray(stored)) return stored; // legacy flat-array shape
+  }catch(e){}
+  return [];
+}
+// catalogId first, exact-name fallback second — the REVERSE priority of
+// client.html's findCatalogEntryForService() (which prefers name first, for
+// a specific double-space bug it's guarding against). Deliberately a
+// separate resolver rather than reusing/changing that one: this is a new,
+// narrower lookup for one bulk action, and changing the shared function's
+// priority would risk changing behavior at its other call sites too.
+function _chCatalogEntryForDefault(svc, catalogServices){
+  if(svc.catalogId){
+    const byId=catalogServices.find(e=>e.id===svc.catalogId);
+    if(byId) return byId;
+  }
+  const svcName=(svc.name||'').trim().toLowerCase();
+  if(!svcName) return null;
+  return catalogServices.find(e=>(e.name||'').trim().toLowerCase()===svcName)||null;
+}
+function assignFromCatalogDefaults(){
+  const catalogServices=_chGetCatalogServices();
+  const roster=_timeOffRoster();
+  const clients=_getClientDB();
+  let assigned=0, skipped=0;
+  clients.forEach(c=>{
+    if((c.status||'active')!=='active') return;
+    (c.services||[]).forEach(s=>{
+      if(_chIsInactiveService(s)) return;
+      if(!_chSvcIsUnassigned(s)) return;
+      const entry=_chCatalogEntryForDefault(s, catalogServices);
+      const defaultId=entry && entry.defaultAssignee;
+      if(!defaultId){ skipped++; return; }
+      // Fill only — this branch is only reached for a service _chSvcIsUnassigned()
+      // already confirmed has no assignee at all, so there is nothing to overwrite.
+      const person=roster.find(u=>u.id===defaultId);
+      s.assigneeIds=[defaultId];
+      s.assigneeId=defaultId;
+      s.assigneeName=person?person.name:'';
+      assigned++;
+    });
+  });
+  if(assigned>0){
+    _saveClientDB(clients);
+    cloudAutoSync(); // per-record push via the normal dirty-diff sync path — see cloudPushAll()
+    renderClientHealthDashboard();
+  }
+  showToast(`Assigned ${assigned} service${assigned===1?'':'s'}, skipped ${skipped} with no catalog default`);
 }
 function renderClientHealthDashboard(){
   const body=document.getElementById('clientHealthTableBody');
