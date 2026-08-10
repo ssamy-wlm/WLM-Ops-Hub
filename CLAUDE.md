@@ -659,6 +659,43 @@ due today) via Playwright — reproduces "due today" exactly, plus separate
 overdue/due-soon/nothing-due cases, and confirmed zero "at risk" text
 remains anywhere on the page.
 
+**Time-off day-count undercounted — real root cause was a timezone bug,
+not naive subtraction (2026-08-08).** Reported live: Aug 10-13, 2026
+(Mon-Thu) stored `days:3` instead of 4. The task's own hypothesis was a
+naive `endDate - startDate` subtraction, but reading the actual code
+(`_calcBusinessDays()` in `index.html`, and its own inline copy in
+`user.html`'s `submitTimeOffRequest()`) showed both already had a correct-
+looking *inclusive weekday-counting loop* — the real bug was
+`new Date(dateStr)` on a bare `'YYYY-MM-DD'` string, which JS parses as
+UTC midnight. In any negative-UTC-offset timezone (confirmed by actually
+running the existing code under `TZ=America/New_York`, not assumed), that
+UTC instant reads back as the *previous* calendar day locally, so
+`.getDay()` silently misclassified the real start date's weekday — Monday
+Aug 10 read as Sunday and got dropped, reproducing the exact `3` instead
+of `4`. Fixed both copies the same way `adjustOffWeekend()`/`calcNextDue()`
+already do elsewhere in this codebase: parse the y/m/d integers directly
+into a LOCAL `Date`, never `new Date(dateStr)`. Verified under three
+timezones (UTC, America/New_York, Asia/Tokyo) to confirm the fix is
+timezone-independent, plus Playwright end-to-end through both the admin
+"Log Time Off" ledger tool and the employee-facing `user.html` request
+form. `daysManuallySet` entries were already correctly bypassing the
+auto-calc (untouched). Append-only ledger (rule on `ops_time_off_ledger`)
+means this fixes future entries only — Sarah re-enters the wrong Aug 10-13
+entry herself; the old wrong row stays as an immutable audit record, by
+design.
+
+Flagged, not fixed (out of scope — a *different* computation, same root-
+cause pattern): `getTimeOffBalance()` (`index.html`) and
+`getMyTimeOffBalance()` (`user.html`) both bucket ledger entries by year
+via `new Date(e.startDate).getFullYear()`, which has the identical UTC-
+parse quirk — confirmed live (`TZ=America/New_York`,
+`new Date('2026-01-01').getFullYear()` returns `2025`), so a Jan 1 entry
+would misbucket into the prior year's balance. Not touched — this task was
+day-count only. Also flagged, not fixed: the "Specific Days" time-off entry
+mode (pick arbitrary individual dates, each always worth 1 day) has no
+weekend restriction at all — a deliberately different, existing model from
+the date-range calc this task fixed, not the reported bug.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
@@ -673,6 +710,12 @@ remains anywhere on the page.
   its due date at all (falls through every `if`/`else if`, `d` stays equal
   to `base`). `user.html`'s own separate `calcNextDue()` already handles
   `quarterly` correctly. Out of scope for that fix, flagged here instead.
+- **Time-off balance year-bucketing has the same UTC-parse bug as the
+  day-count fix (2026-08-08)**: `getTimeOffBalance()`/`getMyTimeOffBalance()`
+  bucket ledger entries by year via `new Date(e.startDate).getFullYear()`
+  — confirmed under `TZ=America/New_York` that a Jan 1 entry misbuckets
+  into the prior year. Different computation from the day-count bug fixed
+  the same day; not touched, flagged here instead.
 - **Franchise permission-matching**: `index.html`'s member-permission logic
   and `user.html` don't yet look inside `client.locations[]` — a team member
   assigned only to a franchise service may not be recognized as "assigned to

@@ -3600,9 +3600,16 @@ function submitTimeOffRequest(){
 
   const userName = document.getElementById('sidebarName')?.textContent || currentUserData?.name || 'User';
   
-  // Calculate business days
-  let days=0; const d=new Date(start);
-  while(d<=new Date(end)){ if(d.getDay()!==0&&d.getDay()!==6) days++; d.setDate(d.getDate()+1); }
+  // Calculate business days (weekdays only, inclusive of both endpoints).
+  // Own copy of index.html's _calcBusinessDays fix (2026-08-08, zero-shared-
+  // code rule) — `new Date(dateStr)` on a bare 'YYYY-MM-DD' string parses as
+  // UTC midnight, which in a negative-UTC-offset timezone reads back as the
+  // PREVIOUS calendar day locally, silently misclassifying the real start
+  // date's weekday. Parses y/m/d directly into a LOCAL Date instead, same
+  // pattern this file's own adjustOffWeekend()/calcNextDue() already use.
+  const _tolParse = s => { const [y,m,dd]=String(s).slice(0,10).split('-').map(Number); return new Date(y,m-1,dd); };
+  let days=0; const d=_tolParse(start); const endD=_tolParse(end);
+  while(d<=endD){ if(d.getDay()!==0&&d.getDay()!==6) days++; d.setDate(d.getDate()+1); }
 
   const request = {
     id: 'to_'+Date.now(),
