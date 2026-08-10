@@ -563,6 +563,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <select class="form-select" id="schedule-service-filter" onchange="renderScheduleView()" style="width:170px;font-size:11px;padding:7px 10px;">
           <option value="">All Services</option>
         </select>
+        <select class="form-select" id="schedule-assignee-filter" onchange="renderScheduleView()" style="width:140px;font-size:11px;padding:7px 10px;">
+          <option value="">All Assignees</option>
+          <option value="unassigned">Unassigned</option>
+        </select>
       </div>
 
       <!-- List view -->
@@ -2214,6 +2218,16 @@ function _svcAssigneeIds(svc){
   if(Array.isArray(svc.assigneeIds) && svc.assigneeIds.length) return svc.assigneeIds;
   if(svc.assigneeId) return [svc.assigneeId];
   return svc.assignee ? [svc.assignee.toLowerCase()] : [];
+}
+// "Unassigned" — reuses _svcAssigneeIds above (the same resolution every
+// other assignee-aware read in this file uses) for assigneeIds[]/assigneeId/
+// assignee, plus the two legacy fields it doesn't cover: a name-only
+// assignment, and the old recurringServices-shaped assignedUserIds[] on the
+// off chance it ever shows up on a services[] row.
+function _svcIsUnassigned(svc){
+  return _svcAssigneeIds(svc).length===0 &&
+    !(svc.assigneeName||'').trim() &&
+    !(Array.isArray(svc.assignedUserIds)&&svc.assignedUserIds.length);
 }
 // The ONE shared "is this service assigned to me" predicate for this file —
 // every read site (edit-rights gates, My Work, the badge count, calendar
@@ -4290,6 +4304,17 @@ function _openDeepLinkFromUrl(){
     const params=new URLSearchParams(window.location.search);
     const page=params.get('page');
     if(page) showPage(page,_el('nav-'+page));
+    // Client Health "Unassigned Services" card click-through — lands on the
+    // Service Schedule page (via ?page= above) with the new Unassigned
+    // filter pre-selected. Forces List view specifically — a service with
+    // no due date at all (the common shape for something nobody's touched)
+    // never appears on the Calendar view no matter what, so List is the
+    // only view that actually shows "exactly those services."
+    const scheduleAssignee=params.get('scheduleAssignee');
+    if(scheduleAssignee && _el('schedule-assignee-filter')){
+      _el('schedule-assignee-filter').value=scheduleAssignee;
+      setScheduleView('list');
+    }
     // Workload dashboard click-through (assignment-module Feature D) — set
     // the Assigned To filter and re-run the existing filterClients() path,
     // same mechanism applySavedFilter() already uses.
@@ -6054,6 +6079,7 @@ function renderSchedule(){
   const clientFilter=_el('schedule-client-filter')?.value||'';
   const bundleFilter=_el('schedule-bundle-filter')?.value||'';
   const serviceFilter=_el('schedule-service-filter')?.value||'';
+  const assigneeFilter=_el('schedule-assignee-filter')?.value||'';
   const t=today();
 
   // Bucket into monthly, yearly, other — each sorted by due date
@@ -6063,6 +6089,7 @@ function renderSchedule(){
     _allClientServices(c).forEach(svc=>{
       if(serviceFilter && (svc.name||'').trim().toLowerCase()!==serviceFilter.trim().toLowerCase()) return;
       if(bundleFilter && !_serviceMatchesBundle(svc,bundleFilter)) return;
+      if(assigneeFilter==='unassigned' && !_svcIsUnassigned(svc)) return;
       if(!_passesDueFilter(svc.due, filter, t)) return;
       const bucket=_scheduleDueBucket(svc.due, t);
       const cls=bucket==='overdue'?'overdue':bucket==='soon'?'soon':'ok';
@@ -6801,6 +6828,7 @@ function _buildScheduleEventMap(){
   const clientF=_el('schedule-client-filter')?.value||'';
   const bundleF=_el('schedule-bundle-filter')?.value||'';
   const serviceF=_el('schedule-service-filter')?.value||'';
+  const assigneeF=_el('schedule-assignee-filter')?.value||'';
   const dueF=_el('schedule-filter')?.value||'';
   const evMap={};
   function addEv(ds,ev){ if(!ds) return; (evMap[ds]=evMap[ds]||[]).push(ev); }
@@ -6819,6 +6847,7 @@ function _buildScheduleEventMap(){
       if(_isWeekendDate(svc.due)) return;
       if(serviceF && (svc.name||'').trim().toLowerCase()!==serviceF.trim().toLowerCase()) return;
       if(bundleF && !_serviceMatchesBundle(svc,bundleF)) return;
+      if(assigneeF==='unassigned' && !_svcIsUnassigned(svc)) return;
       if(!_passesDueFilter(svc.due, dueF, todayStr)) return;
       addEv(svc.due,{type:'service',label:svc._locationName?`${svc.name} (${svc._locationName})`:svc.name,client:c.name,color,
         status:svc.status,due:svc.due,agent:_svcAssigneeIds(svc).map(id=>rosterMap[id]).filter(Boolean).join(', '),
