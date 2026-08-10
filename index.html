@@ -7978,12 +7978,21 @@ function refreshAdminOverview(){
     // drives Client Health, which is out of scope for this fix and not
     // reported as wrong; changing it here would have silently changed
     // Client Health's overdue/at-risk counts too.
+    // 'pending' (2026-08-10): same rule PR #220 added to the shared
+    // _chSvcDueStatus, hand-reused here rather than imported (this
+    // function's whole reason to exist is staying independent of that one
+    // — see the comment above it) — not done this cycle, not overdue, not
+    // within the 7-day Due Soon window, but still due somewhere in the
+    // CURRENT calendar month. per-request/one-time are excluded from due-
+    // status entirely here too, same as #220, for the same reason: neither
+    // is a cadence this rollup should ever call overdue.
     function _taSvcDueStatus(svc, todayStr){
       if(svc.workStatus==='done') return 'ok'; // completed this cycle — not overdue/at-risk
-      if(!svc.due) return 'ok';
+      if(!svc.due || svc.freq==='per-request' || svc.freq==='one-time') return 'ok';
       if(svc.due<todayStr) return 'overdue';
       const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
-      return svc.due<=soon.toISOString().slice(0,10) ? 'soon' : 'ok';
+      if(svc.due<=soon.toISOString().slice(0,10)) return 'soon';
+      return svc.due.slice(0,7)===todayStr.slice(0,7) ? 'pending' : 'ok';
     }
     // Plain-integer day count between two 'YYYY-MM-DD' strings (later minus
     // earlier) — parsed via Date.UTC so this never drifts with local
@@ -8013,21 +8022,34 @@ function refreshAdminOverview(){
     const taRows = _timeOffRoster().map(person=>{
       const admin = taAdmins.find(a=>a.id===person.id);
       const roleLabel = admin ? _getLevelInfo(admin.level).label : (person.role||'Contractor');
-      let ok=0, soon=0, overdue=0, done=0;
+      let ok=0, soon=0, overdue=0, done=0, pending=0;
       const overdueDates=[], upcomingDates=[]; let dueThisWeek=0;
       taAllServices.forEach(s=>{
         if(!_wlSvcAssignedTo(s, person.id, person.name)) return;
         const status=_taSvcDueStatus(s, taToday);
-        if(status==='ok') ok++; else if(status==='soon') soon++; else overdue++;
+        // 'pending' gets its own bucket, never folded into overdue — the
+        // catch-all else below would otherwise silently miscount it, same
+        // bug PR #220 found and fixed in Workload/My Team's Work.
+        if(status==='ok') ok++; else if(status==='soon') soon++; else if(status==='pending') pending++; else overdue++;
         if(s.workStatus==='done'){ done++; return; }
-        if(!s.due) return;
+        // Same per-request/one-time exclusion as _taSvcDueStatus just above —
+        // without it, a per-request/one-time service with a stale due date
+        // would still land in overdueDates below and make dueLabel say
+        // "overdue by N days" for a service the bucket counts just correctly
+        // classified as 'ok', a real mismatch this fix would otherwise
+        // introduce between the two.
+        if(!s.due || s.freq==='per-request' || s.freq==='one-time') return;
         if(s.due<taToday) overdueDates.push(s.due);
         else {
           upcomingDates.push(s.due);
           if(s.due<=(()=>{ const d=new Date(); d.setDate(d.getDate()+CH_DUE_SOON_DAYS); return d.toISOString().slice(0,10); })()) dueThisWeek++;
         }
       });
-      const total = ok+soon+overdue;
+      // pending counts toward total (it's still an assigned, countable
+      // service, just not urgent yet) — leaving it out would shrink the
+      // "done ÷ ALL assigned services" denominator below the real assigned
+      // count the moment a service becomes pending instead of "ok".
+      const total = ok+soon+overdue+pending;
       // 0 assigned services -> null (renders as "—"), never a false 100%
       // (the David-type bug: nothing assigned still showed 100% before).
       const pctDone = total ? Math.round(done/total*100) : null;
@@ -8036,14 +8058,19 @@ function refreshAdminOverview(){
       const weekCounts = taWeekKeys.map(wk=>doneWeeks.filter(w=>w===wk).length);
       const maxWeek = Math.max(1, ...weekCounts);
       const dueLabel = _taDueLabel(overdueDates, upcomingDates, taToday);
-      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pctDone, weekCounts, maxWeek, dueLabel, dueThisWeek };
+      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pending, pctDone, weekCounts, maxWeek, dueLabel, dueThisWeek };
     })
       // No total>0 filter — a person with zero assigned services still
       // shows (0%/"—"), per Sarah's explicit acceptance criterion, instead
       // of being silently hidden from the roster.
-      // Most-overdue-first — same tie-break chain as Workload's own sort,
-      // reused verbatim so "sorted the same way" isn't a coincidence.
-      .sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
+      // Most-behind-on-this-month's-work first: overdue+pending combined is
+      // the primary key (someone piling up pending work should surface
+      // before someone with a single stray overdue item and nothing else
+      // brewing), then plain overdue as a tiebreak so of two people with an
+      // equal combined count, the one with more ALREADY-overdue work still
+      // ranks first, then the same soon/total/name tiebreak chain Workload
+      // already uses.
+      .sort((a,b)=>((b.overdue+b.pending)-(a.overdue+a.pending))||(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
 
     if(!taRows.length){
       taContainer.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No assigned service work yet.</div>';
@@ -8072,7 +8099,7 @@ function refreshAdminOverview(){
           </div>
           <div style="display:flex;align-items:center;gap:14px;padding-left:41px;">
             <div style="font-size:11px;white-space:nowrap;">
-              <span style="font-weight:700;color:${r.dueLabel.color};">${r.dueLabel.text}</span>${r.dueThisWeek>0?` <span style="color:var(--text-light);">· ${r.dueThisWeek} due this week</span>`:''}
+              <span style="font-weight:700;color:${r.dueLabel.color};">${r.dueLabel.text}</span>${r.dueThisWeek>0?` <span style="color:var(--text-light);">· ${r.dueThisWeek} due this week</span>`:''}${r.pending>0?` <span style="color:var(--accent);">· ${r.pending} pending this month</span>`:''}
             </div>
             <div style="flex:1;"></div>
             <div style="display:flex;gap:2px;align-items:flex-end;height:22px;flex-shrink:0;" title="Completions, last ${TA_WEEKS} weeks">${sparkline}</div>
