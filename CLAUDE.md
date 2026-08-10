@@ -748,6 +748,90 @@ undo/edit paths need anyway, applying it to the plain "Log Time Off" path
 too for consistency (same effect either way, just immediate instead of
 next accidental catch-up).
 
+**PR #224's "missing `cloudAutoSync()`" premise was wrong — it added a
+second, redundant call — plus sick-overflow-into-vacation auto-spill
+(2026-08-11).** Two issues from the same task.
+
+Issue 1 (Undo/Edit buttons reportedly not appearing in production):
+exhaustively investigated and **no code defect found**. Checked every
+hypothesis the task raised, each via real Playwright reproduction, not
+just reasoning: (a) the button-render code is present on `main` and in the
+deployed template — `renderAdminTimeOffLedger()`'s `${actions}`
+interpolation is intact, `startEditTimeOffEntry`/`undoTimeOffEntry` both
+present; (b) a fresh real `doLogin()` AND the `restoreAdminSession()`
+reload path both correctly resolve `_adminLevel==='owner'` and render both
+buttons with realistic seeded ledger data; (c) `api/ops-auth.js`'s two
+issuance paths (`PRIMARY_ADMIN_EMAIL` branch and the regular admin-row
+branch) both correctly issue `level:'owner'` for super-tier admins — no
+server-side mismatch; (d) the buttons were confirmed genuinely visible and
+clickable via real `.isVisible()`/`.boundingBox()`/`click({trial:true})`
+checks, not just present in the DOM (the exact class of false-positive
+CLAUDE.md's verification standard calls out); (e) only one
+`renderAdminTimeOffLedger`/`#tolHistoryList` exists — no stale duplicate
+view. Nothing in this repo's code explains the reported symptom. Leading
+hypothesis, NOT fixed here because it's outside this session's ability to
+confirm or safely act on: a stale browser cache on Sarah's device, or she
+was looking at a non-production URL. `vercel.json` was deliberately left
+untouched rather than adding speculative cache-control headers against an
+unconfirmed cause. If the buttons are still missing after a hard refresh
+on the actual production URL, that's a live discrepancy this investigation
+could not reproduce and needs a fresh, narrower repro (exact URL, browser,
+account) rather than another blind code audit.
+
+Issue 2 (sick overflow should auto-spill into vacation instead of going
+negative): implemented as **Option A** — a pure calculation over the
+ledger, via a new `_applySickSpill(usedSickRaw, usedVacationRaw, entSick,
+entVacation)` helper (hand-duplicated in both `index.html` and `user.html`
+per rule #3), called from `getTimeOffBalance()`/`getMyTimeOffBalance()`
+right before the returned `sick`/`vacation` objects are built. The ledger
+itself is never written to for this — a sick entry stays a sick entry
+forever, only the derived/displayed balance spills the excess into
+vacation, capped at whatever vacation actually has remaining. Chosen over
+Option B (splitting into a real sick+vacation entry pair at write time)
+because it composes for free with #224's reversals: undoing the
+overflow-causing entry just changes the raw sick sum this function reads,
+which flows straight back through the same math — no separate "un-spill"
+step, no risk of the reversal targeting the wrong entry type. Verified
+against the exact task example: Assmaa with 6/6 sick already used, log a
+7th sick day → sick shows **0 used / 0 remaining (of 6)**, not -1;
+vacation shows **1 used / 14 remaining (of 15)**. Undoing that 7th entry
+restores sick to 6/0-remaining and vacation back to 0/15 — confirms the
+spill and its reversal both round-trip cleanly, no double-counting. Also
+verified: no-overflow (values pass through unchanged), exactly-at-
+entitlement (no spill), both sick and vacation fully exhausted (sick goes
+negative exactly as before — spill only ever pulls from vacation that
+actually has room), a partial spill (vacation absorbs what it can, sick
+keeps the remainder as overage), and the on-probation case (0/0
+entitlements, nothing to spill into, raw values pass through).
+
+**Real bug found and fixed while building Issue 2's verification test,
+not itself part of either reported issue:** `logTimeOffEntry()` called
+`cloudAutoSync()` **twice** per single log/edit/undo action — once mid-
+function (added by PR #224, whose commit message claimed the function
+"never called `cloudAutoSync()`," which was false) and once already at the
+end of the function (present since well before #224, commit `38c87b7`).
+Production is very likely not showing literal duplicate ledger rows from
+this — `insertNewOnly()`'s `.upsert(payload,{onConflict:'id',
+ignoreDuplicates:true})` was already confirmed idempotent against a real
+Postgres instance during #224's own work, so the second push of an
+already-accepted row should be a silent no-op server-side. But this is
+exactly the class of bug CLAUDE.md rule #2 exists to prevent — an
+unnecessary second live network push per write, resting entirely on the
+server's upsert semantics happening to save it — and it was directly
+reproducible: an isolated Playwright test logging one manual 6-day sick
+entry, with a stateful `/api/ops-sync` + `/api/ops-state` round-trip mock
+(append-then-echo-back, matching real upsert-then-pull behavior), showed
+the entry landing **twice** in the locally-reconciled ledger after the
+double push. Removed the redundant mid-function call, kept the pre-
+existing one at the end (after the form resets and the ledger re-renders,
+matching every other admin write action's convention in this file).
+Re-ran the isolation test after the fix: exactly one entry, no duplicate.
+This was found, diagnosed to its exact root commit via `git blame`, and
+fixed as part of this same PR rather than filed separately, since it
+directly affects the append-only ledger this task was already touching and
+Issue 2's own verification depended on the ledger not silently
+double-writing.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
