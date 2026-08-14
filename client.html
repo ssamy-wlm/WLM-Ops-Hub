@@ -1130,9 +1130,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
       <div class="form-group"><label class="form-label">Assigned Members</label>
         <div id="svc-assignee-checks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px;"></div>
       </div>
-      <div class="form-group" id="svc-platforms-group" style="display:none;">
+      <div class="form-group" id="svc-platforms-group">
         <label class="form-label">Platforms</label>
         <div id="svc-platforms-checks" style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 0;"></div>
+        <input class="form-input" id="svc-platforms-text" placeholder="Other platforms (comma-separated)…">
       </div>
       <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
     </div>
@@ -1175,6 +1176,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <select class="form-select" id="sc-default-assignee"><option value="">— None —</option></select>
       </div>
       <div class="form-group"><label class="form-label">Description</label><textarea class="form-input" id="sc-desc" rows="2" placeholder="Brief description…" style="resize:vertical;"></textarea></div>
+      <div class="form-group"><label class="form-label">Platform Options</label>
+        <div style="font-size:10.5px;color:var(--text-light);margin-bottom:6px;">Optional — lets a team member pick from these on a service that uses this catalog entry, instead of typing platforms freely.</div>
+        <div id="sc-platform-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input class="form-input" id="sc-platform-new" placeholder="Add a platform…" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCatalogPlatformOption();}">
+          <button type="button" class="btn btn-outline btn-sm" onclick="addCatalogPlatformOption()">+ Add</button>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('serviceCatalogModal')">Cancel</button>
@@ -1691,11 +1700,21 @@ const BUNDLE_DEFS=[
   // they stay their own catalog items.
   {bundle:'Social Media Management Bundle', freq:'monthly', items:['Social Media Management','Graphics','Short form Video']},
 ];
-// The platform checkboxes shown on the Add/Edit Service modal specifically
-// for the "Social Media Management" catalog service (matched by name, case-
-// insensitive — see _isSocialMediaService()).
-const SOCIAL_MEDIA_PLATFORMS=['Facebook','Instagram','LinkedIn','TikTok','Pinterest'];
 function _isSocialMediaService(name){ return (name||'').trim().toLowerCase()==='social media management'; }
+// Platform options are now catalog-driven (catEntry.platformOptions[],
+// editable in the Service Catalog modal — see openServiceCatalogModal()),
+// not this one hardcoded list. This is only the in-memory FALLBACK for the
+// Social Media Management entry specifically, applied ONLY when that
+// entry's own platformOptions is empty/unset — same pattern as
+// getFullCatalog()'s own categories backfill: never written back, so the
+// first real edit of the catalog entry (even re-saving the same list) is
+// what actually persists one going forward.
+const DEFAULT_SOCIAL_MEDIA_PLATFORM_OPTIONS=['Facebook','Instagram','LinkedIn','TikTok','X','YouTube','Pinterest','GBP'];
+function _resolvePlatformOptions(catEntry, serviceName){
+  if(catEntry && Array.isArray(catEntry.platformOptions) && catEntry.platformOptions.length) return catEntry.platformOptions;
+  if(_isSocialMediaService(serviceName)) return DEFAULT_SOCIAL_MEDIA_PLATFORM_OPTIONS;
+  return [];
+}
 const DEFAULT_CATALOG=(()=>{
   let n=0; const out=[];
   BUNDLE_DEFS.forEach(def=>{
@@ -3173,27 +3192,68 @@ function prefillServiceDefaults(){
     const cb=document.querySelector(`#svc-assignee-checks input[value="${svc.defaultAssignee}"]`);
     if(cb) cb.checked=true;
   }
-  _updateSvcPlatformsVisibility(svc?svc.name:'', []);
+  _updateSvcPlatformsVisibility(_resolvePlatformOptions(svc, svc?svc.name:''), []);
 }
 
-// Renders the platform checkboxes and shows/hides the group based on whether
-// the selected catalog service is "Social Media Management". `checked` is
-// the array of platform names to pre-check (used when editing an existing
-// service); pass [] for a brand-new service.
-function _updateSvcPlatformsVisibility(serviceName, checked){
-  const group=_el('svc-platforms-group');
+// Back-compat parsing: svc.platforms has always been a plain comma-
+// separated string on real client records; a narrower window of records
+// saved through the old hardcoded-checkbox-only flow stored a plain array
+// instead. Both are accepted uniformly everywhere platforms is read.
+function _parsePlatformsValue(value){
+  if(Array.isArray(value)) return value.map(v=>String(v).trim()).filter(Boolean);
+  return String(value||'').split(',').map(v=>v.trim()).filter(Boolean);
+}
+// Splits an existing platforms value against a catalog entry's option list:
+// any token that case-insensitively matches an option is pre-checked;
+// everything else (including the whole value, when there are no options to
+// match against) is preserved verbatim in the free-text field. This is the
+// one place responsible for never losing data already on the record.
+function _splitPlatformsAgainstOptions(existingPlatforms, options){
+  const tokens=_parsePlatformsValue(existingPlatforms);
+  const optionsLower=(options||[]).map(o=>o.toLowerCase());
+  const checked=[]; const leftover=[];
+  tokens.forEach(t=>{
+    const idx=optionsLower.indexOf(t.toLowerCase());
+    if(idx>-1 && !checked.includes(options[idx])) checked.push(options[idx]);
+    else leftover.push(t);
+  });
+  return { checked, freeText: leftover.join(', ') };
+}
+// Renders the platform checkboxes (from `options`, the catalog entry's own
+// list — see _resolvePlatformOptions()) pre-checked against `existingPlatforms`
+// (string or array, either is fine — see _parsePlatformsValue()), and fills
+// the always-present free-text field with whatever didn't match one of the
+// options. `options` empty just means no checkboxes render — the free-text
+// field alone still carries the full existing value untouched.
+function _updateSvcPlatformsVisibility(options, existingPlatforms){
   const wrap=_el('svc-platforms-checks');
-  if(!group||!wrap) return;
-  if(!_isSocialMediaService(serviceName)){ group.style.display='none'; wrap.innerHTML=''; return; }
-  group.style.display='';
-  const checkedSet=new Set(checked||[]);
-  wrap.innerHTML=SOCIAL_MEDIA_PLATFORMS.map(p=>`
+  const textEl=_el('svc-platforms-text');
+  if(!wrap) return;
+  const {checked, freeText}=_splitPlatformsAgainstOptions(existingPlatforms, options||[]);
+  wrap.innerHTML=(options||[]).map(p=>`
     <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;cursor:pointer;">
-      <input type="checkbox" value="${p}" ${checkedSet.has(p)?'checked':''}> ${p}
+      <input type="checkbox" value="${escHtmlClient(p)}" ${checked.includes(p)?'checked':''}> ${escHtmlClient(p)}
     </label>`).join('');
+  if(textEl) textEl.value=freeText;
 }
 function _collectSvcPlatforms(){
   return [...document.querySelectorAll('#svc-platforms-checks input[type=checkbox]:checked')].map(cb=>cb.value);
+}
+// Combines the checked catalog options with the free-text field into the
+// single comma-separated string svc.platforms has always been — checked
+// boxes first, then whatever's left in free text, exactly restoring the
+// original value when nothing was touched.
+function _collectSvcPlatformsCombined(){
+  const checked=_collectSvcPlatforms();
+  const freeText=(_el('svc-platforms-text')?.value||'').trim();
+  const freeTokens=freeText?freeText.split(',').map(t=>t.trim()).filter(Boolean):[];
+  return [...checked, ...freeTokens].join(', ');
+}
+// Normalizes svc.platforms (string OR the legacy-array shape some records
+// still carry) into one display string — used anywhere platforms is shown,
+// so a record saved through the old array-only flow still renders.
+function _platformsDisplayString(svc){
+  return Array.isArray(svc.platforms) ? svc.platforms.join(', ') : (svc.platforms||'');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3958,7 +4018,7 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${Array.isArray(svc.platforms)&&svc.platforms.length?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(svc.platforms.join(', '))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
@@ -4993,7 +5053,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     populateUserChecks('svc-assignee-checks', roster, _svcAssigneeIds(svc));
     _el('svc-notes').value=svc.notes||'';
     _updateDueHint(svc.due||'');
-    _updateSvcPlatformsVisibility(svc.name, svc.platforms||[]);
+    _updateSvcPlatformsVisibility(_resolvePlatformOptions(catEntry, svc.name), svc.platforms);
   } else {
     const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
     _el('svc-modal-title').textContent='Add Bundle Service';
@@ -5007,7 +5067,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     populateUserChecks('svc-assignee-checks', roster, []);
     _el('svc-notes').value='';
     _updateDueHint(_el('svc-due').value);
-    _updateSvcPlatformsVisibility('', []);
+    _updateSvcPlatformsVisibility([], []);
   }
   openModal('addServiceModal');
   if(!entryId) setTimeout(()=>_maybeShowTip('clientAddService','#svc-modal-title','Pick from the Service Catalog, or type a new name to add it on the fly.'),50);
@@ -5091,11 +5151,16 @@ function saveClientService(){
   const lastDone=_el('svc-lastdone').value||'';
   const due=_el('svc-due').value;
   const data=_buildServiceRecord({catalogId, assigneeIds, freq, lastDone, due, notes:_el('svc-notes').value, current});
-  // Platforms only apply to the "Social Media Management" service — collected
-  // from the checkbox group (see _updateSvcPlatformsVisibility()), never from
-  // free text. Other services keep whatever platforms field they already had
-  // (or none) untouched.
-  if(_isSocialMediaService(data.name)) data.platforms=_collectSvcPlatforms();
+  // Platforms: checked catalog options + free text, combined back into the
+  // single comma-separated string svc.platforms has always been (see
+  // _collectSvcPlatformsCombined()) — applies to every service now, not
+  // just Social Media Management. The free-text field is always populated
+  // with whatever wasn't matched to an option on open (see
+  // _updateSvcPlatformsVisibility()), so a save with nothing touched here
+  // writes back the exact same value rather than blanking it. Guarded on
+  // the field actually existing in the DOM — never blank-overwrite if it's
+  // somehow absent (same defensive rule as Service Areas' save).
+  if(_el('svc-platforms-text')) data.platforms=_collectSvcPlatformsCombined();
   if(entryId){
     if(idx>=0){
       Object.assign(targetList[idx], data);
@@ -5759,6 +5824,35 @@ function renderCatalog(){
 // looked up by id (never a raw name) so this is safe to call from an
 // inline onclick with no quoting/escaping risk from a bundle name
 // containing an apostrophe or other special character.
+// Platform Options chip editor (Service Catalog modal) — local editing
+// state while the modal is open, only written back to the catalog entry
+// on Save. Add/remove/reorder, per the task; reorder is plain array-index
+// swaps (no drag lib needed for a handful of chips).
+let _scPlatformOptions=[];
+function _renderCatalogPlatformChips(){
+  const wrap=_el('sc-platform-chips'); if(!wrap) return;
+  wrap.innerHTML=_scPlatformOptions.length ? _scPlatformOptions.map((p,i)=>`
+    <span style="display:inline-flex;align-items:center;gap:3px;padding:4px 6px 4px 11px;border-radius:20px;background:var(--bg2);border:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-dark);">
+      ${i>0?`<button type="button" onclick="moveCatalogPlatformOption(${i},-1)" title="Move earlier" style="border:none;background:none;cursor:pointer;color:var(--text-light);padding:0 2px;font-size:11px;">‹</button>`:''}
+      ${escHtmlClient(p)}
+      ${i<_scPlatformOptions.length-1?`<button type="button" onclick="moveCatalogPlatformOption(${i},1)" title="Move later" style="border:none;background:none;cursor:pointer;color:var(--text-light);padding:0 2px;font-size:11px;">›</button>`:''}
+      <button type="button" onclick="removeCatalogPlatformOption(${i})" title="Remove" style="border:none;background:none;cursor:pointer;color:var(--red);font-weight:700;padding:0 2px;font-size:11px;">✕</button>
+    </span>`).join('') : `<div style="font-size:11px;color:var(--text-light);">No platform options yet — falls back to a free-text field on services using this entry.</div>`;
+}
+function addCatalogPlatformOption(){
+  const input=_el('sc-platform-new'); const val=(input?.value||'').trim();
+  if(!val) return;
+  if(_scPlatformOptions.some(p=>p.toLowerCase()===val.toLowerCase())){ showToast('That platform is already in the list','warn'); return; }
+  _scPlatformOptions.push(val);
+  if(input) input.value='';
+  _renderCatalogPlatformChips();
+}
+function removeCatalogPlatformOption(i){ _scPlatformOptions.splice(i,1); _renderCatalogPlatformChips(); }
+function moveCatalogPlatformOption(i,dir){
+  const j=i+dir; if(j<0||j>=_scPlatformOptions.length) return;
+  [_scPlatformOptions[i],_scPlatformOptions[j]]=[_scPlatformOptions[j],_scPlatformOptions[i]];
+  _renderCatalogPlatformChips();
+}
 function openServiceCatalogModal(id, presetBundleId){
   _el('sc-modal-title').textContent=id?'Edit Service':'Add Service';
   _el('sc-id').value=id||'';
@@ -5772,11 +5866,15 @@ function openServiceCatalogModal(id, presetBundleId){
   if(id){
     const s=getCatalog().find(x=>x.id===id); if(!s) return;
     _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||''; catEl.value=s.category||'';
+    _scPlatformOptions=Array.isArray(s.platformOptions)?s.platformOptions.slice():[];
   } else {
     _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value=''; catEl.value='';
     const presetBundle = presetBundleId ? getCatalogBundles().find(b=>b.id===presetBundleId) : null;
     bundleEl.value = presetBundle ? presetBundle.name : '';
+    _scPlatformOptions=[];
   }
+  if(_el('sc-platform-new')) _el('sc-platform-new').value='';
+  _renderCatalogPlatformChips();
   openModal('serviceCatalogModal');
 }
 function editServiceCatalog(id){ openServiceCatalogModal(id); }
@@ -5785,7 +5883,7 @@ function saveServiceCatalog(){
   if(!name){ showToast('Service name required','warn'); return; }
   const id=_el('sc-id').value;
   const {bundles, services}=getFullCatalog();
-  const data={name,bundle:_el('sc-bundle').value||null,category:_el('sc-category').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value};
+  const data={name,bundle:_el('sc-bundle').value||null,category:_el('sc-category').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value,platformOptions:_scPlatformOptions.slice()};
   if(id){ const s=services.find(x=>x.id===id); if(s) Object.assign(s,data); }
   else services.push({id:'svc'+uid(),...data});
   saveFullCatalog(bundles, services);
