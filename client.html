@@ -1709,7 +1709,7 @@ function _isSocialMediaService(name){ return (name||'').trim().toLowerCase()==='
 // getFullCatalog()'s own categories backfill: never written back, so the
 // first real edit of the catalog entry (even re-saving the same list) is
 // what actually persists one going forward.
-const DEFAULT_SOCIAL_MEDIA_PLATFORM_OPTIONS=['Facebook','Instagram','LinkedIn','TikTok','X','YouTube','Pinterest','GBP'];
+const DEFAULT_SOCIAL_MEDIA_PLATFORM_OPTIONS=['Facebook','Instagram','LinkedIn','TikTok','X','YouTube'];
 function _resolvePlatformOptions(catEntry, serviceName){
   if(catEntry && Array.isArray(catEntry.platformOptions) && catEntry.platformOptions.length) return catEntry.platformOptions;
   if(_isSocialMediaService(serviceName)) return DEFAULT_SOCIAL_MEDIA_PLATFORM_OPTIONS;
