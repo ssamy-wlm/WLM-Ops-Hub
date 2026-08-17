@@ -1135,6 +1135,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <div id="svc-platforms-checks" style="display:flex;flex-wrap:wrap;gap:12px;padding:8px 0;"></div>
         <input class="form-input" id="svc-platforms-text" placeholder="Other platforms (comma-separated)…">
       </div>
+      <div class="form-group" id="svc-hosting-group" style="display:none;">
+        <label class="form-label">Platform</label>
+        <select class="form-select" id="svc-siteplatform" onchange="_toggleHostingOtherField('svc-siteplatform','svc-siteplatform-other')"></select>
+        <input class="form-input" id="svc-siteplatform-other" placeholder="Type platform…" style="display:none;margin-top:6px;">
+        <label class="form-label" style="margin-top:10px;display:block;">Hosting Provider</label>
+        <select class="form-select" id="svc-hostingprovider" onchange="_toggleHostingOtherField('svc-hostingprovider','svc-hostingprovider-other')"></select>
+        <input class="form-input" id="svc-hostingprovider-other" placeholder="Type hosting provider…" style="display:none;margin-top:6px;">
+      </div>
       <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
     </div>
     <div class="modal-footer">
@@ -3193,6 +3201,7 @@ function prefillServiceDefaults(){
     if(cb) cb.checked=true;
   }
   _updateSvcPlatformsVisibility(_resolvePlatformOptions(svc, svc?svc.name:''), []);
+  _updateSvcHostingVisibility(svc?svc.name:'', null);
 }
 
 // Back-compat parsing: svc.platforms has always been a plain comma-
@@ -3254,6 +3263,61 @@ function _collectSvcPlatformsCombined(){
 // so a record saved through the old array-only flow still renders.
 function _platformsDisplayString(svc){
   return Array.isArray(svc.platforms) ? svc.platforms.join(', ') : (svc.platforms||'');
+}
+
+// ── Website Hosting: Platform + Hosting Provider (2026-08-17) ──────────────
+// Shown only for a service whose NAME contains "Hosting" (covers the
+// catalog's "Website Hosting" and any legacy "Hosting Management" record) —
+// a substring match, not a catalog id, so it also catches an uncatalogued
+// or renamed hosting service. Small constants per the task, so the option
+// lists are easy to extend later without touching the render/save logic.
+const HOSTING_PLATFORM_OPTIONS=['WordPress','Squarespace'];
+const HOSTING_PROVIDER_OPTIONS=['WebLight Media','SiteGround'];
+function _isHostingService(name){ return (name||'').toLowerCase().includes('hosting'); }
+// Populates one dropdown with its base options + a trailing literal "Other",
+// then resolves the existing value against them: an exact match selects it
+// (free-text sibling stays hidden/empty); any other non-empty value selects
+// "Other" and pre-fills the free-text box with it verbatim — this is what
+// lets an existing value that ISN'T in the list still show correctly
+// (rendered via Other) instead of silently reverting to blank.
+function _renderHostingDropdown(selectId, textId, options, value){
+  const sel=_el(selectId), textEl=_el(textId);
+  if(!sel) return;
+  sel.innerHTML=`<option value="">— Select —</option>`+options.map(o=>`<option value="${escHtmlClient(o)}">${escHtmlClient(o)}</option>`).join('')+`<option value="Other">Other</option>`;
+  const trimmed=(value||'').trim();
+  if(trimmed && options.includes(trimmed)){ sel.value=trimmed; if(textEl){ textEl.style.display='none'; textEl.value=''; } }
+  else if(trimmed){ sel.value='Other'; if(textEl){ textEl.style.display=''; textEl.value=trimmed; } }
+  else { sel.value=''; if(textEl){ textEl.style.display='none'; textEl.value=''; } }
+}
+// onchange handler for both hosting dropdowns — reveals the free-text box
+// only while "Other" is selected, and clears it otherwise so switching back
+// to a real option can never leave stale hidden text to accidentally save.
+function _toggleHostingOtherField(selectId, textId){
+  const sel=_el(selectId), textEl=_el(textId);
+  if(!sel||!textEl) return;
+  textEl.style.display = sel.value==='Other' ? '' : 'none';
+  if(sel.value!=='Other') textEl.value='';
+}
+// Shows/hides the whole Platform + Hosting Provider group and (re)populates
+// both dropdowns. `svc` is the actual client-service record being edited
+// (for its real sitePlatform/hostingProvider), or null/undefined for a
+// fresh catalog pick with nothing to preserve yet.
+function _updateSvcHostingVisibility(serviceName, svc){
+  const group=_el('svc-hosting-group');
+  if(!group) return;
+  if(!_isHostingService(serviceName)){ group.style.display='none'; return; }
+  group.style.display='';
+  _renderHostingDropdown('svc-siteplatform','svc-siteplatform-other', HOSTING_PLATFORM_OPTIONS, svc?svc.sitePlatform:'');
+  _renderHostingDropdown('svc-hostingprovider','svc-hostingprovider-other', HOSTING_PROVIDER_OPTIONS, svc?svc.hostingProvider:'');
+}
+// Reads one dropdown+free-text pair back into the value to save: the
+// select's own value normally, or the free-text content when "Other" is
+// selected. Returns undefined if the select is missing (caller's own
+// existence check decides whether that means "skip, don't touch the key").
+function _collectHostingDropdownValue(selectId, textId){
+  const sel=_el(selectId); if(!sel) return undefined;
+  if(sel.value==='Other') return (_el(textId)?.value||'').trim();
+  return sel.value;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -4018,7 +4082,7 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
@@ -5054,6 +5118,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _el('svc-notes').value=svc.notes||'';
     _updateDueHint(svc.due||'');
     _updateSvcPlatformsVisibility(_resolvePlatformOptions(catEntry, svc.name), svc.platforms);
+    _updateSvcHostingVisibility(svc.name, svc);
   } else {
     const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
     _el('svc-modal-title').textContent='Add Bundle Service';
@@ -5068,6 +5133,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _el('svc-notes').value='';
     _updateDueHint(_el('svc-due').value);
     _updateSvcPlatformsVisibility([], []);
+    _updateSvcHostingVisibility('', null);
   }
   openModal('addServiceModal');
   if(!entryId) setTimeout(()=>_maybeShowTip('clientAddService','#svc-modal-title','Pick from the Service Catalog, or type a new name to add it on the fly.'),50);
@@ -5161,6 +5227,16 @@ function saveClientService(){
   // the field actually existing in the DOM — never blank-overwrite if it's
   // somehow absent (same defensive rule as Service Areas' save).
   if(_el('svc-platforms-text')) data.platforms=_collectSvcPlatformsCombined();
+  // Platform/Hosting Provider: only for a service whose name contains
+  // "Hosting" — never adds these keys to an unrelated service just because
+  // the (hidden) inputs happen to exist in the DOM. Existing platforms/
+  // notes are completely untouched by this — separate keys, separate save
+  // calls above/below. Each field is set independently and only when its
+  // own input exists, so one missing element can never blank the other.
+  if(_isHostingService(data.name)){
+    if(_el('svc-siteplatform')) data.sitePlatform=_collectHostingDropdownValue('svc-siteplatform','svc-siteplatform-other');
+    if(_el('svc-hostingprovider')) data.hostingProvider=_collectHostingDropdownValue('svc-hostingprovider','svc-hostingprovider-other');
+  }
   if(entryId){
     if(idx>=0){
       Object.assign(targetList[idx], data);
