@@ -26,9 +26,23 @@
 // row is filtered out of every notification this endpoint creates, so the
 // member's own (pre-existing, local-only) overdue awareness is left exactly
 // as it was before this feature; this cron never notifies the assignee.
+//
+// Also runs the daily ops_backups snapshot (see lib/opsBackup.js) at the end
+// of every invocation, regardless of the overdue-notifications toggle below.
+// This used to be its own endpoint (api/cron-backup.js, its own Vercel Cron
+// entry) but that endpoint has been deleted outright: the Vercel Hobby plan
+// this app runs on caps both the number of scheduled crons AND the total
+// number of serverless functions per project (12), and this app was over
+// that function limit too — so rather than leaving cron-backup.js in place
+// as an unscheduled-but-still-deployed function (which would have kept
+// costing one of those 12 slots for nothing), its logic was folded in here
+// and the file removed. A manual/on-demand snapshot is still available via
+// api/ops-backups.js's `action:'manual'` (Admin Controls → Data Backups →
+// Create Manual Snapshot), so no capability was actually lost.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveNotifyRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
+import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
 
 function isInactiveService(s) { return s.status === 'cancelled' || s.status === 'archived'; }
 // Same rule as client.html's _svcIsDoneThisCycle/_svcDueStatus — kept in sync
@@ -75,72 +89,95 @@ export default async function handler(req, res) {
     const { data: settingsRow } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
     const overdueEnabled = settingsRow?.data?.overdue !== false; // default ON, matching every other event type
     if (!overdueEnabled) {
-      return res.status(200).json({ ok: true, skipped: 'overdue notifications disabled', summary });
-    }
+      summary.skipped = 'overdue notifications disabled';
+    } else {
+      const { data: clientRows, error: clientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
+      if (clientErr) {
+        warnings.push(`clients: ${clientErr.message}`);
+      } else {
+        const t = new Date().toISOString().slice(0, 10);
+        const events = [];
+        const clientsToUpdate = [];
 
-    const { data: clientRows, error: clientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
-    if (clientErr) { warnings.push(`clients: ${clientErr.message}`); return res.status(500).json({ error: clientErr.message, warnings }); }
-
-    const t = new Date().toISOString().slice(0, 10);
-    const events = [];
-    const clientsToUpdate = [];
-
-    for (const row of clientRows || []) {
-      const client = row.data;
-      if (!client) continue;
-      summary.scanned++;
-      let changed = false;
-      const scan = (list, locationName) => {
-        (list || []).forEach(s => {
-          if (!s?.id || !isOverdue(s, t)) return;
-          summary.overdueFound++;
-          if (s.overdueNotifiedFor === s.due) return; // already notified for this exact cycle
-          s.overdueNotifiedFor = s.due;
-          changed = true;
-          events.push({
-            serviceId: s.id, serviceName: s.name, locationName,
-            assigneeId: s.assigneeId, clientId: client.id, clientName: client.name, due: s.due,
-          });
-        });
-      };
-      scan(client.services, null);
-      (client.locations || []).forEach(loc => scan(loc.services, loc.name));
-      if (changed) clientsToUpdate.push({ id: row.id, status: row.status, data: client });
-    }
-
-    summary.newlyStamped = events.length;
-
-    if (clientsToUpdate.length) {
-      const payload = clientsToUpdate.map(c => ({ id: c.id, data: c.data, status: c.status }));
-      const { error } = await supabase.from('ops_clients').upsert(payload, { onConflict: 'id' });
-      if (error) warnings.push(`clients update: ${error.message}`);
-      else summary.clientsUpdated = payload.length;
-    }
-
-    if (events.length) {
-      const { users, admins } = await loadDirectory(supabase);
-      const rows = [];
-      events.forEach(ev => {
-        if (!ev.assigneeId) return;
-        resolveNotifyRecipients(ev.assigneeId, users, admins, 'overdue')
-          .filter(r => r.id !== ev.assigneeId)
-          .forEach(r => {
-            const person = personOf(r.id, r.kind, { users, admins });
-            rows.push({
-              type: 'overdue', recipientId: r.id, recipientKind: r.kind,
-              recipientName: person?.name || '', recipientEmail: person?.email || '',
-              title: `Overdue: ${ev.serviceName}`,
-              body: `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''} — was due ${ev.due}`,
-              link: '',
-              context: { clientId: ev.clientId, serviceId: ev.serviceId },
+        for (const row of clientRows || []) {
+          const client = row.data;
+          if (!client) continue;
+          summary.scanned++;
+          let changed = false;
+          const scan = (list, locationName) => {
+            (list || []).forEach(s => {
+              if (!s?.id || !isOverdue(s, t)) return;
+              summary.overdueFound++;
+              if (s.overdueNotifiedFor === s.due) return; // already notified for this exact cycle
+              s.overdueNotifiedFor = s.due;
+              changed = true;
+              events.push({
+                serviceId: s.id, serviceName: s.name, locationName,
+                assigneeId: s.assigneeId, clientId: client.id, clientName: client.name, due: s.due,
+              });
             });
+          };
+          scan(client.services, null);
+          (client.locations || []).forEach(loc => scan(loc.services, loc.name));
+          if (changed) clientsToUpdate.push({ id: row.id, status: row.status, data: client });
+        }
+
+        summary.newlyStamped = events.length;
+
+        if (clientsToUpdate.length) {
+          const payload = clientsToUpdate.map(c => ({ id: c.id, data: c.data, status: c.status }));
+          const { error } = await supabase.from('ops_clients').upsert(payload, { onConflict: 'id' });
+          if (error) warnings.push(`clients update: ${error.message}`);
+          else summary.clientsUpdated = payload.length;
+        }
+
+        if (events.length) {
+          const { users, admins } = await loadDirectory(supabase);
+          const rows = [];
+          events.forEach(ev => {
+            if (!ev.assigneeId) return;
+            resolveNotifyRecipients(ev.assigneeId, users, admins, 'overdue')
+              .filter(r => r.id !== ev.assigneeId)
+              .forEach(r => {
+                const person = personOf(r.id, r.kind, { users, admins });
+                rows.push({
+                  type: 'overdue', recipientId: r.id, recipientKind: r.kind,
+                  recipientName: person?.name || '', recipientEmail: person?.email || '',
+                  title: `Overdue: ${ev.serviceName}`,
+                  body: `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''} — was due ${ev.due}`,
+                  link: '',
+                  context: { clientId: ev.clientId, serviceId: ev.serviceId },
+                });
+              });
           });
-      });
-      await insertNotifications(supabase, rows, warnings);
-      summary.notificationsSent = rows.length;
+          await insertNotifications(supabase, rows, warnings);
+          summary.notificationsSent = rows.length;
+        }
+      }
     }
 
-    return res.status(200).json({ ok: true, summary, warnings });
+    // Daily backup snapshot — see the header comment above. Runs every
+    // invocation, independent of the overdue-notifications branch above, so
+    // a disabled overdue toggle (or an overdue-side warning) never silently
+    // stops the daily backup from happening. Failures here are logged and
+    // reported in the response but never turn this endpoint's own overdue
+    // work into a failure — the two jobs are independent, just sharing a
+    // schedule slot.
+    let backup;
+    try {
+      const { warnings: backupWarnings, snapshot } = await buildBackupSnapshot(supabase);
+      const id = await insertBackupRow(supabase, 'daily-auto', snapshot);
+      const prune = await pruneOldDailyBackups(supabase, 30);
+      if (backupWarnings.length) {
+        await logError({ endpoint: 'cron-overdue-check:backup', error: `snapshot completed with ${backupWarnings.length} table warning(s)`, extra: { warnings: backupWarnings } });
+      }
+      backup = { ok: true, id, tableCounts: snapshot.meta.tableCounts, warnings: backupWarnings, trimmed: prune.trimmed, pruneError: prune.error || null };
+    } catch (err) {
+      await logError({ endpoint: 'cron-overdue-check:backup', error: err });
+      backup = { ok: false, error: err.message };
+    }
+
+    return res.status(200).json({ ok: true, summary, warnings, backup });
   } catch (err) {
     await logError({ endpoint: 'cron-overdue-check', error: err });
     return res.status(500).json({ error: err.message });
