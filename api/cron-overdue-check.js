@@ -29,13 +29,16 @@
 //
 // Also runs the daily ops_backups snapshot (see lib/opsBackup.js) at the end
 // of every invocation, regardless of the overdue-notifications toggle below.
-// This used to be its own Vercel Cron entry (api/cron-backup.js), but the
-// Vercel plan this app runs on caps the number of scheduled crons at one, so
-// the daily snapshot now piggybacks on this job's existing schedule instead
-// of having its own. api/cron-backup.js itself is unchanged and still a
-// normal CRON_SECRET-gated endpoint — just no longer wired into
-// vercel.json's `crons` list — so it stays directly callable (e.g. for a
-// manual backfill) without needing its own cron slot.
+// This used to be its own endpoint (api/cron-backup.js, its own Vercel Cron
+// entry) but that endpoint has been deleted outright: the Vercel Hobby plan
+// this app runs on caps both the number of scheduled crons AND the total
+// number of serverless functions per project (12), and this app was over
+// that function limit too — so rather than leaving cron-backup.js in place
+// as an unscheduled-but-still-deployed function (which would have kept
+// costing one of those 12 slots for nothing), its logic was folded in here
+// and the file removed. A manual/on-demand snapshot is still available via
+// api/ops-backups.js's `action:'manual'` (Admin Controls → Data Backups →
+// Create Manual Snapshot), so no capability was actually lost.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveNotifyRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';

@@ -832,6 +832,70 @@ directly affects the append-only ledger this task was already touching and
 Issue 2's own verification depended on the ledger not silently
 double-writing.
 
+**Daily backup snapshots (ops_backups) + admin restore viewer, and the
+Vercel Hobby-plan limits it collided with (2026-08-18).** Built a daily
+automated snapshot of every `ops_*` data table into a new `ops_backups`
+table, plus an Admin Controls "Data Backups" panel (Super Admin/Owner
+only) to list/download snapshots, take an on-demand manual snapshot, and
+restore one — restore follows the full rule #6 pattern (dry run computes a
+per-table diff and an HMAC `reviewToken`; confirm requires typing
+`RESTORE <backup-id>` exactly, both re-checked server-side) and is
+deliberately upsert-only, never deleting a row that's live but absent from
+the snapshot. New migration `20260817130000_ops_backups.sql`: a dedicated
+`ops_backups_guard()` trigger (blocks all UPDATE; blocks DELETE except on
+`daily-auto` rows, matching the narrow-exception pattern already
+established for `ops_error_log`). Shared logic lives in `lib/opsBackup.js`
+(`BACKUP_TABLE_PK` per-table primary-key map, since this schema isn't
+uniformly `id`; `APPEND_ONLY_TABLES` special-cases `ops_feed`/
+`ops_time_off_ledger` to insert-missing-only, since their DB trigger blocks
+all UPDATE/DELETE unconditionally). Deliberately excludes `ops_error_log`
+and `ops_session_activity` from the snapshot/restore scope — diagnostic/log
+tables, not restorable business data.
+
+This shipped as its own scheduled cron (`api/cron-backup.js`, a second
+`vercel.json` crons entry) and immediately hit two separate Vercel Hobby
+plan ceilings in sequence, each only visible once the *previous* one was
+fixed and a real deploy was attempted:
+
+1. **Cron-count limit.** Two `crons` entries exceeded the plan's per-project
+   cron limit, failing every production deploy. Fixed by removing the
+   `api/cron-backup.js` entry from `vercel.json` and instead calling the
+   same `buildBackupSnapshot`/`insertBackupRow`/`pruneOldDailyBackups`
+   logic from the end of `api/cron-overdue-check.js`'s own run — piggy-
+   backing the daily snapshot onto the one remaining cron slot. The backup
+   step runs unconditionally, independent of the overdue-notifications
+   toggle and of whether the overdue-side client read succeeds, so neither
+   a disabled toggle nor an overdue-side error silently stops the daily
+   backup; a backup failure is caught, logged, and reported in the
+   response's `backup` field without turning the endpoint's own overdue
+   work into a failure.
+2. **Function-count limit.** Separately, the app had grown to 14 files
+   under `api/`, exceeding the Hobby plan's 12-serverless-function cap —
+   also a hard deploy-blocker, unrelated to the cron-count issue above
+   (confirmed by finding the identical immediate deployment failure on a
+   commit that predated the cron fix). Fixed by deleting two files outright
+   rather than just trimming call sites: `api/cron-backup.js` (fully
+   redundant once its logic moved into `cron-overdue-check.js` per the fix
+   above — keeping it around unscheduled would still have cost one of the
+   12 function slots for nothing) and `api/import-legacy-data.js` (the
+   one-time Phase 5 client importer — its job was done and verified back
+   when it ran, so per rule #6 it was due for removal regardless of the
+   function-count pressure; this just made it non-optional). Removing the
+   importer also meant removing its Admin Controls UI card and JS
+   (`runClientImportDryRun`/`confirmClientImport`/etc.) from `index.html`
+   per rule #6's "remove the tool: endpoint, UI card, JS functions"
+   language — leaving the frontend calling a deleted endpoint would have
+   silently 404'd for any admin who clicked it. `lib/legacyDataTransform.js`
+   was noticed to already be fully orphaned (no import anywhere, including
+   from `import-legacy-data.js` itself, despite its header comment
+   referencing that file) — left alone as out of scope for this fix, since
+   it costs no serverless-function slot; flagged here instead of silently
+   deleted.
+
+Net effect: 12 files under `api/`, exactly at the Hobby plan's limit — any
+future new endpoint needs an existing one removed or folded in first, not
+just added.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
@@ -840,6 +904,13 @@ double-writing.
   `ops_error_log.archived_at`) came from this before a CI pipeline existed
   to close it. Left here as a pointer rather than deleted so the history of
   why this got built isn't lost.
+- **`lib/legacyDataTransform.js` is fully orphaned** — found while removing
+  `api/import-legacy-data.js` (2026-08-18, see above): nothing imports it,
+  not even `import-legacy-data.js` itself despite that file's own header
+  comment referencing it. Left in place — it costs no serverless-function
+  slot, so it wasn't part of the Hobby-plan fix that prompted this — but
+  it's dead code from an earlier, abandoned schema-transform attempt and a
+  candidate for deletion whenever someone's actually looking at it.
 - **`client.html`'s `calcNextDue()` has no `quarterly` case**: found while
   fixing the no-weekend recurring-rollover gap (2026-08-06, see above) — a
   quarterly-freq service marked done via the admin Tracker wouldn't advance

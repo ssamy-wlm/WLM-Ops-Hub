@@ -1,8 +1,8 @@
 // Admin viewer + guarded restore for ops_backups snapshots (daily-auto from
-// api/cron-backup.js, or manual — created here). Super Admin/Owner only,
-// same tier gate as Import Clients/Error Log/Schema Drift — a full-data
-// restore is exactly the kind of high-blast-radius operation CLAUDE.md rule
-// #6 reserves for the strictest access band.
+// api/cron-overdue-check.js's end-of-run backup step, or manual — created
+// here). Super Admin/Owner only, same tier gate as Error Log/Schema Drift —
+// a full-data restore is exactly the kind of high-blast-radius operation
+// CLAUDE.md rule #6 reserves for the strictest access band.
 //
 // GET  (no query)        -> list snapshots: id, kind, created_at, size_bytes
 //                            (never the full `data` blob, so listing stays
