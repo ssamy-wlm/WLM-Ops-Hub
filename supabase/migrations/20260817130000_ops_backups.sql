@@ -7,6 +7,10 @@
 -- "Create Manual Snapshot" action in Admin Controls). `size_bytes` is
 -- computed once at insert time so the admin viewer's list view never has to
 -- pull the (potentially large) `data` blob just to show a size column.
+-- `kind` is free-text, not constrained to a fixed set of values — the guard
+-- trigger below only special-cases the literal 'daily-auto', anything else
+-- (including 'manual', or ad hoc values like 'manual-full') is treated as a
+-- permanent, undeletable snapshot.
 --
 -- Guard trigger (mirrors the narrow-exception pattern
 -- 20260805120000_ops_error_log_archive_guard.sql already established for
@@ -23,11 +27,12 @@
 
 create table if not exists public.ops_backups (
   id         text primary key,
-  kind       text not null check (kind in ('daily-auto','manual')),
+  kind       text not null,
   data       jsonb not null,
   size_bytes integer not null default 0,
   created_at timestamptz not null default now()
 );
+alter table public.ops_backups add column if not exists size_bytes integer not null default 0;
 create index if not exists idx_ops_backups_kind_created_at on public.ops_backups(kind, created_at);
 
 create or replace function public.ops_backups_guard()
