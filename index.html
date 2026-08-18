@@ -2264,6 +2264,31 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── DATA BACKUPS — Super Admin/Owner only ── -->
+      <div class="card" style="margin-top:22px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🗄 Data Backups</div>
+            <div class="card-sub">A daily automatic snapshot of every data table, plus on-demand manual snapshots — download anytime; restore only with a dry run and typed confirmation.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="createManualBackup()">📸 Create Manual Snapshot</button>
+        </div>
+        <div class="card-body">
+          <div id="backupsListStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:10px;">Loading snapshots…</div>
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Date</th>
+                <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Kind</th>
+                <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Size</th>
+                <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="backupsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- ── EMAIL NOTIFICATIONS ── -->
       <div class="card" style="margin-top:22px;">
         <div class="card-header">
@@ -2460,6 +2485,30 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('grantManagerModal')">Cancel</button>
       <button class="btn btn-primary" onclick="grantManagerRole()">Grant Manager Role →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Restore Snapshot Modal — dry run required before Confirm unlocks, typed
+     confirmation phrase re-checked server-side, never auto-runs. -->
+<div id="restoreBackupModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Restore Snapshot</div><div class="modal-sub" id="restoreBackupSub"></div></div>
+      <button class="modal-close" onclick="closeModal('restoreBackupModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">
+        Run a dry run first — it makes no changes and shows exactly what restoring this snapshot would do. Confirm stays disabled until a dry run has succeeded and you've typed the exact phrase below.
+      </div>
+      <button class="btn btn-outline btn-sm" id="restoreDryRunBtn" onclick="runRestoreDryRun()">Run Dry Run</button>
+      <div id="restoreDryRunResults" style="margin-top:14px;font-size:13px;"></div>
+      <div id="restoreConfirmSection" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+        <label class="form-label">Type <code id="restoreConfirmPhraseHint" style="background:var(--bg);padding:2px 6px;border-radius:4px;"></code> to confirm</label>
+        <input class="form-input" id="restoreConfirmPhraseInput" placeholder="Type the exact phrase above" oninput="_updateRestoreConfirmBtn()">
+        <button class="btn btn-danger btn-sm" id="restoreConfirmBtn" style="margin-top:10px;" disabled onclick="confirmRestore()">⚠ Confirm Restore</button>
+      </div>
+      <div id="restoreFinalResults" style="margin-top:14px;font-size:13px;"></div>
     </div>
   </div>
 </div>
@@ -3215,7 +3264,7 @@ function switchAdminTab(el, tab){
   // same gate as the card's own visibility in applyAdminRoleRestrictions().
   if(tab==='adminControls'){
     if(_adminLevel==='super' || _adminLevel==='owner'){
-      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus();
+      loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); loadBackupsList();
     }
     if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
@@ -7042,6 +7091,192 @@ function downloadLocalData(){
     if(typeof showToast === 'function') showToast(`✅ Local data downloaded (${out.keyCount} keys)`);
   }catch(e){
     if(typeof showToast === 'function') showToast('❌ Local export failed: '+e.message);
+  }
+}
+
+// ── Data Backups (Admin Controls, Super Admin only) ────────────────────────
+// loadBackupsList() is called ONLY from switchAdminTab()'s explicit
+// 'adminControls' branch — a deliberate navigation action, same as Error
+// Log/Schema Drift right next to it — never on page load, sync, or a timer
+// (CLAUDE.md rule #2's banned pattern).
+const OPS_BACKUPS_URL = '/api/ops-backups';
+let _backupsList = [];
+let _restoreState = null; // { id, dryRunOk, reviewToken }
+
+function _fmtBackupBytes(n){
+  if(n==null) return '—';
+  if(n<1024) return n+' B';
+  if(n<1024*1024) return (n/1024).toFixed(1)+' KB';
+  return (n/1024/1024).toFixed(2)+' MB';
+}
+
+async function loadBackupsList(){
+  const token = _opsToken();
+  const statusEl = document.getElementById('backupsListStatus');
+  if(!token){ if(statusEl) statusEl.textContent='Not signed in.'; return; }
+  try{
+    const res = await fetch(OPS_BACKUPS_URL, { headers:{Authorization:'Bearer '+token} });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    _backupsList = data.snapshots || [];
+    _renderBackupsTable();
+    if(statusEl) statusEl.textContent = _backupsList.length ? `${_backupsList.length} snapshot(s)` : 'No snapshots yet.';
+  }catch(e){
+    if(statusEl) statusEl.textContent = '❌ Failed to load snapshots: '+e.message;
+  }
+}
+
+function _renderBackupsTable(){
+  const body = document.getElementById('backupsTableBody');
+  if(!body) return;
+  if(!_backupsList.length){
+    body.innerHTML = `<tr><td colspan="4" style="padding:14px;color:var(--text-light);font-size:13px;">No snapshots yet.</td></tr>`;
+    return;
+  }
+  body.innerHTML = _backupsList.map(s=>{
+    const dateLabel = new Date(s.created_at).toLocaleString();
+    const kindLabel = s.kind==='daily-auto' ? 'Daily (auto)' : 'Manual';
+    return `
+    <tr>
+      <td style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(dateLabel)}</td>
+      <td style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(kindLabel)}</td>
+      <td style="padding:8px 10px;font-size:12px;">${_fmtBackupBytes(s.size_bytes)}</td>
+      <td style="padding:8px 10px;">
+        <button class="btn btn-xs btn-outline" onclick="downloadBackup('${s.id}')">⬇ Download</button>
+        <button class="btn btn-xs btn-danger" onclick="openRestoreBackupModal('${s.id}')">Restore…</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function createManualBackup(){
+  if(!confirm('Create a manual snapshot of all data right now?')) return;
+  const token = _opsToken(); if(!token) return;
+  const statusEl = document.getElementById('backupsListStatus');
+  if(statusEl) statusEl.textContent = 'Creating snapshot…';
+  try{
+    const res = await fetch(OPS_BACKUPS_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({action:'manual'}) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    showToast('✅ Manual snapshot created');
+    await loadBackupsList();
+  }catch(e){
+    if(statusEl) statusEl.textContent = '❌ Snapshot failed: '+e.message;
+  }
+}
+
+async function downloadBackup(id){
+  const token = _opsToken(); if(!token) return;
+  try{
+    const res = await fetch(OPS_BACKUPS_URL+'?download='+encodeURIComponent(id), { headers:{Authorization:'Bearer '+token} });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    const blob = new Blob([JSON.stringify(data.snapshot.data, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `wlm-ops-hub-snapshot-${id}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){
+    showToast('❌ Download failed: '+e.message);
+  }
+}
+
+// Restore is a deliberate, multi-step, admin-only action — see CLAUDE.md
+// rule #6: a dry run (no writes) must succeed before Confirm even unlocks,
+// and the exact phrase typed here is re-checked server-side (never just a
+// client-side gate) alongside a reviewToken bound to the exact diff just
+// shown, so live data changing between dry run and confirm forces a fresh
+// dry run instead of silently acting on a stale review.
+function openRestoreBackupModal(id){
+  _restoreState = { id, dryRunOk:false, reviewToken:null };
+  const snap = _backupsList.find(s=>s.id===id);
+  const kindLabel = snap && snap.kind==='daily-auto' ? 'Daily (auto)' : 'Manual';
+  const dateLabel = snap ? new Date(snap.created_at).toLocaleString() : id;
+  document.getElementById('restoreBackupSub').textContent = `${kindLabel} snapshot from ${dateLabel}`;
+  document.getElementById('restoreDryRunResults').innerHTML='';
+  document.getElementById('restoreFinalResults').innerHTML='';
+  document.getElementById('restoreConfirmSection').style.display='none';
+  document.getElementById('restoreConfirmPhraseInput').value='';
+  document.getElementById('restoreConfirmPhraseHint').textContent = `RESTORE ${id}`;
+  document.getElementById('restoreConfirmBtn').disabled=true;
+  document.getElementById('restoreDryRunBtn').disabled=false;
+  openModal('restoreBackupModal');
+}
+
+async function runRestoreDryRun(){
+  if(!_restoreState) return;
+  const token = _opsToken(); if(!token) return;
+  const resultsEl = document.getElementById('restoreDryRunResults');
+  resultsEl.innerHTML = '<div style="color:var(--text-mid);">Running dry run…</div>';
+  document.getElementById('restoreDryRunBtn').disabled=true;
+  document.getElementById('restoreConfirmSection').style.display='none';
+  document.getElementById('restoreConfirmBtn').disabled=true;
+  _restoreState.dryRunOk=false;
+  try{
+    const res = await fetch(OPS_BACKUPS_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({action:'restore-dry-run', id:_restoreState.id}) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    _restoreState.reviewToken = data.reviewToken;
+    _restoreState.dryRunOk = true;
+    let totalToRestore = 0;
+    const rows = Object.entries(data.diff).map(([table,d])=>{
+      if(d.error) return `<tr><td style="padding:3px 8px;">${escHtmlAdmin(table)}</td><td colspan="3" style="padding:3px 8px;color:var(--red);">${escHtmlAdmin(d.error)}</td></tr>`;
+      totalToRestore += d.toRestoreCount||0;
+      return `<tr>
+        <td style="padding:3px 8px;">${escHtmlAdmin(table)}</td>
+        <td style="padding:3px 8px;text-align:right;">${d.toRestoreCount}</td>
+        <td style="padding:3px 8px;text-align:right;color:var(--text-light);">${d.unchanged}</td>
+        <td style="padding:3px 8px;text-align:right;color:var(--text-light);">${d.notInSnapshotCount}</td>
+      </tr>`;
+    }).join('');
+    resultsEl.innerHTML = `
+      <div style="font-weight:600;color:var(--green,#2e9e6e);margin-bottom:8px;">✅ Dry run complete — nothing was written</div>
+      <div style="margin-bottom:8px;">Total rows that would be restored (inserted or reverted to match the snapshot): <b>${totalToRestore}</b></div>
+      <table style="font-size:12px;width:100%;">
+        <thead><tr><th style="text-align:left;padding:3px 8px;">Table</th><th style="text-align:right;padding:3px 8px;">Would restore</th><th style="text-align:right;padding:3px 8px;">Unchanged</th><th style="text-align:right;padding:3px 8px;">Not in snapshot</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="font-size:11px;color:var(--text-light);margin-top:8px;">"Not in snapshot" rows are never deleted by restore — only rows present in the snapshot are inserted or reverted to match it.</div>
+    `;
+    document.getElementById('restoreConfirmSection').style.display='';
+  }catch(e){
+    resultsEl.innerHTML = `<div style="color:var(--red);">❌ Dry run failed: ${escHtmlAdmin(e.message)}</div>`;
+    _restoreState.dryRunOk=false;
+  }
+  document.getElementById('restoreDryRunBtn').disabled=false;
+  _updateRestoreConfirmBtn();
+}
+
+function _updateRestoreConfirmBtn(){
+  if(!_restoreState){ return; }
+  const btn = document.getElementById('restoreConfirmBtn');
+  if(!btn) return;
+  const val = document.getElementById('restoreConfirmPhraseInput').value;
+  const expected = `RESTORE ${_restoreState.id}`;
+  btn.disabled = !(_restoreState.dryRunOk && val===expected);
+}
+
+async function confirmRestore(){
+  if(!_restoreState || !_restoreState.dryRunOk) return;
+  const phrase = document.getElementById('restoreConfirmPhraseInput').value;
+  const expected = `RESTORE ${_restoreState.id}`;
+  if(phrase !== expected) return;
+  if(!confirm('This will overwrite live data to match the snapshot (existing rows not in the snapshot are left alone). This cannot be undone from here. Continue?')) return;
+  const token = _opsToken(); if(!token) return;
+  const resultsEl = document.getElementById('restoreFinalResults');
+  resultsEl.innerHTML = '<div style="color:var(--text-mid);">Restoring…</div>';
+  document.getElementById('restoreConfirmBtn').disabled=true;
+  try{
+    const res = await fetch(OPS_BACKUPS_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({ action:'restore-confirm', id:_restoreState.id, reviewToken:_restoreState.reviewToken, confirmPhrase:phrase }) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    const rows = Object.entries(data.results).map(([table,r])=>`<div>${escHtmlAdmin(table)}: ${r.error?('❌ '+escHtmlAdmin(r.error)):(r.restored+' row(s) restored')}</div>`).join('');
+    resultsEl.innerHTML = `<div style="font-weight:600;color:var(--green,#2e9e6e);margin-bottom:6px;">✅ Restore complete</div>${rows}`;
+    showToast('✅ Restore complete');
+  }catch(e){
+    resultsEl.innerHTML = `<div style="color:var(--red);">❌ Restore failed: ${escHtmlAdmin(e.message)}</div>`;
+    document.getElementById('restoreConfirmBtn').disabled=false;
   }
 }
 
