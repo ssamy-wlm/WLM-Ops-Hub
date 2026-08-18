@@ -2179,6 +2179,26 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- ── BROWSER-LOCAL DATA RECOVERY — read-only, zero writes. Scans
+           THIS browser's localStorage for data that was never synced to
+           Supabase (Payroll saved weeks, Archived Users) so it can be
+           previewed/downloaded before it's lost to a cache clear or a
+           different device. Never sends anything anywhere, never writes
+           anything back — a scan+download tool only. See CLAUDE.md's
+           2026-08-18 payroll data-loss investigation for why this exists. ── -->
+      <div class="card" id="localRecoveryCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🔎 Browser-Local Data Recovery</div>
+            <div class="card-sub">Checks THIS browser's local storage for data that was never synced to the cloud (Payroll saved weeks, Archived Users). Read-only — never sends or writes anything.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="scanLocalRecoveryData()">Scan this browser</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="localRecoveryResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click "Scan this browser" to check for local-only data on this device.</div>
+        </div>
+      </div>
+
       </div><!-- /admin-controls-super-only-wrap (part 1) -->
 
       <!-- ── SALES FUNNEL ACCESS (own screen, separate from Edit User/Edit
@@ -9334,6 +9354,84 @@ function emailPayrollReport(){
   showToast('📧 Email export — connect email service (Resend/SendGrid) to send payroll reports');
 }
 
+// ═══════════════════════════════════════════════════════════
+// BROWSER-LOCAL DATA RECOVERY — read-only scan of local-only stores that
+// were never synced to Supabase (see CLAUDE.md's 2026-08-18 payroll
+// data-loss investigation). Zero writes: only localStorage.getItem() calls
+// and a client-side Blob download. Never touches cloudPushAll/cloudAutoSync,
+// never calls dbSet on either key, never sends the data anywhere.
+// ═══════════════════════════════════════════════════════════
+const _LOCAL_RECOVERY_STORES = [
+  { key: 'wl_saved_payrolls', label: 'Payroll saved weeks',
+    describe: r => `${r.length} record(s)` + (r.length ? `, ${_localRecoveryDateRange(r, 'savedAt')}` : '') },
+  { key: 'wl_archived_users', label: 'Archived Users',
+    describe: r => `${r.length} record(s)` + (r.length ? `, ${_localRecoveryDateRange(r, 'archivedAt')}` : '') },
+];
+
+function _localRecoveryDateRange(records, field){
+  const dates = records.map(r=>r && r[field]).filter(Boolean).map(d=>new Date(d)).filter(d=>!isNaN(d));
+  if(!dates.length) return 'no dates found';
+  const min = new Date(Math.min(...dates)), max = new Date(Math.max(...dates));
+  const fmt = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  return min.getTime()===max.getTime() ? fmt(min) : `${fmt(min)} → ${fmt(max)}`;
+}
+
+function scanLocalRecoveryData(){
+  const results = document.getElementById('localRecoveryResults');
+  if(!results) return;
+
+  const found = _LOCAL_RECOVERY_STORES.map(store=>{
+    let records = null, error = null;
+    try{
+      const raw = localStorage.getItem(store.key);
+      records = raw ? JSON.parse(raw) : [];
+      if(!Array.isArray(records)) throw new Error('stored value is not an array');
+    }catch(e){ error = e.message; records = null; }
+    return { ...store, records, error };
+  });
+
+  results.innerHTML = found.map(f=>{
+    if(f.error){
+      return `<div style="padding:14px 20px;border-bottom:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(f.label)}</div>
+        <div style="font-size:12px;color:#e05555;margin-top:2px;">Couldn't read this key: ${escHtmlAdmin(f.error)}</div>
+      </div>`;
+    }
+    if(!f.records.length){
+      return `<div style="padding:14px 20px;border-bottom:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(f.label)}</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Nothing found in this browser (key: ${escHtmlAdmin(f.key)}).</div>
+      </div>`;
+    }
+    const summary = f.describe(f.records);
+    return `<div style="padding:14px 20px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(f.label)} — found data on this device</div>
+          <div style="font-size:12px;color:var(--text-mid);margin-top:2px;">${escHtmlAdmin(summary)} · key: ${escHtmlAdmin(f.key)}</div>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="_downloadLocalRecoveryStore('${f.key}')">⬇ Download raw JSON</button>
+      </div>
+    </div>`;
+  }).join('') + `<div style="padding:12px 20px;font-size:11px;color:var(--text-light);">Scanned only THIS browser's local storage. If nothing was found here, check any other browser/computer that may have been used for Payroll or Archiving before — each one has its own independent, never-synced copy.</div>`;
+}
+
+function _downloadLocalRecoveryStore(key){
+  let raw;
+  try{ raw = localStorage.getItem(key); }catch(e){ showToast('❌ Could not read '+key); return; }
+  if(!raw){ showToast('Nothing to download for '+key); return; }
+  const blob = new Blob([raw], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = key + '_' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('✅ Downloaded '+key);
+}
+
 // Also update populateManagerDropdown to keep manager list current
 function populateManagerDropdown(){
   const sel=document.getElementById('newUserManager');
@@ -9962,6 +10060,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // only visibility as the two cards above.
   const passwordMigrationCard = document.getElementById('passwordMigrationCard');
   if(passwordMigrationCard) passwordMigrationCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
+
+  // Browser-local data recovery scan (read-only) — same Super Admin/Owner-
+  // only visibility as the cards above.
+  const localRecoveryCard = document.getElementById('localRecoveryCard');
+  if(localRecoveryCard) localRecoveryCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
   // Sales Funnel Access permissions screen — Super Admin/Owner-level admin,
   // OR (Google-Drive-style) anyone granted Sales Funnel Owner level
