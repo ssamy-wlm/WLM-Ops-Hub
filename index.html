@@ -63,6 +63,14 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .btn-blue:hover{background:var(--text-dark);}
 .btn-outline{background:transparent;color:var(--text);border:1.5px solid var(--border-hover);}
 .btn-outline:hover{background:var(--bg);border-color:var(--text);}
+/* Active state for a toggle/filter button that must NEVER change size when
+   switching on/off — layered on top of the constant "btn btn-sm btn-outline"
+   base (never swapped for btn-primary, which sets width:100% and would blow
+   the button up to fill its row; never a bare .btn either, which drops the
+   1.5px border and shifts the box size by the border width). Only
+   background/color/border-color change here — nothing that affects layout. */
+.btn-toggle-active{background:var(--btn);color:#fff;border-color:var(--btn);}
+.btn-toggle-active:hover{background:var(--btn-hover);border-color:var(--btn-hover);color:#fff;}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
 .btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
@@ -1414,7 +1422,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
         <div style="display:flex;gap:6px;">
-          <button class="btn btn-sm" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
           <button class="btn btn-sm btn-outline" id="taViewCalBtn" onclick="setTaView('calendar')">📅 Calendar</button>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -1461,6 +1469,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <button class="btn btn-sm btn-outline" onclick="shiftTaCalMonth(1)">›</button>
             </div>
             <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+            <div id="taCalUndated" style="display:none;margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-mid);cursor:pointer;" onclick="setTaView('list')"></div>
           </div>
         </div>
       </div>
@@ -8261,9 +8270,13 @@ function loadTaskAssignments(){
 
   const pillsEl = document.getElementById('taCategoryPills');
   if(pillsEl){
+    // Same fixed-size active-state fix as setTaView()/toggleTaQuickFilter()
+    // above — btn-primary's width:100% is especially visible here, since a
+    // flex-wrap row of pills would have the active one balloon out to fill
+    // the entire row on its own line.
     pillsEl.innerHTML = ['All', ...TA_CATEGORIES].map(c=>{
       const active = (c==='All' && !_taActiveCategory) || c===_taActiveCategory;
-      return `<button class="btn btn-sm ${active?'btn-primary':'btn-outline'}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
+      return `<button class="btn btn-sm btn-outline${active?' btn-toggle-active':''}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
   renderTaskAssignments();
@@ -8274,8 +8287,13 @@ function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(
 
 function setTaView(v){
   _taView = v;
-  document.getElementById('taViewListBtn').className = 'btn btn-sm '+(v==='list'?'':'btn-outline');
-  document.getElementById('taViewCalBtn').className = 'btn btn-sm '+(v==='calendar'?'':'btn-outline');
+  // Base class ("btn btn-sm btn-outline") never changes between active and
+  // inactive — only btn-toggle-active is added/removed, so the button's box
+  // size (padding+border) stays identical either way. Never btn-primary
+  // (width:100%) or a bare btn (no border) here — see the .btn-toggle-active
+  // comment in the stylesheet for why those broke this before.
+  document.getElementById('taViewListBtn').className = 'btn btn-sm btn-outline'+(v==='list'?' btn-toggle-active':'');
+  document.getElementById('taViewCalBtn').className = 'btn btn-sm btn-outline'+(v==='calendar'?' btn-toggle-active':'');
   document.getElementById('taListWrap').style.display = v==='list' ? '' : 'none';
   document.getElementById('taCalWrap').style.display = v==='calendar' ? '' : 'none';
   renderTaskAssignments();
@@ -8283,8 +8301,11 @@ function setTaView(v){
 
 function toggleTaQuickFilter(kind){
   _taQuickFilter = (_taQuickFilter===kind) ? null : kind;
-  document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm '+(_taQuickFilter==='overdue'?'btn-primary':'btn-outline');
-  document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm '+(_taQuickFilter==='dueToday'?'btn-primary':'btn-outline');
+  // Same fixed-size toggle pattern as setTaView() above — base class is
+  // always "btn btn-sm btn-outline", never btn-primary (which sets
+  // width:100% and made the active button balloon to fill the row).
+  document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='overdue'?' btn-toggle-active':'');
+  document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='dueToday'?' btn-toggle-active':'');
   renderTaskAssignments();
 }
 
@@ -8388,26 +8409,43 @@ function shiftTaCalMonth(delta){
 function _renderTaCalendar(tasks){
   const grid = document.getElementById('taCalGrid');
   const label = document.getElementById('taCalLabel');
+  const undatedEl = document.getElementById('taCalUndated');
   if(!grid) return;
   const y = _taCalDate.getFullYear(), m = _taCalDate.getMonth();
   if(label) label.textContent = _taCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
   const firstDow = new Date(y,m,1).getDay();
   const daysInMonth = new Date(y,m+1,0).getDate();
   const byDate = {};
-  tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } });
+  let undatedCount = 0;
+  tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } else { undatedCount++; } });
   let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
   for(let i=0;i<firstDow;i++) html += '<div></div>';
   for(let d=1; d<=daysInMonth; d++){
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
+    // No slice/cap here on purpose — a truncated "+N more" that goes
+    // nowhere is exactly how a day's tasks went invisible before. The cell
+    // just grows to fit everything due that day instead of hiding any of
+    // it; min-height keeps empty days from looking cramped.
     html += `<div style="min-height:70px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(46,93,166,.06);':''}">
       <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
-      ${dayTasks.slice(0,3).map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
-      ${dayTasks.length>3 ? `<div style="font-size:10px;color:var(--text-light);">+${dayTasks.length-3} more</div>` : ''}
+      ${dayTasks.map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
     </div>`;
   }
   grid.innerHTML = html;
+  // Tasks with no due date can never appear on a date grid at all — flagged
+  // here instead of just silently absent, since "not on the calendar" and
+  // "doesn't exist" look identical otherwise. Clicking switches to List,
+  // where every task (dated or not) always renders.
+  if(undatedEl){
+    if(undatedCount>0){
+      undatedEl.style.display = '';
+      undatedEl.textContent = `📋 ${undatedCount} task${undatedCount===1?'':'s'} with no due date aren't shown on this calendar — click to view in List.`;
+    } else {
+      undatedEl.style.display = 'none';
+    }
+  }
 }
 
 function openTaDetailPanel(id){
