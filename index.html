@@ -2274,6 +2274,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div class="card-body">
           <div id="passwordMigrationResults" style="font-size:13px;color:var(--text-mid);">Loading…</div>
+          <button class="btn btn-outline btn-sm" id="pwCutoverOpenBtn" style="margin-top:12px;display:none;" onclick="openPasswordCutoverModal()">Hash Remaining Legacy Passwords Now</button>
         </div>
       </div>
 
@@ -2589,6 +2590,28 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-danger btn-sm" id="restoreConfirmBtn" style="margin-top:10px;" disabled onclick="confirmRestore()">⚠ Confirm Restore</button>
       </div>
       <div id="restoreFinalResults" style="margin-top:14px;font-size:13px;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pwCutoverModal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title">Hash Remaining Legacy Passwords</div></div>
+      <button class="modal-close" onclick="closeModal('pwCutoverModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text-mid);margin-bottom:12px;">
+        Run a dry run first — it makes no changes and lists exactly which accounts would be hashed. Confirm stays disabled until a dry run has succeeded and you've typed the exact phrase below. Nobody's password changes — everyone keeps logging in the same way; this only converts how it's stored.
+      </div>
+      <button class="btn btn-outline btn-sm" id="pwCutoverDryRunBtn" onclick="runPasswordCutoverDryRun()">Run Dry Run</button>
+      <div id="pwCutoverDryRunResults" style="margin-top:14px;font-size:13px;"></div>
+      <div id="pwCutoverConfirmSection" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+        <label class="form-label">Type <code style="background:var(--bg);padding:2px 6px;border-radius:4px;">HASH ALL LEGACY PASSWORDS</code> to confirm</label>
+        <input class="form-input" id="pwCutoverConfirmPhraseInput" placeholder="Type the exact phrase above" oninput="_updatePwCutoverConfirmBtn()">
+        <button class="btn btn-danger btn-sm" id="pwCutoverConfirmBtn" style="margin-top:10px;" disabled onclick="confirmPasswordCutover()">⚠ Confirm Cutover</button>
+      </div>
+      <div id="pwCutoverFinalResults" style="margin-top:14px;font-size:13px;"></div>
     </div>
   </div>
 </div>
@@ -7854,8 +7877,9 @@ async function setSalesFunnelLevel(kind, id, level){
 // performs any migration itself; nothing here writes anything.
 function renderPasswordMigrationStatus(){
   const box = document.getElementById('passwordMigrationResults'); if(!box) return;
+  const openBtn = document.getElementById('pwCutoverOpenBtn');
   const status = dbGet(DB_KEYS.passwordMigrationStatus);
-  if(!status || !status.total){ box.textContent = 'No accounts found.'; return; }
+  if(!status || !status.total){ box.textContent = 'No accounts found.'; if(openBtn) openBtn.style.display='none'; return; }
   const pct = Math.round((status.hashed/status.total)*100);
   box.innerHTML = `
     <div style="display:flex;align-items:center;gap:14px;">
@@ -7864,8 +7888,90 @@ function renderPasswordMigrationStatus(){
       </div>
       <div style="font-size:12px;font-weight:700;color:var(--text-dark);white-space:nowrap;">${status.hashed} / ${status.total} upgraded</div>
     </div>
-    ${status.legacy>0?`<div style="font-size:11px;color:var(--text-light);margin-top:8px;">${status.legacy} account${status.legacy===1?'':'s'} still on the legacy path — each upgrades automatically the next time that person logs in.</div>`:'<div style="font-size:11px;color:var(--green,#2e9e6e);margin-top:8px;">All accounts are on the hashed path ✓</div>'}
+    ${status.legacy>0?`<div style="font-size:11px;color:var(--text-light);margin-top:8px;">${status.legacy} account${status.legacy===1?'':'s'} still on the legacy path — each upgrades automatically the next time that person logs in, or use the one-time cutover below.</div>`:'<div style="font-size:11px;color:var(--green,#2e9e6e);margin-top:8px;">All accounts are on the hashed path ✓</div>'}
   `;
+  if(openBtn) openBtn.style.display = status.legacy>0 ? '' : 'none';
+}
+
+// ── One-time password-hash cutover — Super Admin/Owner only. Same rule #6
+// dry-run + typed-confirmation + fresh-reviewToken pattern as the Data
+// Backups restore modal below (openRestoreBackupModal/runRestoreDryRun/
+// confirmRestore) — mirrors that flow deliberately rather than inventing a
+// new UX for the same kind of guarded, high-blast-radius admin action. Only
+// reaches accounts that haven't logged in or changed their password since
+// hashing shipped; every other account already upgraded itself.
+let _pwCutoverState = null;
+function openPasswordCutoverModal(){
+  _pwCutoverState = { dryRunOk:false, reviewToken:null };
+  document.getElementById('pwCutoverDryRunResults').innerHTML='';
+  document.getElementById('pwCutoverFinalResults').innerHTML='';
+  document.getElementById('pwCutoverConfirmSection').style.display='none';
+  document.getElementById('pwCutoverConfirmPhraseInput').value='';
+  document.getElementById('pwCutoverConfirmBtn').disabled=true;
+  document.getElementById('pwCutoverDryRunBtn').disabled=false;
+  openModal('pwCutoverModal');
+}
+async function runPasswordCutoverDryRun(){
+  if(!_pwCutoverState) return;
+  const token = _opsToken(); if(!token) return;
+  const resultsEl = document.getElementById('pwCutoverDryRunResults');
+  resultsEl.innerHTML = '<div style="color:var(--text-mid);">Running dry run…</div>';
+  document.getElementById('pwCutoverDryRunBtn').disabled=true;
+  document.getElementById('pwCutoverConfirmSection').style.display='none';
+  document.getElementById('pwCutoverConfirmBtn').disabled=true;
+  _pwCutoverState.dryRunOk=false;
+  try{
+    const res = await fetch(OPS_SYNC_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({action:'password-cutover-dry-run'}) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    _pwCutoverState.reviewToken = data.reviewToken;
+    _pwCutoverState.dryRunOk = true;
+    if(!data.count){
+      resultsEl.innerHTML = '<div style="color:var(--green,#2e9e6e);">✅ Nothing to do — every account is already on the hashed path.</div>';
+      document.getElementById('pwCutoverConfirmSection').style.display='none';
+    } else {
+      const rows = data.accounts.map(a=>`<li>${escHtmlAdmin(a.name)} <span style="color:var(--text-light);">(${escHtmlAdmin(a.table)})</span></li>`).join('');
+      resultsEl.innerHTML = `
+        <div style="font-weight:600;color:var(--green,#2e9e6e);margin-bottom:8px;">✅ Dry run complete — nothing was written</div>
+        <div style="margin-bottom:6px;">${data.count} account${data.count===1?'':'s'} would be hashed now (no password value is ever shown here):</div>
+        <ul style="margin:0 0 0 18px;padding:0;">${rows}</ul>
+      `;
+      document.getElementById('pwCutoverConfirmSection').style.display='';
+    }
+  }catch(e){
+    resultsEl.innerHTML = `<div style="color:var(--red);">❌ Dry run failed: ${escHtmlAdmin(e.message)}</div>`;
+    _pwCutoverState.dryRunOk=false;
+  }
+  document.getElementById('pwCutoverDryRunBtn').disabled=false;
+  _updatePwCutoverConfirmBtn();
+}
+function _updatePwCutoverConfirmBtn(){
+  if(!_pwCutoverState) return;
+  const btn = document.getElementById('pwCutoverConfirmBtn'); if(!btn) return;
+  const val = document.getElementById('pwCutoverConfirmPhraseInput').value;
+  btn.disabled = !(_pwCutoverState.dryRunOk && val==='HASH ALL LEGACY PASSWORDS');
+}
+async function confirmPasswordCutover(){
+  if(!_pwCutoverState || !_pwCutoverState.dryRunOk) return;
+  const phrase = document.getElementById('pwCutoverConfirmPhraseInput').value;
+  if(phrase !== 'HASH ALL LEGACY PASSWORDS') return;
+  if(!confirm('This will hash every remaining legacy-plaintext password right now. Each account keeps logging in with the exact same password as before — this only changes how it\'s stored. Continue?')) return;
+  const token = _opsToken(); if(!token) return;
+  const resultsEl = document.getElementById('pwCutoverFinalResults');
+  resultsEl.innerHTML = '<div style="color:var(--text-mid);">Hashing…</div>';
+  document.getElementById('pwCutoverConfirmBtn').disabled=true;
+  try{
+    const res = await fetch(OPS_SYNC_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({ action:'password-cutover-confirm', reviewToken:_pwCutoverState.reviewToken, confirmPhrase:phrase }) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    resultsEl.innerHTML = `<div style="font-weight:600;color:var(--green,#2e9e6e);margin-bottom:6px;">✅ Cutover complete</div><div>${data.usersHashed} user(s), ${data.adminsHashed} admin(s)${data.primaryAdminHashed?', and the primary admin':''} hashed.</div>${data.warnings&&data.warnings.length?`<div style="color:var(--red);margin-top:6px;">${data.warnings.map(w=>escHtmlAdmin(w)).join('<br>')}</div>`:''}`;
+    showToast('✅ Password cutover complete');
+    await cloudPullAll(true);
+    renderPasswordMigrationStatus();
+  }catch(e){
+    resultsEl.innerHTML = `<div style="color:var(--red);">❌ Cutover failed: ${escHtmlAdmin(e.message)}</div>`;
+    document.getElementById('pwCutoverConfirmBtn').disabled=false;
+  }
 }
 
 // ── Error log viewer (read-only capture, Super Admin/Owner only) ──
