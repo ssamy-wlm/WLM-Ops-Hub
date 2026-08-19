@@ -43,11 +43,12 @@ For EACH distinct task or action item you find:
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
 - "ownerName": if the text clearly assigns this specific task to one specific person on the team, that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
+- "alreadyDone": true if the text itself says this specific item is already finished/sent/completed (e.g. "already posted the update", "done", "sent yesterday"), false otherwise. Only true when the text says so explicitly for THIS item — never infer completion just because a task sounds simple or routine.
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":"","ownerName":""}]}`;
+{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":"","ownerName":"","alreadyDone":false}]}`;
 }
 
 // Live, active-only roster (users + admins together — an admin like Abby
@@ -139,6 +140,52 @@ function matchClient(task, activeClients) {
   return null;
 }
 
+const STOPWORDS = new Set(['a','an','the','to','for','of','on','in','and','or','with','is','are','be','this','that']);
+function subjectTokens(subject) {
+  return String(subject || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && !STOPWORDS.has(w));
+}
+// Plain token-overlap (Jaccard) similarity, not an LLM judgment call — same
+// "deterministic, reviewable" conviction as matchClient/matchOwner. Two
+// subjects are "clearly the same work" only when most of their significant
+// words overlap; this deliberately doesn't try to be clever about synonyms
+// or paraphrasing — a near-miss stays a separate task rather than risking a
+// wrong merge onto someone's real tracked work.
+function subjectSimilarity(a, b) {
+  const ta = new Set(subjectTokens(a)), tb = new Set(subjectTokens(b));
+  if (!ta.size || !tb.size) return 0;
+  let overlap = 0;
+  for (const w of ta) if (tb.has(w)) overlap++;
+  return overlap / new Set([...ta, ...tb]).size;
+}
+const SUBJECT_SIMILARITY_THRESHOLD = 0.6;
+// "Same task" requires BOTH a strong subject match AND agreement on client
+// and assignee — a similar-sounding subject about a DIFFERENT client is
+// never treated as the same work, no matter how close the wording is.
+function isSameTask(a, b) {
+  if ((a.clientId || null) !== (b.clientId || null)) return false;
+  if ((a.assigneeId || null) !== (b.assigneeId || null)) return false;
+  return subjectSimilarity(a.subject, b.subject) >= SUBJECT_SIMILARITY_THRESHOLD;
+}
+
+// Collapses duplicates WITHIN one parse response — e.g. four pasted
+// meeting transcripts all mentioning the same follow-up. Merging is purely
+// additive: notes are concatenated (never dropped), tags unioned, the
+// earliest non-empty due date wins, and alreadyDone is true if ANY of the
+// merged mentions says so. Never touches anything already in storage —
+// this only ever combines candidates that don't exist yet.
+function dedupeWithinBatch(tasks) {
+  const kept = [];
+  for (const t of tasks) {
+    const existing = kept.find(k => isSameTask(k, t));
+    if (!existing) { kept.push({ ...t }); continue; }
+    if (t.notes && t.notes !== existing.notes) existing.notes = existing.notes ? `${existing.notes}\n${t.notes}` : t.notes;
+    existing.tags = [...new Set([...(existing.tags || []), ...(t.tags || [])])];
+    if (!existing.dueDate && t.dueDate) existing.dueDate = t.dueDate;
+    existing.alreadyDone = existing.alreadyDone || t.alreadyDone;
+  }
+  return kept;
+}
+
 async function handleTaskEmailMode(req, res) {
   let session;
   try { session = await requireSession(req); }
@@ -162,19 +209,28 @@ async function handleTaskEmailMode(req, res) {
   // after — the roster feeds the prompt itself (see buildTaskEmailSystemPrompt),
   // and the caller's scope (below) is derived from this same live data,
   // never from anything the request body claims about the caller's role.
-  let activeClients, roster, scope;
+  let activeClients, roster, scope, existingOpenTasks;
   try {
-    const [{ data: clientRows, error: clientErr }, rosterList] = await Promise.all([
+    const [{ data: clientRows, error: clientErr }, rosterList, { data: taskRows, error: taskErr }] = await Promise.all([
       // Active clients ONLY — an inactive/archived client can never be
       // auto-matched or assigned a parsed task (CLAUDE.md-required
       // constraint for this feature).
       supabase.from('ops_clients').select('id, status, data').eq('status', 'active'),
       activeRoster(supabase),
+      // Existing NOT-done tasks — dedupe/merge candidates for the pass
+      // below. A task already marked Done is never a merge target: the
+      // point is to stop a still-open item from getting duplicated, not to
+      // reopen something already finished.
+      supabase.from('ops_tasks').select('id, data'),
     ]);
     if (clientErr) throw new Error(clientErr.message);
+    if (taskErr) throw new Error(taskErr.message);
     activeClients = (clientRows || []).map(r => ({ id: r.id, ...r.data }));
     roster = rosterList;
     scope = callerTaskScope(session, roster);
+    existingOpenTasks = (taskRows || [])
+      .map(r => ({ id: r.id, ...r.data }))
+      .filter(t => t.status !== 'Done');
   } catch (err) {
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
     return res.status(500).json({ error: err.message });
@@ -231,6 +287,7 @@ async function handleTaskEmailMode(req, res) {
           emailReceivedDate: typeof t.emailReceivedDate === 'string' ? t.emailReceivedDate : '',
           emailThreadId: typeof t.emailThreadId === 'string' ? t.emailThreadId : '',
           assigneeId: owner ? owner.id : null,
+          alreadyDone: t.alreadyDone === true,
         };
       })
       .filter(t => {
@@ -245,7 +302,35 @@ async function handleTaskEmailMode(req, res) {
         return true;
       });
 
-    return res.status(200).json({ tasks, raw_count: rawTasks.length });
+    // Collapse duplicates mentioned more than once across the pasted
+    // text (e.g. four transcripts all referencing the same follow-up)
+    // BEFORE ever comparing against what's already stored — a candidate
+    // that's a duplicate of another candidate should merge with THAT one
+    // first, not independently match the same existing task twice.
+    const deduped = dedupeWithinBatch(tasks);
+
+    // Match each surviving candidate against existing NOT-done tasks
+    // within this caller's own scope — an admin can merge into anyone's
+    // task, a member/manager-tier caller only into one already visible to
+    // them (self, or a direct report), same allowedIds used above. A
+    // match never overwrites the existing task's stored data here — it
+    // only tells the client WHICH existing row to update instead of
+    // inserting a new one; the client performs a narrow, additive merge
+    // (see runTaskEmailParse/runDtEmailParse), never a full overwrite.
+    const scopedExistingTasks = scope.isAdmin
+      ? existingOpenTasks
+      : existingOpenTasks.filter(t => scope.allowedIds.has(t.assigneeId));
+    const finalTasks = deduped.map(t => {
+      const match = scopedExistingTasks.find(ex => isSameTask(ex, t));
+      return {
+        ...t,
+        status: t.alreadyDone ? 'Done' : 'Not started',
+        mergeIntoId: match ? match.id : null,
+        mergeIntoSubject: match ? match.subject : '',
+      };
+    });
+
+    return res.status(200).json({ tasks: finalTasks, raw_count: rawTasks.length });
   } catch (err) {
     console.error('Anthropic API error (taskEmail):', err);
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });

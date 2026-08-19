@@ -1185,6 +1185,75 @@ server data actually changed, closing the stale-tab-clobbers-newer-state
 window described above — lower priority since it can't resurrect a
 tombstoned row, only produce a spurious no-op-equivalent write.
 
+**Task parser quality batch — cross-transcript dedupe/merge + mark-done
+detection (2026-08-19).** Last item of the "make the parser behave like
+Sarah's original app" spec (item #5), highest-risk of the batch so
+built last, with a design choice confirmed with Sarah first: deterministic
+similarity matching, not an LLM judging duplicates — same "plain code,
+reviewable, no guessing" conviction as `matchClient()`/`matchOwner()`
+already use for this feature.
+
+`api/process-transcript.js` gained a new `alreadyDone` boolean per
+extracted task (true only when the text explicitly says that specific
+item is finished — never inferred from a task merely sounding routine)
+and a two-stage dedupe pipeline, both purely deterministic:
+
+1. **Within-batch** (`dedupeWithinBatch()`): collapses duplicates
+   mentioned more than once across the pasted text — e.g. four meeting
+   transcripts all referencing the same follow-up — BEFORE anything is
+   compared against storage. `isSameTask()` requires matching client AND
+   matching assignee AND a subject token-overlap (Jaccard) similarity
+   ≥0.6 (`subjectSimilarity()`, stopword-filtered) — a near-miss on
+   wording alone is never enough; a similar-sounding task about a
+   different client never merges. Merging is purely additive: notes
+   concatenated, tags unioned, earliest non-empty due date wins,
+   `alreadyDone` becomes true if any merged mention says so.
+2. **Against existing storage**: each survivor is checked against
+   existing NOT-done `ops_tasks` (a Done task is never a merge target —
+   the goal is stopping a still-open item from doubling, not reopening
+   finished work), scoped exactly like the owner-matching filter (an
+   admin can match against anyone's task; a member/manager-tier caller
+   only against one already in their own scope — self, or a direct
+   report). A match attaches `mergeIntoId`/`mergeIntoSubject` to the
+   response — the endpoint itself never touches existing data; it only
+   tells the client which row to fold into instead of inserting a new
+   one.
+
+`index.html`'s `runTaskEmailParse()` and `user.html`'s
+`runDtEmailParse()` both now branch on `mergeIntoId`: when present, the
+merge is deliberately narrow and additive ONLY — notes appended (never
+overwritten), tags unioned, due date filled only if the existing task
+doesn't already have one, status escalated to Done only if the text
+said so. Every other field of the existing task (assignee, client,
+category, priority, service, replyStatus, etc.) is left completely
+untouched — a wrong fuzzy match costs at most a stray note, never
+corrupts someone's real tracked work. This was the deliberate reason to
+avoid a full-object overwrite on merge, even though the existing
+admin-edit path already allows one: a fuzzy similarity match is a much
+weaker signal than a human clicking Save on a specific row, so it gets a
+narrower blast radius. `alreadyDone` on a brand-new (non-merged) task
+sets its initial `status` to `'Done'` instead of the usual `'Not
+started'`.
+
+Verified two ways, no live DB access (rule #11): (1) a Node script
+against the real, byte-identical `api/process-transcript.js` — four
+near-duplicate mentions collapse to one task with all four notes
+preserved; a genuinely different subject is never merged; a brand-new
+`alreadyDone` task gets `status:'Done'`; a similar-subject/same-client
+candidate correctly matches an existing open task by id; the same
+subject with a DIFFERENT (unmatched) client does not match; an existing
+task already marked Done is never offered as a merge target; and a
+member's merge candidates are correctly scoped (an existing task
+entirely outside their scope is dropped by the earlier owner-scope
+filter before the merge step ever runs, same as any other out-of-scope
+task). (2) Playwright against the real `index.html` UI end-to-end
+(mocked `/api/process-transcript`/`/api/ops-state`/`/api/ops-sync`): a
+merge produces exactly one net-new task plus the existing task correctly
+updated (not a third duplicate row) — notes appended, tags unioned, due
+date filled in, client/assignee left untouched, status unchanged (no
+`alreadyDone`) — while a separate brand-new `alreadyDone` task is
+created with `status:'Done'`. 8/8 checks passing.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

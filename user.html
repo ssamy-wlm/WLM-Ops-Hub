@@ -1673,24 +1673,43 @@ async function runDtEmailParse(){
     // email about Rana's work), falling back to self exactly like before
     // this change for everyone else.
     const tasks = dbGet(DB_KEYS.tasks)||[];
+    let createdCount = 0, mergedCount = 0;
     extracted.forEach(et=>{
+      // Same narrow, additive merge as index.html's runTaskEmailParse() —
+      // the server already matched this against an existing NOT-done task
+      // within this employee's own scope (self, or a direct report if
+      // they're a manager-tier employee). Only notes/tags/dueDate(if
+      // missing)/status(Done only) are touched; every other field of the
+      // existing task is left alone.
+      if(et.mergeIntoId){
+        const existing = tasks.find(x=>x.id===et.mergeIntoId);
+        if(existing){
+          if(et.notes) existing.notes = existing.notes ? `${existing.notes}\n${et.notes}` : et.notes;
+          existing.tags = [...new Set([...(existing.tags||[]), ...(et.tags||[])])];
+          if(!existing.dueDate && et.dueDate) existing.dueDate = et.dueDate;
+          if(et.status==='Done') existing.status = 'Done';
+          mergedCount++;
+          return;
+        }
+      }
       tasks.push({
         id: _dtGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
         assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
         category: et.category, type: et.type, priority: et.priority,
-        status: 'Not started', dueDate: et.dueDate||'',
+        status: et.status||'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
       });
+      createdCount++;
     });
     dbSet(DB_KEYS.tasks, tasks);
     _scheduleCloudPush();
     document.getElementById('dtParseText').value = '';
     document.getElementById('dtParseFileInput').value = '';
     _dtParseFileTexts = [];
-    statusEl.textContent = `✅ ${extracted.length} task(s) added to your list.`;
+    statusEl.textContent = `✅ ${createdCount} new task(s)${mergedCount?`, ${mergedCount} merged into existing task(s)`:''} added.`;
   } catch(e){
     statusEl.textContent = `❌ ${e.message}`;
   } finally {
