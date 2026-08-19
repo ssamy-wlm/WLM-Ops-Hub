@@ -64,7 +64,7 @@ export default async function handler(req, res) {
   try {
     const [
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
-      timeOffReqQ, timeOffLedgerQ, summariesQ, settingsQ, deletedQ,
+      timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
       orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
@@ -76,6 +76,7 @@ export default async function handler(req, res) {
       supabase.from('ops_roadmap_tasks').select('id, data'),
       supabase.from('ops_time_off_requests').select('id, data'),
       supabase.from('ops_time_off_ledger').select('id, data'),
+      supabase.from('ops_payroll').select('id, data'),
       supabase.from('ops_summaries').select('client_id, kind, period_key, data'),
       supabase.from('ops_settings').select('key, data'),
       supabase.from('ops_deleted_user_ids').select('user_id'),
@@ -101,7 +102,7 @@ export default async function handler(req, res) {
     const namedQueries = [
       ['users', usersQ], ['admins', adminsQ], ['clients', clientsQ], ['goals', goalsQ],
       ['feed', feedQ], ['messages', messagesQ], ['roadmapTasks', roadmapQ],
-      ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['summaries', summariesQ],
+      ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['payroll', payrollQ], ['summaries', summariesQ],
       ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
       ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
       ['salesFunnel', salesFunnelQ],
@@ -126,6 +127,7 @@ export default async function handler(req, res) {
     let roadmapTasks = rows(roadmapQ.data);
     let timeOffRequests = rows(timeOffReqQ.data);
     let timeOffLedger = rows(timeOffLedgerQ.data);
+    let payroll = rows(payrollQ.data);
     let summaries = (summariesQ.data || []).map(r => ({ clientId: r.client_id, kind: r.kind, periodKey: r.period_key, ...r.data }));
     let orgNodes = rows(orgNodesQ.data);
     let orgLinks = rows(orgLinksQ.data);
@@ -208,7 +210,7 @@ export default async function handler(req, res) {
       viewerEmployeeId: session.employeeId ?? null,
       viewerAdminId: session.adminId ?? null,
       users, admins, clients, goals, feed, messages, roadmapTasks,
-      timeOffRequests, timeOffLedger, summaries,
+      timeOffRequests, timeOffLedger, payroll, summaries,
       deletedUserIds: [...deletedIds],
       announcement: settingsMap.announcement ?? null,
       coc: settingsMap.coc ?? null,
@@ -329,6 +331,10 @@ export default async function handler(req, res) {
       const myName = String(session.name || '').toLowerCase();
       record.timeOffRequests = record.timeOffRequests.filter(r => String(r.userName || '').toLowerCase() === myName);
       record.timeOffLedger = record.timeOffLedger.filter(r => r.employeeId === session.id);
+      // Payroll saved-week records: Super Admin/CEO exclusive, same as the
+      // time-off ledger above and every other payroll/pay-rate field — a
+      // member has no legitimate reason to see anyone's payroll totals.
+      record.payroll = [];
       record.deletedUserIds = [];
       // orgNodes/orgLinks: unlike everything else stripped in this branch,
       // this is intentionally NOT redacted for member tier — it's just a
@@ -374,6 +380,7 @@ export default async function handler(req, res) {
       });
       record.roadmapTasks = [];
       record.timeOffLedger = [];
+      record.payroll = [];
       record.orgNodes = [];
       record.orgLinks = [];
       record.coc = null;

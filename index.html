@@ -5631,6 +5631,7 @@ const DB_KEYS = {
   roadmapTasks:  'wl_roadmap_tasks',
   timeOffRequests: 'wl_timeoff_requests',
   timeOffLedger: 'wl_timeoff_ledger',
+  payroll: 'wl_saved_payrolls',
   notifications: 'wl_ops_notifications',
   notificationSettings: 'wl_notification_settings',
   passwordMigrationStatus: 'wl_password_migration_status',
@@ -7286,6 +7287,8 @@ async function cloudPushAll(silent=false){
     if(torDirty.length) changes.timeOffRequests = torDirty;
     const ledgerDirty = _opsDirty('timeOffLedger', dbGet(DB_KEYS.timeOffLedger)||[]);
     if(ledgerDirty.length) changes.timeOffLedger = ledgerDirty;
+    const payrollDirty = _opsDirty('payroll', dbGet(DB_KEYS.payroll)||[]);
+    if(payrollDirty.length) changes.payroll = payrollDirty;
     const orgNodesDirty = _opsDirty('orgNodes', dbGet(DB_KEYS.orgNodes)||[]);
     if(orgNodesDirty.length) changes.orgNodes = orgNodesDirty;
     const orgLinksDirty = _opsDirty('orgLinks', dbGet(DB_KEYS.orgLinks)||[]);
@@ -7413,6 +7416,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr), ()=>dbGet(DB_KEYS.roadmapTasks)||[]);
     _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
     _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[]);
+    _applyServerArray('payroll', r.payroll, arr=>dbSet(DB_KEYS.payroll, arr), ()=>dbGet(DB_KEYS.payroll)||[]);
     _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[]);
     _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
@@ -7909,7 +7913,11 @@ async function cloudPullUsers(silent=false){ return cloudPullAll(silent); }
 // Auto-sync after every data write (debounce is handled by callers)
 async function cloudAutoSync(){
   if(!cloudIsConfigured()) return;
-  await cloudPushAll(true);
+  // Propagate cloudPushAll's success/failure — needed by callers that must
+  // know whether the push actually landed before declaring a save "saved"
+  // (see savePayrollWeek's confirmed-write discipline). Existing call sites
+  // that don't check the return value are unaffected.
+  return await cloudPushAll(true);
 }
 
 // Live sync — polls the server every 30s so all devices/roles stay in sync,
@@ -9105,7 +9113,16 @@ function calcPayroll(){
   }
 }
 
-function savePayrollWeek(){
+// Confirmed-write: the record is added to the local cache immediately (so
+// it renders and survives if the tab closes before the push completes —
+// _opsDirty() will pick it up and retry on the next sync), but the "saved"
+// toast — the signal Sarah actually trusts — only fires once the server has
+// confirmed the insert. A failed push shows an error instead of a false
+// success; the record stays in the local cache either way, so nothing is
+// lost, and the next successful sync retries it automatically. This is the
+// exact discipline the payroll data-loss investigation (2026-08-18/19)
+// exists to enforce going forward.
+async function savePayrollWeek(){
   const allUsers = dbGet(DB_KEYS.users)||[];
   const now = new Date();
   const day = now.getDay();
@@ -9134,15 +9151,28 @@ function savePayrollWeek(){
   // entire week's saved entries down to whichever rows were on screen for
   // the LATEST save.
   saved.unshift(record);
-  showToast('Payroll saved ✓ — $'+total.toFixed(2)+' total');
   dbSet('wl_saved_payrolls',saved); // no cap — a new save must never evict a prior one
   renderSavedPayrolls();
-  cloudAutoSync(true);
+  const submitBtn = document.querySelector('button[onclick="savePayrollWeek()"]');
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
+  const ok = await cloudAutoSync();
+  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'Save This Week'; }
+  if(ok === false){
+    showToast('❌ Payroll saved locally but the cloud sync failed — it will retry automatically, or click Sync now.');
+  } else {
+    showToast('Payroll saved ✓ — $'+total.toFixed(2)+' total');
+  }
   logActivity('admin','Admin','Saved payroll for week of '+weekStart,'$'+total.toFixed(2));
 }
 
 function deletePayrollRecord(id){
-  if(!confirm('Delete this saved payroll record?')) return;
+  // Once a record has been pushed to Supabase, ops_payroll is append-only
+  // (DB-level guard, see the ops_payroll migration) — a local delete would
+  // just have the record silently reappear on the next pull, which is
+  // worse than not offering delete at all. This path only ever runs for a
+  // pre-migration local-only record that was never actually confirmed
+  // synced (see the recovered-totals/durable-payroll work, 2026-08-19).
+  if(!confirm('Delete this saved payroll record?\n\nNote: once a record has synced to the cloud it can no longer be deleted (payroll records are permanent, like the time-off ledger) — this only works for a record that never made it to the cloud.')) return;
   // String-compare: id arrives as a string from the (now always-quoted)
   // onclick call site, but records saved before this change still carry
   // their original numeric Date.now() id, untouched, exactly as saved —
@@ -9193,8 +9223,16 @@ function renderSavedPayrolls(){
   // the feed-derived row for the same week — never show both for one week.
   const localWeekStarts = new Set(saved.map(p=>p.weekStart));
   const recovered = _recoveredPayrollWeeks().filter(r=>!localWeekStarts.has(r.weekStart));
+  // A record with no entries[] array at all (as opposed to an empty array,
+  // which just means "nobody logged hours that week") has no per-employee
+  // breakdown to render — this covers the durable totals-only rows seeded
+  // directly into ops_payroll for the recovered weeks (see the PAYROLL —
+  // MASTER PLAN, Step 3), which arrive through this same synced
+  // wl_saved_payrolls cache once Supabase-backed, not through the
+  // feed-parsing path above. Render them the same honest "recovered" way
+  // regardless of which path they came from.
   const combined = [
-    ...saved.map(p=>({...p, recovered:false})),
+    ...saved.map(p=>({...p, recovered: !Array.isArray(p.entries)})),
     ...recovered,
   ].sort((a,b)=> b.weekStart.localeCompare(a.weekStart)); // newest week first
   if(!combined.length){list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div>';return;}
