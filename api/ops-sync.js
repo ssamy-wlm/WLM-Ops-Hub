@@ -6,9 +6,9 @@
 // local cache simply has nothing to send.
 //
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
-// messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, summaries?,
-// settings?, orgNodes?, orgLinks?, catalogSuggestions?, notifications?,
-// salesFunnel?, salesFunnelGrants? },
+// messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, payroll?,
+// summaries?, settings?, orgNodes?, orgLinks?, catalogSuggestions?,
+// notifications?, salesFunnel?, salesFunnelGrants? },
 // tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids] },
 // restoreUserIds?: [ids] }
 //
@@ -51,7 +51,7 @@ import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
 // Dropped for members outright (never a legitimate member write); within the
 // isAdmin branch below, admins/roadmapTasks/orgNodes/orgLinks/timeOffLedger/
 // settings are further narrowed to tier === 'super' only.
-const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
+const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'payroll', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
 const PAYROLL_FIELDS = ['payRate', 'hours'];
 
 // Sales Funnel access level resolution — kept identical to (but deliberately
@@ -1125,6 +1125,15 @@ export default async function handler(req, res) {
         if (Array.isArray(c.timeOffLedger) && c.timeOffLedger.length) {
           applied.timeOffLedger = await insertNewOnly(supabase, 'ops_time_off_ledger', c.timeOffLedger.filter(validGeneric), warnings);
         }
+        // Payroll saved-week records: append-only, INSERT only, same
+        // insertNewOnly() pattern as the time-off ledger above — a payroll
+        // save can never overwrite/replace a prior week's record, only add
+        // a new one (see the PAYROLL — MASTER PLAN, 2026-08-19, and commit
+        // f8075e23's app-level fix this table structurally enforces at the
+        // DB level too via ops_payroll_guard).
+        if (Array.isArray(c.payroll) && c.payroll.length) {
+          applied.payroll = await insertNewOnly(supabase, 'ops_payroll', c.payroll.filter(validGeneric), warnings);
+        }
         if (c.settings && typeof c.settings === 'object') {
           const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
           for (const [key, value] of otherKeys) {
@@ -1134,7 +1143,7 @@ export default async function handler(req, res) {
           if (otherKeys.length) applied.settings = otherKeys.length;
         }
       } else {
-        for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'settings']) {
+        for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'payroll', 'settings']) {
           const hasOtherSettings = key === 'settings' && c.settings && Object.keys(c.settings).some(k => k !== 'serviceCatalog');
           if (key === 'settings' ? hasOtherSettings : Array.isArray(c[key]) && c[key].length) {
             warnings.push(`${key}: dropped — Super Admin/CEO only, caller is a manager-tier admin`);
