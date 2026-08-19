@@ -8550,7 +8550,12 @@ async function runTaskEmailParse(){
         id: _taGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
-        assigneeId: null, assignedById: null,
+        // The server already matched an "assign this to X" mention in the
+        // text against the real roster (api/process-transcript.js) — use it
+        // as the default assignee here so it shows up pre-filled below
+        // instead of forcing every admin parse through a manual assign
+        // step; still just a default, freely reassignable in the table.
+        assigneeId: et.assigneeId||null, assignedById: null,
         category: et.category, type: et.type, priority: et.priority,
         status: 'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'admin',

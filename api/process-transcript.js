@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { logError } from '../lib/errorLog.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession } from '../lib/opsSession.js';
+import { requireSession, tierOf } from '../lib/opsSession.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
 
@@ -19,7 +19,16 @@ const TASK_CATEGORIES = ['Production', 'Updates', 'Sales', 'Admin', 'Other', 'In
 const TASK_TYPES = ['Task', 'Client Update', 'New Service', 'New Sale', 'Follow-up'];
 const TASK_PRIORITIES = ['Urgent', 'High', 'Normal', 'Low'];
 
-const TASK_EMAIL_SYSTEM_PROMPT = `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
+// Built fresh per request from the LIVE active roster (see activeRoster()
+// below) — deliberately NOT a static list of example names baked into the
+// prompt. A stale hardcoded roster is exactly the failure mode the Roadmap
+// mode's own SYSTEM_PROMPT below has (a fixed "sarah/david/emily/jacob/
+// rania" example list) — someone hired or renamed after this file was last
+// edited would never be extractable as an owner. Every call rebuilds this
+// list from ops_users/ops_admins, so it can never drift from who's actually
+// on the team right now.
+function buildTaskEmailSystemPrompt(rosterDisplayList) {
+  return `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
 
 For EACH distinct task or action item you find:
 - "subject": a concise one-line summary (under 12 words).
@@ -33,11 +42,61 @@ For EACH distinct task or action item you find:
 - "senderName": the sender's display name if available, otherwise empty string.
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
+- "ownerName": if the text clearly assigns this specific task to one specific person on the team, that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":""}]}`;
+{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":"","ownerName":""}]}`;
+}
+
+// Live, active-only roster (users + admins together — an admin like Abby
+// does real production work too, same combined-roster convention as
+// index.html's _timeOffRoster()/loadTaskAssignments() assignee dropdown).
+// Fetched fresh every request; never cached across requests, unlike the
+// per-request _directoryCache pattern in api/ops-sync.js (this is a single
+// short-lived serverless invocation, not a warm-instance-reused module).
+async function activeRoster(supabase) {
+  const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }] = await Promise.all([
+    supabase.from('ops_users').select('id, data'),
+    supabase.from('ops_admins').select('id, data'),
+  ]);
+  const firstErr = uErr || aErr;
+  if (firstErr) throw new Error(firstErr.message);
+  const users = (userRows || []).map(r => ({ id: r.id, kind: 'user', ...r.data })).filter(u => u.status === 'active' && u.name);
+  const admins = (adminRows || []).map(r => ({ id: r.id, kind: 'admin', ...r.data })).filter(a => a.status === 'active' && a.name);
+  return [...users, ...admins];
+}
+
+// Deterministic, same "plain code, never ask the model to guess" convention
+// as matchClient() below. Exact full-name match first; otherwise a
+// first-name match, but ONLY if it's unambiguous (exactly one roster member
+// shares that first name) — two "Sarah"s on the roster must never resolve
+// to a coin-flip.
+function matchOwner(ownerName, roster) {
+  const q = String(ownerName || '').trim().toLowerCase();
+  if (!q) return null;
+  const exact = roster.find(p => String(p.name || '').trim().toLowerCase() === q);
+  if (exact) return exact;
+  const byFirstName = roster.filter(p => String(p.name || '').trim().split(/\s+/)[0].toLowerCase() === q);
+  return byFirstName.length === 1 ? byFirstName[0] : null;
+}
+
+// Who a non-admin caller is allowed to see/create tasks for: themselves,
+// plus anyone whose configured manager (users[].managerId — the same field
+// index.html's assignment-escalation notifications already read) is this
+// caller. This is what makes a manager-tier employee (e.g. Sherine, who has
+// no special admin/super tier of her own — she's a plain member whom other
+// members' managerId happens to point at) distinct from an individual
+// contributor (e.g. Rana, Michael) with no reports: the exact same formula
+// just yields {self} when nobody's managerId points at them. Admin/super
+// tier is unrestricted, same as everywhere else in this app.
+function callerTaskScope(session, roster) {
+  const tier = tierOf(session);
+  if (tier !== 'member') return { isAdmin: true, allowedIds: null };
+  const reportIds = roster.filter(p => p.managerId === session.id).map(p => p.id);
+  return { isAdmin: false, allowedIds: new Set([session.id, ...reportIds]) };
+}
 
 function extractDomain(email) {
   const m = /@([^\s>]+)/.exec(String(email || ''));
@@ -95,13 +154,42 @@ async function handleTaskEmailMode(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
   }
 
+  let supabase;
+  try { supabase = getSupabaseAdmin(); }
+  catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err, session }); return res.status(500).json({ error: err.message }); }
+
+  // Roster + client-matching data are fetched BEFORE calling the model, not
+  // after — the roster feeds the prompt itself (see buildTaskEmailSystemPrompt),
+  // and the caller's scope (below) is derived from this same live data,
+  // never from anything the request body claims about the caller's role.
+  let activeClients, roster, scope;
+  try {
+    const [{ data: clientRows, error: clientErr }, rosterList] = await Promise.all([
+      // Active clients ONLY — an inactive/archived client can never be
+      // auto-matched or assigned a parsed task (CLAUDE.md-required
+      // constraint for this feature).
+      supabase.from('ops_clients').select('id, status, data').eq('status', 'active'),
+      activeRoster(supabase),
+    ]);
+    if (clientErr) throw new Error(clientErr.message);
+    activeClients = (clientRows || []).map(r => ({ id: r.id, ...r.data }));
+    roster = rosterList;
+    scope = callerTaskScope(session, roster);
+  } catch (err) {
+    await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
+    return res.status(500).json({ error: err.message });
+  }
+
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     const message = await client.messages.create({
       model: 'claude-opus-4-7',
       max_tokens: 4096,
-      system: TASK_EMAIL_SYSTEM_PROMPT,
+      system: buildTaskEmailSystemPrompt(roster.map(p => {
+        const title = p.title || p.level;
+        return title ? `${p.name} — ${title}` : p.name;
+      })),
       messages: [{ role: 'user', content: text.trim() }],
     });
 
@@ -117,20 +205,18 @@ async function handleTaskEmailMode(req, res) {
 
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
 
-    let supabase;
-    try { supabase = getSupabaseAdmin(); }
-    catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err, session }); return res.status(500).json({ error: err.message }); }
-    // Active clients ONLY — an inactive/archived client can never be
-    // auto-matched or assigned a parsed task (CLAUDE.md-required constraint
-    // for this feature).
-    const { data: clientRows, error: clientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
-    if (clientErr) { await logError({ endpoint: 'process-transcript:taskEmail', error: clientErr, session }); return res.status(500).json({ error: clientErr.message }); }
-    const activeClients = (clientRows || []).map(r => ({ id: r.id, ...r.data }));
-
+    // Owner-matching and the role-scoped filter below run over EVERY
+    // extracted task before any of it is returned — a member/manager-tier
+    // caller never even receives an out-of-scope task in the HTTP response,
+    // let alone gets a chance to import it. This is enforcement, not just
+    // UX: the client sent nothing about its own role in the request body
+    // (mode/text only), so there is nothing here for a modified client to
+    // spoof — the scope above came entirely from the signed session token.
     const tasks = rawTasks
       .filter(t => t && typeof t.subject === 'string' && t.subject.trim())
       .map(t => {
-        const matched = matchClient(t, activeClients);
+        const matchedClient = matchClient(t, activeClients);
+        const owner = matchOwner(t.ownerName, roster);
         return {
           subject: t.subject.trim(),
           notes: typeof t.notes === 'string' ? t.notes : '',
@@ -139,12 +225,24 @@ async function handleTaskEmailMode(req, res) {
           type: TASK_TYPES.includes(t.type) ? t.type : 'Task',
           priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
           dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
-          clientId: matched ? matched.id : null,
-          clientName: matched ? matched.name : '',
+          clientId: matchedClient ? matchedClient.id : null,
+          clientName: matchedClient ? matchedClient.name : '',
           source: 'parsed-email',
           emailReceivedDate: typeof t.emailReceivedDate === 'string' ? t.emailReceivedDate : '',
           emailThreadId: typeof t.emailThreadId === 'string' ? t.emailThreadId : '',
+          assigneeId: owner ? owner.id : null,
         };
+      })
+      .filter(t => {
+        if (scope.isAdmin) return true;
+        if (t.assigneeId) return scope.allowedIds.has(t.assigneeId);
+        // No owner identified at all — default it to the caller themselves
+        // rather than dropping it, matching how api/ops-sync.js already
+        // treats an unassigned member-created task (forced to self); an
+        // admin's unmatched tasks are left null so they get manually
+        // assigned instead, same as before this change.
+        t.assigneeId = session.id;
+        return true;
       });
 
     return res.status(200).json({ tasks, raw_count: rawTasks.length });

@@ -1664,16 +1664,21 @@ async function runDtEmailParse(){
       statusEl.textContent = 'No tasks found in that text.';
       return;
     }
-    // origin/assigneeId/assignedById are forced server-side to this member's
-    // own id regardless of what's sent — set sensibly here too so the local
-    // list looks right before the next pull confirms it.
+    // assignedById is forced server-side to this member's own id regardless
+    // of what's sent — set sensibly here too so the local list looks right
+    // before the next pull confirms it. assigneeId defaults to the server's
+    // roster-matched owner when the pasted text named a specific person
+    // (api/process-transcript.js already scoped that to "me, or one of my
+    // own direct reports" — a manager-tier employee like Sherine parsing an
+    // email about Rana's work), falling back to self exactly like before
+    // this change for everyone else.
     const tasks = dbGet(DB_KEYS.tasks)||[];
     extracted.forEach(et=>{
       tasks.push({
         id: _dtGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
-        assigneeId: currentUser?.id||null, assignedById: currentUser?.id||null,
+        assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
         category: et.category, type: et.type, priority: et.priority,
         status: 'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'self',
