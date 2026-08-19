@@ -66,6 +66,7 @@ export default async function handler(req, res) {
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
       orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
+      tasksQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
@@ -85,6 +86,7 @@ export default async function handler(req, res) {
       supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
       supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
       supabase.from('ops_sales_funnel').select('id, data'),
+      supabase.from('ops_tasks').select('id, data'),
     ]);
 
     // A single table's query failing (e.g. a column a newer deploy expects
@@ -105,7 +107,7 @@ export default async function handler(req, res) {
       ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['payroll', payrollQ], ['summaries', summariesQ],
       ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
       ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
-      ['salesFunnel', salesFunnelQ],
+      ['salesFunnel', salesFunnelQ], ['tasks', tasksQ],
     ];
     for (const [table, q] of namedQueries) {
       if (q.error) {
@@ -137,6 +139,15 @@ export default async function handler(req, res) {
     // tier). A super admin does not see anyone else's notifications either.
     let notifications = rows(notificationsQ.data).filter(n => n.recipientId === session.id);
     const salesFunnel = rows(salesFunnelQ.data);
+    // Task Assignments (admin) / Daily Tasks (employee) — a member sees only
+    // tasks assigned to them OR created by them (covers a self-authored
+    // Daily Tasks entry before/without any admin ever touching it); every
+    // admin tier sees every task, same super-sees-everyone convention as
+    // clients/users below. Scoped here, unconditionally on tier, same as
+    // notifications above — never a client-side filter.
+    const tasks = rows(tasksQ.data).filter(
+      t => tier !== 'member' || t.assigneeId === session.id || t.assignedById === session.id
+    );
 
     // Sales Funnel access — three levels (viewer/editor/owner). Super
     // Admin/CEO (this row's own level is 'super'/'owner') always resolves to
@@ -225,6 +236,7 @@ export default async function handler(req, res) {
       serviceCatalog: settingsMap.serviceCatalog ?? null,
       catalogSuggestions,
       notifications,
+      tasks,
       // Onboarding tour/tips flags: personal to the caller, same scoping as
       // notifications above — every tier, including the primary-admin
       // sentinel (which has no ops_users/ops_admins row), gets only its OWN
