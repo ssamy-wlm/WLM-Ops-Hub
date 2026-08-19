@@ -1382,6 +1382,64 @@ grid/list; switching back to List works; and reassigning a task from the
 list row's inline dropdown fires an `ops-sync` push carrying the new
 assignee, immediately, in the same interaction.
 
+**Task Assignments: quick-filter/view button resize + calendar
+completeness (2026-08-19).** Reported as two display bugs plus a request
+to verify a suspected data-completeness issue before touching anything
+persistence-related.
+
+Root cause of the resize bug: `toggleTaQuickFilter()` and the category-
+pill renderer toggled a button's class between `btn-outline` (inactive)
+and `btn-primary` (active) to show which filter was on. `.btn-primary`
+sets `width:100%` (it's designed for a full-width primary action button,
+e.g. "Save"), so an "active" quick-filter or category pill would balloon
+out to fill its row instead of just changing color — the exact "changes
+dimensions" symptom reported. `setTaView()` (List/Calendar) had a milder
+version of the same class of bug: toggling `btn-outline` on/off entirely
+changes the border width, shifting the box size by a couple of pixels.
+Fixed by introducing `.btn-toggle-active` — a modifier class that only
+sets background/color/border-*color*, layered on top of a `btn btn-sm
+btn-outline` base that never changes between the two states. Applied to
+all three affected controls (quick filters, List/Calendar toggle, and the
+category pills — the pills weren't named in the report but have the
+identical `btn-primary` bug, found while fixing the reported ones and
+fixed in the same pass since it's the same root cause in the same page).
+
+Calendar view: removed the hard `dayTasks.slice(0,3)` per day — a day
+cell now renders every task due that day (the cell just grows taller;
+`min-height` keeps empty days from looking cramped) instead of silently
+hiding anything past the 3rd with a "+N more" that didn't lead anywhere.
+Added a new `#taCalUndated` banner above the grid, populated whenever
+any visible task has no `dueDate` at all (those can never appear on a
+date grid by definition) — reports the count and, on click, switches to
+List view where every task, dated or not, always renders. Before this,
+an undated task was simply invisible on the calendar with no indication
+it existed at all.
+
+**Completeness/persistence check, run before touching anything (per the
+task's own instruction to stop and flag rather than patch the UI if this
+turned up a real data-loss bug): parsed a 19-task transcript and
+verified the full path — no bug found.** Tested at two levels: (1)
+Playwright against the real `index.html` UI with a stateful mock server
+(an in-memory `Map` keyed by task id standing in for `ops_tasks`, so a
+push really accumulates and a subsequent pull really reflects what was
+stored, not a canned response) — all 19 tasks render in the List table
+immediately after parsing, the `ops-sync` push carries all 19, the
+mock store ends up with 19 distinct ids (no collision), and after a full
+page reload (session restored from localStorage, a fresh `/api/ops-state`
+pull) all 19 are still present and still render. (2) A Node script
+against the real, byte-identical `api/ops-sync.js` (rule #9 pattern,
+no live DB access per rule #11): pushed 19 brand-new tasks directly,
+confirmed `applied.tasks === 19`, zero `rejected`, zero `warnings`, and
+19 distinct rows actually stored. `_taGenId()`'s id scheme
+(`Date.now()` + a 7-char base36 random suffix) was the leading
+suspicion going in — a tight synchronous loop calling it 19 times can
+easily return the same millisecond for all of them, leaving only the
+random suffix as real entropy — but 36^7 ≈ 78 billion possibilities
+makes a real collision at n=19 astronomically unlikely, and no
+collision occurred in the actual test runs either. No code path was
+found that drops, truncates, or batches tasks during save/sync; the
+19-of-19 result held at every stage checked.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
