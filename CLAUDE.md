@@ -974,6 +974,91 @@ change only adds the field and its member-write protection, no data). Per
 rule #12, this PR's migration must be confirmed applied to production
 before merge, same as every migration-adding PR.
 
+**Task Assignments email-parser: live-roster owner matching + server-
+enforced scope (2026-08-19).** First installment of a larger "make the
+parser behave like Sarah's original app" batch, shipped as its own focused
+PR per that batch's own instruction. Two changes, same code path:
+
+1. `api/process-transcript.js`'s `taskEmail` mode now asks the model for an
+   `ownerName` per extracted task, matched against a LIVE roster built
+   fresh from `ops_users`/`ops_admins` on every request (name + title/
+   level, e.g. `"Rana Ayman — Designer"`) — never a hardcoded example list.
+   This deliberately avoids the exact failure mode already present in this
+   same file's OTHER mode (the Roadmap meeting-transcript extractor's
+   `SYSTEM_PROMPT`, which still hardcodes `sarah/david/emily/jacob/rania` as
+   example owners) — that mode is untouched, its own flaw flagged below,
+   not fixed here since it's a separate feature. Matching is deterministic
+   (`matchOwner()`): exact full-name match first, then a first-name match
+   ONLY if it's unambiguous — two people sharing a first name resolve to
+   `null` (left for a human to assign), never a coin-flip.
+2. The extracted-task list is filtered server-side by the CALLER's own
+   scope before any of it is returned, computed from the signed session
+   token alone (the request body carries only `{mode, text}` — nothing
+   about the caller's role for a modified client to spoof): an admin/super
+   caller sees everything, unfiltered; anyone else sees only tasks matched
+   to themselves or to a direct report (`users[].managerId` pointing at
+   them — the SAME field index.html's assignment-escalation notifications
+   already read, so a "manager-tier" employee like Sherine is nothing more
+   than a plain member whom other members' `managerId` happens to point
+   at, not a distinct tier). A task matched to someone outside that scope
+   is silently dropped from the HTTP response — a member never even
+   receives it, let alone gets a chance to import it. An unmatched-owner
+   task is left `null` (unassigned) for an admin caller, exactly as
+   before, but defaults to the caller themselves for a member — matching
+   how `api/ops-sync.js` already treated an unassigned member-created task
+   before this change.
+   
+   This second half required a matching write-side change:
+   `api/ops-sync.js`'s task-creation path previously forced EVERY
+   non-admin-created task to `assigneeId: session.id` unconditionally, with
+   no exception — meaning even if the parser correctly matched a task to
+   Sherine's report Rana, saving it would have silently overwritten that
+   back to Sherine. Fixed by computing the same "self + direct reports" set
+   server-side at write time (via the existing `getDirectory()` helper) and
+   allowing a member to create a new task with `assigneeId` set to anyone
+   in that set — silently falling back to themselves for anyone outside it
+   (never a hard rejection, matching this block's existing "force-correct,
+   don't reject" convention for the CREATE path). An individual contributor
+   with no reports gets exactly the old behavior back, since their
+   allowed-set is just `{self}`. Updating an EXISTING task is unchanged —
+   still member-restricted to a task already assigned to them, still only
+   status/notes/tags. `api/ops-state.js` needed NO change at all: its
+   existing member read-scope (`assigneeId === session.id ||
+   assignedById === session.id`) already covers "tasks I created for
+   someone else," so once Sherine creates Rana's task, both of them
+   already see it correctly — that scoping was already exactly right for
+   this, just previously unreachable because nothing could write such a
+   row.
+
+Verified with two Node scripts exercising the real, byte-identical
+`api/process-transcript.js` and `api/ops-sync.js` against in-memory fakes
+(rule #9 pattern, no live DB access per rule #11): 21/21 checks on the
+parse+scope side (admin sees all three tasks including two different
+matched owners and one unmatched; Sherine sees her own + Rana's, Michael's
+is dropped, an unmatched one defaults to her; Rana sees only her own, her
+manager Sherine's task is dropped; an ambiguous two-"Sam" roster never
+resolves to a guess; client-matching is unaffected; the prompt sent to the
+model contains the live roster and NOT the stale Roadmap-mode names) and
+15/15 on the write-side scope (Sherine creating a task for report Rana is
+honored; Sherine attempting one for non-report Michael silently falls back
+to herself; Rana cannot assign to her own manager either; admin remains
+fully unrestricted; the existing "not your task" update rejection is
+unchanged). `index.html`/`user.html` both now default a parsed task's
+`assigneeId` to whatever the server resolved, instead of always `null`
+(admin) or always self (employee) — freely reassignable afterward exactly
+as before.
+
+**Flagged, not fixed — separate items in the same "parser quality" batch,
+each its own PR:** due-date extraction from relative language ("by
+Friday"), dropping the "Type" field, fixing client detection (including a
+possible "WebLight Media (Internal)" pseudo-client that this agent cannot
+confirm exists in production without live DB access — rule #11), and
+cross-transcript/existing-task dedupe+merge. The Roadmap mode's own stale
+hardcoded owner-name list (`sarah/david/emily/jacob/rania` in this same
+file's OTHER `SYSTEM_PROMPT`) is a pre-existing, separate flaw, not touched
+by this PR — flagged here since this PR fixes the identical problem in the
+sibling mode.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

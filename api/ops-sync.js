@@ -1323,18 +1323,27 @@ export default async function handler(req, res) {
 
     // ── Task Assignments (admin) / Daily Tasks (employee) — ops_tasks.
     // Admins have full CRUD on any task, including reassigning it to a
-    // different employee. Members may only (a) create a brand-new task,
-    // always forced to origin:'self', assigneeId/assignedById forced to
-    // their OWN id regardless of what the client sent (so "Add / import
-    // tasks" can never silently assign to someone else), or (b) update an
-    // EXISTING task already assigned to them — and even then, only a small
-    // set of fields (status/notes/tags): everything else (assignee, client,
-    // category, type, priority, due date, origin, source) is admin-only,
-    // the same allow-list-of-untouchable-fields pattern
-    // checkMemberClientWrite already uses for clients. A task's assignee
-    // actually changing (including a brand-new task created WITH an
-    // assignee, since assigneeChanged's prevId is '' for a task that didn't
-    // exist before) fires an in-app + email notification via
+    // different employee. A member may create a brand-new task assigned to
+    // themselves OR to a direct report — anyone whose configured manager
+    // (users[].managerId, the same field index.html's assignment-escalation
+    // notifications already read) is this caller. assigneeId/assignedById
+    // are forced server-side regardless of what the client sent: assignedById
+    // is always the caller, and assigneeId is the incoming value ONLY if
+    // it's the caller or one of their own reports, silently falling back to
+    // the caller otherwise (so "Add / import tasks" — including the
+    // email-parser's owner-matching in api/process-transcript.js — can never
+    // assign to someone outside that caller's own scope, individual
+    // contributors included, since an individual's report set is empty and
+    // this collapses back to exactly the old self-only behavior for them).
+    // Updating an EXISTING task is unchanged: only if it's already assigned
+    // to them, and even then only a small set of fields (status/notes/tags)
+    // — everything else (assignee, client, category, type, priority, due
+    // date, origin, source) is admin-only, the same
+    // allow-list-of-untouchable-fields pattern checkMemberClientWrite
+    // already uses for clients. A task's assignee actually changing
+    // (including a brand-new task created WITH an assignee, since
+    // assigneeChanged's prevId is '' for a task that didn't exist before)
+    // fires an in-app + email notification via
     // fireOpsTaskAssignmentNotifications, unless the task is self-assigned
     // (assigning yourself something needs no notification). ──
     if (Array.isArray(c.tasks) && c.tasks.length) {
@@ -1344,14 +1353,25 @@ export default async function handler(req, res) {
       const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
+      // Computed once per request, fresh from the live directory — never
+      // trusted from the client. null for an admin caller (unrestricted).
+      let creatableAssigneeIds = null;
+      if (!isAdmin) {
+        const { users: directoryUsers } = await getDirectory(supabase);
+        const reportIds = directoryUsers.filter(u => u.managerId === session.id).map(u => u.id);
+        creatableAssigneeIds = new Set([session.id, ...reportIds]);
+      }
       let n = 0;
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
         let row;
         if (!cur) {
-          row = isAdmin
-            ? { ...inc, assignedById: inc.assignedById || session.id }
-            : { ...inc, assigneeId: session.id, assignedById: session.id, origin: 'self' };
+          if (isAdmin) {
+            row = { ...inc, assignedById: inc.assignedById || session.id };
+          } else {
+            const assigneeId = creatableAssigneeIds.has(inc.assigneeId) ? inc.assigneeId : session.id;
+            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self' };
+          }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else if (isAdmin) {
