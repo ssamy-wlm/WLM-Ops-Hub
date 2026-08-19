@@ -40,6 +40,8 @@ For EACH distinct task or action item you find:
 - "dueDate": an ISO YYYY-MM-DD date if one is mentioned or clearly implied, otherwise empty string.
 - "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
 - "senderName": the sender's display name if available, otherwise empty string.
+- "recipientEmail": the primary recipient's email address if the text contains one (e.g. a "To:" header, or who a WebLight team member is writing/replying to), otherwise empty string.
+- "recipientName": the primary recipient's display name if available, otherwise empty string.
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
 - "ownerName": if the text clearly assigns this specific task to one specific person on the team, that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
@@ -47,7 +49,7 @@ For EACH distinct task or action item you find:
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":"","ownerName":""}]}`;
+{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","ownerName":""}]}`;
 }
 
 // Live, active-only roster (users + admins together — an admin like Abby
@@ -108,35 +110,65 @@ function domainOf(url) {
   return m ? m[1].toLowerCase() : '';
 }
 
+// A client name can carry a trailing qualifier in parens (e.g. "WebLight
+// Media (Internal)") that nobody actually types when writing about that
+// client in plain text — stripping it gives a second, more natural string
+// to check a text-mention against, without treating "(Internal)" itself as
+// something a real email would ever contain verbatim.
+function stripParenthetical(name) {
+  return String(name || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
 // Deterministic, not LLM-guessed — a wrong auto-match here would silently
 // attach a task (and whatever it references) to the wrong client, so this
 // stays plain code the same way every other client-matching decision in
 // this app is server-side and reviewable, never "ask the model to guess."
-// Checked in order: exact sender-email match against the client's salvaged
-// clientEmails[]/legacy clientEmail, then a case-insensitive sender-name
-// vs client-name match, then a sender-domain vs client-website-domain
-// match. No match at any step leaves the task unlinked — an admin assigns
-// the client manually in the UI rather than the system guessing wrong.
+// Checked in order, most confident first: exact email match (sender OR
+// recipient — a task can equally be about something WebLight is sending
+// TO a client, not just receiving from one) against the client's salvaged
+// clientEmails[]/legacy clientEmail; exact name match (sender or
+// recipient) against the client's own name; sender/recipient domain vs the
+// client's website domain; and finally, lowest-confidence, an unambiguous
+// mention of the client's name (or that name with a trailing parenthetical
+// qualifier stripped) inside the task's own subject/notes text — accepted
+// ONLY when it's the single client whose name appears, since a short or
+// generic client name matching two different active clients at once means
+// this signal isn't trustworthy for that task. No match at any step leaves
+// the task unlinked — an admin assigns the client manually rather than the
+// system guessing wrong.
 function matchClient(task, activeClients) {
   const senderEmail = String(task.senderEmail || '').toLowerCase().trim();
-  const senderDomain = extractDomain(senderEmail);
+  const recipientEmail = String(task.recipientEmail || '').toLowerCase().trim();
   const senderName = String(task.senderName || '').toLowerCase().trim();
-  if (senderEmail) {
-    const byEmail = activeClients.find(c =>
-      (Array.isArray(c.clientEmails) && c.clientEmails.some(e => String(e).toLowerCase().trim() === senderEmail)) ||
-      String(c.clientEmail || '').toLowerCase().trim() === senderEmail
-    );
-    if (byEmail) return byEmail;
-  }
-  if (senderName) {
-    const byName = activeClients.find(c => String(c.name || '').toLowerCase().trim() === senderName);
-    if (byName) return byName;
-  }
-  if (senderDomain) {
-    const byDomain = activeClients.find(c => domainOf(c.website) && domainOf(c.website) === senderDomain);
-    if (byDomain) return byDomain;
-  }
-  return null;
+  const recipientName = String(task.recipientName || '').toLowerCase().trim();
+  const senderDomain = extractDomain(senderEmail);
+  const recipientDomain = extractDomain(recipientEmail);
+
+  const byEmail = (email) => email && activeClients.find(c =>
+    (Array.isArray(c.clientEmails) && c.clientEmails.some(e => String(e).toLowerCase().trim() === email)) ||
+    String(c.clientEmail || '').toLowerCase().trim() === email
+  );
+  const byName = (name) => name && activeClients.find(c => String(c.name || '').toLowerCase().trim() === name);
+  const byDomain = (domain) => domain && activeClients.find(c => domainOf(c.website) && domainOf(c.website) === domain);
+
+  return byEmail(senderEmail) || byEmail(recipientEmail)
+    || byName(senderName) || byName(recipientName)
+    || byDomain(senderDomain) || byDomain(recipientDomain)
+    || matchClientByTextMention(task, activeClients)
+    || null;
+}
+
+function matchClientByTextMention(task, activeClients) {
+  const text = `${task.subject || ''} ${task.notes || ''}`.toLowerCase();
+  if (!text.trim()) return null;
+  // A minimum length guards against a short/generic client name (e.g. an
+  // acronym) matching all over unrelated text.
+  const candidates = activeClients.filter(c => {
+    const full = String(c.name || '').toLowerCase().trim();
+    const stripped = stripParenthetical(c.name).toLowerCase();
+    return (full.length >= 4 && text.includes(full)) || (stripped.length >= 4 && stripped !== full && text.includes(stripped));
+  });
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 async function handleTaskEmailMode(req, res) {
