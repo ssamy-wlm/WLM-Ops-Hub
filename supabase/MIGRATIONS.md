@@ -125,6 +125,57 @@ If you want the belt-and-suspenders functional check too (an
 or `created_at` fails) — the exact four statements are in the git history
 of this file's introducing PR.
 
+### 7. Four more migrations were hand-applied after this pipeline was built — this is fine, no separate action needed
+
+Since this workflow was written, `ops_session_activity`, `ops_backups`
+(including its later `size_bytes`/CHECK-constraint fix, folded into the
+same file rather than a second one), `ops_payroll`, and `ops_tasks` were
+all applied to production by hand (the SQL editor), same as before this
+pipeline existed. **What this means for the check:** the CLI's own
+migration-history bookkeeping (`supabase_migrations.schema_migrations` on
+the remote database — a table the CLI itself maintains, *separate from*
+`api/schema-drift.js`'s hand-maintained `EXPECTED_TABLES` list and
+`api/migrate-schema.js`'s unrelated, abandoned Vercel-Postgres migration
+system) has no record of these 4, even though the schema they describe is
+already live. `db push --dry-run` — exactly what
+`check-prod-current` runs — reports them as pending on that basis alone,
+regardless of the fact that the tables/columns already exist.
+
+**Verified locally, end-to-end, against a real Postgres 16 instance** (same
+method as step 3 above): built a database with the baseline migrations
+applied, then hand-ran these 4 files' raw SQL directly via `psql` —
+bypassing the CLI entirely, exactly reproducing "applied by hand" — and
+confirmed `db push --dry-run` reports precisely these 4 as pending
+(`upToDate: false`), matching the real symptom. Two independent ways to
+close the gap, both verified to work:
+
+1. **Just run the normal one-time bootstrap push** (step 4 above) as
+   written — no new command needed. All 4 files use the same
+   `if not exists`/`or replace` idempotent pattern as every other
+   migration in this repo, so re-running their SQL against a database that
+   already has these tables is a safe no-op, and `db push` still correctly
+   records the version as applied once it completes without error.
+   Verified: after hand-applying all 4 out-of-band, running the real
+   (non-dry-run) `db push` re-applied them cleanly with zero errors and a
+   subsequent dry-run reported `"Remote database is up to date."`
+2. **Or, if you'd rather not re-run any SQL at all:**
+   ```
+   supabase migration repair --status applied 20260806080000 20260817130000 20260818090000 20260819100000 --db-url "<your connection string>"
+   ```
+   Verified identically effective — a subsequent dry-run also reports up
+   to date, with no SQL re-executed.
+
+**Confirmed this does NOT mask genuine future drift**, either way: after
+reconciling via either method, adding a throwaway new migration file and
+re-running `db push --dry-run` correctly reported it as pending
+(`upToDate: false`) — the gate still catches a real gap, this only closes
+the specific, already-hand-applied one.
+
+Bottom line: **no new action beyond the existing one-time bootstrap (step
+4) is required for these 4** — this section exists so the person running
+that step doesn't need to wonder whether these 4 hand-applied tables will
+cause a problem. They won't.
+
 ## Ongoing: what happens on every future migration
 
 Nothing manual. Commit a new file under `supabase/migrations/`, open a PR —
