@@ -8481,8 +8481,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // "changed" and pushed it to the cloud via cloudAutoSync() — creating the
   // 2026-07-08 14:47:37 batch write across 8 real ops_users rows. Function
   // body left in place, unreferenced, as a record of what it did.
-  // Remove duplicate clients created by an earlier (incorrect) SOP seed attempt
-  _removeSopSeedDuplicates();
+  // _removeSopSeedDuplicates() call DISABLED (2026-08-19, Security & Cleanup
+  // item #12): removed a client-DB duplicate on every load and — via the
+  // same local-dirty-check/cloudAutoSync path every write in this file
+  // goes through — could push that removal to the cloud, the exact
+  // load-time-diff-and-write pattern CLAUDE.md rule #2 forbids. Its actual
+  // job (a one-time SOP-seed duplicate cleanup) is long done; no function
+  // may run on load that modifies/seeds/fixes data. Function body left in
+  // place, unreferenced, as a record of what it did.
   // _cleanupPlaceholderSeedUsers() call DISABLED (2026-07-09): same class of
   // bug as seedStaticUsers() above — guarded only by a local `localStorage`
   // done-flag (`wl_placeholder_cleanup_v1_done`), which is gone on the exact
@@ -8520,18 +8526,30 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // _removeDuplicateAssmaaRecord() above — writes ops_users and calls
   // cloudAutoSync() from a purely local diff, no server round-trip check
   // first. Function body left in place, unreferenced, as a record of what it did.
-  // Reset Abby's and Emily's admin password to the known default so their first login works (idempotent)
-  _resetAbbyAndEmilyFirstLoginPassword();
+  // _resetAbbyAndEmilyFirstLoginPassword() call DISABLED (2026-08-19,
+  // Security & Cleanup item #12): wrote a hardcoded plaintext password
+  // ('123456') onto two named admin records and pushed it to the cloud on
+  // every load — the exact banned load-time-mutation pattern, made worse
+  // here by writing a real credential in cleartext. Their first login is
+  // long since resolved; no function may run on load that modifies/seeds/
+  // fixes data, and password fixes especially must never be a standing
+  // load-time capability. Function body left in place, unreferenced, as a
+  // record of what it did.
   // _reassignSocialMediaToSherine() and _seedAssmaaWorkload() calls DISABLED
   // (2026-07-03): these auto-applied reassignments to live data on every admin
   // page load with no review step. Reassignment is now handled as a one-time,
   // explicitly reviewed change instead of standing auto-seed logic. Function
   // bodies left in place, unreferenced, as a record of exactly what they did —
   // safe to delete once the reviewed reassignment supersedes them.
-  // Tag pre-existing seed records as unconnected placeholders (idempotent, re-runs after
-  // every cloud pull too) — runs after the above so real assigned work is already in
-  // place and never gets mistakenly tagged as an unconnected placeholder.
-  _tagSeededPlaceholderUsers();
+  // _tagSeededPlaceholderUsers() call DISABLED (2026-08-19, Security &
+  // Cleanup item #12): re-derived a `seeded` flag on every user record on
+  // every load AND after every cloud pull, pushing a change to the cloud
+  // whenever it disagreed with what was already there — the exact banned
+  // load-time-diff-and-write pattern, just re-tagging instead of
+  // re-seeding. Any record already correctly tagged from a past run keeps
+  // that tag (this only ever set/cleared the flag, never deleted a user);
+  // no function may run on load that modifies data. Function body left in
+  // place, unreferenced, as a record of what it did.
   // _unhideRestoredYehia() call DISABLED (2026-07-09): writes ops_users and
   // calls cloudAutoSync() purely from local record state (`u.seeded`/
   // `u.placeholderExempt`), no server round-trip check first — same
