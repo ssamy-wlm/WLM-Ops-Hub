@@ -1185,6 +1185,261 @@ server data actually changed, closing the stale-tab-clobbers-newer-state
 window described above — lower priority since it can't resurrect a
 tombstoned row, only produce a spurious no-op-equivalent write.
 
+**Task parser quality batch — dropped the "Type" field (2026-08-19).**
+First of several focused PRs off a "make the Task Assignments parser
+behave like Sarah's original app" spec. This one removes the `type` field
+entirely — it only ever read "Task" in practice and added a column/select/
+detail-row nobody used. Removed from: `api/process-transcript.js`'s
+`taskEmail` extraction schema and prompt (`TASK_TYPES` deleted), the Task
+Assignments list column/filter/edit-modal in `index.html`, and the Daily
+Tasks detail view in `user.html` (which never had an edit path for it —
+display-only). `api/ops-sync.js`'s `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` also
+dropped `'type'` — found and fixed as part of the same change, not a
+separate bug: leaving it in that list would have permanently rejected any
+member status/notes/tags update on a task with legacy stored `type` data
+the instant the client stopped sending the field, since
+`JSON.stringify(cur.type) !== JSON.stringify(undefined)` is `true` even
+though nothing meaningful changed. Verified with a Node script reproducing
+exactly that scenario against the real `api/ops-sync.js` (rule #9) — a
+member updating only status/notes on a task with legacy `type:'Client
+Update'` data succeeds, not rejected. Existing rows that still carry a
+stored `type` value are untouched (no migration, this is a document-model
+jsonb field — it just stops being read or written going forward).
+
+**Task parser quality batch — due date extraction + due-date sort
+(2026-08-19).** Another focused PR off the "make the parser behave like
+Sarah's original app" spec. `api/process-transcript.js`'s `taskEmail`
+prompt now includes today's real date and weekday (computed fresh per
+request — plain server-side `new Date()`, not a Workflow script, so this
+is fine) as the reference point for relative language, plus explicit
+resolution rules for the phrasings the spec named: "by/this &lt;weekday&gt;"
+(the next occurrence, today if today IS that weekday), "next &lt;weekday&gt;"
+(that weekday next week, never this week), "next week" (next week's
+Monday), "end of month" (last day of the CURRENT month), "tomorrow"/
+"today", and "in N days/weeks". A new `validDueDate()` guards the
+returned value before it's ever used: `Date` silently ROLLS OVER an
+out-of-range date instead of failing (`"2026-02-30"` normalizes to March
+2) — checking `getTime()` alone would let that corrupted value through
+as if it were real, so this round-trips the parsed year/month/day back
+out and compares them to the original string, dropping to `''` (treated
+identically to "no due date mentioned") on any mismatch or non-ISO
+format. `index.html`'s Task Assignments list now sorts by due date as the
+PRIMARY key (undated tasks last — "nothing to act on yet" rather than
+implying urgency), with priority only as a tie-breaker among tasks
+sharing a due date or lacking one, via a new `_taSortByDue()` applied
+inside `_taFilteredTasks()` so every consumer (list view, filters, quick
+filters) gets the same order for free. Verified with Node scripts against
+the real, byte-identical `api/process-transcript.js` (malformed and
+impossible dates both drop to `''`, a valid date passes through
+unchanged, the prompt actually carries today's date and the resolution
+rules) and the real, extracted `_taSortByDue()` (dated-before-undated,
+earlier-date-first, priority tie-breaking both among same-dated and
+among undated tasks, and confirms the input array itself is never
+mutated).
+
+**Task parser quality batch — client detection widened (2026-08-19).**
+Another focused PR off the same spec. `api/process-transcript.js`'s
+`matchClient()` (deterministic, never LLM-guessed — same conviction as
+`matchOwner()`) gained three more signals, all checked in the same
+most-confident-first order as before: a new `recipientEmail`/
+`recipientName` pair is now extracted alongside the existing sender
+fields (a task can be about something WebLight is sending TO a client,
+not just receiving from one) and checked the same way sender email/name/
+domain already were; and, lowest-confidence, an unambiguous mention of
+the client's own name inside the task's subject/notes text — including a
+parenthetical-stripped variant (`"WebLight Media (Internal)"` ->
+`"WebLight Media"`), since nobody types the qualifier verbatim when
+writing about their own internal work. "Unambiguous" is load-bearing
+here: the text-mention check only accepts a match when exactly one active
+client's name (or stripped name) appears — confirmed with the exact
+"Fern Wood Flooring" vs a hypothetical shorter "Fern Wood" overlap
+(the same client CLAUDE.md already flags a spelling trap for elsewhere)
+correctly resolving to unassigned rather than guessing either one. A
+minimum-length guard (4 chars) keeps a short/generic client name from
+matching all over unrelated text. Confirmed against Sarah's specific
+example: "WebLight Media (Internal)" already exists as an active client
+record in production (per Sarah directly — not independently verified,
+no live DB access, rule #11), so no data change was needed, only the
+matching logic. Verified with a Node script against the real, byte-
+identical `matchClient()`/`matchClientByTextMention()`: recipient email
+and recipient name both resolve a client; the Internal client resolves
+via both its full and stripped name; a task with genuinely no client
+signal stays unassigned; the short-name guard holds; the ambiguous-
+overlap case resolves to unassigned, not a guess; and the pre-existing
+sender-email match is unaffected.
+
+**Task parser quality batch — cross-transcript dedupe/merge + mark-done
+detection (2026-08-19).** Last item of the "make the parser behave like
+Sarah's original app" spec (item #5), highest-risk of the batch so
+built last, with a design choice confirmed with Sarah first: deterministic
+similarity matching, not an LLM judging duplicates — same "plain code,
+reviewable, no guessing" conviction as `matchClient()`/`matchOwner()`
+already use for this feature.
+
+`api/process-transcript.js` gained a new `alreadyDone` boolean per
+extracted task (true only when the text explicitly says that specific
+item is finished — never inferred from a task merely sounding routine)
+and a two-stage dedupe pipeline, both purely deterministic:
+
+1. **Within-batch** (`dedupeWithinBatch()`): collapses duplicates
+   mentioned more than once across the pasted text — e.g. four meeting
+   transcripts all referencing the same follow-up — BEFORE anything is
+   compared against storage. `isSameTask()` requires matching client AND
+   matching assignee AND a subject token-overlap (Jaccard) similarity
+   ≥0.6 (`subjectSimilarity()`, stopword-filtered) — a near-miss on
+   wording alone is never enough; a similar-sounding task about a
+   different client never merges. Merging is purely additive: notes
+   concatenated, tags unioned, earliest non-empty due date wins,
+   `alreadyDone` becomes true if any merged mention says so.
+2. **Against existing storage**: each survivor is checked against
+   existing NOT-done `ops_tasks` (a Done task is never a merge target —
+   the goal is stopping a still-open item from doubling, not reopening
+   finished work), scoped exactly like the owner-matching filter (an
+   admin can match against anyone's task; a member/manager-tier caller
+   only against one already in their own scope — self, or a direct
+   report). A match attaches `mergeIntoId`/`mergeIntoSubject` to the
+   response — the endpoint itself never touches existing data; it only
+   tells the client which row to fold into instead of inserting a new
+   one.
+
+`index.html`'s `runTaskEmailParse()` and `user.html`'s
+`runDtEmailParse()` both now branch on `mergeIntoId`: when present, the
+merge is deliberately narrow and additive ONLY — notes appended (never
+overwritten), tags unioned, due date filled only if the existing task
+doesn't already have one, status escalated to Done only if the text
+said so. Every other field of the existing task (assignee, client,
+category, priority, service, replyStatus, etc.) is left completely
+untouched — a wrong fuzzy match costs at most a stray note, never
+corrupts someone's real tracked work. This was the deliberate reason to
+avoid a full-object overwrite on merge, even though the existing
+admin-edit path already allows one: a fuzzy similarity match is a much
+weaker signal than a human clicking Save on a specific row, so it gets a
+narrower blast radius. `alreadyDone` on a brand-new (non-merged) task
+sets its initial `status` to `'Done'` instead of the usual `'Not
+started'`.
+
+Verified two ways, no live DB access (rule #11): (1) a Node script
+against the real, byte-identical `api/process-transcript.js` — four
+near-duplicate mentions collapse to one task with all four notes
+preserved; a genuinely different subject is never merged; a brand-new
+`alreadyDone` task gets `status:'Done'`; a similar-subject/same-client
+candidate correctly matches an existing open task by id; the same
+subject with a DIFFERENT (unmatched) client does not match; an existing
+task already marked Done is never offered as a merge target; and a
+member's merge candidates are correctly scoped (an existing task
+entirely outside their scope is dropped by the earlier owner-scope
+filter before the merge step ever runs, same as any other out-of-scope
+task). (2) Playwright against the real `index.html` UI end-to-end
+(mocked `/api/process-transcript`/`/api/ops-state`/`/api/ops-sync`): a
+merge produces exactly one net-new task plus the existing task correctly
+updated (not a third duplicate row) — notes appended, tags unioned, due
+date filled in, client/assignee left untouched, status unchanged (no
+`alreadyDone`) — while a separate brand-new `alreadyDone` task is
+created with `status:'Done'`. 8/8 checks passing.
+
+**Task parser quality batch — "Assigned Tasks" schedule tab, separate
+from parsing (2026-08-19).** Last of the focused PRs off the same spec.
+Before this, Task Assignments was one single page: the "Import & parse"
+card sat directly above the existing List/Calendar(month-only) toggle,
+filters, and table — no separation between "bring in new tasks" and
+"browse/schedule what's already assigned." Split into two sub-tabs
+(`setTaSubtab()`, new `#ta-subtab-parse`/`#ta-subtab-assigned` wraps): the
+parse card now lives alone under "📧 Add / Import"; everything else
+(view toggle, filters, category pills, list/calendar) moved under "🗓
+Assigned Tasks." Switching sub-tabs is a pure display toggle, same
+pattern as the existing List/Calendar toggle it sits next to — no new
+data-fetch, and switching INTO "Assigned Tasks" re-renders so anything
+imported (or changed by someone else, picked up by the normal live-sync
+poll) while parked on the parse tab shows fresh.
+
+The view toggle itself grew from 2 options (List/Calendar-month-only) to
+4 (List/Day/Week/Month) per the spec's explicit "Day / Week / Month
+views (a schedule you can map work across)" ask. `_taCalDate` is kept as
+the ONE shared "current period" anchor across all three calendar-style
+views (previously only Month used it) — `_taShiftPeriod(delta)` shifts it
+by day/week/month depending on which view is active, rather than three
+separate date variables that could drift from each other when switching
+views. New `_renderTaDay()`/`_renderTaWeek()` sit alongside the existing
+`_renderTaCalendar()` (month), reusing the same due-date bucketing and
+overdue-coloring conventions.
+
+"Assigning/reassigning reflects immediately in the assignee's Daily
+Tasks" needed NO new plumbing — `_taReassign()` already pushed via
+`cloudAutoSync()` immediately on every reassignment (list row, detail
+panel, or edit modal), and both portals already poll `/api/ops-state`
+on their existing live-sync interval; this requirement was already true
+of the existing architecture, confirmed rather than assumed via the
+Playwright check below (a reassignment produces an `ops-sync` push
+carrying the new `assigneeId` within the same interaction, no manual
+refresh triggered).
+
+Verified via Playwright against the real `index.html` UI (mocked
+`/api/ops-state`/`/api/ops-sync`): the parse sub-tab is visible by
+default and the assigned-tasks sub-tab hidden, switching flips both
+correctly; List is the default view within Assigned Tasks; switching to
+Day/Week/Month each correctly shows a task due today in that view's
+grid/list; switching back to List works; and reassigning a task from the
+list row's inline dropdown fires an `ops-sync` push carrying the new
+assignee, immediately, in the same interaction.
+
+**Task Assignments: quick-filter/view button resize + calendar
+completeness (2026-08-19).** Reported as two display bugs plus a request
+to verify a suspected data-completeness issue before touching anything
+persistence-related.
+
+Root cause of the resize bug: `toggleTaQuickFilter()` and the category-
+pill renderer toggled a button's class between `btn-outline` (inactive)
+and `btn-primary` (active) to show which filter was on. `.btn-primary`
+sets `width:100%` (it's designed for a full-width primary action button,
+e.g. "Save"), so an "active" quick-filter or category pill would balloon
+out to fill its row instead of just changing color — the exact "changes
+dimensions" symptom reported. `setTaView()` (List/Calendar) had a milder
+version of the same class of bug: toggling `btn-outline` on/off entirely
+changes the border width, shifting the box size by a couple of pixels.
+Fixed by introducing `.btn-toggle-active` — a modifier class that only
+sets background/color/border-*color*, layered on top of a `btn btn-sm
+btn-outline` base that never changes between the two states. Applied to
+all three affected controls (quick filters, List/Calendar toggle, and the
+category pills — the pills weren't named in the report but have the
+identical `btn-primary` bug, found while fixing the reported ones and
+fixed in the same pass since it's the same root cause in the same page).
+
+Calendar view: removed the hard `dayTasks.slice(0,3)` per day — a day
+cell now renders every task due that day (the cell just grows taller;
+`min-height` keeps empty days from looking cramped) instead of silently
+hiding anything past the 3rd with a "+N more" that didn't lead anywhere.
+Added a new `#taCalUndated` banner above the grid, populated whenever
+any visible task has no `dueDate` at all (those can never appear on a
+date grid by definition) — reports the count and, on click, switches to
+List view where every task, dated or not, always renders. Before this,
+an undated task was simply invisible on the calendar with no indication
+it existed at all.
+
+**Completeness/persistence check, run before touching anything (per the
+task's own instruction to stop and flag rather than patch the UI if this
+turned up a real data-loss bug): parsed a 19-task transcript and
+verified the full path — no bug found.** Tested at two levels: (1)
+Playwright against the real `index.html` UI with a stateful mock server
+(an in-memory `Map` keyed by task id standing in for `ops_tasks`, so a
+push really accumulates and a subsequent pull really reflects what was
+stored, not a canned response) — all 19 tasks render in the List table
+immediately after parsing, the `ops-sync` push carries all 19, the
+mock store ends up with 19 distinct ids (no collision), and after a full
+page reload (session restored from localStorage, a fresh `/api/ops-state`
+pull) all 19 are still present and still render. (2) A Node script
+against the real, byte-identical `api/ops-sync.js` (rule #9 pattern,
+no live DB access per rule #11): pushed 19 brand-new tasks directly,
+confirmed `applied.tasks === 19`, zero `rejected`, zero `warnings`, and
+19 distinct rows actually stored. `_taGenId()`'s id scheme
+(`Date.now()` + a 7-char base36 random suffix) was the leading
+suspicion going in — a tight synchronous loop calling it 19 times can
+easily return the same millisecond for all of them, leaving only the
+random suffix as real entropy — but 36^7 ≈ 78 billion possibilities
+makes a real collision at n=19 astronomically unlikely, and no
+collision occurred in the actual test runs either. No code path was
+found that drops, truncates, or batches tasks during save/sync; the
+19-of-19 result held at every stage checked.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
