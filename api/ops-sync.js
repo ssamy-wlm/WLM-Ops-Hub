@@ -32,6 +32,7 @@
 // load-time whole-record diffing pattern is what corrupted data before and
 // is deliberately not used anywhere in this file.
 
+import crypto from 'crypto';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
@@ -912,6 +913,115 @@ export default async function handler(req, res) {
   let supabase;
   try { supabase = getSupabaseAdmin(); }
   catch (err) { await logError({ endpoint: 'ops-sync', error: err, session }); return res.status(500).json({ error: err.message }); }
+
+  // ── One-time password-hash cutover (Security & Cleanup #11) — Super
+  // Admin/Owner only, same CLAUDE.md rule #6 dry-run + typed-confirmation +
+  // fresh-reviewToken pattern as api/ops-backups.js's restore action. Every
+  // write path in this file already hashes a password the moment it's set
+  // (hashIncomingPasswords below, selfPasswordChange above), and every login
+  // lazily upgrades its own row (api/ops-auth.js) — this action exists only
+  // to reach the remainder: an account that hasn't logged in or changed its
+  // password since scrypt hashing shipped (2026-07-25), whose stored value
+  // is still legacy plaintext. Dispatched via a top-level `action` field,
+  // same convention as ops-backups.js, never via `changes` — this isn't a
+  // per-record sync write, it's a guarded administrative action.
+  if (req.body?.action === 'password-cutover-dry-run' || req.body?.action === 'password-cutover-confirm') {
+    if (tier !== 'super') return res.status(403).json({ error: 'Super Admin/Owner only' });
+    const CUTOVER_PHRASE = 'HASH ALL LEGACY PASSWORDS';
+
+    // Reads live rows fresh — never a cached/passed-in list — so the
+    // resulting reviewToken is always bound to what's actually in the
+    // database at the moment it's computed, matching computeReviewToken's
+    // "recompute fresh, refuse if it doesn't match" pattern in opsBackup.js.
+    async function cutoverSnapshot() {
+      const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: pwRow, error: pErr }] = await Promise.all([
+        supabase.from('ops_users').select('id, data'),
+        supabase.from('ops_admins').select('id, data'),
+        supabase.from('ops_settings').select('data').eq('key', 'primaryAdminPw').maybeSingle(),
+      ]);
+      const firstErr = uErr || aErr || pErr;
+      if (firstErr) throw new Error(firstErr.message);
+      const legacyUsers = (userRows || []).filter(r => hasContent(r.data?.password) && !isHashed(r.data.password));
+      const legacyAdmins = (adminRows || []).filter(r => hasContent(r.data?.password) && !isHashed(r.data.password));
+      const primaryAdminLegacy = hasContent(pwRow?.data) && !isHashed(pwRow.data);
+      const idList = [
+        ...legacyUsers.map(r => `users:${r.id}`),
+        ...legacyAdmins.map(r => `admins:${r.id}`),
+        ...(primaryAdminLegacy ? ['primaryAdminPw'] : []),
+      ].sort();
+      return { legacyUsers, legacyAdmins, primaryAdminLegacy, idList };
+    }
+    function cutoverToken(idList) {
+      const secret = process.env.SESSION_SECRET;
+      if (!secret) throw new Error('SESSION_SECRET is not configured on the server.');
+      return crypto.createHmac('sha256', secret).update(JSON.stringify(idList)).digest('base64url');
+    }
+
+    if (req.body.action === 'password-cutover-dry-run') {
+      try {
+        const snap = await cutoverSnapshot();
+        return res.status(200).json({
+          ok: true,
+          reviewToken: cutoverToken(snap.idList),
+          count: snap.idList.length,
+          // Names only, for the confirmation screen — never a password or
+          // hash value, hashed or not, leaves this endpoint in this action.
+          accounts: [
+            ...snap.legacyUsers.map(r => ({ table: 'users', id: r.id, name: r.data?.name || r.data?.email || r.id })),
+            ...snap.legacyAdmins.map(r => ({ table: 'admins', id: r.id, name: r.data?.name || r.data?.email || r.id })),
+            ...(snap.primaryAdminLegacy ? [{ table: 'settings', id: 'primaryAdminPw', name: 'Primary Admin' }] : []),
+          ],
+        });
+      } catch (err) {
+        await logError({ endpoint: 'ops-sync', error: err, session });
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // action === 'password-cutover-confirm'
+    const { reviewToken, confirmPhrase } = req.body;
+    if (!reviewToken || !confirmPhrase) return res.status(400).json({ error: '"reviewToken" and "confirmPhrase" are both required' });
+    if (confirmPhrase !== CUTOVER_PHRASE) return res.status(400).json({ error: `Confirmation phrase must be exactly: ${CUTOVER_PHRASE}` });
+    try {
+      const snap = await cutoverSnapshot();
+      // Re-derived from data read JUST NOW, then compared to the token the
+      // browser is echoing back from its earlier dry run — if anything
+      // changed in between (a new legacy account, someone logging in and
+      // self-upgrading), the tokens won't match and this is refused rather
+      // than acting on a stale review, exactly like ops-backups.js restore.
+      if (cutoverToken(snap.idList) !== reviewToken) {
+        return res.status(409).json({ error: 'Live data has changed since your dry run — please run the dry run again before confirming.' });
+      }
+      const cutoverWarnings = [];
+      let usersHashed = 0, adminsHashed = 0, primaryAdminHashed = false;
+      for (const r of snap.legacyUsers) {
+        // Re-checked here, not just trusted from the snapshot above — an
+        // account can self-upgrade via a normal login at any moment, and
+        // hashing an already-hashed value would double-hash it and
+        // permanently lock that person out. Same guard as every other
+        // password-write path in this file (hashIncomingPasswords, etc).
+        if (isHashed(r.data.password)) continue;
+        const { error } = await supabase.from('ops_users').update({ data: { ...r.data, password: hashPassword(r.data.password) } }).eq('id', r.id);
+        if (error) cutoverWarnings.push(`password-cutover: users/${r.id}: ${error.message}`); else usersHashed++;
+      }
+      for (const r of snap.legacyAdmins) {
+        if (isHashed(r.data.password)) continue;
+        const { error } = await supabase.from('ops_admins').update({ data: { ...r.data, password: hashPassword(r.data.password) } }).eq('id', r.id);
+        if (error) cutoverWarnings.push(`password-cutover: admins/${r.id}: ${error.message}`); else adminsHashed++;
+      }
+      if (snap.primaryAdminLegacy) {
+        const { data: freshPwRow } = await supabase.from('ops_settings').select('data').eq('key', 'primaryAdminPw').maybeSingle();
+        if (freshPwRow && hasContent(freshPwRow.data) && !isHashed(freshPwRow.data)) {
+          const { error } = await supabase.from('ops_settings').upsert({ key: 'primaryAdminPw', data: hashPassword(freshPwRow.data) }, { onConflict: 'key' });
+          if (error) cutoverWarnings.push(`password-cutover: primaryAdminPw: ${error.message}`); else primaryAdminHashed = true;
+        }
+      }
+      return res.status(200).json({ ok: true, usersHashed, adminsHashed, primaryAdminHashed, warnings: cutoverWarnings });
+    } catch (err) {
+      await logError({ endpoint: 'ops-sync', error: err, session });
+      return res.status(500).json({ error: err.message });
+    }
+  }
 
   const { changes, tombstones, restoreUserIds } = req.body || {};
   const warnings = []; // genuine per-row write failures ONLY — logged as an error every time

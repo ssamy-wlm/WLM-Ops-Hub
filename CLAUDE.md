@@ -1058,6 +1058,132 @@ hardcoded owner-name list (`sarah/david/emily/jacob/rania` in this same
 file's OTHER `SYSTEM_PROMPT`) is a pre-existing, separate flaw, not touched
 by this PR — flagged here since this PR fixes the identical problem in the
 sibling mode.
+**Security & Cleanup item #11 (password hashing) — investigation found this
+was already shipped, one genuine gap closed (2026-08-19).** Given as the
+highest-risk, do-last item of a 4-part batch ("stop storing `ops_users`
+passwords in cleartext... add a hashing library... one-time cutover...
+login change"). Reading the actual code before writing anything found the
+entire feature already merged to `main` (commit `d56f0d0`, 2026-07-25,
+predating this batch by three weeks) and never previously written up here
+— an existing documentation gap, not new work: `lib/passwordHash.js`
+(scrypt via Node's built-in `crypto`, chosen deliberately over bcrypt/
+argon2 to avoid a new dependency or native-binary build step that could
+fail on Vercel, self-identifying `"scrypt:<salt>:<hash>"` stored value so
+`isHashed()` can tell a migrated row from legacy plaintext with one cheap
+check); `api/ops-auth.js` verifies a hash-or-plaintext on every login
+(covering `ops_users`, `ops_admins`, and the primary admin's
+`ops_settings.primaryAdminPw` alike) and lazily upgrades a row to a hash
+on its own next successful login; `api/ops-sync.js` hashes any new/changed
+password the instant it's written (`hashIncomingPasswords()` for admin-
+created/edited users and admins, an explicit hash in `selfPasswordChange`)
+so no code path has written a fresh cleartext password since that commit;
+`api/ops-state.js` exposes a Super-Admin-only `passwordMigrationStatus`
+count (hashed/legacy/total), rendered read-only in the existing Admin
+Controls "Password Security Migration" card. No schema/migration change
+was ever needed — the hash lives in the same existing `password` field,
+told apart by its own prefix. `ADMIN_CREDENTIALS`/`ADMIN_CREDS` (out of
+scope per Sarah's decision on the separate item #10) was never touched by
+that commit or by this one.
+
+The one literal gap against this batch's acceptance criteria ("no
+cleartext passwords remain in `ops_users`"): the existing design is
+lazy-only — an account that hasn't logged in or changed its password since
+2026-07-25 is still sitting on legacy plaintext today, with no way to
+force it. Closed by adding a genuine one-time cutover, matching the
+spec's own explicitly-offered alternative ("hash everything in the
+cutover") and CLAUDE.md rule #6's guarded-action pattern (mirroring
+`api/ops-backups.js`'s restore flow byte-for-byte: dry run reads live data
+and returns only names/table/count, writes nothing, returns an HMAC
+`reviewToken`; confirm requires typing `HASH ALL LEGACY PASSWORDS` exactly
+and re-derives the token from data read fresh at that moment, refusing
+with 409 if live data changed since the dry run). No new `api/*.js` file
+(the 12-function Hobby-plan cap has no headroom) — added as two new
+top-level `action` values on the existing `api/ops-sync.js` POST endpoint,
+Super Admin/Owner only, and a matching card/modal in `index.html`'s
+Admin Controls tab. Each affected row is hashed and written individually
+(`.update(...).eq('id', row.id)`, never a bulk table replace, per rule #1)
+and re-checked with `isHashed()` immediately before writing — guards
+against double-hashing a row that self-upgraded via a normal login in the
+gap between the dry run and the confirm click, which would otherwise
+permanently lock that person out.
+
+Verified two ways, no live DB access being available (rule #11): (1) a
+Node script (`lib/passwordHash.js`'s established rule #9 pattern) running
+the real, byte-identical `api/ops-sync.js` against an in-memory fake
+Supabase client — 25/25 checks, including that an already-hashed account
+is never touched, a stale reviewToken is refused with 409 after live data
+changes, a non-super caller gets 403, and — the acceptance criterion that
+actually matters — every newly-hashed account's original plaintext
+password still verifies successfully against its new stored hash (i.e.
+nobody's real login credential changes); (2) Playwright against the real
+`index.html` UI with a mocked `/api/ops-sync` — 16/16 checks covering the
+full dry-run-then-confirm modal flow, the confirm button staying disabled
+until the exact phrase is typed, and the request never carrying a
+password value. `api/ops-auth.js` itself was not touched by this PR at
+all (confirmed via `git diff`), so the existing, already-verified login
+behavior (hash-or-plaintext compare, lazy upgrade) is unaffected by
+construction — the "verified login on preview" acceptance criterion still
+needs a real click-through on the Vercel preview before merge, same as
+every other batch item in this set.
+**Security & Cleanup batch, item #13 — removed WLM_SEED_DATA; root-caused
+the org-chart node mismatch (2026-08-19).** Deleted the ~139 KB hardcoded
+`WLM_SEED_DATA` client array from `client.html` (the original Excel-import
+seed — unused since Supabase became the source of truth) along with its
+only two remaining references, `seedWLMClients()` and
+`backfillMissingServices()` — both already fully dead (never called;
+already documented in this file's own disabled-functions history at the
+2026-07-09 entry) and now referencing a deleted constant, so nothing of
+value was lost by removing the bodies too. Confirmed via grep: zero
+remaining references anywhere in the file. One new orphan noticed as a
+side effect: `migrateServicesToProjects()`'s only caller was
+`seedWLMClients()`, so it's now unreferenced too — flagged, not touched
+(out of scope for this PR; it's a well-formed, general function, not
+obviously safe to delete without separately confirming nothing else
+should call it).
+
+**Org-chart node mismatch (~27 `ops_org_nodes` rows vs. 9 real people) —
+root cause found by reading the actual code, not guessed:** there is no
+code path anywhere that removes or deduplicates an org-chart node when
+the person it represents leaves, gets archived, or already has a node
+under a different id — grepped for `archiveUser`/`_orgRemovePerson`/any
+call site that touches `orgNodes` in response to a user-record change and
+found none. Node removal is 100% manual, one at a time, via
+`deleteOrgBubble()`'s own explicit tombstone — it was never wired to fire
+automatically from anywhere else. Combined with the already-documented
+2026-07-13 entry above ("the corresponding stale rows already sitting in
+the live `ops_org_nodes` table were deliberately NOT touched by this PR
+— that is a separate, later, dry-run-approved step"), this fully explains
+the count: legacy rows from before `ORG_NODES_DEFAULT` shrank from 18 to
+9 were never cleaned up, and every person who's left or been re-added
+since has just added to the pile, with nothing ever subtracting from it.
+
+Ruled out, not just assumed: traced whether a stale browser's full local
+`orgNodes` array could resurrect an already-tombstoned node via
+`orgSave()`'s `cloudAutoSync()` push — `orgLoad()` only refreshes the
+in-memory `orgNodes` variable on an explicit pull, never on the 30s
+background live-sync poll (`fromLiveSync===true` skips it), so a long-open
+tab's stale in-memory copy really can get pushed back via any unrelated
+`orgSave()` call (e.g. dragging one bubble). But `upsertRows()`'s payload
+is only `{id, data}` — Postgres upsert never touches a column absent from
+the payload — so this can't actually clear a tombstoned row's
+`deleted_at` back to null. Confirmed this mechanism is real but not the
+cause of the specific symptom reported here.
+
+**Proposed reconcile (NOT executed — no data deletion without an approved
+plan, per CLAUDE.md rule #6):** a dry-run tool, same pattern as every
+other destructive-operation tool in this codebase — compute and display
+which `ops_org_nodes` rows don't match any currently-active `ops_users`/
+`ops_admins` record by name (cross-referenced, not just matched against
+the 9-entry `ORG_NODES_DEFAULT`, so a real person who isn't in the
+hardcoded defaults is never mistakenly flagged), require Sarah's typed
+confirmation, then tombstone (never hard-delete) exactly the confirmed
+set via the same `deleted_at` mechanism `deleteOrgBubble()` already uses.
+A separate, smaller code fix worth considering afterward (not part of
+this proposal, flagging only): make `orgLoad()` also refresh the in-memory
+`orgNodes`/`orgLinks` variables on the background live-sync poll when the
+server data actually changed, closing the stale-tab-clobbers-newer-state
+window described above — lower priority since it can't resurrect a
+tombstoned row, only produce a spurious no-op-equivalent write.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
@@ -1125,7 +1251,13 @@ sibling mode.
   `db push` per `supabase/MIGRATIONS.md` (see rule #12 and the
   Migration-apply pipeline entry above). Until this runs, the pipeline is
   merged-but-inert and every PR's `check-prod-current` shows red by design
-  — that is expected, not a bug, and should not be re-investigated.
+  — that is expected, not a bug, and should not be re-investigated. This
+  same one bootstrap step also fully resolves the 4 migrations
+  (`ops_session_activity`, `ops_backups`, `ops_payroll`, `ops_tasks`) that
+  got hand-applied to production after this pipeline was built — verified
+  locally (see `supabase/MIGRATIONS.md`'s step 7): no separate action
+  needed for those, the existing bootstrap `db push` safely no-ops over
+  them and correctly records each as applied.
 - **Run the Error Log cleanup once (Sarah):** ~602 stale entries exist
   (mostly one fixed 2026-07-13 bug, plus a 2026-07-24 Supabase SSL outage).
   The archive/clear control (PR #202) now works correctly; a cutoff around
