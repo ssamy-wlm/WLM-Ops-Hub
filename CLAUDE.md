@@ -1237,6 +1237,37 @@ earlier-date-first, priority tie-breaking both among same-dated and
 among undated tasks, and confirms the input array itself is never
 mutated).
 
+**Task parser quality batch — client detection widened (2026-08-19).**
+Another focused PR off the same spec. `api/process-transcript.js`'s
+`matchClient()` (deterministic, never LLM-guessed — same conviction as
+`matchOwner()`) gained three more signals, all checked in the same
+most-confident-first order as before: a new `recipientEmail`/
+`recipientName` pair is now extracted alongside the existing sender
+fields (a task can be about something WebLight is sending TO a client,
+not just receiving from one) and checked the same way sender email/name/
+domain already were; and, lowest-confidence, an unambiguous mention of
+the client's own name inside the task's subject/notes text — including a
+parenthetical-stripped variant (`"WebLight Media (Internal)"` ->
+`"WebLight Media"`), since nobody types the qualifier verbatim when
+writing about their own internal work. "Unambiguous" is load-bearing
+here: the text-mention check only accepts a match when exactly one active
+client's name (or stripped name) appears — confirmed with the exact
+"Fern Wood Flooring" vs a hypothetical shorter "Fern Wood" overlap
+(the same client CLAUDE.md already flags a spelling trap for elsewhere)
+correctly resolving to unassigned rather than guessing either one. A
+minimum-length guard (4 chars) keeps a short/generic client name from
+matching all over unrelated text. Confirmed against Sarah's specific
+example: "WebLight Media (Internal)" already exists as an active client
+record in production (per Sarah directly — not independently verified,
+no live DB access, rule #11), so no data change was needed, only the
+matching logic. Verified with a Node script against the real, byte-
+identical `matchClient()`/`matchClientByTextMention()`: recipient email
+and recipient name both resolve a client; the Internal client resolves
+via both its full and stripped name; a task with genuinely no client
+signal stays unassigned; the short-name guard holds; the ambiguous-
+overlap case resolves to unassigned, not a guess; and the pre-existing
+sender-email match is unaffected.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
