@@ -1185,6 +1185,27 @@ server data actually changed, closing the stale-tab-clobbers-newer-state
 window described above — lower priority since it can't resurrect a
 tombstoned row, only produce a spurious no-op-equivalent write.
 
+**Task parser quality batch — dropped the "Type" field (2026-08-19).**
+First of several focused PRs off a "make the Task Assignments parser
+behave like Sarah's original app" spec. This one removes the `type` field
+entirely — it only ever read "Task" in practice and added a column/select/
+detail-row nobody used. Removed from: `api/process-transcript.js`'s
+`taskEmail` extraction schema and prompt (`TASK_TYPES` deleted), the Task
+Assignments list column/filter/edit-modal in `index.html`, and the Daily
+Tasks detail view in `user.html` (which never had an edit path for it —
+display-only). `api/ops-sync.js`'s `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` also
+dropped `'type'` — found and fixed as part of the same change, not a
+separate bug: leaving it in that list would have permanently rejected any
+member status/notes/tags update on a task with legacy stored `type` data
+the instant the client stopped sending the field, since
+`JSON.stringify(cur.type) !== JSON.stringify(undefined)` is `true` even
+though nothing meaningful changed. Verified with a Node script reproducing
+exactly that scenario against the real `api/ops-sync.js` (rule #9) — a
+member updating only status/notes on a task with legacy `type:'Client
+Update'` data succeeds, not rejected. Existing rows that still carry a
+stored `type` value are untouched (no migration, this is a document-model
+jsonb field — it just stops being read or written going forward).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
