@@ -1337,6 +1337,51 @@ date filled in, client/assignee left untouched, status unchanged (no
 `alreadyDone`) — while a separate brand-new `alreadyDone` task is
 created with `status:'Done'`. 8/8 checks passing.
 
+**Task parser quality batch — "Assigned Tasks" schedule tab, separate
+from parsing (2026-08-19).** Last of the focused PRs off the same spec.
+Before this, Task Assignments was one single page: the "Import & parse"
+card sat directly above the existing List/Calendar(month-only) toggle,
+filters, and table — no separation between "bring in new tasks" and
+"browse/schedule what's already assigned." Split into two sub-tabs
+(`setTaSubtab()`, new `#ta-subtab-parse`/`#ta-subtab-assigned` wraps): the
+parse card now lives alone under "📧 Add / Import"; everything else
+(view toggle, filters, category pills, list/calendar) moved under "🗓
+Assigned Tasks." Switching sub-tabs is a pure display toggle, same
+pattern as the existing List/Calendar toggle it sits next to — no new
+data-fetch, and switching INTO "Assigned Tasks" re-renders so anything
+imported (or changed by someone else, picked up by the normal live-sync
+poll) while parked on the parse tab shows fresh.
+
+The view toggle itself grew from 2 options (List/Calendar-month-only) to
+4 (List/Day/Week/Month) per the spec's explicit "Day / Week / Month
+views (a schedule you can map work across)" ask. `_taCalDate` is kept as
+the ONE shared "current period" anchor across all three calendar-style
+views (previously only Month used it) — `_taShiftPeriod(delta)` shifts it
+by day/week/month depending on which view is active, rather than three
+separate date variables that could drift from each other when switching
+views. New `_renderTaDay()`/`_renderTaWeek()` sit alongside the existing
+`_renderTaCalendar()` (month), reusing the same due-date bucketing and
+overdue-coloring conventions.
+
+"Assigning/reassigning reflects immediately in the assignee's Daily
+Tasks" needed NO new plumbing — `_taReassign()` already pushed via
+`cloudAutoSync()` immediately on every reassignment (list row, detail
+panel, or edit modal), and both portals already poll `/api/ops-state`
+on their existing live-sync interval; this requirement was already true
+of the existing architecture, confirmed rather than assumed via the
+Playwright check below (a reassignment produces an `ops-sync` push
+carrying the new `assigneeId` within the same interaction, no manual
+refresh triggered).
+
+Verified via Playwright against the real `index.html` UI (mocked
+`/api/ops-state`/`/api/ops-sync`): the parse sub-tab is visible by
+default and the assigned-tasks sub-tab hidden, switching flips both
+correctly; List is the default view within Assigned Tasks; switching to
+Day/Week/Month each correctly shows a task due today in that view's
+grid/list; switching back to List works; and reassigning a task from the
+list row's inline dropdown fires an `ops-sync` push carrying the new
+assignee, immediately, in the same interaction.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
