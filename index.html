@@ -1395,72 +1395,109 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-primary btn-sm" onclick="openTaskEditModal(null)">+ New Task</button>
       </div>
 
-      <div class="card" style="margin-bottom:16px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">📧 Import &amp; parse</div>
-            <div class="card-sub">Paste a transcript/email, or drop one or more .eml files</div>
-          </div>
-        </div>
-        <div class="card-body">
-          <textarea id="taParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <input type="file" id="taParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onTaParseFilesChosen(event)">
-            <button class="btn btn-sm btn-primary" id="taParseBtn" onclick="runTaskEmailParse()">Parse &amp; extract tasks</button>
-          </div>
-          <div id="taParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
-        </div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
+        <button class="btn btn-sm" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
+        <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
       </div>
 
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-sm" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
-          <button class="btn btn-sm btn-outline" id="taViewCalBtn" onclick="setTaView('calendar')">📅 Calendar</button>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
-          <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
-          <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
-          <select id="taFilterType" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All types</option></select>
-          <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
-          <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
-          <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
-        </div>
-      </div>
-      <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
-
-      <div id="taListWrap">
-        <div class="card">
-          <div class="card-body" style="padding:0;overflow-x:auto;">
-            <table style="width:100%;min-width:820px;">
-              <thead>
-                <tr>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Assignee</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Type</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Priority</th>
-                </tr>
-              </thead>
-              <tbody id="taTableBody"></tbody>
-            </table>
-            <div id="taListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No tasks match these filters.</div>
-          </div>
-        </div>
-      </div>
-
-      <div id="taCalWrap" style="display:none;">
-        <div class="card">
-          <div class="card-body">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-              <button class="btn btn-sm btn-outline" onclick="shiftTaCalMonth(-1)">‹</button>
-              <div id="taCalLabel" style="font-weight:700;font-size:14px;"></div>
-              <button class="btn btn-sm btn-outline" onclick="shiftTaCalMonth(1)">›</button>
+      <div id="ta-subtab-parse">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">📧 Import &amp; parse</div>
+              <div class="card-sub">Paste a transcript/email, or drop one or more .eml files</div>
             </div>
-            <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+          </div>
+          <div class="card-body">
+            <textarea id="taParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <input type="file" id="taParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onTaParseFilesChosen(event)">
+              <button class="btn btn-sm btn-primary" id="taParseBtn" onclick="runTaskEmailParse()">Parse &amp; extract tasks</button>
+            </div>
+            <div id="taParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="ta-subtab-assigned" style="display:none;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
+            <button class="btn btn-sm btn-outline" id="taViewDayBtn" onclick="setTaView('day')">Day</button>
+            <button class="btn btn-sm btn-outline" id="taViewWeekBtn" onclick="setTaView('week')">Week</button>
+            <button class="btn btn-sm btn-outline" id="taViewMonthBtn" onclick="setTaView('month')">📅 Month</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
+            <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
+            <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
+            <select id="taFilterType" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All types</option></select>
+            <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
+            <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
+            <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
+          </div>
+        </div>
+        <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+
+        <div id="taListWrap">
+          <div class="card">
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+              <table style="width:100%;min-width:820px;">
+                <thead>
+                  <tr>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Assignee</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Type</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Priority</th>
+                  </tr>
+                </thead>
+                <tbody id="taTableBody"></tbody>
+              </table>
+              <div id="taListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No tasks match these filters.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="taDayWrap" style="display:none;">
+          <div class="card">
+            <div class="card-body">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(-1)">‹</button>
+                <div id="taDayLabel" style="font-weight:700;font-size:14px;"></div>
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
+              </div>
+              <div id="taDayList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="taWeekWrap" style="display:none;">
+          <div class="card">
+            <div class="card-body">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(-1)">‹</button>
+                <div id="taWeekLabel" style="font-weight:700;font-size:14px;"></div>
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
+              </div>
+              <div id="taWeekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="taCalWrap" style="display:none;">
+          <div class="card">
+            <div class="card-body">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(-1)">‹</button>
+                <div id="taCalLabel" style="font-weight:700;font-size:14px;"></div>
+                <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
+              </div>
+              <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -8272,12 +8309,32 @@ function loadTaskAssignments(){
 let _taActiveCategory = null;
 function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(); }
 
+// "Add / Import (parse)" and "Assigned Tasks" are separate sub-tabs —
+// parsing/importing new tasks is a distinct activity from browsing and
+// scheduling the ones already assigned, per the parser-quality spec's
+// explicit instruction to keep them apart. Re-renders on switching INTO
+// "assigned" so anything imported (or changed by someone else, picked up
+// by the normal live-sync poll) while parked on the parse tab shows fresh.
+function setTaSubtab(tab){
+  document.getElementById('taSubtabParseBtn').className = 'btn btn-sm '+(tab==='parse'?'':'btn-outline');
+  document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm '+(tab==='assigned'?'':'btn-outline');
+  document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
+  document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
+  if(tab==='assigned') renderTaskAssignments();
+}
+
+const TA_VIEW_BTN_IDS = {list:'taViewListBtn', day:'taViewDayBtn', week:'taViewWeekBtn', month:'taViewMonthBtn'};
+const TA_VIEW_WRAP_IDS = {list:'taListWrap', day:'taDayWrap', week:'taWeekWrap', month:'taCalWrap'};
 function setTaView(v){
   _taView = v;
-  document.getElementById('taViewListBtn').className = 'btn btn-sm '+(v==='list'?'':'btn-outline');
-  document.getElementById('taViewCalBtn').className = 'btn btn-sm '+(v==='calendar'?'':'btn-outline');
-  document.getElementById('taListWrap').style.display = v==='list' ? '' : 'none';
-  document.getElementById('taCalWrap').style.display = v==='calendar' ? '' : 'none';
+  Object.entries(TA_VIEW_BTN_IDS).forEach(([view,id])=>{
+    document.getElementById(id).className = 'btn btn-sm '+(v===view?'':'btn-outline');
+  });
+  Object.entries(TA_VIEW_WRAP_IDS).forEach(([view,id])=>{
+    document.getElementById(id).style.display = v===view ? '' : 'none';
+  });
   renderTaskAssignments();
 }
 
@@ -8321,7 +8378,9 @@ function _taPersonName(id){
 
 function renderTaskAssignments(){
   const tasks = _taFilteredTasks();
-  if(_taView==='calendar') _renderTaCalendar(tasks);
+  if(_taView==='month') _renderTaCalendar(tasks);
+  else if(_taView==='week') _renderTaWeek(tasks);
+  else if(_taView==='day') _renderTaDay(tasks);
   else _renderTaListTable(tasks);
 }
 
@@ -8380,10 +8439,18 @@ function _taReassign(id, newAssigneeId){
   renderTaskAssignments();
 }
 
-function shiftTaCalMonth(delta){
-  _taCalDate = new Date(_taCalDate.getFullYear(), _taCalDate.getMonth()+delta, 1);
+// One shared "current period" anchor (_taCalDate) for all three schedule
+// views — shifting by day/week/month depending on which one is active,
+// rather than three separate date-tracking variables that could drift out
+// of sync with each other when switching views.
+function _taShiftPeriod(delta){
+  if(_taView==='day') _taCalDate = new Date(_taCalDate.getFullYear(), _taCalDate.getMonth(), _taCalDate.getDate()+delta);
+  else if(_taView==='week') _taCalDate = new Date(_taCalDate.getFullYear(), _taCalDate.getMonth(), _taCalDate.getDate()+delta*7);
+  else _taCalDate = new Date(_taCalDate.getFullYear(), _taCalDate.getMonth()+delta, 1);
   renderTaskAssignments();
 }
+function _taDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function _taStartOfWeek(d){ const s = new Date(d.getFullYear(), d.getMonth(), d.getDate()-d.getDay()); return s; }
 
 function _renderTaCalendar(tasks){
   const grid = document.getElementById('taCalGrid');
@@ -8405,6 +8472,47 @@ function _renderTaCalendar(tasks){
       <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
       ${dayTasks.slice(0,3).map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
       ${dayTasks.length>3 ? `<div style="font-size:10px;color:var(--text-light);">+${dayTasks.length-3} more</div>` : ''}
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function _renderTaDay(tasks){
+  const list = document.getElementById('taDayList');
+  const label = document.getElementById('taDayLabel');
+  if(!list) return;
+  const dateStr = _taDateStr(_taCalDate);
+  if(label) label.textContent = _taCalDate.toLocaleString('en-US',{weekday:'long', month:'long', day:'numeric', year:'numeric'});
+  const dayTasks = tasks.filter(t=>t.dueDate===dateStr);
+  if(!dayTasks.length){ list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-light);font-size:13px;">Nothing due this day.</div>'; return; }
+  list.innerHTML = dayTasks.map(t=>`
+    <div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtmlAdmin(t.clientName||'—')} · ${escHtmlAdmin(_taPersonName(t.assigneeId))}</div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:${_taStatusColor(t.status)};white-space:nowrap;">${t.status||'Not started'}</div>
+    </div>`).join('');
+}
+
+function _renderTaWeek(tasks){
+  const grid = document.getElementById('taWeekGrid');
+  const label = document.getElementById('taWeekLabel');
+  if(!grid) return;
+  const start = _taStartOfWeek(_taCalDate);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+6);
+  if(label) label.textContent = `${start.toLocaleString('en-US',{month:'short',day:'numeric'})} – ${end.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+  const byDate = {};
+  tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } });
+  let html = '';
+  for(let i=0;i<7;i++){
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i);
+    const dateStr = _taDateStr(d);
+    const dayTasks = byDate[dateStr]||[];
+    const isToday = dateStr === _taToday();
+    html += `<div style="min-height:140px;border:1px solid var(--border);border-radius:6px;padding:6px;${isToday?'background:rgba(46,93,166,.06);':''}">
+      <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}</div>
+      ${dayTasks.map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:3px 5px;margin-bottom:3px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
     </div>`;
   }
   grid.innerHTML = html;
