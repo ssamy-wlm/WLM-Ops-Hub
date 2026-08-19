@@ -974,6 +974,73 @@ change only adds the field and its member-write protection, no data). Per
 rule #12, this PR's migration must be confirmed applied to production
 before merge, same as every migration-adding PR.
 
+**Security & Cleanup item #11 (password hashing) — investigation found this
+was already shipped, one genuine gap closed (2026-08-19).** Given as the
+highest-risk, do-last item of a 4-part batch ("stop storing `ops_users`
+passwords in cleartext... add a hashing library... one-time cutover...
+login change"). Reading the actual code before writing anything found the
+entire feature already merged to `main` (commit `d56f0d0`, 2026-07-25,
+predating this batch by three weeks) and never previously written up here
+— an existing documentation gap, not new work: `lib/passwordHash.js`
+(scrypt via Node's built-in `crypto`, chosen deliberately over bcrypt/
+argon2 to avoid a new dependency or native-binary build step that could
+fail on Vercel, self-identifying `"scrypt:<salt>:<hash>"` stored value so
+`isHashed()` can tell a migrated row from legacy plaintext with one cheap
+check); `api/ops-auth.js` verifies a hash-or-plaintext on every login
+(covering `ops_users`, `ops_admins`, and the primary admin's
+`ops_settings.primaryAdminPw` alike) and lazily upgrades a row to a hash
+on its own next successful login; `api/ops-sync.js` hashes any new/changed
+password the instant it's written (`hashIncomingPasswords()` for admin-
+created/edited users and admins, an explicit hash in `selfPasswordChange`)
+so no code path has written a fresh cleartext password since that commit;
+`api/ops-state.js` exposes a Super-Admin-only `passwordMigrationStatus`
+count (hashed/legacy/total), rendered read-only in the existing Admin
+Controls "Password Security Migration" card. No schema/migration change
+was ever needed — the hash lives in the same existing `password` field,
+told apart by its own prefix. `ADMIN_CREDENTIALS`/`ADMIN_CREDS` (out of
+scope per Sarah's decision on the separate item #10) was never touched by
+that commit or by this one.
+
+The one literal gap against this batch's acceptance criteria ("no
+cleartext passwords remain in `ops_users`"): the existing design is
+lazy-only — an account that hasn't logged in or changed its password since
+2026-07-25 is still sitting on legacy plaintext today, with no way to
+force it. Closed by adding a genuine one-time cutover, matching the
+spec's own explicitly-offered alternative ("hash everything in the
+cutover") and CLAUDE.md rule #6's guarded-action pattern (mirroring
+`api/ops-backups.js`'s restore flow byte-for-byte: dry run reads live data
+and returns only names/table/count, writes nothing, returns an HMAC
+`reviewToken`; confirm requires typing `HASH ALL LEGACY PASSWORDS` exactly
+and re-derives the token from data read fresh at that moment, refusing
+with 409 if live data changed since the dry run). No new `api/*.js` file
+(the 12-function Hobby-plan cap has no headroom) — added as two new
+top-level `action` values on the existing `api/ops-sync.js` POST endpoint,
+Super Admin/Owner only, and a matching card/modal in `index.html`'s
+Admin Controls tab. Each affected row is hashed and written individually
+(`.update(...).eq('id', row.id)`, never a bulk table replace, per rule #1)
+and re-checked with `isHashed()` immediately before writing — guards
+against double-hashing a row that self-upgraded via a normal login in the
+gap between the dry run and the confirm click, which would otherwise
+permanently lock that person out.
+
+Verified two ways, no live DB access being available (rule #11): (1) a
+Node script (`lib/passwordHash.js`'s established rule #9 pattern) running
+the real, byte-identical `api/ops-sync.js` against an in-memory fake
+Supabase client — 25/25 checks, including that an already-hashed account
+is never touched, a stale reviewToken is refused with 409 after live data
+changes, a non-super caller gets 403, and — the acceptance criterion that
+actually matters — every newly-hashed account's original plaintext
+password still verifies successfully against its new stored hash (i.e.
+nobody's real login credential changes); (2) Playwright against the real
+`index.html` UI with a mocked `/api/ops-sync` — 16/16 checks covering the
+full dry-run-then-confirm modal flow, the confirm button staying disabled
+until the exact phrase is typed, and the request never carrying a
+password value. `api/ops-auth.js` itself was not touched by this PR at
+all (confirmed via `git diff`), so the existing, already-verified login
+behavior (hash-or-plaintext compare, lazy upgrade) is unaffected by
+construction — the "verified login on preview" acceptance criterion still
+needs a real click-through on the Vercel preview before merge, same as
+every other batch item in this set.
 **Security & Cleanup batch, item #13 — removed WLM_SEED_DATA; root-caused
 the org-chart node mismatch (2026-08-19).** Deleted the ~139 KB hardcoded
 `WLM_SEED_DATA` client array from `client.html` (the original Excel-import
