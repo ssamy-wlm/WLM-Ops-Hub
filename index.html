@@ -8548,7 +8548,32 @@ async function runTaskEmailParse(){
       return;
     }
     const tasks = _taTasks();
+    let createdCount = 0, mergedCount = 0;
     extracted.forEach(et=>{
+      // The server already matched this task against an existing NOT-done
+      // one within scope (same subject/client/assignee, deterministically —
+      // see api/process-transcript.js's isSameTask). Merging here is
+      // deliberately narrow and additive ONLY: notes appended, tags
+      // unioned, due date filled only if the existing task doesn't already
+      // have one, status escalated to Done only if the text says so. Every
+      // other field of the existing task (assignee, client, category,
+      // priority, service, replyStatus, etc.) is left completely
+      // untouched — a wrong fuzzy match costs at most a stray note, never
+      // corrupts someone's real tracked work.
+      if(et.mergeIntoId){
+        const existing = tasks.find(x=>x.id===et.mergeIntoId);
+        if(existing){
+          if(et.notes) existing.notes = existing.notes ? `${existing.notes}\n${et.notes}` : et.notes;
+          existing.tags = [...new Set([...(existing.tags||[]), ...(et.tags||[])])];
+          if(!existing.dueDate && et.dueDate) existing.dueDate = et.dueDate;
+          if(et.status==='Done') existing.status = 'Done';
+          mergedCount++;
+          return;
+        }
+        // Existing row not found in the currently-loaded local list (rare)
+        // — fall through and create a new task rather than silently
+        // dropping this mention.
+      }
       tasks.push({
         id: _taGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
@@ -8560,18 +8585,19 @@ async function runTaskEmailParse(){
         // step; still just a default, freely reassignable in the table.
         assigneeId: et.assigneeId||null, assignedById: null,
         category: et.category, priority: et.priority,
-        status: 'Not started', dueDate: et.dueDate||'',
+        status: et.status||'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         replyStatus: '',
       });
+      createdCount++;
     });
     _taSaveTasks(tasks);
     cloudAutoSync();
     document.getElementById('taParseText').value = '';
     document.getElementById('taParseFileInput').value = '';
     _taParseFileTexts = [];
-    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — assign them below.`;
+    statusEl.textContent = `✅ ${createdCount} new task(s)${mergedCount?`, ${mergedCount} merged into existing task(s)`:''} — assign them below.`;
     renderTaskAssignments();
   } catch(e){
     statusEl.textContent = `❌ ${e.message}`;
