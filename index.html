@@ -9157,12 +9157,61 @@ function deletePayrollRecord(id){
   showToast('Payroll record deleted');
 }
 
+// Recovers TOTALS-ONLY rows for historical payroll weeks that have no local
+// wl_saved_payrolls record (see the payroll data-loss investigation,
+// 2026-08-18/19 CLAUDE.md entries) — every "Save This Week" click already
+// wrote a receipt to the activity feed (logActivity('admin','Admin','Saved
+// payroll for week of '+weekStart,'$'+total.toFixed(2))), and the feed IS
+// synced to Supabase (ops_feed), unlike wl_saved_payrolls. READ-ONLY: parses
+// whatever's already in the in-memory/localStorage feed cache (DB_KEYS.feed,
+// already pulled by the normal cloud sync) — never issues a new fetch, never
+// writes anything back anywhere, never re-saves a recovered row into
+// wl_saved_payrolls. No per-employee breakdown exists in a feed receipt, so
+// a recovered row is deliberately total-only, never a fabricated employee
+// list. NOTE: ops-state.js caps the feed query at the 300 most recent rows —
+// a week old enough to have aged out of that window simply won't appear
+// here; this is expected given the "no new fetch" constraint, not a bug.
+const _RECOVERED_PAYROLL_RE = /^Saved payroll for week of (\d{4}-\d{2}-\d{2})$/;
+function _recoveredPayrollWeeks(){
+  const feed = dbGet(DB_KEYS.feed)||[];
+  const out = [];
+  feed.forEach(e=>{
+    if(!e || typeof e.desc!=='string') return;
+    const m = e.desc.match(_RECOVERED_PAYROLL_RE);
+    if(!m) return;
+    const total = parseFloat(String(e.detail||'').replace(/^\$/,'').replace(/,/g,''));
+    if(isNaN(total)) return;
+    out.push({ weekStart: m[1], total, recovered: true });
+  });
+  return out;
+}
 function renderSavedPayrolls(){
   const saved=dbGet('wl_saved_payrolls')||[];
   const list=document.getElementById('savedPayrollList');
   if(!list) return;
-  if(!saved.length){list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div>';return;}
-  list.innerHTML=saved.map(p=>{
+  // Merge: a weekStart with a full local record keeps that record and drops
+  // the feed-derived row for the same week — never show both for one week.
+  const localWeekStarts = new Set(saved.map(p=>p.weekStart));
+  const recovered = _recoveredPayrollWeeks().filter(r=>!localWeekStarts.has(r.weekStart));
+  const combined = [
+    ...saved.map(p=>({...p, recovered:false})),
+    ...recovered,
+  ].sort((a,b)=> b.weekStart.localeCompare(a.weekStart)); // newest week first
+  if(!combined.length){list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div>';return;}
+  list.innerHTML=combined.map(p=>{
+    if(p.recovered){
+      return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;border:1px dashed var(--border);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text-dark);">Week of ${p.weekStart}
+              <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(217,119,6,.12);color:#d97706;margin-left:6px;vertical-align:middle;">Recovered — total only</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Per-employee breakdown not available.</div>
+          </div>
+          <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${p.total.toFixed(2)}</div>
+        </div>
+      </div>`;
+    }
     const rows=p.entries.filter(e=>e.hours>0).map(e=>{
       return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${e.name}</span><span>${e.hours}h × $${e.rate} = <strong>$${e.pay.toFixed(2)}</strong></span></div>`;
     }).join('');
