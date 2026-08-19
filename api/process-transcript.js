@@ -19,7 +19,20 @@ const TASK_CATEGORIES = ['Production', 'Updates', 'Sales', 'Admin', 'Other', 'In
 const TASK_TYPES = ['Task', 'Client Update', 'New Service', 'New Sale', 'Follow-up'];
 const TASK_PRIORITIES = ['Urgent', 'High', 'Normal', 'Low'];
 
-const TASK_EMAIL_SYSTEM_PROMPT = `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// A reference date is required for relative-language resolution ("by
+// Friday", "next week", "end of month") — the model has no other way to
+// know what day "today" is. Computed fresh per request from the real
+// clock, never hardcoded — this is plain server-side Date usage (not a
+// Workflow script, where Date.now()/new Date() are restricted).
+function buildTaskEmailSystemPrompt() {
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const weekday = WEEKDAY_NAMES[now.getUTCDay()];
+  return `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
+
+Today's date is ${todayIso} (a ${weekday}). Use this as the reference point for any relative date language in the text.
 
 For EACH distinct task or action item you find:
 - "subject": a concise one-line summary (under 12 words).
@@ -28,7 +41,7 @@ For EACH distinct task or action item you find:
 - "category": exactly one of ${JSON.stringify(TASK_CATEGORIES)} — "Invoices/Payments" for billing/invoice/payment items, "Other" only if truly nothing else fits.
 - "type": exactly one of ${JSON.stringify(TASK_TYPES)}.
 - "priority": exactly one of ${JSON.stringify(TASK_PRIORITIES)} — infer from urgency language, default "Normal" if unclear.
-- "dueDate": an ISO YYYY-MM-DD date if one is mentioned or clearly implied, otherwise empty string.
+- "dueDate": an ISO YYYY-MM-DD date. Resolve relative language against today's date above: "by <weekday>" or "this <weekday>" means the very next occurrence of that weekday (today itself if today IS that weekday); "next <weekday>" means that weekday in the FOLLOWING week (never this week, even if that day hasn't happened yet this week); "next week" means next week's Monday; "end of month"/"end of the month" means the last calendar day of the CURRENT month; "tomorrow" and "today" mean exactly that; "in N days"/"in N weeks" means today plus that many days. If no due date is mentioned or clearly implied at all, return an empty string — never invent one just because a task exists.
 - "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
 - "senderName": the sender's display name if available, otherwise empty string.
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
@@ -38,6 +51,22 @@ If the text contains no actionable task at all, return an empty tasks array — 
 
 Return ONLY valid JSON, no markdown, no explanation:
 {"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":""}]}`;
+}
+
+// A malformed or out-of-range date from the model must never reach storage
+// or the sort below as if it were real — dropped to '' (same as "no due
+// date mentioned") rather than crashing or silently corrupting the sort.
+function validDueDate(value) {
+  const m = typeof value === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return '';
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  // Date silently ROLLS OVER an out-of-range day/month (e.g. "2026-02-30"
+  // becomes March 2) instead of producing an invalid Date — checking
+  // getTime() alone would let that corrupted value through as if it were
+  // real. Round-tripping the components back out and comparing catches it.
+  const roundTrips = d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+  return roundTrips ? value : '';
+}
 
 function extractDomain(email) {
   const m = /@([^\s>]+)/.exec(String(email || ''));
@@ -101,7 +130,7 @@ async function handleTaskEmailMode(req, res) {
     const message = await client.messages.create({
       model: 'claude-opus-4-7',
       max_tokens: 4096,
-      system: TASK_EMAIL_SYSTEM_PROMPT,
+      system: buildTaskEmailSystemPrompt(),
       messages: [{ role: 'user', content: text.trim() }],
     });
 
@@ -138,7 +167,7 @@ async function handleTaskEmailMode(req, res) {
           category: TASK_CATEGORIES.includes(t.category) ? t.category : 'Other',
           type: TASK_TYPES.includes(t.type) ? t.type : 'Task',
           priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
-          dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
+          dueDate: validDueDate(t.dueDate),
           clientId: matched ? matched.id : null,
           clientName: matched ? matched.name : '',
           source: 'parsed-email',

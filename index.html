@@ -8291,13 +8291,29 @@ function toggleTaQuickFilter(kind){
 function _taIsOverdue(t){ return !!t.dueDate && t.dueDate < _taToday() && t.status!=='Done'; }
 function _taIsDueToday(t){ return t.dueDate === _taToday() && t.status!=='Done'; }
 
+// Due date is the PRIMARY sort key (undated tasks last, matching "nothing
+// to act on yet" rather than implying urgency); priority is only a
+// tie-breaker among tasks sharing the same due date (or no date), never
+// the primary key — per the parser-quality spec's explicit "due date, not
+// just priority" requirement.
+const TA_PRIORITY_RANK = {Urgent:0, High:1, Normal:2, Low:3};
+function _taSortByDue(tasks){
+  return tasks.slice().sort((a,b)=>{
+    const ad = a.dueDate||'', bd = b.dueDate||'';
+    if(ad && bd && ad!==bd) return ad<bd?-1:1;
+    if(ad && !bd) return -1;
+    if(!ad && bd) return 1;
+    return (TA_PRIORITY_RANK[a.priority]??2) - (TA_PRIORITY_RANK[b.priority]??2);
+  });
+}
+
 function _taFilteredTasks(){
   const search = (document.getElementById('taSearchInput')?.value||'').trim().toLowerCase();
   const assignee = document.getElementById('taFilterAssignee')?.value||'';
   const client = document.getElementById('taFilterClient')?.value||'';
   const type = document.getElementById('taFilterType')?.value||'';
   const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
-  return _taTasks().filter(t=>{
+  const filtered = _taTasks().filter(t=>{
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
     if(assignee && t.assigneeId!==assignee) return false;
     if(client && t.clientId!==client) return false;
@@ -8308,6 +8324,7 @@ function _taFilteredTasks(){
     if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
     return true;
   });
+  return _taSortByDue(filtered);
 }
 
 function _taStatusColor(status){

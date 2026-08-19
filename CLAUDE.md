@@ -1101,6 +1101,37 @@ server data actually changed, closing the stale-tab-clobbers-newer-state
 window described above — lower priority since it can't resurrect a
 tombstoned row, only produce a spurious no-op-equivalent write.
 
+**Task parser quality batch — due date extraction + due-date sort
+(2026-08-19).** Another focused PR off the "make the parser behave like
+Sarah's original app" spec. `api/process-transcript.js`'s `taskEmail`
+prompt now includes today's real date and weekday (computed fresh per
+request — plain server-side `new Date()`, not a Workflow script, so this
+is fine) as the reference point for relative language, plus explicit
+resolution rules for the phrasings the spec named: "by/this &lt;weekday&gt;"
+(the next occurrence, today if today IS that weekday), "next &lt;weekday&gt;"
+(that weekday next week, never this week), "next week" (next week's
+Monday), "end of month" (last day of the CURRENT month), "tomorrow"/
+"today", and "in N days/weeks". A new `validDueDate()` guards the
+returned value before it's ever used: `Date` silently ROLLS OVER an
+out-of-range date instead of failing (`"2026-02-30"` normalizes to March
+2) — checking `getTime()` alone would let that corrupted value through
+as if it were real, so this round-trips the parsed year/month/day back
+out and compares them to the original string, dropping to `''` (treated
+identically to "no due date mentioned") on any mismatch or non-ISO
+format. `index.html`'s Task Assignments list now sorts by due date as the
+PRIMARY key (undated tasks last — "nothing to act on yet" rather than
+implying urgency), with priority only as a tie-breaker among tasks
+sharing a due date or lacking one, via a new `_taSortByDue()` applied
+inside `_taFilteredTasks()` so every consumer (list view, filters, quick
+filters) gets the same order for free. Verified with Node scripts against
+the real, byte-identical `api/process-transcript.js` (malformed and
+impossible dates both drop to `''`, a valid date passes through
+unchanged, the prompt actually carries today's date and the resolution
+rules) and the real, extracted `_taSortByDue()` (dated-before-undated,
+earlier-date-first, priority tie-breaking both among same-dated and
+among undated tasks, and confirms the input array itself is never
+mutated).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
