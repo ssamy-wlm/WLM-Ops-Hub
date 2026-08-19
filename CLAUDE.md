@@ -1040,7 +1040,13 @@ before merge, same as every migration-adding PR.
   `db push` per `supabase/MIGRATIONS.md` (see rule #12 and the
   Migration-apply pipeline entry above). Until this runs, the pipeline is
   merged-but-inert and every PR's `check-prod-current` shows red by design
-  — that is expected, not a bug, and should not be re-investigated.
+  — that is expected, not a bug, and should not be re-investigated. This
+  same one bootstrap step also fully resolves the 4 migrations
+  (`ops_session_activity`, `ops_backups`, `ops_payroll`, `ops_tasks`) that
+  got hand-applied to production after this pipeline was built — verified
+  locally (see `supabase/MIGRATIONS.md`'s step 7): no separate action
+  needed for those, the existing bootstrap `db push` safely no-ops over
+  them and correctly records each as applied.
 - **Run the Error Log cleanup once (Sarah):** ~602 stale entries exist
   (mostly one fixed 2026-07-13 bug, plus a 2026-07-24 Supabase SSL outage).
   The archive/clear control (PR #202) now works correctly; a cutoff around
