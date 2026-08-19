@@ -506,6 +506,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div class="nav-group-label">My Work</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span>Operations</div>
       <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
+      <div class="nav-item" onclick="showSection('dailyTasks',this)" id="nav-dailytasks"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Daily tasks<span class="msg-nav-badge" id="daily-tasks-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
       <div class="nav-item" onclick="openTrackerPage('reports',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>Progress Reports</div>
       <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
@@ -573,6 +574,18 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div class="help-panel-footer">
           <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Daily Tasks detail slide-in panel — reuses .help-panel-overlay/
+         .help-panel verbatim (same file, no zero-shared-code concern). -->
+    <div id="dtDetailOverlay" class="help-panel-overlay" onclick="if(event.target===this) closeDtDetailPanel()">
+      <div class="help-panel">
+        <div class="help-panel-header">
+          <div style="font-weight:800;font-size:15px;color:var(--text-dark);">Task details</div>
+          <button onclick="closeDtDetailPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-light);">✕</button>
+        </div>
+        <div id="dtDetailBody" class="help-panel-body" style="padding:14px 16px;"></div>
       </div>
     </div>
 
@@ -958,6 +971,77 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div id="assign-notif-empty" style="text-align:center;padding:24px;color:var(--text-light);font-size:12px;">No notifications right now.</div>
       </div>
 
+      <!-- ── DAILY TASKS (port of the WebLight Media Email Tracker) — a new,
+           separate section; "My Work" above is completely untouched. ── -->
+      <div id="sec-dailyTasks" class="page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">Daily tasks</div>
+          <div id="dtNewAssignedBadge" style="display:none;font-size:12px;color:var(--text-mid);">🔔 <span id="dtNewAssignedCount">0</span> new assigned</div>
+        </div>
+
+        <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
+          <button class="btn btn-sm" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
+          <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
+        </div>
+
+        <div id="dtTabMine">
+          <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
+          <div style="display:flex;gap:6px;margin-bottom:12px;">
+            <button class="btn btn-sm" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
+            <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
+          </div>
+          <div id="dtListWrap">
+            <div class="card">
+              <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table style="width:100%;min-width:520px;">
+                  <thead>
+                    <tr>
+                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
+                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
+                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
+                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dtTableBody"></tbody>
+                </table>
+                <div id="dtListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">Nothing assigned to you yet.</div>
+              </div>
+            </div>
+          </div>
+          <div id="dtCalWrap" style="display:none;">
+            <div class="card">
+              <div class="card-body">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                  <button class="btn btn-sm btn-outline" onclick="shiftDtCalMonth(-1)">‹</button>
+                  <div id="dtCalLabel" style="font-weight:700;font-size:14px;"></div>
+                  <button class="btn btn-sm btn-outline" onclick="shiftDtCalMonth(1)">›</button>
+                </div>
+                <div id="dtCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="dtTabImport" style="display:none;">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">📧 Add / import tasks</div>
+                <div class="card-sub">Paste a transcript/email, or drop one or more .eml files — extracted tasks land only in your own list</div>
+              </div>
+            </div>
+            <div class="card-body">
+              <textarea id="dtParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <input type="file" id="dtParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onDtParseFilesChosen(event)">
+                <button class="btn btn-sm btn-primary" id="dtParseBtn" onclick="runDtEmailParse()">Parse &amp; extract tasks</button>
+              </div>
+              <div id="dtParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── MESSAGES ── -->
       <div id="sec-messages" class="page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
@@ -1150,6 +1234,7 @@ const DB_KEYS = {
   notifications: 'wl_ops_notifications',
   orgNodes: 'wl_org_nodes',
   orgLinks: 'wl_org_links',
+  tasks: 'wl_ops_tasks',
   // Onboarding tour/tips flags — same localStorage key name client.html/
   // index.html use (same-origin shared storage, see client.html's CL_KEYS
   // comment for why that's intentional, not a coincidence).
@@ -1256,6 +1341,8 @@ async function cloudFetchUsers(){
     _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
     _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)));
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr));
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr));
+    if(document.getElementById('sec-dailyTasks')?.classList.contains('active') && typeof renderDailyTasks==='function') renderDailyTasks();
     // Read-only Company Overview chart — same ops_org_nodes/ops_org_links
     // data the admin chart renders from (api/ops-state.js no longer strips
     // these for member tier; see there for why it's safe: no sensitive
@@ -1310,6 +1397,8 @@ async function cloudPushData(){
     // `read` (see readOpsNotif()/markAllOpsNotifsRead() below) — push just that.
     const notifsDirty = _opsDirty('notifications', dbGet(DB_KEYS.notifications)||[]);
     if(notifsDirty.length) changes.notifications = notifsDirty.map(n=>({id:n.id, read:!!n.read}));
+    const tasksDirty = _opsDirty('tasks', dbGet(DB_KEYS.tasks)||[]);
+    if(tasksDirty.length) changes.tasks = tasksDirty;
     // Onboarding tour/tips flags — only ever written by an explicit dismiss/
     // finish/skip/replay action (see _saveTourFlags below), never on load.
     const tourFlags = dbGet(DB_KEYS.tourFlags); if(tourFlags) changes.tourFlags = tourFlags;
@@ -1333,6 +1422,275 @@ async function cloudPushData(){
     await cloudFetchUsers();
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
   }catch(e){}
+}
+
+// ── Daily Tasks (employee) — port of the WebLight Media Email Tracker.
+// The server (api/ops-state.js) already scopes the `tasks` array to this
+// member's own tasks before it ever reaches the browser (assigneeId or
+// assignedById === session.id) — this file just displays what it's given,
+// same "server is the single source of truth" rule as everything else
+// here. Category/type/priority lists are hand-duplicated from
+// index.html's own copy (CLAUDE.md zero-shared-code rule) and must match
+// api/process-transcript.js's TASK_CATEGORIES exactly. No assignee
+// dropdown, no other people's tasks, no team roster — a member can only
+// ever touch status/notes/tags on a task already assigned to them (server-
+// enforced in api/ops-sync.js, not just hidden here), or create a new
+// self-origin one via the Add/Import tab. ──
+const DT_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
+const DT_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+
+let _dtTab = 'mine';
+let _dtView = 'list';
+let _dtActiveCategory = null;
+let _dtCalDate = new Date();
+let _dtDetailTaskId = null;
+let _dtParseFileTexts = [];
+
+function _dtGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
+function _dtMyTasks(){ return (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.assigneeId===currentUser?.id); }
+function _dtToday(){ return new Date().toISOString().slice(0,10); }
+function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
+
+// Only ever called from showSection's explicit 'dailyTasks' branch — never
+// on page load/timer (CLAUDE.md rule #2).
+function loadDailyTasks(){
+  const pillsEl = document.getElementById('dtCategoryPills');
+  if(pillsEl){
+    pillsEl.innerHTML = ['All', ...DT_CATEGORIES].map(c=>{
+      const active = (c==='All' && !_dtActiveCategory) || c===_dtActiveCategory;
+      return `<button class="btn btn-sm ${active?'btn-primary':'btn-outline'}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
+    }).join('');
+  }
+  renderDailyTasks();
+}
+
+function setDtActiveCategory(cat){ _dtActiveCategory = cat; loadDailyTasks(); }
+
+function setDtTab(tab){
+  _dtTab = tab;
+  document.getElementById('dtTabMineBtn').className = 'btn btn-sm '+(tab==='mine'?'':'btn-outline');
+  document.getElementById('dtTabImportBtn').className = 'btn btn-sm '+(tab==='import'?'':'btn-outline');
+  document.getElementById('dtTabMine').style.display = tab==='mine' ? '' : 'none';
+  document.getElementById('dtTabImport').style.display = tab==='import' ? '' : 'none';
+  if(tab==='mine') renderDailyTasks();
+}
+
+function setDtView(v){
+  _dtView = v;
+  document.getElementById('dtViewListBtn').className = 'btn btn-sm '+(v==='list'?'':'btn-outline');
+  document.getElementById('dtViewCalBtn').className = 'btn btn-sm '+(v==='calendar'?'':'btn-outline');
+  document.getElementById('dtListWrap').style.display = v==='list' ? '' : 'none';
+  document.getElementById('dtCalWrap').style.display = v==='calendar' ? '' : 'none';
+  renderDailyTasks();
+}
+
+function _dtStatusColor(status){
+  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
+}
+
+function renderDailyTasks(){
+  let tasks = _dtMyTasks();
+  if(_dtActiveCategory) tasks = tasks.filter(t=>t.category===_dtActiveCategory);
+  // "New assigned" badge: tasks assigned to me that I haven't opened the
+  // detail panel for yet (local-only "seen" flag, same spirit as an unread
+  // notification — never written back to the server).
+  let seen = [];
+  try{ seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]'); }catch(e){}
+  const newCount = tasks.filter(t=>!seen.includes(t.id)).length;
+  const badge = document.getElementById('dtNewAssignedBadge');
+  if(badge){
+    badge.style.display = newCount>0 ? '' : 'none';
+    document.getElementById('dtNewAssignedCount').textContent = newCount;
+  }
+  const navBadge = document.getElementById('daily-tasks-badge');
+  if(navBadge){
+    navBadge.style.display = newCount>0 ? '' : 'none';
+    navBadge.textContent = newCount;
+  }
+  if(_dtView==='calendar') _renderDtCalendar(tasks);
+  else _renderDtListTable(tasks);
+}
+
+function _renderDtListTable(tasks){
+  const body = document.getElementById('dtTableBody');
+  const empty = document.getElementById('dtListEmpty');
+  if(!body) return;
+  if(!tasks.length){
+    body.innerHTML = '';
+    if(empty) empty.style.display = 'block';
+    return;
+  }
+  if(empty) empty.style.display = 'none';
+  body.innerHTML = tasks.map(t=>{
+    const overdue = _dtIsOverdue(t);
+    return `<tr style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${DT_CATEGORY_LABELS[t.category]||t.category||''}</div>
+      </td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlUser(t.clientName||'—')}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${_dtStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function shiftDtCalMonth(delta){
+  _dtCalDate = new Date(_dtCalDate.getFullYear(), _dtCalDate.getMonth()+delta, 1);
+  renderDailyTasks();
+}
+
+function _renderDtCalendar(tasks){
+  const grid = document.getElementById('dtCalGrid');
+  const label = document.getElementById('dtCalLabel');
+  if(!grid) return;
+  const y = _dtCalDate.getFullYear(), m = _dtCalDate.getMonth();
+  if(label) label.textContent = _dtCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
+  const firstDow = new Date(y,m,1).getDay();
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const byDate = {};
+  tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } });
+  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
+  for(let i=0;i<firstDow;i++) html += '<div></div>';
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayTasks = byDate[dateStr]||[];
+    const isToday = dateStr === _dtToday();
+    html += `<div style="min-height:60px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(45,107,182,.06);':''}">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
+      ${dayTasks.slice(0,3).map(t=>`<div onclick="openDtDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_dtIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(45,107,182,.08)'};color:${_dtIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlUser(t.subject||'')}</div>`).join('')}
+      ${dayTasks.length>3 ? `<div style="font-size:10px;color:var(--text-light);">+${dayTasks.length-3} more</div>` : ''}
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function _dtAssignedByName(id){
+  if(!id) return '—';
+  const users = dbGet(DB_KEYS.users)||[];
+  const p = users.find(u=>u.id===id);
+  return p ? p.name : (id===currentUser?.id ? 'You' : '—');
+}
+
+function openDtDetailPanel(id){
+  const t = _dtMyTasks().find(x=>x.id===id);
+  if(!t) return;
+  _dtDetailTaskId = id;
+  // Mark seen — local-only, never synced (see the badge comment in renderDailyTasks).
+  try{
+    const seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]');
+    if(!seen.includes(id)){ seen.push(id); localStorage.setItem('wl_dt_seen_ids', JSON.stringify(seen.slice(-500))); }
+  }catch(e){}
+  const body = document.getElementById('dtDetailBody');
+  body.innerHTML = `
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px;">${escHtmlUser(t.subject||'')}</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
+      <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
+      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
+      <div style="color:var(--text-light);">Type</div><div>${escHtmlUser(t.type||'')}</div>
+      <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
+      <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
+      ${t.source==='parsed-email' ? `<div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>` : ''}
+    </div>
+    <label class="form-label">Status</label>
+    <select class="form-input" id="dt-status-select"><option>Not started</option><option>In progress</option><option>Done</option></select>
+    <label class="form-label" style="margin-top:10px;">Notes</label>
+    <textarea class="form-input" id="dt-notes-input" rows="3"></textarea>
+    <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
+  `;
+  document.getElementById('dt-status-select').value = t.status || 'Not started';
+  document.getElementById('dt-notes-input').value = t.notes || '';
+  document.getElementById('dtDetailOverlay').classList.add('open');
+}
+function closeDtDetailPanel(){
+  document.getElementById('dtDetailOverlay').classList.remove('open');
+  _dtDetailTaskId = null;
+}
+
+// A member may only ever touch status/notes/tags on a task already
+// assigned to them — server-enforced (api/ops-sync.js's
+// TASK_KEYS_MEMBER_MAY_NOT_TOUCH), this is just the matching client-side
+// form. Every other field is sent back UNCHANGED from the existing local
+// copy so the update never accidentally looks like it touched anything else.
+function saveDtTaskUpdate(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  t.status = document.getElementById('dt-status-select').value;
+  t.notes = document.getElementById('dt-notes-input').value;
+  dbSet(DB_KEYS.tasks, tasks);
+  _scheduleCloudPush();
+  closeDtDetailPanel();
+  renderDailyTasks();
+  showToast('Task updated ✓');
+}
+
+function _onDtParseFilesChosen(event){
+  const files = Array.from(event.target.files || []);
+  _dtParseFileTexts = [];
+  if(!files.length) return;
+  let remaining = files.length;
+  files.forEach(f=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      _dtParseFileTexts.push(reader.result);
+      remaining--;
+      if(remaining===0) document.getElementById('dtParseStatus').textContent = `${files.length} file(s) loaded, ready to parse.`;
+    };
+    reader.readAsText(f);
+  });
+}
+
+async function runDtEmailParse(){
+  const token = _opsToken();
+  if(!token) return;
+  const pastedText = document.getElementById('dtParseText').value.trim();
+  const allText = [pastedText, ..._dtParseFileTexts].filter(Boolean).join('\n\n---\n\n');
+  if(!allText){ showToast('Paste text or drop a file first'); return; }
+  const btn = document.getElementById('dtParseBtn');
+  const statusEl = document.getElementById('dtParseStatus');
+  btn.disabled = true;
+  statusEl.textContent = 'Parsing…';
+  try{
+    const res = await fetch('/api/process-transcript', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({ mode: 'taskEmail', text: allText }),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
+    const extracted = Array.isArray(data.tasks) ? data.tasks : [];
+    if(!extracted.length){
+      statusEl.textContent = 'No tasks found in that text.';
+      return;
+    }
+    // origin/assigneeId/assignedById are forced server-side to this member's
+    // own id regardless of what's sent — set sensibly here too so the local
+    // list looks right before the next pull confirms it.
+    const tasks = dbGet(DB_KEYS.tasks)||[];
+    extracted.forEach(et=>{
+      tasks.push({
+        id: _dtGenId(),
+        subject: et.subject, notes: et.notes||'', tags: et.tags||[],
+        clientId: et.clientId||null, clientName: et.clientName||'',
+        assigneeId: currentUser?.id||null, assignedById: currentUser?.id||null,
+        category: et.category, type: et.type, priority: et.priority,
+        status: 'Not started', dueDate: et.dueDate||'',
+        source: 'parsed-email', origin: 'self',
+        emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
+      });
+    });
+    dbSet(DB_KEYS.tasks, tasks);
+    _scheduleCloudPush();
+    document.getElementById('dtParseText').value = '';
+    document.getElementById('dtParseFileInput').value = '';
+    _dtParseFileTexts = [];
+    statusEl.textContent = `✅ ${extracted.length} task(s) added to your list.`;
+  } catch(e){
+    statusEl.textContent = `❌ ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────
@@ -3294,7 +3652,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Work',myassignments:'My Work',companyOverview:'Company Overview'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Work',myassignments:'My Work',companyOverview:'Company Overview',dailyTasks:'Daily tasks'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -3308,6 +3666,7 @@ function showSection(id, el){
     loadMyAssignments();
     setTimeout(_maybeShowMyWorkTip,50);
   }
+  if(id==='dailyTasks') loadDailyTasks();
   if(id==='timeoff'){
     setTimeout(()=>_maybeShowTip('myWorkRequestTimeOff','#to-start','Pick your dates and submit — your admin gets notified to review it.'),50);
   }
@@ -3503,6 +3862,11 @@ setInterval(()=>{
     // Company Overview: same pattern — pick up an admin's org chart save
     // within 20s if a member has this tab open, without a manual refresh.
     if(document.getElementById('sec-companyOverview')?.classList.contains('active')){
+      cloudFetchUsers();
+    }
+    // Daily Tasks: same pattern — pick up a newly-assigned/reassigned task
+    // within 20s without a manual refresh.
+    if(document.getElementById('sec-dailyTasks')?.classList.contains('active')){
       cloudFetchUsers();
     }
   }

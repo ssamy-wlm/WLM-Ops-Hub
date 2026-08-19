@@ -208,6 +208,19 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'name', 'status', 'pinned', 'color', 'code', 'industry', 'accountManager',
   'clientName', 'clientEmail', 'clientPhone', 'referredBy', 'notes',
   'internalNotes', 'website', 'logo', 'brandColors', 'brandDetails', 'startDate',
+  // Task-assignment email-matching data (Task Assignments feature) — loaded
+  // via a one-time admin salvage import, never a member-facing edit.
+  'clientEmails',
+];
+
+// A member editing an EXISTING task assigned to them (Daily Tasks) may only
+// touch status/notes/tags — everything else (who it's for, what it's
+// about, where it lives) is admin-only, same allow-list-of-untouchable-
+// fields pattern as CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH above.
+const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
+  'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
+  'category', 'type', 'priority', 'dueDate', 'source', 'origin',
+  'emailReceivedDate', 'emailThreadId',
 ];
 
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
@@ -621,6 +634,36 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
         recipientName: person?.name || '', recipientEmail: person?.email || '',
         title, body, link: '',
         context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null, subitemId: ev.subitemId || null },
+      });
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// Task Assignments / Daily Tasks (ops_tasks — a standalone top-level table,
+// NOT the client.projects[] "tasks" the functions above already use that
+// name for, hence the distinct "opsTask" naming throughout this block).
+// Deliberately named/shaped differently from fireAssignmentNotifications
+// above rather than folded into it: an ops_task has no projectName/
+// locationName, and reuses the SAME established mechanism
+// (resolveNotifyRecipients + insertNotifications, which already sends the
+// email itself via Resend — see insertNotifications' own comment) rather
+// than the separate api/send-assignment-email.js tool, for consistency with
+// every other assignment-type notification in this file.
+async function fireOpsTaskAssignmentNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    resolveNotifyRecipients(ev.assigneeId, users, admins, 'assigned').forEach(r => {
+      const person = personOf(r.id, r.kind, { users, admins });
+      rows.push({
+        type: 'taskAssignment', recipientId: r.id, recipientKind: r.kind,
+        recipientName: person?.name || '', recipientEmail: person?.email || '',
+        title: `New task assigned: ${ev.subject}`,
+        body: `${ev.clientName || 'No client'}${ev.dueDate ? ' — due ' + ev.dueDate : ''}`,
+        link: '',
+        context: { taskId: ev.taskId, clientId: ev.clientId || null },
       });
     });
   });
@@ -1276,6 +1319,75 @@ export default async function handler(req, res) {
       await fireServiceUpdateNotifications(supabase, serviceUpdateEvents, warnings);
       await fireServiceDoneNotifications(supabase, doneEvents, warnings);
       await fireSubmittedForReviewNotifications(supabase, reviewEvents, warnings, notices);
+    }
+
+    // ── Task Assignments (admin) / Daily Tasks (employee) — ops_tasks.
+    // Admins have full CRUD on any task, including reassigning it to a
+    // different employee. Members may only (a) create a brand-new task,
+    // always forced to origin:'self', assigneeId/assignedById forced to
+    // their OWN id regardless of what the client sent (so "Add / import
+    // tasks" can never silently assign to someone else), or (b) update an
+    // EXISTING task already assigned to them — and even then, only a small
+    // set of fields (status/notes/tags): everything else (assignee, client,
+    // category, type, priority, due date, origin, source) is admin-only,
+    // the same allow-list-of-untouchable-fields pattern
+    // checkMemberClientWrite already uses for clients. A task's assignee
+    // actually changing (including a brand-new task created WITH an
+    // assignee, since assigneeChanged's prevId is '' for a task that didn't
+    // exist before) fires an in-app + email notification via
+    // fireOpsTaskAssignmentNotifications, unless the task is self-assigned
+    // (assigning yourself something needs no notification). ──
+    if (Array.isArray(c.tasks) && c.tasks.length) {
+      const incoming = c.tasks.filter(validGeneric);
+      const ids = incoming.map(t => t.id);
+      const { data: currentTaskRows } = await supabase.from('ops_tasks').select('id, data').in('id', ids);
+      const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
+      const notifSettings = await getNotificationSettings(supabase);
+      const taskAssignmentEvents = [];
+      let n = 0;
+      for (const inc of incoming) {
+        const cur = byId.get(inc.id);
+        let row;
+        if (!cur) {
+          row = isAdmin
+            ? { ...inc, assignedById: inc.assignedById || session.id }
+            : { ...inc, assigneeId: session.id, assignedById: session.id, origin: 'self' };
+          const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
+          if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
+        } else if (isAdmin) {
+          // assignedById never gets blanked by a falsy incoming value — a
+          // client that hasn't pulled back the server-assigned value yet
+          // (e.g. a second quick edit within the same 30s poll window)
+          // would otherwise silently overwrite it with null on every save.
+          row = { ...inc, assignedById: inc.assignedById || cur.assignedById || null };
+          const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
+          if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
+        } else {
+          if (cur.assigneeId !== session.id) {
+            rejected.push({ table: 'tasks', id: inc.id, reason: 'not your task' });
+            continue;
+          }
+          const disallowedKey = TASK_KEYS_MEMBER_MAY_NOT_TOUCH.find(
+            key => JSON.stringify(cur[key]) !== JSON.stringify(inc[key])
+          );
+          if (disallowedKey) {
+            rejected.push({ table: 'tasks', id: inc.id, reason: `members cannot edit tasks.${disallowedKey}` });
+            continue;
+          }
+          row = inc;
+          const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
+          if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
+        }
+        n++;
+        if (notifSettings.assignment && row.assigneeId && row.assigneeId !== session.id && assigneeChanged(cur, row)) {
+          taskAssignmentEvents.push({
+            taskId: inc.id, subject: row.subject, assigneeId: row.assigneeId,
+            clientId: row.clientId || null, clientName: row.clientName || '', dueDate: row.dueDate || '',
+          });
+        }
+      }
+      applied.tasks = n;
+      await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);

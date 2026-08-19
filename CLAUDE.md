@@ -896,6 +896,84 @@ Net effect: 12 files under `api/`, exactly at the Hobby plan's limit — any
 future new endpoint needs an existing one removed or folded in first, not
 just added.
 
+**Task Assignments (admin) + Daily Tasks (employee) — port of the
+standalone WebLight Media Email Tracker (2026-08-19).** New `ops_tasks`
+table (migration `20260819100000_ops_tasks.sql`, plain mutable table like
+`ops_clients`/`ops_users`) plus two new UI sections: "Task assignments" in
+`index.html` (admin: sees/assigns every task, Import & Parse box, List/
+Calendar toggle, filters, slide-in detail panel, edit modal) and "Daily
+tasks" in `user.html` (employee: two tabs — My assigned tasks / Add-import
+tasks — scoped to their own tasks only, no assignee dropdown, no team
+roster). "My Work" was not touched. Per the Hobby-plan function-count limit
+above, **no new `api/*.js` file was added** — three existing endpoints were
+extended instead:
+
+- `api/ops-sync.js`: a new `c.tasks` write block. Admins have full CRUD/
+  reassign; members may only create a new task (forced server-side to
+  `origin:'self'`, `assigneeId`/`assignedById` forced to their own id
+  regardless of what the client sends) or touch status/notes/tags on a task
+  already assigned to them — every other field is admin-only
+  (`TASK_KEYS_MEMBER_MAY_NOT_TOUCH`, same allow-list pattern as
+  `CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH`, which also gained a new
+  `clientEmails` entry for the salvage field below). A task's assignee
+  actually changing (including a brand-new task created WITH an assignee)
+  fires an in-app + email notification via a new
+  `fireOpsTaskAssignmentNotifications()` — deliberately reusing the
+  existing `insertNotifications()` mechanism (which already sends the
+  email itself via Resend for every other assignment-type event in this
+  file) rather than the separate `api/send-assignment-email.js` tool the
+  original build spec named — same effect, one fewer moving part, no new
+  session/tier friction. Also fixed, found while building this: an admin
+  UPDATE to an existing task with a stale/falsy `assignedById` (e.g. a
+  second quick edit before the next 30s pull catches up) used to silently
+  blank an already-correctly-set value — an update now preserves
+  `cur.assignedById` when the incoming value is falsy, mirroring the
+  Contract-End-date/`serviceAreas` "never let an absent field blank a real
+  value" convention already used elsewhere in this codebase.
+- `api/ops-state.js`: a new `tasks` field, scoped exactly like
+  `notifications` — a member gets only tasks where they're the assignee OR
+  the creator, unconditionally on tier; every admin tier sees every task.
+- `api/process-transcript.js`: a new `mode:'taskEmail'` branch, completely
+  separate from the pre-existing Roadmap meeting-transcript extractor this
+  file already had (different system prompt, different category/type
+  vocabulary, different output shape) — sharing the file only because of
+  the function-count limit above. Unlike the Roadmap mode's loose optional
+  static-key check, this mode requires a real signed ops session
+  (`requireSession`), since the extracted tasks get written under that
+  caller's identity. Client-matching (sender email → a client's new
+  `clientEmails[]`/legacy `clientEmail` → case-insensitive name → sender-
+  domain vs client-website-domain) is deliberately plain deterministic
+  code, never left to the model to guess — a wrong auto-match would
+  silently attach a task to the wrong client. Only `status:'active'`
+  clients are ever queried as match candidates, so an inactive client can
+  never receive a parsed task. The Roadmap mode's own code path is
+  byte-for-byte untouched.
+- `lib/opsBackup.js`: added `ops_tasks` to `BACKUP_TABLE_PK` so tasks are
+  included in the existing daily/manual snapshot and restore flow — no
+  separate mechanism.
+
+Two small deviations from the original build spec, made after investigating
+the actual codebase rather than guessing, both confirmed with Sarah before
+implementing: (1) email mechanism above (`insertNotifications()` instead of
+`api/send-assignment-email.js`); (2) the spec's `Type` field listed
+"Task | Client Update | New Service | New Sale | Follow-up …" with a
+trailing ellipsis (no complete list given) — built as a fixed 5-value enum,
+ellipsis dropped, rather than free text. `Category` is the fixed 6-value
+enum the spec did fully specify (`Production/Updates/Sales/Admin/Other/
+Invoices-Payments`, the last displayed as "Invoices" in the UI). Reply
+status is free text (matches the mockup's varied values like "4h"/"1d"/"—"
+directly, no invented bucket list). A `service` free-text field was added
+to the task shape to reconcile a spec inconsistency: section 2's data model
+didn't list it, but section 4's edit-modal field list did — added as a
+plain optional string, not linked to the real Service Catalog.
+
+**Not done in this change, by design:** the actual tracker→client email
+mapping data (the spec's own plan was for Sarah's operator to load that
+separately via connector once the `clientEmails[]` field existed — this
+change only adds the field and its member-write protection, no data). Per
+rule #12, this PR's migration must be confirmed applied to production
+before merge, same as every migration-adding PR.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

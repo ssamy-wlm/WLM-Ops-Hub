@@ -1,7 +1,159 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { logError } from '../lib/errorLog.js';
+import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
+import { requireSession } from '../lib/opsSession.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
+
+// ── Task Assignments / Daily Tasks email-parsing mode (mode:'taskEmail' in
+// the request body) — a completely separate feature from the Roadmap
+// meeting-transcript extractor above/below, sharing this file only because
+// this app is capped at 12 serverless functions (Vercel Hobby plan) and
+// this was the closest existing "paste text, get structured JSON back from
+// Claude" endpoint. Unlike the Roadmap mode (an optional, loosely-checked
+// static API key), this mode requires a REAL signed ops session — every
+// caller (admin or employee) must be logged in, since the extracted tasks
+// get written into ops_tasks via api/ops-sync.js under that same identity.
+// The Roadmap mode's own request handling below is completely untouched. ──
+const TASK_CATEGORIES = ['Production', 'Updates', 'Sales', 'Admin', 'Other', 'Invoices/Payments'];
+const TASK_TYPES = ['Task', 'Client Update', 'New Service', 'New Sale', 'Follow-up'];
+const TASK_PRIORITIES = ['Urgent', 'High', 'Normal', 'Low'];
+
+const TASK_EMAIL_SYSTEM_PROMPT = `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
+
+For EACH distinct task or action item you find:
+- "subject": a concise one-line summary (under 12 words).
+- "notes": any additional relevant detail from the text (can be empty string).
+- "tags": an array of short relevant keyword strings (can be empty array).
+- "category": exactly one of ${JSON.stringify(TASK_CATEGORIES)} — "Invoices/Payments" for billing/invoice/payment items, "Other" only if truly nothing else fits.
+- "type": exactly one of ${JSON.stringify(TASK_TYPES)}.
+- "priority": exactly one of ${JSON.stringify(TASK_PRIORITIES)} — infer from urgency language, default "Normal" if unclear.
+- "dueDate": an ISO YYYY-MM-DD date if one is mentioned or clearly implied, otherwise empty string.
+- "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
+- "senderName": the sender's display name if available, otherwise empty string.
+- "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
+- "emailThreadId": a Message-ID header value if present, otherwise empty string.
+
+If the text contains no actionable task at all, return an empty tasks array — do not invent one.
+
+Return ONLY valid JSON, no markdown, no explanation:
+{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":""}]}`;
+
+function extractDomain(email) {
+  const m = /@([^\s>]+)/.exec(String(email || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+function domainOf(url) {
+  const m = /^(?:https?:\/\/)?(?:www\.)?([^/\s]+)/i.exec(String(url || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+// Deterministic, not LLM-guessed — a wrong auto-match here would silently
+// attach a task (and whatever it references) to the wrong client, so this
+// stays plain code the same way every other client-matching decision in
+// this app is server-side and reviewable, never "ask the model to guess."
+// Checked in order: exact sender-email match against the client's salvaged
+// clientEmails[]/legacy clientEmail, then a case-insensitive sender-name
+// vs client-name match, then a sender-domain vs client-website-domain
+// match. No match at any step leaves the task unlinked — an admin assigns
+// the client manually in the UI rather than the system guessing wrong.
+function matchClient(task, activeClients) {
+  const senderEmail = String(task.senderEmail || '').toLowerCase().trim();
+  const senderDomain = extractDomain(senderEmail);
+  const senderName = String(task.senderName || '').toLowerCase().trim();
+  if (senderEmail) {
+    const byEmail = activeClients.find(c =>
+      (Array.isArray(c.clientEmails) && c.clientEmails.some(e => String(e).toLowerCase().trim() === senderEmail)) ||
+      String(c.clientEmail || '').toLowerCase().trim() === senderEmail
+    );
+    if (byEmail) return byEmail;
+  }
+  if (senderName) {
+    const byName = activeClients.find(c => String(c.name || '').toLowerCase().trim() === senderName);
+    if (byName) return byName;
+  }
+  if (senderDomain) {
+    const byDomain = activeClients.find(c => domainOf(c.website) && domainOf(c.website) === senderDomain);
+    if (byDomain) return byDomain;
+  }
+  return null;
+}
+
+async function handleTaskEmailMode(req, res) {
+  let session;
+  try { session = await requireSession(req); }
+  catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err }); return res.status(500).json({ error: err.message }); }
+  if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
+
+  const { text } = req.body || {};
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    await logError({ endpoint: 'process-transcript:taskEmail', error: 'ANTHROPIC_API_KEY is not configured on the server.', session });
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+  }
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  try {
+    const message = await client.messages.create({
+      model: 'claude-opus-4-7',
+      max_tokens: 4096,
+      system: TASK_EMAIL_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: text.trim() }],
+    });
+
+    const raw = message.content[0]?.text || '{}';
+    let parsed;
+    try {
+      const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
+      return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
+    }
+
+    const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+
+    let supabase;
+    try { supabase = getSupabaseAdmin(); }
+    catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err, session }); return res.status(500).json({ error: err.message }); }
+    // Active clients ONLY — an inactive/archived client can never be
+    // auto-matched or assigned a parsed task (CLAUDE.md-required constraint
+    // for this feature).
+    const { data: clientRows, error: clientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
+    if (clientErr) { await logError({ endpoint: 'process-transcript:taskEmail', error: clientErr, session }); return res.status(500).json({ error: clientErr.message }); }
+    const activeClients = (clientRows || []).map(r => ({ id: r.id, ...r.data }));
+
+    const tasks = rawTasks
+      .filter(t => t && typeof t.subject === 'string' && t.subject.trim())
+      .map(t => {
+        const matched = matchClient(t, activeClients);
+        return {
+          subject: t.subject.trim(),
+          notes: typeof t.notes === 'string' ? t.notes : '',
+          tags: Array.isArray(t.tags) ? t.tags.filter(x => typeof x === 'string') : [],
+          category: TASK_CATEGORIES.includes(t.category) ? t.category : 'Other',
+          type: TASK_TYPES.includes(t.type) ? t.type : 'Task',
+          priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
+          dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
+          clientId: matched ? matched.id : null,
+          clientName: matched ? matched.name : '',
+          source: 'parsed-email',
+          emailReceivedDate: typeof t.emailReceivedDate === 'string' ? t.emailReceivedDate : '',
+          emailThreadId: typeof t.emailThreadId === 'string' ? t.emailThreadId : '',
+        };
+      });
+
+    return res.status(200).json({ tasks, raw_count: rawTasks.length });
+  } catch (err) {
+    console.error('Anthropic API error (taskEmail):', err);
+    await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
+    return res.status(500).json({ error: err.message || 'Anthropic API call failed' });
+  }
+}
 
 const SYSTEM_PROMPT = `You are a planning assistant for a small business called Weblight Media. Read this meeting transcript and extract every task, action item, goal, or idea mentioned.
 
@@ -37,10 +189,14 @@ Return ONLY valid JSON, no markdown, no explanation:
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-claude-api-key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-claude-api-key, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
+  }
+
+  if (req.method === 'POST' && req.body?.mode === 'taskEmail') {
+    return handleTaskEmailMode(req, res);
   }
 
   if (req.method !== 'POST') {

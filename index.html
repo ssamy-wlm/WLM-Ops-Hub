@@ -1114,6 +1114,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            applyAdminRoleRestrictions(), independent of the level-based
            gating everything else on this nav uses. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'myTeamsWork')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>My Team's Work</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'taskAssignments')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Task assignments</div>
 
       <div class="admin-nav-group-label">People &amp; HR</div>
       <!-- Users (+ Time off / Time off ledger / Archive) -->
@@ -1191,6 +1192,22 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div id="help-panel-body" class="help-panel-body"></div>
         <div class="help-panel-footer">
           <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task detail slide-in panel — reuses the .help-panel-overlay/.help-panel
+         CSS classes above verbatim (same file, so no zero-shared-code
+         concern — that rule is only about the three separate frontends). -->
+    <div id="taDetailOverlay" class="help-panel-overlay" onclick="if(event.target===this) closeTaDetailPanel()">
+      <div class="help-panel">
+        <div class="help-panel-header">
+          <div style="font-weight:800;font-size:15px;color:var(--text-dark);">Task details</div>
+          <button onclick="closeTaDetailPanel()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-light);">✕</button>
+        </div>
+        <div id="taDetailBody" class="help-panel-body" style="padding:14px 16px;"></div>
+        <div class="help-panel-footer">
+          <button class="btn btn-primary btn-sm" style="width:100%;" onclick="openTaskEditModal(_taDetailTaskId)">✏️ Edit</button>
         </div>
       </div>
     </div>
@@ -1364,6 +1381,87 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <tbody id="myTeamsWorkTableBody"></tbody>
           </table>
           <div id="myTeamsWorkEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">Nobody on your team has an active assignment yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ TASK ASSIGNMENTS (port of the WebLight Media Email Tracker) ══ -->
+    <div id="admin-taskAssignments" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse emails/transcripts into tasks, or add one manually, and assign to anyone on the team</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openTaskEditModal(null)">+ New Task</button>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📧 Import &amp; parse</div>
+            <div class="card-sub">Paste a transcript/email, or drop one or more .eml files</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <textarea id="taParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="file" id="taParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onTaParseFilesChosen(event)">
+            <button class="btn btn-sm btn-primary" id="taParseBtn" onclick="runTaskEmailParse()">Parse &amp; extract tasks</button>
+          </div>
+          <div id="taParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
+          <button class="btn btn-sm btn-outline" id="taViewCalBtn" onclick="setTaView('calendar')">📅 Calendar</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
+          <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
+          <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
+          <select id="taFilterType" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All types</option></select>
+          <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
+          <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
+          <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
+        </div>
+      </div>
+      <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
+
+      <div id="taListWrap">
+        <div class="card">
+          <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table style="width:100%;min-width:820px;">
+              <thead>
+                <tr>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Assignee</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Type</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Priority</th>
+                </tr>
+              </thead>
+              <tbody id="taTableBody"></tbody>
+            </table>
+            <div id="taListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No tasks match these filters.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="taCalWrap" style="display:none;">
+        <div class="card">
+          <div class="card-body">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <button class="btn btn-sm btn-outline" onclick="shiftTaCalMonth(-1)">‹</button>
+              <div id="taCalLabel" style="font-weight:700;font-size:14px;"></div>
+              <button class="btn btn-sm btn-outline" onclick="shiftTaCalMonth(1)">›</button>
+            </div>
+            <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -2495,6 +2593,76 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
+<!-- Task Assignments — Edit/Create Task Modal -->
+<div id="taskEditModal" class="modal-overlay">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <div><div class="modal-title" id="taskEditModalTitle">Edit Task</div></div>
+      <button class="modal-close" onclick="closeModal('taskEditModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tem-id">
+      <label class="form-label">Subject</label>
+      <input class="form-input" id="tem-subject" placeholder="Task subject">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+        <div>
+          <label class="form-label">Assignee</label>
+          <select class="form-input" id="tem-assignee"><option value="">Unassigned</option></select>
+        </div>
+        <div>
+          <label class="form-label">Client</label>
+          <select class="form-input" id="tem-client"><option value="">No client</option></select>
+        </div>
+        <div>
+          <label class="form-label">Category</label>
+          <select class="form-input" id="tem-category"></select>
+        </div>
+        <div>
+          <label class="form-label">Type</label>
+          <select class="form-input" id="tem-type"></select>
+        </div>
+        <div>
+          <label class="form-label">Priority</label>
+          <select class="form-input" id="tem-priority"></select>
+        </div>
+        <div>
+          <label class="form-label">Status</label>
+          <select class="form-input" id="tem-status"><option>Not started</option><option>In progress</option><option>Done</option></select>
+        </div>
+        <div>
+          <label class="form-label">Due date</label>
+          <input class="form-input" type="date" id="tem-due">
+        </div>
+        <div>
+          <label class="form-label">Service</label>
+          <input class="form-input" id="tem-service" placeholder="Optional">
+        </div>
+      </div>
+      <label class="form-label" style="margin-top:12px;">Notes</label>
+      <textarea class="form-input" id="tem-notes" rows="3" placeholder="Optional"></textarea>
+      <label class="form-label" style="margin-top:12px;">Tags (comma-separated)</label>
+      <input class="form-input" id="tem-tags" placeholder="e.g. urgent, social">
+      <div id="tem-email-fields" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">From parsed email</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Email received</label>
+            <input class="form-input" type="date" id="tem-email-received">
+          </div>
+          <div>
+            <label class="form-label">Reply status</label>
+            <input class="form-input" id="tem-reply-status" placeholder="e.g. 4h, 1d, —">
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;">
+        <button class="btn btn-primary" onclick="saveTaskEdit()">Save</button>
+        <button class="btn btn-outline" onclick="closeModal('taskEditModal')">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Email Preview Modal -->
 <div id="emailPreviewModal" class="modal-overlay" style="z-index:9999;">
   <div class="modal" style="max-width:580px;">
@@ -3257,6 +3425,7 @@ function switchAdminTab(el, tab){
     setTimeout(()=>_maybeShowTip('workload','#workload-tip-anchor','Click a person to see their assignments.'),50);
   }
   if(tab==='myTeamsWork') renderMyTeamsWork();
+  if(tab==='taskAssignments') loadTaskAssignments();
 }
 
 function loadAdminTrackerFrame(){
@@ -5634,6 +5803,7 @@ const DB_KEYS = {
   payroll: 'wl_saved_payrolls',
   notifications: 'wl_ops_notifications',
   notificationSettings: 'wl_notification_settings',
+  tasks: 'wl_ops_tasks',
   passwordMigrationStatus: 'wl_password_migration_status',
   // Onboarding tour/tips flags — same localStorage key name client.html/
   // user.html use (same-origin shared storage, see client.html's CL_KEYS
@@ -7297,6 +7467,8 @@ async function cloudPushAll(silent=false){
     // `read` (see readAdminNotif()/markAllAdminNotifsRead()) — push just that.
     const notifsDirty = _opsDirty('notifications', dbGet(DB_KEYS.notifications)||[]);
     if(notifsDirty.length) changes.notifications = notifsDirty.map(n=>({id:n.id, read:!!n.read}));
+    const tasksDirty = _opsDirty('tasks', dbGet(DB_KEYS.tasks)||[]);
+    if(tasksDirty.length) changes.tasks = tasksDirty;
 
     const settings = {};
     const ann = dbGet('wl_announcement'); if(ann!==null && ann!==undefined) settings.announcement = ann;
@@ -7421,6 +7593,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[]);
+    if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -7929,6 +8103,367 @@ function startLiveSync(level){
     if(!cloudIsConfigured()) return;
     await cloudPullAll(true, true); // silent background sync — does NOT reset org chart canvas
   }, 30000); // every 30 seconds
+}
+
+// ── Task Assignments (admin) — port of the WebLight Media Email Tracker.
+// Data lives in ops_tasks, synced through the exact same DB_KEYS/
+// _opsDirty/cloudAutoSync machinery as every other table above — never a
+// separate storage mechanism. Category/type/priority lists here must match
+// api/process-transcript.js's TASK_CATEGORIES/TASK_TYPES/TASK_PRIORITIES
+// and api/ops-sync.js's write-side validation exactly (hand-kept in sync,
+// same convention as every other cross-file constant list in this app). ──
+const TA_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
+const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+const TA_TYPES = ['Task','Client Update','New Service','New Sale','Follow-up'];
+const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
+
+let _taView = 'list';
+let _taQuickFilter = null; // null | 'overdue' | 'dueToday'
+let _taCalDate = new Date();
+let _taDetailTaskId = null;
+let _taParseFileTexts = [];
+
+function _taGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
+function _taActiveClients(){ return _getClientDB().filter(c=>c.status==='active'); }
+function _taTasks(){ return dbGet(DB_KEYS.tasks)||[]; }
+function _taSaveTasks(arr){ dbSet(DB_KEYS.tasks, arr); }
+function _taToday(){ return new Date().toISOString().slice(0,10); }
+
+// Only ever called from switchAdminTab's explicit 'taskAssignments' branch —
+// never on page load/timer (CLAUDE.md rule #2).
+function loadTaskAssignments(){
+  const roster = _timeOffRoster();
+  const assigneeSel = document.getElementById('taFilterAssignee');
+  const temAssigneeSel = document.getElementById('tem-assignee');
+  if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+  if(temAssigneeSel) temAssigneeSel.innerHTML = '<option value="">Unassigned</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+
+  const clients = _taActiveClients();
+  const clientFilterSel = document.getElementById('taFilterClient');
+  const temClientSel = document.getElementById('tem-client');
+  if(clientFilterSel) clientFilterSel.innerHTML = '<option value="">All clients</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
+  if(temClientSel) temClientSel.innerHTML = '<option value="">No client</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
+
+  const typeFilterSel = document.getElementById('taFilterType');
+  if(typeFilterSel) typeFilterSel.innerHTML = '<option value="">All types</option>' + TA_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  const temTypeSel = document.getElementById('tem-type');
+  if(temTypeSel) temTypeSel.innerHTML = TA_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
+  const temCatSel = document.getElementById('tem-category');
+  if(temCatSel) temCatSel.innerHTML = TA_CATEGORIES.map(c=>`<option value="${c}">${TA_CATEGORY_LABELS[c]||c}</option>`).join('');
+  const temPrioSel = document.getElementById('tem-priority');
+  if(temPrioSel) temPrioSel.innerHTML = TA_PRIORITIES.map(p=>`<option value="${p}">${p}</option>`).join('');
+
+  const pillsEl = document.getElementById('taCategoryPills');
+  if(pillsEl){
+    pillsEl.innerHTML = ['All', ...TA_CATEGORIES].map(c=>{
+      const active = (c==='All' && !_taActiveCategory) || c===_taActiveCategory;
+      return `<button class="btn btn-sm ${active?'btn-primary':'btn-outline'}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
+    }).join('');
+  }
+  renderTaskAssignments();
+}
+
+let _taActiveCategory = null;
+function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(); }
+
+function setTaView(v){
+  _taView = v;
+  document.getElementById('taViewListBtn').className = 'btn btn-sm '+(v==='list'?'':'btn-outline');
+  document.getElementById('taViewCalBtn').className = 'btn btn-sm '+(v==='calendar'?'':'btn-outline');
+  document.getElementById('taListWrap').style.display = v==='list' ? '' : 'none';
+  document.getElementById('taCalWrap').style.display = v==='calendar' ? '' : 'none';
+  renderTaskAssignments();
+}
+
+function toggleTaQuickFilter(kind){
+  _taQuickFilter = (_taQuickFilter===kind) ? null : kind;
+  document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm '+(_taQuickFilter==='overdue'?'btn-primary':'btn-outline');
+  document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm '+(_taQuickFilter==='dueToday'?'btn-primary':'btn-outline');
+  renderTaskAssignments();
+}
+
+function _taIsOverdue(t){ return !!t.dueDate && t.dueDate < _taToday() && t.status!=='Done'; }
+function _taIsDueToday(t){ return t.dueDate === _taToday() && t.status!=='Done'; }
+
+function _taFilteredTasks(){
+  const search = (document.getElementById('taSearchInput')?.value||'').trim().toLowerCase();
+  const assignee = document.getElementById('taFilterAssignee')?.value||'';
+  const client = document.getElementById('taFilterClient')?.value||'';
+  const type = document.getElementById('taFilterType')?.value||'';
+  const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
+  return _taTasks().filter(t=>{
+    if(_taActiveCategory && t.category!==_taActiveCategory) return false;
+    if(assignee && t.assigneeId!==assignee) return false;
+    if(client && t.clientId!==client) return false;
+    if(type && t.type!==type) return false;
+    if(reply && !(t.replyStatus||'').toLowerCase().includes(reply)) return false;
+    if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
+    if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
+    if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
+    return true;
+  });
+}
+
+function _taStatusColor(status){
+  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
+}
+function _taPersonName(id){
+  if(!id) return '—';
+  const p = _timeOffRoster().find(p=>p.id===id);
+  return p ? p.name : '—';
+}
+
+function renderTaskAssignments(){
+  const tasks = _taFilteredTasks();
+  if(_taView==='calendar') _renderTaCalendar(tasks);
+  else _renderTaListTable(tasks);
+}
+
+function _renderTaListTable(tasks){
+  const body = document.getElementById('taTableBody');
+  const empty = document.getElementById('taListEmpty');
+  if(!body) return;
+  if(!tasks.length){
+    body.innerHTML = '';
+    if(empty) empty.style.display = 'block';
+    return;
+  }
+  if(empty) empty.style.display = 'none';
+  const roster = _timeOffRoster();
+  body.innerHTML = tasks.map(t=>{
+    const overdue = _taIsOverdue(t);
+    const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
+    return `<tr style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
+      </td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;" onchange="_taReassign('${t.id}', this.value)">
+          <option value="">Unassigned</option>
+          ${roster.map(p=>`<option value="${p.id}" ${p.id===t.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
+        </select>
+      </td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.type||'')}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.replyStatus||'—')}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.priority||'Normal')}</td>
+    </tr>`;
+  }).join('');
+}
+
+// Inline assignee-dropdown reassignment from the list row — the same write
+// path (dbSet + cloudAutoSync) as every other edit here; the server fires
+// the reassignment notification itself once it sees assigneeId actually
+// change (see fireOpsTaskAssignmentNotifications in api/ops-sync.js).
+function _taReassign(id, newAssigneeId){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  // assignedById is left as-is (or absent) — api/ops-sync.js defaults it to
+  // the caller's own session.id server-side when a new task/reassignment
+  // doesn't already carry one, so there's no need to guess "who am I"
+  // client-side (same server-is-authoritative-on-identity principle as
+  // CLAUDE.md rule #4).
+  t.assigneeId = newAssigneeId || null;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  showToast('Task reassigned ✓');
+  renderTaskAssignments();
+}
+
+function shiftTaCalMonth(delta){
+  _taCalDate = new Date(_taCalDate.getFullYear(), _taCalDate.getMonth()+delta, 1);
+  renderTaskAssignments();
+}
+
+function _renderTaCalendar(tasks){
+  const grid = document.getElementById('taCalGrid');
+  const label = document.getElementById('taCalLabel');
+  if(!grid) return;
+  const y = _taCalDate.getFullYear(), m = _taCalDate.getMonth();
+  if(label) label.textContent = _taCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
+  const firstDow = new Date(y,m,1).getDay();
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const byDate = {};
+  tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } });
+  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
+  for(let i=0;i<firstDow;i++) html += '<div></div>';
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayTasks = byDate[dateStr]||[];
+    const isToday = dateStr === _taToday();
+    html += `<div style="min-height:70px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(46,93,166,.06);':''}">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
+      ${dayTasks.slice(0,3).map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
+      ${dayTasks.length>3 ? `<div style="font-size:10px;color:var(--text-light);">+${dayTasks.length-3} more</div>` : ''}
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+function openTaDetailPanel(id){
+  const t = _taTasks().find(x=>x.id===id);
+  if(!t) return;
+  _taDetailTaskId = id;
+  const body = document.getElementById('taDetailBody');
+  body.innerHTML = `
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px;">${escHtmlAdmin(t.subject||'')}</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;">
+      <div style="color:var(--text-light);">Client</div><div>${escHtmlAdmin(t.clientName||'—')}</div>
+      <div style="color:var(--text-light);">Assignee</div><div>${escHtmlAdmin(_taPersonName(t.assigneeId))}</div>
+      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlAdmin(_taPersonName(t.assignedById))}</div>
+      <div style="color:var(--text-light);">Type</div><div>${escHtmlAdmin(t.type||'')}</div>
+      <div style="color:var(--text-light);">Service</div><div>${escHtmlAdmin(t.service||'—')}</div>
+      <div style="color:var(--text-light);">Priority</div><div>${escHtmlAdmin(t.priority||'Normal')}</div>
+      <div style="color:var(--text-light);">Status</div><div style="color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</div>
+      <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
+      <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
+      ${t.source==='parsed-email' ? `
+      <div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>
+      <div style="color:var(--text-light);">Reply status</div><div>${escHtmlAdmin(t.replyStatus||'—')}</div>
+      ` : ''}
+    </div>
+    ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
+    ${(t.tags||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">${t.tags.map(tag=>`<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 8px;">${escHtmlAdmin(tag)}</span>`).join('')}</div>` : ''}
+  `;
+  document.getElementById('taDetailOverlay').classList.add('open');
+}
+function closeTaDetailPanel(){
+  document.getElementById('taDetailOverlay').classList.remove('open');
+  _taDetailTaskId = null;
+}
+
+function openTaskEditModal(id){
+  const isNew = !id;
+  document.getElementById('taskEditModalTitle').textContent = isNew ? 'New Task' : 'Edit Task';
+  const t = isNew ? {} : (_taTasks().find(x=>x.id===id) || {});
+  document.getElementById('tem-id').value = id || '';
+  document.getElementById('tem-subject').value = t.subject || '';
+  document.getElementById('tem-assignee').value = t.assigneeId || '';
+  document.getElementById('tem-client').value = t.clientId || '';
+  document.getElementById('tem-category').value = t.category || TA_CATEGORIES[0];
+  document.getElementById('tem-type').value = t.type || TA_TYPES[0];
+  document.getElementById('tem-priority').value = t.priority || 'Normal';
+  document.getElementById('tem-status').value = t.status || 'Not started';
+  document.getElementById('tem-due').value = t.dueDate || '';
+  document.getElementById('tem-service').value = t.service || '';
+  document.getElementById('tem-notes').value = t.notes || '';
+  document.getElementById('tem-tags').value = (t.tags||[]).join(', ');
+  document.getElementById('tem-email-received').value = t.emailReceivedDate || '';
+  document.getElementById('tem-reply-status').value = t.replyStatus || '';
+  document.getElementById('tem-email-fields').style.display = t.source==='parsed-email' ? 'block' : 'none';
+  closeTaDetailPanel();
+  openModal('taskEditModal');
+}
+
+function saveTaskEdit(){
+  const id = document.getElementById('tem-id').value || _taGenId();
+  const isNew = !document.getElementById('tem-id').value;
+  const tasks = _taTasks();
+  const existing = tasks.find(x=>x.id===id) || {};
+  const clientSel = document.getElementById('tem-client');
+  const assigneeId = document.getElementById('tem-assignee').value || null;
+  const t = {
+    ...existing,
+    id,
+    subject: document.getElementById('tem-subject').value.trim(),
+    assigneeId,
+    // Left as whatever it already was (or absent for a new task) — the
+    // server fills/preserves it authoritatively, see the comment on
+    // _taReassign above.
+    assignedById: existing.assignedById || null,
+    clientId: clientSel.value || null,
+    clientName: clientSel.value ? (clientSel.options[clientSel.selectedIndex]?.textContent || '') : '',
+    category: document.getElementById('tem-category').value,
+    type: document.getElementById('tem-type').value,
+    priority: document.getElementById('tem-priority').value,
+    status: document.getElementById('tem-status').value,
+    dueDate: document.getElementById('tem-due').value,
+    service: document.getElementById('tem-service').value.trim(),
+    notes: document.getElementById('tem-notes').value,
+    tags: document.getElementById('tem-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+    emailReceivedDate: document.getElementById('tem-email-received').value,
+    replyStatus: document.getElementById('tem-reply-status').value,
+    source: existing.source || 'manual',
+    origin: existing.origin || 'admin',
+  };
+  if(!t.subject){ showToast('Subject is required','warn'); return; }
+  if(isNew) tasks.push(t); else Object.assign(tasks.find(x=>x.id===id), t);
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  closeModal('taskEditModal');
+  renderTaskAssignments();
+  showToast(isNew ? 'Task created ✓' : 'Task saved ✓');
+}
+
+function _onTaParseFilesChosen(event){
+  const files = Array.from(event.target.files || []);
+  _taParseFileTexts = [];
+  if(!files.length) return;
+  let remaining = files.length;
+  files.forEach(f=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      _taParseFileTexts.push(reader.result);
+      remaining--;
+      if(remaining===0) document.getElementById('taParseStatus').textContent = `${files.length} file(s) loaded, ready to parse.`;
+    };
+    reader.readAsText(f);
+  });
+}
+
+async function runTaskEmailParse(){
+  const token = _opsToken();
+  if(!token) return;
+  const pastedText = document.getElementById('taParseText').value.trim();
+  const allText = [pastedText, ..._taParseFileTexts].filter(Boolean).join('\n\n---\n\n');
+  if(!allText){ showToast('Paste text or drop a file first','warn'); return; }
+  const btn = document.getElementById('taParseBtn');
+  const statusEl = document.getElementById('taParseStatus');
+  btn.disabled = true;
+  statusEl.textContent = 'Parsing…';
+  try{
+    const res = await fetch('/api/process-transcript', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({ mode: 'taskEmail', text: allText }),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
+    const extracted = Array.isArray(data.tasks) ? data.tasks : [];
+    if(!extracted.length){
+      statusEl.textContent = 'No tasks found in that text.';
+      return;
+    }
+    const tasks = _taTasks();
+    extracted.forEach(et=>{
+      tasks.push({
+        id: _taGenId(),
+        subject: et.subject, notes: et.notes||'', tags: et.tags||[],
+        clientId: et.clientId||null, clientName: et.clientName||'',
+        assigneeId: null, assignedById: null,
+        category: et.category, type: et.type, priority: et.priority,
+        status: 'Not started', dueDate: et.dueDate||'',
+        source: 'parsed-email', origin: 'admin',
+        emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
+        replyStatus: '',
+      });
+    });
+    _taSaveTasks(tasks);
+    cloudAutoSync();
+    document.getElementById('taParseText').value = '';
+    document.getElementById('taParseFileInput').value = '';
+    _taParseFileTexts = [];
+    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — assign them below.`;
+    renderTaskAssignments();
+  } catch(e){
+    statusEl.textContent = `❌ ${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
