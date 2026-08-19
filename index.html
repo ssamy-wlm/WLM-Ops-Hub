@@ -1421,7 +1421,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
           <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
           <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
-          <select id="taFilterType" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All types</option></select>
           <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
           <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
           <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
@@ -1438,7 +1437,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Assignee</th>
-                  <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Type</th>
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
                   <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
@@ -2616,10 +2614,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div>
           <label class="form-label">Category</label>
           <select class="form-input" id="tem-category"></select>
-        </div>
-        <div>
-          <label class="form-label">Type</label>
-          <select class="form-input" id="tem-type"></select>
         </div>
         <div>
           <label class="form-label">Priority</label>
@@ -8108,13 +8102,15 @@ function startLiveSync(level){
 // ── Task Assignments (admin) — port of the WebLight Media Email Tracker.
 // Data lives in ops_tasks, synced through the exact same DB_KEYS/
 // _opsDirty/cloudAutoSync machinery as every other table above — never a
-// separate storage mechanism. Category/type/priority lists here must match
-// api/process-transcript.js's TASK_CATEGORIES/TASK_TYPES/TASK_PRIORITIES
-// and api/ops-sync.js's write-side validation exactly (hand-kept in sync,
-// same convention as every other cross-file constant list in this app). ──
+// separate storage mechanism. Category/priority lists here must match
+// api/process-transcript.js's TASK_CATEGORIES/TASK_PRIORITIES and
+// api/ops-sync.js's write-side validation exactly (hand-kept in sync,
+// same convention as every other cross-file constant list in this app).
+// The "Type" field (a leftover from the original port that only ever read
+// "Task") was dropped entirely — no TA_TYPES here, nothing to collect or
+// display. ──
 const TA_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
-const TA_TYPES = ['Task','Client Update','New Service','New Sale','Follow-up'];
 const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
 
 let _taView = 'list';
@@ -8144,10 +8140,6 @@ function loadTaskAssignments(){
   if(clientFilterSel) clientFilterSel.innerHTML = '<option value="">All clients</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
   if(temClientSel) temClientSel.innerHTML = '<option value="">No client</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
 
-  const typeFilterSel = document.getElementById('taFilterType');
-  if(typeFilterSel) typeFilterSel.innerHTML = '<option value="">All types</option>' + TA_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
-  const temTypeSel = document.getElementById('tem-type');
-  if(temTypeSel) temTypeSel.innerHTML = TA_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
   const temCatSel = document.getElementById('tem-category');
   if(temCatSel) temCatSel.innerHTML = TA_CATEGORIES.map(c=>`<option value="${c}">${TA_CATEGORY_LABELS[c]||c}</option>`).join('');
   const temPrioSel = document.getElementById('tem-priority');
@@ -8189,13 +8181,11 @@ function _taFilteredTasks(){
   const search = (document.getElementById('taSearchInput')?.value||'').trim().toLowerCase();
   const assignee = document.getElementById('taFilterAssignee')?.value||'';
   const client = document.getElementById('taFilterClient')?.value||'';
-  const type = document.getElementById('taFilterType')?.value||'';
   const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
   return _taTasks().filter(t=>{
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
     if(assignee && t.assigneeId!==assignee) return false;
     if(client && t.clientId!==client) return false;
-    if(type && t.type!==type) return false;
     if(reply && !(t.replyStatus||'').toLowerCase().includes(reply)) return false;
     if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
     if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
@@ -8245,7 +8235,6 @@ function _renderTaListTable(tasks){
           ${roster.map(p=>`<option value="${p.id}" ${p.id===t.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
         </select>
       </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.type||'')}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.replyStatus||'—')}</td>
@@ -8315,7 +8304,6 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Client</div><div>${escHtmlAdmin(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assignee</div><div>${escHtmlAdmin(_taPersonName(t.assigneeId))}</div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlAdmin(_taPersonName(t.assignedById))}</div>
-      <div style="color:var(--text-light);">Type</div><div>${escHtmlAdmin(t.type||'')}</div>
       <div style="color:var(--text-light);">Service</div><div>${escHtmlAdmin(t.service||'—')}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlAdmin(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Status</div><div style="color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</div>
@@ -8345,7 +8333,6 @@ function openTaskEditModal(id){
   document.getElementById('tem-assignee').value = t.assigneeId || '';
   document.getElementById('tem-client').value = t.clientId || '';
   document.getElementById('tem-category').value = t.category || TA_CATEGORIES[0];
-  document.getElementById('tem-type').value = t.type || TA_TYPES[0];
   document.getElementById('tem-priority').value = t.priority || 'Normal';
   document.getElementById('tem-status').value = t.status || 'Not started';
   document.getElementById('tem-due').value = t.dueDate || '';
@@ -8378,7 +8365,6 @@ function saveTaskEdit(){
     clientId: clientSel.value || null,
     clientName: clientSel.value ? (clientSel.options[clientSel.selectedIndex]?.textContent || '') : '',
     category: document.getElementById('tem-category').value,
-    type: document.getElementById('tem-type').value,
     priority: document.getElementById('tem-priority').value,
     status: document.getElementById('tem-status').value,
     dueDate: document.getElementById('tem-due').value,
@@ -8445,7 +8431,7 @@ async function runTaskEmailParse(){
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
         assigneeId: null, assignedById: null,
-        category: et.category, type: et.type, priority: et.priority,
+        category: et.category, priority: et.priority,
         status: 'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',

@@ -217,9 +217,15 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // touch status/notes/tags — everything else (who it's for, what it's
 // about, where it lives) is admin-only, same allow-list-of-untouchable-
 // fields pattern as CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH above.
+// 'type' deliberately excluded (Security & Cleanup batch, "drop the Type
+// field") — a task carrying a legacy stored `type` value from before that
+// change would otherwise permanently fail this comparison the instant a
+// client stops sending the field at all (JSON.stringify(cur.type) !==
+// JSON.stringify(undefined)), rejecting an otherwise-legitimate status/
+// notes/tags update forever. Never re-add it without handling that.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
-  'category', 'type', 'priority', 'dueDate', 'source', 'origin',
+  'category', 'priority', 'dueDate', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId',
 ];
 

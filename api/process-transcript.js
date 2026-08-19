@@ -16,7 +16,6 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // get written into ops_tasks via api/ops-sync.js under that same identity.
 // The Roadmap mode's own request handling below is completely untouched. ──
 const TASK_CATEGORIES = ['Production', 'Updates', 'Sales', 'Admin', 'Other', 'Invoices/Payments'];
-const TASK_TYPES = ['Task', 'Client Update', 'New Service', 'New Sale', 'Follow-up'];
 const TASK_PRIORITIES = ['Urgent', 'High', 'Normal', 'Low'];
 
 const TASK_EMAIL_SYSTEM_PROMPT = `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
@@ -26,7 +25,6 @@ For EACH distinct task or action item you find:
 - "notes": any additional relevant detail from the text (can be empty string).
 - "tags": an array of short relevant keyword strings (can be empty array).
 - "category": exactly one of ${JSON.stringify(TASK_CATEGORIES)} — "Invoices/Payments" for billing/invoice/payment items, "Other" only if truly nothing else fits.
-- "type": exactly one of ${JSON.stringify(TASK_TYPES)}.
 - "priority": exactly one of ${JSON.stringify(TASK_PRIORITIES)} — infer from urgency language, default "Normal" if unclear.
 - "dueDate": an ISO YYYY-MM-DD date if one is mentioned or clearly implied, otherwise empty string.
 - "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
@@ -37,7 +35,7 @@ For EACH distinct task or action item you find:
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","type":"Task","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":""}]}`;
+{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","emailReceivedDate":"","emailThreadId":""}]}`;
 
 function extractDomain(email) {
   const m = /@([^\s>]+)/.exec(String(email || ''));
@@ -136,7 +134,6 @@ async function handleTaskEmailMode(req, res) {
           notes: typeof t.notes === 'string' ? t.notes : '',
           tags: Array.isArray(t.tags) ? t.tags.filter(x => typeof x === 'string') : [],
           category: TASK_CATEGORIES.includes(t.category) ? t.category : 'Other',
-          type: TASK_TYPES.includes(t.type) ? t.type : 'Task',
           priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
           dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
           clientId: matched ? matched.id : null,

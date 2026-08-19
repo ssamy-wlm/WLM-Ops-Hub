@@ -1587,7 +1587,6 @@ function openDtDetailPanel(id){
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
       <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
-      <div style="color:var(--text-light);">Type</div><div>${escHtmlUser(t.type||'')}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
       ${t.source==='parsed-email' ? `<div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>` : ''}
@@ -1674,7 +1673,7 @@ async function runDtEmailParse(){
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
         assigneeId: currentUser?.id||null, assignedById: currentUser?.id||null,
-        category: et.category, type: et.type, priority: et.priority,
+        category: et.category, priority: et.priority,
         status: 'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
