@@ -205,6 +205,11 @@ function diffArrayById(oldArr, newArr) {
   return changed;
 }
 
+// Plain server-side Date usage (this is a serverless request handler, not
+// a Workflow script) — used to default a task's assignedDate when a client
+// doesn't send one, so it's never blank in storage.
+function todayIsoUtc() { return new Date().toISOString().slice(0, 10); }
+
 const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'name', 'status', 'pinned', 'color', 'code', 'industry', 'accountManager',
   'clientName', 'clientEmail', 'clientPhone', 'referredBy', 'notes',
@@ -227,7 +232,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'source', 'origin',
-  'emailReceivedDate', 'emailThreadId',
+  'emailReceivedDate', 'emailThreadId', 'assignedDate',
 ];
 
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
@@ -1482,11 +1487,17 @@ export default async function handler(req, res) {
         const cur = byId.get(inc.id);
         let row;
         if (!cur) {
+          // assignedDate must never be blank on a stored task (this
+          // feature's own requirement) — the parser already fills it for
+          // every parsed task, but a manually-created task (either portal's
+          // "New Task"/self-add path) needs the same guarantee, so it's
+          // forced here too rather than trusted from the client.
+          const assignedDate = inc.assignedDate || todayIsoUtc();
           if (isAdmin) {
-            row = { ...inc, assignedById: inc.assignedById || session.id };
+            row = { ...inc, assignedById: inc.assignedById || session.id, assignedDate };
           } else {
             const assigneeId = creatableAssigneeIds.has(inc.assigneeId) ? inc.assigneeId : session.id;
-            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self' };
+            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate };
           }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
@@ -1495,7 +1506,10 @@ export default async function handler(req, res) {
           // client that hasn't pulled back the server-assigned value yet
           // (e.g. a second quick edit within the same 30s poll window)
           // would otherwise silently overwrite it with null on every save.
-          row = { ...inc, assignedById: inc.assignedById || cur.assignedById || null };
+          // assignedDate gets the identical treatment — it's an aging/
+          // due-date-resolution anchor, not something an accidental blank
+          // resave should ever reset to "today."
+          row = { ...inc, assignedById: inc.assignedById || cur.assignedById || null, assignedDate: inc.assignedDate || cur.assignedDate || todayIsoUtc() };
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else {

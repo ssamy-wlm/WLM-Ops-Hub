@@ -8286,6 +8286,31 @@ function _taTasks(){ return dbGet(DB_KEYS.tasks)||[]; }
 function _taSaveTasks(arr){ dbSet(DB_KEYS.tasks, arr); }
 function _taToday(){ return new Date().toISOString().slice(0,10); }
 
+// Formats an ISO date as a short display string ("Aug 18") WITHOUT going
+// through `new Date(isoString)` directly — that parses as UTC midnight and
+// can read back as the PREVIOUS calendar day in any negative-UTC-offset
+// timezone (the exact bug class fixed in the time-off day-count entry) —
+// so this builds the Date from the y/m/d components in local time instead.
+function _taFormatShortDate(iso){
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-').map(Number);
+  return new Date(y, m-1, d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+// Whole days between a task's assignedDate and today — an old-transcript
+// task (assignedDate far in the past) ages correctly even when parsed
+// today, since this reads assignedDate, never the parse/creation moment.
+function _taDaysSinceAssigned(t){
+  if(!t.assignedDate) return null;
+  const [y,m,d] = t.assignedDate.split('-').map(Number);
+  const [ty,tm,td] = _taToday().split('-').map(Number);
+  return Math.round((new Date(ty,tm-1,td) - new Date(y,m-1,d)) / 86400000);
+}
+function _taAgeLabel(days){
+  if(days==null) return '';
+  if(days<=0) return 'today';
+  return days===1 ? '1 day ago' : `${days} days ago`;
+}
+
 // Only ever called from switchAdminTab's explicit 'taskAssignments' branch —
 // never on page load/timer (CLAUDE.md rule #2).
 function loadTaskAssignments(){
@@ -8438,7 +8463,7 @@ function _renderTaListTable(tasks){
     return `<tr style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
         <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_taFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
@@ -8586,6 +8611,7 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlAdmin(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Status</div><div style="color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
+      <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_taFormatShortDate(t.assignedDate)} · ${_taAgeLabel(_taDaysSinceAssigned(t))}` : '—'}</div>
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
       ${t.source==='parsed-email' ? `
       <div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>
@@ -8653,6 +8679,10 @@ function saveTaskEdit(){
     replyStatus: document.getElementById('tem-reply-status').value,
     source: existing.source || 'manual',
     origin: existing.origin || 'admin',
+    // Never blank, never reset by re-saving an existing task — an edit
+    // preserves whatever assignedDate the task already had; only a
+    // brand-new task (no existing.assignedDate) defaults to today.
+    assignedDate: existing.assignedDate || _taToday(),
   };
   if(!t.subject){ showToast('Subject is required','warn'); return; }
   if(isNew) tasks.push(t); else Object.assign(tasks.find(x=>x.id===id), t);
@@ -8744,6 +8774,10 @@ async function runTaskEmailParse(){
         source: 'parsed-email', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         replyStatus: '',
+        // The server already resolved this (the parsed text's own date, or
+        // today if none was found) — defaulting to today here too only
+        // matters if a future client omits it, never in practice.
+        assignedDate: et.assignedDate||_taToday(),
       });
       createdCount++;
     });
