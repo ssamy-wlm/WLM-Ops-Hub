@@ -11,12 +11,11 @@ name: Supabase migrations
 # Two independent jobs, deliberately scoped to different GitHub events:
 #
 #   check-prod-current (on pull_request) — READ-ONLY. Runs `supabase db push
-#   --dry-run` against the live production database and fails the check if
-#   anything committed to main hasn't been applied yet. This never writes
+#   --dry-run` against the live production database. This never writes
 #   anything, so it is safe to run on every PR with zero risk to the shared
 #   prod/preview database (see CLAUDE.md — previews are NOT a sandbox here).
-#   It also means a PR can't be merged "blind" while prod is already behind
-#   for any reason, not just this PR's own changes.
+#   NEUTRALIZED as of 2026-08-20 (continue-on-error: true on the job) — see
+#   the comment on that job below for why; it no longer blocks a PR.
 #
 #   apply-on-merge (on push to main only) — the only job that writes. Runs
 #   the real `supabase db push`, then immediately re-runs the same dry-run
@@ -46,9 +45,30 @@ jobs:
     name: Check production is current (read-only)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # NEUTRALIZED (2026-08-20): migrations in this repo are applied by hand
+    # and verified against production before a migration-adding PR is
+    # merged (CLAUDE.md rule #12) — the CLI-driven pipeline this job/
+    # apply-on-merge were built for was never bootstrapped (no
+    # SUPABASE_DB_URL secret, migration ledger never reconciled against
+    # what's actually live — see the "Open items" entry in CLAUDE.md), so
+    # this dry-run has been permanently red on every PR for a reason that
+    # has nothing to do with any individual PR's own changes. That's noise,
+    # not signal, so it no longer blocks merges — informational only.
+    # To re-enable blocking once the pipeline is actually bootstrapped
+    # (SUPABASE_DB_URL set + the ledger reconciled), remove the
+    # `continue-on-error: true` on the step below.
     steps:
       - uses: actions/checkout@v4
       - name: Dry-run against production
+        # continue-on-error lives on the STEP, not the job: verified against
+        # a real run that job-level continue-on-error still reports this
+        # check's own conclusion as "failure" to the PR (it only keeps the
+        # overall WORKFLOW RUN from failing / lets `needs` on this job see
+        # "success" downstream) — the actual PR check stayed red. Step-level
+        # continue-on-error is what turns the STEP's failure into a
+        # successful JOB conclusion, which is what makes the check itself
+        # show green/neutral instead of red.
+        continue-on-error: true
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
