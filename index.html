@@ -1457,6 +1457,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-body" id="ta-staging-list"></div>
           </div>
         </div>
+        <div id="ta-recent-imports" style="margin-top:12px;"></div>
       </div>
 
       <div id="ta-subtab-assigned" style="display:none;">
@@ -2725,7 +2726,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <select class="form-input" id="tem-status"><option>Not started</option><option>In progress</option><option>Done</option></select>
         </div>
         <div>
-          <label class="form-label">Due date</label>
+          <label class="form-label">Due date <span id="tem-due-lock" style="display:none;font-size:10px;font-weight:700;color:var(--text-light);">🔒 Locked</span></label>
           <input class="form-input" type="date" id="tem-due">
         </div>
         <div>
@@ -5850,6 +5851,13 @@ window.switchAdminTab = function(el, tab){
 .rm-done-btn:hover{background:var(--green);color:#fff;border-color:var(--green);}
 .rm-card-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .rm-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
+/* Task Assignments "New" highlight (2026-08-20) — same amber treatment as
+   .rm-card-new above, reused via .rm-new-tag directly for the pill; these
+   two are the row/div-shaped equivalents of .rm-card-new for a <tr> (no
+   border to speak of, just a background tint) and the staging list's plain
+   <div> rows. See _taIsNew()/_renderTaListTable()/_renderTaStaging(). */
+.ta-row-new td{background:rgba(245,158,11,.07)!important;}
+.ta-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
 .rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
 .rm-archive-header:hover{background:var(--bg2);}
@@ -5891,6 +5899,7 @@ const DB_KEYS = {
   deletedUserIds:'wl_deleted_user_ids',
   deletedOrgNodeIds:'wl_deleted_org_node_ids',
   deletedOrgLinkIds:'wl_deleted_org_link_ids',
+  deletedTaskIds:'wl_deleted_task_ids',
   messages:      'wl_messages_db',
   roadmapTasks:  'wl_roadmap_tasks',
   timeOffRequests: 'wl_timeoff_requests',
@@ -7607,14 +7616,25 @@ async function cloudPushAll(silent=false){
     try{ orgLinkAlreadySent = JSON.parse(localStorage.getItem('wl_org_link_tombstones_sent')||'[]'); }catch(e){}
     const newOrgLinkTombs = allOrgLinkTombIds.filter(id=>!orgLinkAlreadySent.includes(id));
 
+    // Task import undo (2026-08-20) — same already-sent dedup pattern, but
+    // this one is a genuine hard DELETE server-side (ops_tasks has no
+    // deleted_at column, unlike orgNodes/orgLinks above) — see
+    // undoStagedImportBatch()/undoCommittedImportBatch() and the
+    // tombstones.taskIds block in api/ops-sync.js.
+    const allTaskTombIds = dbGet(DB_KEYS.deletedTaskIds)||[];
+    let taskAlreadySent = [];
+    try{ taskAlreadySent = JSON.parse(localStorage.getItem('wl_task_tombstones_sent')||'[]'); }catch(e){}
+    const newTaskTombs = allTaskTombIds.filter(id=>!taskAlreadySent.includes(id));
+
     const body = { changes };
     const tombstones = {};
     if(newTombs.length) tombstones.users = newTombs;
     if(newOrgNodeTombs.length) tombstones.orgNodes = newOrgNodeTombs;
     if(newOrgLinkTombs.length) tombstones.orgLinks = newOrgLinkTombs;
+    if(newTaskTombs.length) tombstones.taskIds = newTaskTombs;
     if(Object.keys(tombstones).length) body.tombstones = tombstones;
 
-    if(!Object.keys(changes).length && !newTombs.length && !newOrgNodeTombs.length && !newOrgLinkTombs.length){
+    if(!Object.keys(changes).length && !newTombs.length && !newOrgNodeTombs.length && !newOrgLinkTombs.length && !newTaskTombs.length){
       updateCloudStatusUI();
       return true; // nothing changed locally — nothing to send
     }
@@ -7633,6 +7653,7 @@ async function cloudPushAll(silent=false){
     if(newTombs.length){ try{ localStorage.setItem('wl_tombstones_sent', JSON.stringify([...alreadySent, ...newTombs])); }catch(e){} }
     if(newOrgNodeTombs.length){ try{ localStorage.setItem('wl_org_node_tombstones_sent', JSON.stringify([...orgNodeAlreadySent, ...newOrgNodeTombs])); }catch(e){} }
     if(newOrgLinkTombs.length){ try{ localStorage.setItem('wl_org_link_tombstones_sent', JSON.stringify([...orgLinkAlreadySent, ...newOrgLinkTombs])); }catch(e){} }
+    if(newTaskTombs.length){ try{ localStorage.setItem('wl_task_tombstones_sent', JSON.stringify([...taskAlreadySent, ...newTaskTombs])); }catch(e){} }
 
     // Refresh from the server so this device reflects exactly what's stored,
     // including anything else that changed concurrently.
@@ -8315,6 +8336,19 @@ function _taTasks(){ return dbGet(DB_KEYS.tasks)||[]; }
 function _taSaveTasks(arr){ dbSet(DB_KEYS.tasks, arr); }
 function _taToday(){ return new Date().toISOString().slice(0,10); }
 
+// "New" highlight (2026-08-20) — same _rmIsNew/rm-card-new/rm-new-tag
+// pattern as the Roadmap tab (see loadRoadmap() above), ported here: any
+// task ASSIGNED (created or reassigned) after this admin session's page
+// load flags amber until the page is reloaded — "recently added/assigned,
+// so you can see what just came in." lastAssignedAt is a soft, cosmetic
+// timestamp only (bumped in saveTaskEdit()/_taReassign()/
+// commitStagedTasks() whenever assigneeId actually changes) — never a
+// permission or audit field.
+function _taIsNew(t){
+  const pageLoad = parseInt(sessionStorage.getItem('wl_ta_page_load')||'0');
+  return new Date(t.lastAssignedAt||t.createdAt||0).getTime() > pageLoad + 800;
+}
+
 // Formats an ISO date as a short display string ("Aug 18") WITHOUT going
 // through `new Date(isoString)` directly — that parses as UTC midnight and
 // can read back as the PREVIOUS calendar day in any negative-UTC-offset
@@ -8343,6 +8377,11 @@ function _taAgeLabel(days){
 // Only ever called from switchAdminTab's explicit 'taskAssignments' branch —
 // never on page load/timer (CLAUDE.md rule #2).
 function loadTaskAssignments(){
+  // Record page-load time once per session so tasks assigned AFTER this are
+  // flagged "New" — same one-time-per-session marker as loadRoadmap() above.
+  if(!sessionStorage.getItem('wl_ta_page_load')){
+    sessionStorage.setItem('wl_ta_page_load', Date.now().toString());
+  }
   const roster = _timeOffRoster();
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
@@ -8372,6 +8411,7 @@ function loadTaskAssignments(){
     }).join('');
   }
   renderTaskAssignments();
+  renderTaRecentImports();
 }
 
 let _taActiveCategory = null;
@@ -8488,10 +8528,11 @@ function _renderTaListTable(tasks){
   const roster = _timeOffRoster();
   body.innerHTML = tasks.map(t=>{
     const overdue = _taIsOverdue(t);
+    const isNew = _taIsNew(t);
     const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
-    return `<tr style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
+    return `<tr class="${isNew?'ta-row-new':''}" style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}</div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_taFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>
@@ -8522,7 +8563,11 @@ function _taReassign(id, newAssigneeId){
   // doesn't already carry one, so there's no need to guess "who am I"
   // client-side (same server-is-authoritative-on-identity principle as
   // CLAUDE.md rule #4).
+  const changed = (newAssigneeId||null) !== (t.assigneeId||null);
   t.assigneeId = newAssigneeId || null;
+  // "New" highlight anchor (see _taIsNew()) — a reassignment is exactly
+  // the "manual assignment" case this feature is meant to flag.
+  if(changed) t.lastAssignedAt = new Date().toISOString();
   _taSaveTasks(tasks);
   cloudAutoSync();
   showToast('Task reassigned ✓');
@@ -8669,6 +8714,11 @@ function openTaskEditModal(id){
   document.getElementById('tem-priority').value = t.priority || 'Normal';
   document.getElementById('tem-status').value = t.status || 'Not started';
   document.getElementById('tem-due').value = t.dueDate || '';
+  // Locks after one admin change (see saveTaskEdit()/api/ops-sync.js) —
+  // disabling the input here is the UX signal; the actual immutability is
+  // server-enforced regardless of what this input would otherwise submit.
+  document.getElementById('tem-due').disabled = !!t.dueDateLocked;
+  document.getElementById('tem-due-lock').style.display = t.dueDateLocked ? '' : 'none';
   document.getElementById('tem-service').value = t.service || '';
   document.getElementById('tem-notes').value = t.notes || '';
   document.getElementById('tem-tags').value = (t.tags||[]).join(', ');
@@ -8686,6 +8736,20 @@ function saveTaskEdit(){
   const existing = tasks.find(x=>x.id===id) || {};
   const clientSel = document.getElementById('tem-client');
   const assigneeId = document.getElementById('tem-assignee').value || null;
+  const assigneeChanged = isNew ? !!assigneeId : (assigneeId !== (existing.assigneeId||null));
+  const newDueDate = document.getElementById('tem-due').value;
+  // dueDate locks the first time it's actually CHANGED on an existing task
+  // (never at creation, never on a resave that leaves it unchanged) —
+  // server-enforced too (api/ops-sync.js ignores any further dueDate once
+  // dueDateLocked is true); this is just the optimistic local mirror so
+  // the UI reflects the lock immediately rather than waiting for the next
+  // pull. The due-date input is already disabled once locked (see
+  // openTaskEditModal()), so this really only ever fires the FIRST time.
+  let dueDate, dueDateLocked;
+  if(isNew){ dueDate = newDueDate; dueDateLocked = false; }
+  else if(existing.dueDateLocked){ dueDate = existing.dueDate; dueDateLocked = true; }
+  else { dueDate = newDueDate; dueDateLocked = newDueDate !== (existing.dueDate||''); }
+  const nowIso = new Date().toISOString();
   const t = {
     ...existing,
     id,
@@ -8700,7 +8764,7 @@ function saveTaskEdit(){
     category: document.getElementById('tem-category').value,
     priority: document.getElementById('tem-priority').value,
     status: document.getElementById('tem-status').value,
-    dueDate: document.getElementById('tem-due').value,
+    dueDate, dueDateLocked,
     service: document.getElementById('tem-service').value.trim(),
     notes: document.getElementById('tem-notes').value,
     tags: document.getElementById('tem-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
@@ -8711,7 +8775,14 @@ function saveTaskEdit(){
     // Never blank, never reset by re-saving an existing task — an edit
     // preserves whatever assignedDate the task already had; only a
     // brand-new task (no existing.assignedDate) defaults to today.
+    // assignedDate is otherwise fully immutable — there is no UI field for
+    // it anywhere, by design (see api/ops-sync.js's matching server-side lock).
     assignedDate: existing.assignedDate || _taToday(),
+    createdAt: existing.createdAt || nowIso,
+    // "New" highlight anchor (see _taIsNew()) — bumped whenever the
+    // assignee actually changes, including a brand-new task created WITH
+    // an assignee; otherwise preserved.
+    lastAssignedAt: assigneeChanged ? nowIso : (existing.lastAssignedAt || existing.createdAt || nowIso),
   };
   if(!t.subject){ showToast('Subject is required','warn'); return; }
   if(isNew) tasks.push(t); else Object.assign(tasks.find(x=>x.id===id), t);
@@ -8770,16 +8841,25 @@ async function runTaskEmailParse(){
     // mergeIntoSubject (from api/process-transcript.js's existing dedupe
     // pass) are carried through unresolved — see commitStagedTasks() for
     // where the actual narrow additive merge now happens.
+    //
+    // importBatchId (2026-08-20) tags every row from THIS parse action —
+    // one id shared by the whole batch, generated client-side (purely a
+    // grouping key for "Undo this import", never a permission/audit
+    // field) — so the staging list can group them and offer a single
+    // batch-scoped undo instead of only one-row-at-a-time Discard.
+    const importBatchId = 'imp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+    const nowIso = new Date().toISOString();
     extracted.forEach(et=>{
       _taStagedTasks.push({
         id: _taGenId(),
+        importBatchId, createdAt: nowIso, lastAssignedAt: nowIso,
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
         // Auto-detected assignee/client are pre-filled but editable — see
         // _renderTaStaging(); still just a default, freely changed there.
         assigneeId: et.assigneeId||null, assignedById: null,
         category: et.category, priority: et.priority,
-        status: et.status||'Not started', dueDate: et.dueDate||'',
+        status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
         source: 'parsed-email', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         replyStatus: '',
@@ -8814,6 +8894,15 @@ function discardStagedTask(id){
   _renderTaStaging();
 }
 
+// Undo an entire import BEFORE it's committed — drops every staged row
+// from this one parse action, leaving any OTHER staged batch (from an
+// earlier parse that hasn't been committed yet either) untouched. No
+// network call: nothing from staging has ever reached ops_tasks.
+function undoStagedImportBatch(batchId){
+  _taStagedTasks = _taStagedTasks.filter(x=>x.importBatchId!==batchId);
+  _renderTaStaging();
+}
+
 function _renderTaStaging(){
   const wrap = document.getElementById('ta-staging-wrap');
   const list = document.getElementById('ta-staging-list');
@@ -8828,40 +8917,63 @@ function _renderTaStaging(){
   if(countEl) countEl.textContent = _taStagedTasks.length;
   const roster = _timeOffRoster();
   const clients = _taActiveClients();
-  list.innerHTML = _taStagedTasks.map(row=>{
-    const rowStyle = 'padding:12px 0;border-bottom:1px solid var(--border);';
-    if(row.mergeIntoId){
-      // A merge candidate mutates an EXISTING task (narrow/additive —
-      // notes/tags/dueDate-if-missing/status-if-done only, same as
-      // before this feature) rather than creating a new one, so editable
-      // assignee/client/etc. fields here would be misleading — they'd
-      // never actually apply. Shown read-only with just a Discard option.
-      return `<div style="${rowStyle}">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(row.subject||'')}</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlAdmin(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
-        <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button></div>
+  // Grouped by importBatchId so multiple not-yet-committed parses (rare,
+  // but possible if a second paste happens before the first is saved) each
+  // get their own "Undo this import" scope instead of one undoing
+  // everything currently staged.
+  const batches = [];
+  const byBatch = {};
+  _taStagedTasks.forEach(row=>{
+    const bid = row.importBatchId || '_none';
+    if(!byBatch[bid]){ byBatch[bid] = { id: bid, rows: [] }; batches.push(byBatch[bid]); }
+    byBatch[bid].rows.push(row);
+  });
+  list.innerHTML = batches.map(batch=>{
+    const rowsHtml = batch.rows.map(row=>{
+      // Every staged row is, by definition, from the current import —
+      // always shown with the same amber "New" treatment as a just-
+      // assigned committed task (see _taIsNew()/.ta-staging-new).
+      const rowStyle = 'padding:12px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;';
+      if(row.mergeIntoId){
+        // A merge candidate mutates an EXISTING task (narrow/additive —
+        // notes/tags/dueDate-if-missing/status-if-done only, same as
+        // before this feature) rather than creating a new one, so editable
+        // assignee/client/etc. fields here would be misleading — they'd
+        // never actually apply. Shown read-only with just a Discard option.
+        return `<div class="ta-staging-new" style="${rowStyle}">
+          <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(row.subject||'')} <span class="rm-new-tag">New</span></div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlAdmin(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
+          <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button></div>
+        </div>`;
+      }
+      return `<div class="ta-staging-new" style="${rowStyle}">
+        <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlAdmin(row.subject||'')} <span class="rm-new-tag">New</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
+            <option value="">Unassigned</option>
+            ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
+          </select>
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','clientId',this.value)">
+            <option value="">No client</option>
+            ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlAdmin(c.name)}</option>`).join('')}
+          </select>
+          <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_taUpdateStaged('${row.id}','dueDate',this.value)">
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','priority',this.value)">
+            ${TA_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
+          </select>
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','category',this.value)">
+            ${TA_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${TA_CATEGORY_LABELS[c]||c}</option>`).join('')}
+          </select>
+          <button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button>
+        </div>
       </div>`;
-    }
-    return `<div style="${rowStyle}">
-      <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlAdmin(row.subject||'')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
-          <option value="">Unassigned</option>
-          ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
-        </select>
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','clientId',this.value)">
-          <option value="">No client</option>
-          ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlAdmin(c.name)}</option>`).join('')}
-        </select>
-        <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_taUpdateStaged('${row.id}','dueDate',this.value)">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','priority',this.value)">
-          ${TA_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
-        </select>
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','category',this.value)">
-          ${TA_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${TA_CATEGORY_LABELS[c]||c}</option>`).join('')}
-        </select>
-        <button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button>
+    }).join('');
+    return `<div style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--text-light);">${batch.rows.length} task(s) from this import</span>
+        <button class="btn btn-xs btn-outline" onclick="undoStagedImportBatch('${batch.id}')">↩ Undo this import</button>
       </div>
+      ${rowsHtml}
     </div>`;
   }).join('');
 }
@@ -8875,10 +8987,19 @@ function _renderTaStaging(){
 // after review, per this feature's whole point ("parsing must NOT commit
 // to the live task list"). Switches to Assigned Tasks afterward so the
 // commit's result is immediately visible, same as "moves them over."
+//
+// Recently-committed batches, this session only (2026-08-20) — powers the
+// POST-commit "Undo this import" (see undoCommittedImportBatch() below).
+// Deliberately in-memory/session-only, not persisted: undoing a merge's
+// additive text changes isn't attempted (out of scope — only brand-new
+// rows this batch actually CREATED are ever candidates for the hard
+// delete), so only non-merge task ids are tracked per batch here.
+let _taRecentImportBatches = [];
 function commitStagedTasks(){
   if(!_taStagedTasks.length) return;
   const tasks = _taTasks();
   let createdCount = 0, mergedCount = 0;
+  const newBatchIds = {};
   _taStagedTasks.forEach(row=>{
     if(row.mergeIntoId){
       const existing = tasks.find(x=>x.id===row.mergeIntoId);
@@ -8897,13 +9018,52 @@ function commitStagedTasks(){
     const { mergeIntoId, mergeIntoSubject, ...task } = row;
     tasks.push(task);
     createdCount++;
+    const bid = task.importBatchId || '_none';
+    (newBatchIds[bid] = newBatchIds[bid]||[]).push(task.id);
   });
   _taSaveTasks(tasks);
   cloudAutoSync();
+  Object.entries(newBatchIds).forEach(([id, taskIds])=>{
+    if(id!=='_none') _taRecentImportBatches.unshift({ id, taskIds });
+  });
+  _taRecentImportBatches = _taRecentImportBatches.slice(0,10);
   _taStagedTasks = [];
   _renderTaStaging();
+  renderTaRecentImports();
   showToast(`✅ ${createdCount} task(s) assigned${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
   setTaSubtab('assigned');
+}
+
+function renderTaRecentImports(){
+  const wrap = document.getElementById('ta-recent-imports');
+  if(!wrap) return;
+  if(!_taRecentImportBatches.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent imports (this session)</div>` +
+    _taRecentImportBatches.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
+      <span>${b.taskIds.length} task(s) added</span>
+      <button class="btn btn-xs btn-outline" onclick="undoCommittedImportBatch('${b.id}')">↩ Undo this import</button>
+    </div>`).join('');
+}
+
+// Reverses an already-committed import — a genuine per-record delete (see
+// tombstones.taskIds in api/ops-sync.js; ops_tasks has no deleted_at, so
+// this is a real SQL DELETE, not a soft tombstone). Only ever targets the
+// specific task ids THIS batch created (never a merge's additive edits to
+// a pre-existing task) — see the commitStagedTasks() comment above.
+function undoCommittedImportBatch(batchId){
+  const batch = _taRecentImportBatches.find(b=>b.id===batchId);
+  if(!batch) return;
+  if(!confirm(`Remove ${batch.taskIds.length} task(s) from this import? This can't be undone.`)) return;
+  const tasks = _taTasks().filter(t=>!batch.taskIds.includes(t.id));
+  _taSaveTasks(tasks);
+  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
+  batch.taskIds.forEach(id=>{ if(!tomb.includes(id)) tomb.push(id); });
+  dbSet(DB_KEYS.deletedTaskIds, tomb);
+  cloudAutoSync();
+  _taRecentImportBatches = _taRecentImportBatches.filter(b=>b.id!==batchId);
+  renderTaRecentImports();
+  renderTaskAssignments();
+  showToast(`Removed ${batch.taskIds.length} task(s) from that import`);
 }
 
 // ═══════════════════════════════════════════════════════════

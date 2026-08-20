@@ -432,6 +432,14 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .tour-btn-skip{border:none;background:none;color:var(--text-light);padding:6px 4px;}
 .tour-btn-primary{background:var(--gold,#f5b301);border-color:var(--gold,#f5b301);color:#152444;}
 .tour-progress{font-size:10px;color:var(--text-light);margin-top:10px;text-align:right;}
+/* Daily Tasks "New" highlight (2026-08-20) — a task not yet in this
+   member's own wl_dt_seen_ids (see _dtIsNew()/openDtDetailPanel()) shows
+   this amber treatment until opened; same visual language as index.html's
+   own Roadmap/Task-Assignments "New" tag, hand-duplicated here since this
+   file shares no code with index.html (CLAUDE.md rule #3). */
+.dt-row-new td{background:rgba(245,158,11,.07)!important;}
+.dt-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
+.dt-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
 </style>
 </head>
 <body>
@@ -1058,6 +1066,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
               <div class="card-body" id="dt-staging-list"></div>
             </div>
           </div>
+          <div id="dt-recent-imports" style="margin-top:12px;"></div>
         </div>
       </div>
 
@@ -1254,6 +1263,7 @@ const DB_KEYS = {
   orgNodes: 'wl_org_nodes',
   orgLinks: 'wl_org_links',
   tasks: 'wl_ops_tasks',
+  deletedTaskIds: 'wl_dt_deleted_task_ids',
   // Onboarding tour/tips flags — same localStorage key name client.html/
   // index.html use (same-origin shared storage, see client.html's CL_KEYS
   // comment for why that's intentional, not a coincidence).
@@ -1422,12 +1432,27 @@ async function cloudPushData(){
     // finish/skip/replay action (see _saveTourFlags below), never on load.
     const tourFlags = dbGet(DB_KEYS.tourFlags); if(tourFlags) changes.tourFlags = tourFlags;
 
-    if(!Object.keys(changes).length) return; // nothing changed locally — nothing to send
+    // Task import undo (2026-08-20) — same already-sent dedup pattern
+    // index.html uses for its org-node/link tombstones, hand-duplicated
+    // here (CLAUDE.md zero-shared-code rule). This one is a genuine hard
+    // DELETE server-side (ops_tasks has no deleted_at column) — see
+    // undoDtStagedImportBatch()/undoDtCommittedImportBatch() and the
+    // tombstones.taskIds block in api/ops-sync.js, which restricts a
+    // member to only deleting a batch THEY themselves committed.
+    const dtDeletedTaskIds = dbGet(DB_KEYS.deletedTaskIds)||[];
+    let dtTaskTombsSent = [];
+    try{ dtTaskTombsSent = JSON.parse(localStorage.getItem('wl_dt_task_tombstones_sent')||'[]'); }catch(e){}
+    const newDtTaskTombs = dtDeletedTaskIds.filter(id=>!dtTaskTombsSent.includes(id));
+
+    if(!Object.keys(changes).length && !newDtTaskTombs.length) return; // nothing changed locally — nothing to send
+
+    const reqBody = {changes};
+    if(newDtTaskTombs.length) reqBody.tombstones = {taskIds: newDtTaskTombs};
 
     const res = await fetch(OPS_SYNC_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-      body: JSON.stringify({changes})
+      body: JSON.stringify(reqBody)
     });
     if(!res.ok) return;
     const body = await res.json().catch(()=>({}));
@@ -1437,6 +1462,7 @@ async function cloudPushData(){
     if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
       showToast(`❌ Not saved: ${body.rejected[0].reason}`);
     }
+    if(newDtTaskTombs.length){ try{ localStorage.setItem('wl_dt_task_tombstones_sent', JSON.stringify([...dtTaskTombsSent, ...newDtTaskTombs])); }catch(e){} }
     // Refresh from the server so this device reflects exactly what was accepted.
     await cloudFetchUsers();
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
@@ -1481,6 +1507,17 @@ function _dtToday(){ return new Date().toISOString().slice(0,10); }
 function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active'); }catch(e){ return []; } }
 function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
 
+// "New" highlight (2026-08-20) — reuses the EXISTING wl_dt_seen_ids
+// mechanism renderDailyTasks() already maintains for the "N new assigned"
+// badge (see openDtDetailPanel(), which is the only place an id is ever
+// added to it) rather than a separate page-load-timestamp marker: "shows a
+// yellow highlight + New tag until the assignee has seen it (cleared when
+// they open/view it)" maps exactly onto "not in my own seen-ids list yet",
+// for a task newly assigned to me whether by a parse-commit or an admin's
+// manual reassignment — either way, I've never opened it before.
+function _dtSeenIds(){ try{ return JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]'); }catch(e){ return []; } }
+function _dtIsNew(t, seen){ return !(seen||_dtSeenIds()).includes(t.id); }
+
 // Same y/m/d-components-not-raw-string construction as index.html's
 // _taFormatShortDate() — `new Date(isoString)` parses as UTC midnight and
 // can read back as the PREVIOUS calendar day in a negative-UTC-offset
@@ -1514,6 +1551,7 @@ function loadDailyTasks(){
     }).join('');
   }
   renderDailyTasks();
+  renderDtRecentImports();
 }
 
 function setDtActiveCategory(cat){ _dtActiveCategory = cat; loadDailyTasks(); }
@@ -1573,11 +1611,13 @@ function _renderDtListTable(tasks){
     return;
   }
   if(empty) empty.style.display = 'none';
+  const seen = _dtSeenIds();
   body.innerHTML = tasks.map(t=>{
     const overdue = _dtIsOverdue(t);
-    return `<tr style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
+    const isNew = _dtIsNew(t, seen);
+    return `<tr class="${isNew?'dt-row-new':''}" style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}</div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${DT_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_dtFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlUser(t.clientName||'—')}</td>
@@ -1629,9 +1669,12 @@ function openDtDetailPanel(id){
   if(!t) return;
   _dtDetailTaskId = id;
   // Mark seen — local-only, never synced (see the badge comment in renderDailyTasks).
+  // Also clears this task's own "New" highlight/tag (see _dtIsNew()) —
+  // re-render the list right away so opening a task visibly drops it
+  // rather than waiting for some other unrelated re-render.
   try{
     const seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]');
-    if(!seen.includes(id)){ seen.push(id); localStorage.setItem('wl_dt_seen_ids', JSON.stringify(seen.slice(-500))); }
+    if(!seen.includes(id)){ seen.push(id); localStorage.setItem('wl_dt_seen_ids', JSON.stringify(seen.slice(-500))); renderDailyTasks(); }
   }catch(e){}
   const body = document.getElementById('dtDetailBody');
   body.innerHTML = `
@@ -1725,14 +1768,22 @@ async function runDtEmailParse(){
     // work), falling back to self otherwise — shown read-only in the
     // staging row (no assignee dropdown; a member can't assign to anyone
     // else, same existing role split), not editable there either.
+    //
+    // importBatchId (2026-08-20) tags every row from THIS parse action —
+    // see index.html's identical comment on its own copy of this — so the
+    // staging list can group them and offer one batch-scoped "Undo this
+    // import" instead of only one-row-at-a-time Discard.
+    const importBatchId = 'imp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+    const nowIso = new Date().toISOString();
     extracted.forEach(et=>{
       _dtStagedTasks.push({
         id: _dtGenId(),
+        importBatchId, createdAt: nowIso,
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
         assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
         category: et.category, priority: et.priority,
-        status: et.status||'Not started', dueDate: et.dueDate||'',
+        status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
         source: 'parsed-email', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         assignedDate: et.assignedDate||_dtToday(),
@@ -1766,6 +1817,14 @@ function discardDtStagedTask(id){
   _renderDtStaging();
 }
 
+// Undo an entire import BEFORE it's committed — see index.html's identical
+// undoStagedImportBatch(). No network call: nothing from staging has ever
+// reached ops_tasks.
+function undoDtStagedImportBatch(batchId){
+  _dtStagedTasks = _dtStagedTasks.filter(x=>x.importBatchId!==batchId);
+  _renderDtStaging();
+}
+
 function _renderDtStaging(){
   const wrap = document.getElementById('dt-staging-wrap');
   const list = document.getElementById('dt-staging-list');
@@ -1779,39 +1838,60 @@ function _renderDtStaging(){
   wrap.style.display = '';
   if(countEl) countEl.textContent = _dtStagedTasks.length;
   const clients = _dtActiveClients();
-  list.innerHTML = _dtStagedTasks.map(row=>{
-    const rowStyle = 'padding:12px 0;border-bottom:1px solid var(--border);';
-    if(row.mergeIntoId){
-      // Same reasoning as index.html: a merge mutates an EXISTING task
-      // (narrow/additive only) rather than creating a new one, so no
-      // editable fields here — they'd never actually apply.
-      return `<div style="${rowStyle}">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(row.subject||'')}</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlUser(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
-        <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button></div>
+  // Grouped by importBatchId — see index.html's identical comment on its
+  // own copy of this grouping.
+  const batches = [];
+  const byBatch = {};
+  _dtStagedTasks.forEach(row=>{
+    const bid = row.importBatchId || '_none';
+    if(!byBatch[bid]){ byBatch[bid] = { id: bid, rows: [] }; batches.push(byBatch[bid]); }
+    byBatch[bid].rows.push(row);
+  });
+  list.innerHTML = batches.map(batch=>{
+    const rowsHtml = batch.rows.map(row=>{
+      // Every staged row is, by definition, from the current import —
+      // always shown with the same amber "New" treatment as a just-
+      // assigned committed task (see _dtIsNew()/.dt-staging-new).
+      const rowStyle = 'padding:12px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;';
+      if(row.mergeIntoId){
+        // Same reasoning as index.html: a merge mutates an EXISTING task
+        // (narrow/additive only) rather than creating a new one, so no
+        // editable fields here — they'd never actually apply.
+        return `<div class="dt-staging-new" style="${rowStyle}">
+          <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(row.subject||'')} <span class="dt-new-tag">New</span></div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlUser(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
+          <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button></div>
+        </div>`;
+      }
+      // No assignee picker — a member can't assign to anyone else (same
+      // role split as everywhere in this file); shown read-only instead.
+      // _dtAssignedByName() is a plain id->name lookup despite its name
+      // (built for the "Assigned by" detail-panel row), reused as-is here.
+      return `<div class="dt-staging-new" style="${rowStyle}">
+        <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlUser(row.subject||'')} <span class="dt-new-tag">New</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
+            <option value="">No client</option>
+            ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
+          </select>
+          <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_dtUpdateStaged('${row.id}','dueDate',this.value)">
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','priority',this.value)">
+            ${DT_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
+          </select>
+          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','category',this.value)">
+            ${DT_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${DT_CATEGORY_LABELS[c]||c}</option>`).join('')}
+          </select>
+          <button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button>
+        </div>
       </div>`;
-    }
-    // No assignee picker — a member can't assign to anyone else (same
-    // role split as everywhere in this file); shown read-only instead.
-    // _dtAssignedByName() is a plain id->name lookup despite its name
-    // (built for the "Assigned by" detail-panel row), reused as-is here.
-    return `<div style="${rowStyle}">
-      <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlUser(row.subject||'')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
-          <option value="">No client</option>
-          ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
-        </select>
-        <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_dtUpdateStaged('${row.id}','dueDate',this.value)">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','priority',this.value)">
-          ${DT_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
-        </select>
-        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','category',this.value)">
-          ${DT_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${DT_CATEGORY_LABELS[c]||c}</option>`).join('')}
-        </select>
-        <button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button>
+    }).join('');
+    return `<div style="margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--text-light);">${batch.rows.length} task(s) from this import</span>
+        <button class="btn btn-xs btn-outline" onclick="undoDtStagedImportBatch('${batch.id}')">↩ Undo this import</button>
       </div>
+      ${rowsHtml}
     </div>`;
   }).join('');
 }
@@ -1821,10 +1901,16 @@ function _renderDtStaging(){
 // narrow merge, plain-row creation from whatever was left/edited in the
 // staging table). Switches to "My assigned tasks" afterward so the result
 // is immediately visible.
+//
+// Recently-committed batches, this session only — see index.html's
+// identical _taRecentImportBatches for why this is in-memory/session-only
+// and only ever tracks non-merge task ids.
+let _dtRecentImportBatches = [];
 function commitDtStagedTasks(){
   if(!_dtStagedTasks.length) return;
   const tasks = dbGet(DB_KEYS.tasks)||[];
   let createdCount = 0, mergedCount = 0;
+  const newBatchIds = {};
   _dtStagedTasks.forEach(row=>{
     if(row.mergeIntoId){
       const existing = tasks.find(x=>x.id===row.mergeIntoId);
@@ -1840,13 +1926,51 @@ function commitDtStagedTasks(){
     const { mergeIntoId, mergeIntoSubject, ...task } = row;
     tasks.push(task);
     createdCount++;
+    const bid = task.importBatchId || '_none';
+    (newBatchIds[bid] = newBatchIds[bid]||[]).push(task.id);
   });
   dbSet(DB_KEYS.tasks, tasks);
   _scheduleCloudPush();
+  Object.entries(newBatchIds).forEach(([id, taskIds])=>{
+    if(id!=='_none') _dtRecentImportBatches.unshift({ id, taskIds });
+  });
+  _dtRecentImportBatches = _dtRecentImportBatches.slice(0,10);
   _dtStagedTasks = [];
   _renderDtStaging();
+  renderDtRecentImports();
   showToast(`✅ ${createdCount} task(s) added${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
   setDtTab('mine');
+}
+
+function renderDtRecentImports(){
+  const wrap = document.getElementById('dt-recent-imports');
+  if(!wrap) return;
+  if(!_dtRecentImportBatches.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent imports (this session)</div>` +
+    _dtRecentImportBatches.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
+      <span>${b.taskIds.length} task(s) added</span>
+      <button class="btn btn-xs btn-outline" onclick="undoDtCommittedImportBatch('${b.id}')">↩ Undo this import</button>
+    </div>`).join('');
+}
+
+// Reverses an already-committed import — a genuine per-record delete (see
+// tombstones.taskIds in api/ops-sync.js, permission-scoped to only a
+// batch THIS member themselves committed — see the comment on
+// cloudPushData()'s own tombstone block above).
+function undoDtCommittedImportBatch(batchId){
+  const batch = _dtRecentImportBatches.find(b=>b.id===batchId);
+  if(!batch) return;
+  if(!confirm(`Remove ${batch.taskIds.length} task(s) from this import? This can't be undone.`)) return;
+  const tasks = (dbGet(DB_KEYS.tasks)||[]).filter(t=>!batch.taskIds.includes(t.id));
+  dbSet(DB_KEYS.tasks, tasks);
+  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
+  batch.taskIds.forEach(id=>{ if(!tomb.includes(id)) tomb.push(id); });
+  dbSet(DB_KEYS.deletedTaskIds, tomb);
+  _scheduleCloudPush();
+  _dtRecentImportBatches = _dtRecentImportBatches.filter(b=>b.id!==batchId);
+  renderDtRecentImports();
+  renderDailyTasks();
+  showToast(`Removed ${batch.taskIds.length} task(s) from that import`);
 }
 
 // ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────

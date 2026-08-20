@@ -55,15 +55,15 @@ For EACH distinct task or action item you find:
 - "tags": an array of short relevant keyword strings (can be empty array).
 - "category": exactly one of ${JSON.stringify(TASK_CATEGORIES)} — "Invoices/Payments" for billing/invoice/payment items, "Other" only if truly nothing else fits.
 - "priority": exactly one of ${JSON.stringify(TASK_PRIORITIES)} — infer from urgency language, default "Normal" if unclear.
-- "dueDate": an ISO YYYY-MM-DD date. Resolve relative language AGAINST THE ASSIGNEDDATE YOU DETERMINED ABOVE, not today's real date, since the text may have been written well before it's parsed: "by <weekday>" or "this <weekday>" means the very next occurrence of that weekday counting from the assignedDate (the assignedDate itself if the assignedDate IS that weekday); "next <weekday>" means that weekday in the week AFTER the assignedDate's own week (never the same week, even if that day hasn't happened yet within it); "next week" means the Monday of the week following the assignedDate; "end of month"/"end of the month" means the last calendar day of the month the assignedDate falls in; "tomorrow" means the day right after the assignedDate, "today" means the assignedDate itself; "in N days"/"in N weeks" means the assignedDate plus that many days. Example: if the assignedDate is 2026-08-18 (a Tuesday) and the text says "by end of week", that resolves to Friday 2026-08-21 — even though today's real date above may be later than that. If no due date is mentioned or clearly implied at all, return an empty string — never invent one just because a task exists.
+- "dueDate": an ISO YYYY-MM-DD date, resolved relative to the ASSIGNEDDATE you determined above, not today's real date, since the text may have been written well before it's parsed. First look for explicit or relative due-date language: "by <weekday>" or "this <weekday>" means the very next occurrence of that weekday counting from the assignedDate (the assignedDate itself if the assignedDate IS that weekday); "next <weekday>" means that weekday in the week AFTER the assignedDate's own week (never the same week, even if that day hasn't happened yet within it); "next week" means the Monday of the week following the assignedDate; "end of month"/"end of the month" means the last calendar day of the month the assignedDate falls in; "tomorrow" means the day right after the assignedDate, "today" means the assignedDate itself; "in N days"/"in N weeks" means the assignedDate plus that many days. Example: if the assignedDate is 2026-08-18 (a Tuesday) and the text says "by end of week", that resolves to Friday 2026-08-21 — even though today's real date above may be later than that. If the text states or implies no specific timeframe at all, ESTIMATE a dueDate instead of leaving it empty, based on the task's own nature and effort, still resolved relative to the assignedDate: a quick, low-effort task (a short email, a phone call, a single social media post, a one-line fix) should land a few days after the assignedDate; a substantial, multi-step task (building a website, producing a video, a research project) should land proportionally further out — weeks or more, scaled to how much work it clearly represents. There is no fixed maximum for a large task. Always return a real date — only return an empty string if the "subject" itself is too vague to estimate anything from at all.
 - "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
 - "senderName": the sender's display name if available, otherwise empty string.
 - "recipientEmail": the primary recipient's email address if the text contains one (e.g. a "To:" header, or who a WebLight team member is writing/replying to), otherwise empty string.
 - "recipientName": the primary recipient's display name if available, otherwise empty string.
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
-- "clientName": if this task is clearly about work for one specific client from this list: ${JSON.stringify(clientNames)}, output that client's name EXACTLY as it appears in the list. If the text has a near-miss or misspelled version of a client's name (a typo, a phonetic spelling, a partial name — e.g. "surf pro" for "Servpro"), still match it to the single closest real name in this exact list — best-match, don't require an exact spelling in the text itself. If the task is about WebLight Media's own internal work rather than a client's, and "WebLight Media (Internal)" appears in this list, use that. If genuinely no client from this list is identifiable for this task, leave this an empty string — never invent a name that isn't in the list.
-- "ownerName": the specific person this task belongs to. Look for an explicit assignment ("assigned to X", "X will handle this") AND per-person ownership language even without an explicit assignment verb — e.g. "X's priorities" or "X's tasks" (a list introduced this way belongs to X for every item under it), "X will …" / "X agreed to …" / "X is going to …" (a stated commitment BY X), "X shared they'll …" / "X mentioned she's going to …" (X's own intended action, even when reported by someone else). In every case, use that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
+- "clientName": if this task is clearly about work for one specific client from this list: ${JSON.stringify(clientNames)}, output that client's name EXACTLY as it appears in the list. If the text has a near-miss, mis-heard, or misspelled version of a client's name (a typo, a phonetic spelling, a partial name — e.g. "surf pro" for "Servpro"), still match it to the single closest real name in this exact list — best phonetic/fuzzy match, don't require an exact spelling in the text itself. If the task is about WebLight Media's own internal work rather than a client's, and "WebLight Media (Internal)" appears in this list, use that. If genuinely no client from this list is identifiable for this task, leave this an empty string — never invent a name that isn't in the list.
+- "ownerName": the specific person this task belongs to. Look for an explicit assignment ("assigned to X", "X will handle this") AND per-person ownership language even without an explicit assignment verb — e.g. "X's priorities" or "X's tasks" (a list introduced this way belongs to X for every item under it), "X will …" / "X agreed to …" / "X is going to …" (a stated commitment BY X), "X shared they'll …" / "X mentioned she's going to …" (X's own intended action, even when reported by someone else). In every case, use that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. If the text has a near-miss, mis-heard, or misspelled version of a name on this list (e.g. "Shereen" or "Shireen" for "Sherine"), still match it to the single closest real name in this exact list — best phonetic/fuzzy match, don't require an exact spelling in the text itself. Only leave this an empty string if genuinely no name on the list is a reasonable match. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
 - "alreadyDone": true if the text itself says this specific item is already finished/sent/completed (e.g. "already posted the update", "done", "sent yesterday"), false otherwise. Only true when the text says so explicitly for THIS item — never infer completion just because a task sounds simple or routine.
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
@@ -204,10 +204,56 @@ function matchClient(task, activeClients) {
 // richer signal than matchClient()'s email/domain/text-mention heuristics
 // below), checked first; matchClient() is the fallback for whatever this
 // leaves empty or unmatched.
+// Plain Levenshtein edit distance — deterministic, same "reviewable code,
+// never an LLM guess" conviction as matchClient()/matchOwner() above.
+function _levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+function _normalizeForPhonetic(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+// Similarity ratio in [0,1], 1 = identical after stripping spaces/
+// punctuation/case — e.g. "surf pro" vs "Servpro" both normalize to
+// "surfpro"/"servpro" (edit distance 2 of 7 chars ≈ 0.71 similarity).
+function _phoneticSimilarity(a, b) {
+  const na = _normalizeForPhonetic(a), nb = _normalizeForPhonetic(b);
+  if (!na || !nb) return 0;
+  return 1 - _levenshtein(na, nb) / Math.max(na.length, nb.length);
+}
+const PHONETIC_MATCH_THRESHOLD = 0.7;
+
 function matchClientByName(clientName, activeClients) {
   const q = String(clientName || '').trim().toLowerCase();
   if (!q) return null;
-  return activeClients.find(c => String(c.name || '').trim().toLowerCase() === q) || null;
+  const exact = activeClients.find(c => String(c.name || '').trim().toLowerCase() === q);
+  if (exact) return exact;
+  // Phonetic-tolerant fallback: the model is instructed to already
+  // best-match a mis-heard/misspelled name to an exact string from the
+  // live list itself (see buildTaskEmailSystemPrompt), but this
+  // re-validates against the real list rather than trusting it blindly —
+  // if the model still returns something close-but-not-exact, this catches
+  // it deterministically instead of dropping the match. A minimum length
+  // guard (same convention as matchClientByTextMention below) plus
+  // requiring the best match to be unambiguous (no other client ties it)
+  // keeps this from guessing on a genuinely weak signal.
+  if (q.length < 4) return null;
+  const scored = activeClients
+    .map(c => ({ c, score: _phoneticSimilarity(q, c.name) }))
+    .filter(x => x.score >= PHONETIC_MATCH_THRESHOLD)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  return (scored.length === 1 || scored[0].score > scored[1].score) ? scored[0].c : null;
 }
 
 function matchClientByTextMention(task, activeClients) {
