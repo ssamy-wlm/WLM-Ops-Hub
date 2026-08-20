@@ -311,6 +311,15 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
   .admin-sidebar.open{transform:translateX(0);}
 }
 .admin-content{padding:28px 32px;}
+/* Overview's top row (Team Assessment + Recent Activity) — fills the full
+   width via fr units already (no fixed-px cap to remove), but never
+   collapsed to one column on a narrow window, squeezing both cards. Stacks
+   at the same 900px breakpoint the sidebar already uses, so the two
+   thresholds move together instead of drifting apart over time. */
+.ov-top-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start;}
+@media(max-width:900px){
+  .ov-top-grid{grid-template-columns:1fr;}
+}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
 .admin-stat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;text-align:center;}
 .as-val{font-family:'Poppins',sans-serif;font-size:26px;color:var(--text-dark);}
@@ -1236,7 +1245,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            scrollbar floating in a big empty gap. Each card now sizes to its
            own content; if the page overall needs to scroll, the page
            scrolls, not a box inside it (2026-08-07). -->
-      <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start;">
+      <div class="ov-top-grid">
         <div class="card">
           <div class="card-header">
             <div>
