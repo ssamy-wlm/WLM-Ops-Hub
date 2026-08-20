@@ -1440,6 +1440,101 @@ collision occurred in the actual test runs either. No code path was
 found that drops, truncates, or batches tasks during save/sync; the
 19-of-19 result held at every stage checked.
 
+**Task Assignments: `assignedDate` field — resolve due dates from the
+transcript's own date, not the parse date (2026-08-20).** Reported gap: an
+old meeting transcript pasted in days after the meeting had its relative
+due-date language ("by end of week") resolved against today's real date
+instead of the meeting's own date, and nothing on a task recorded when it
+was actually assigned versus when it happened to be parsed.
+
+`api/process-transcript.js`'s `taskEmail` prompt now asks the model to
+first determine one `assignedDate` for the WHOLE parsed text (a meeting/
+transcript header with a date, an email "Date:" header, or a phrase like
+"as of 8/18"), falling back to today's real date if none is found in the
+text — this is asked once per parse, not per task, since every task
+extracted from one pasted document shares the same source date. Every
+per-task `dueDate`'s relative-language resolution ("by Friday", "next
+week", "end of month", etc.) is now explicitly anchored to THAT
+assignedDate rather than today's real date, which is still given to the
+model separately (needed to resolve a bare "8/18"-style date's year).
+Server-side, `assignedDate` is re-validated through the exact same
+`validDueDate()` round-trip guard already used for `dueDate` (an
+out-of-range or malformed model-reported date is never trusted) and
+falls back to the request's own `todayIso` — computed once per request
+and threaded into the prompt builder too, so the "today" the model sees
+and the fallback used server-side can never disagree. Verified against the
+task's own acceptance example: an assignedDate of 2026-08-18 (extracted
+from the text) is applied to every task from that parse regardless of
+when it's actually parsed; a dateless transcript falls back to the real
+parse-time date; a malformed/impossible model-reported date (e.g.
+"2026-02-30") falls back the same way `validDueDate()` already treats an
+impossible `dueDate`; and the dedupe-within-batch merge (#245) preserves
+the shared value across a merge.
+
+`api/ops-sync.js` gained the matching write-side guarantees: `assignedDate`
+added to `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` (same admin-only scalar-identity
+treatment as `dueDate`/`category` — without this, a member could backdate
+their own aging metric by editing it on a task already assigned to them);
+a brand-new task (either portal's manual "New Task" path, or a member's
+own self-created task, not just a parsed one) gets `assignedDate` forced
+to today server-side if the client didn't send one, so it's never blank
+regardless of entry path; an admin's update to an existing task preserves
+the stored `assignedDate` when the incoming payload omits it, the same
+falsy-preservation convention already used for `assignedById` on this
+exact code path — an accidental resave must never reset a task's aging
+anchor back to "today."
+
+Client-side, both `index.html`'s `saveTaskEdit()` (manual create/edit) and
+`runTaskEmailParse()`/`user.html`'s `runDtEmailParse()` (parsed-task
+creation) default `assignedDate` the same way, and both portals' detail
+panels gained an "Assigned" row (`_taFormatShortDate()`/
+`_dtFormatShortDate()`, formatting as "Aug 18") plus a same-portal age
+label ("2 days ago"/"today"), computed from y/m/d components rather than
+`new Date(isoString)` directly — the exact timezone-parsing bug class
+already fixed once in this codebase's time-off day-count entry, so it was
+avoided here from the start rather than reintroduced. The task list view
+in both portals shows a compact "· Assigned Aug 18" addition to the
+existing category subtitle line under the subject, rather than a new
+table column — Task Assignments already removed its "Type" column for
+being clutter nobody used (see the entry above), so a full 8th/5th column
+here was deliberately avoided in favor of the same subtitle-line pattern
+`emailReceivedDate` already uses in the detail panel.
+
+Two scope decisions made and flagged rather than guessed silently: (1) no
+"response-speed"/"aging" report or dashboard exists anywhere in this
+codebase today (`replyStatus` is free text, manually typed, per an earlier
+documented decision) — this task's request to "feed the response-speed/
+aging metrics from assignedDate" is satisfied minimally by exposing
+`assignedDate` itself plus a `_taDaysSinceAssigned()`/`_dtDaysSinceAssigned()`
+helper and displaying the resulting age label, WITHOUT inventing a new
+metrics dashboard nothing asked for; a dedicated aging/response-speed
+report would be its own separately-scoped feature. (2) the existing
+`emailReceivedDate` field (optional, per-task, editable, already shown in
+both detail panels as "Email received") is conceptually adjacent but
+deliberately left untouched — it is when an email itself arrived, editable
+and sometimes blank by design, whereas `assignedDate` is a required,
+never-blank anchor that drives due-date math and aging for every task
+regardless of source. The two coexist rather than being merged into one
+field. (3) `assignedDate` is not exposed as an editable input in either
+portal's edit modal — it's set once (by the parser, or defaulted at manual
+creation) and preserved thereafter; making it manually editable would need
+its own explicit decision given it's now a permission-gated field.
+
+Verified with Node scripts against the real, byte-identical
+`api/process-transcript.js` (11/11: dated-transcript propagation, dateless
+fallback, malformed-date fallback, the prompt itself asking for and
+correctly anchoring to assignedDate, and dedupe-merge preserving it) and
+`api/ops-sync.js` (9/9: insert-defaulting for both admin and member
+create paths, honoring an explicit parsed value, admin-update
+preservation, the member anti-backdating rejection, and a normal
+status-only member update still succeeding). Playwright against both real
+portal UIs (6/6 `index.html`, 5/5 `user.html`): list-row subtitle, detail
+panel date + age label, and the "no assignedDate at all" case rendering
+as "—" rather than "NaN"/"undefined" in either portal. All four of this
+session's pre-existing Task Assignments Playwright regression suites
+(button/calendar, schedule tab, dedupe/merge, 19-task completeness) re-run
+clean against the combined file — 43/43, no regressions from this change.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
