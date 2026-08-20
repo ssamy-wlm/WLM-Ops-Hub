@@ -104,20 +104,32 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .page-section.active{display:block;}
 /* Service Schedule calendar (week + month views) — 7 columns (5 weekday +
    2 narrower weekend, matching CAL_GRID_COLS in JS; keep these two in sync
-   if that constant ever changes) that fill the card width via fr units.
+   if that constant ever changes) that fill the card width via fr units and
+   scale down proportionally as the window narrows — the ratio itself
+   (weekday wide, weekend narrow, since no work is ever due on a weekend)
+   is unchanged, only how each column's CONTENT behaves at small widths.
    min-width:0 on every cell (set inline per-cell in _renderWeekGrid()/
-   _renderMonthGrid()) is what actually lets a long client/service name
-   truncate with its existing ellipsis styling instead of forcing the whole
-   grid — and the page — wider than the viewport, at any width down through
-   the narrowest verified (768px). A true vertical single-column stack on a
-   phone-width screen is deliberately NOT done here: the header row and day
-   cells are flat siblings of one shared grid on purpose (see the
-   2026-07-29 alignment-fix comment above _renderWeekGrid) so collapsing to
-   1 column would interleave all 7 headers before all 7 day cells instead
-   of pairing each day with its header — fixing that needs a DOM
-   restructure, not a CSS rule, so it's out of scope for this presentational
-   pass. Flagged as a follow-up rather than silently skipped. */
-.cal-week-grid{display:grid;grid-template-columns:repeat(5,1fr) repeat(2,0.55fr);}
+   _renderMonthGrid()) lets a cell shrink below its content's natural
+   width instead of forcing the whole grid wider than the viewport.
+   align-items:start here (not per-cell align-self, which each render
+   function used to set individually) keeps every day only as tall as its
+   own content — a busy day never stretches an empty neighbor in the same
+   row to match it — and, combined with _calEventCard()'s wrap (not
+   truncate) styling below, is what makes a day cell GROW TALLER to fit
+   wrapped text instead of clipping it (2026-08-20, replacing the
+   1-2-letter-ellipsis behavior Sarah flagged as unreadable): grid rows
+   auto-size to their tallest cell by default, so once text wraps to more
+   lines, the row — and just that row — grows to fit, no fixed cell height
+   anywhere clips it. A true vertical single-column stack on a phone-width
+   screen is deliberately NOT done here: the header row and day cells are
+   flat siblings of one shared grid on purpose (see the 2026-07-29
+   alignment-fix comment above _renderWeekGrid) so collapsing to 1 column
+   would interleave all 7 headers before all 7 day cells instead of
+   pairing each day with its header — fixing that needs a DOM restructure,
+   not a CSS rule. Below ~700px the schedule now defaults to List instead
+   (see setScheduleView's phone-default comment) rather than cramming 7
+   columns onto a phone. */
+.cal-week-grid{display:grid;grid-template-columns:repeat(5,1fr) repeat(2,0.55fr);align-items:start;}
 
 /* ── BUTTONS ── */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:9px;font-family:'Poppins',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:all .18s;white-space:nowrap;}
@@ -3025,7 +3037,15 @@ function showPage(name, el){
     populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); filterClients();
     setTimeout(()=>_maybeShowTip('savedFilters','button[onclick="saveCurrentFilter()"]','Save this filter combo for one-click reuse later.'),50);
   }
-  if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
+  if(name==='services-schedule'){
+    populateScheduleClientFilter();
+    // Phone default — see _scheduleViewPhoneDefaultApplied's declaration.
+    if(!_scheduleViewPhoneDefaultApplied){
+      _scheduleViewPhoneDefaultApplied=true;
+      if(window.innerWidth<=700) _scheduleView='list';
+    }
+    setScheduleView(_scheduleView);
+  }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
@@ -6232,35 +6252,59 @@ function renderSchedule(){
     const days=daysUntil(svc.due);
     const daysLabel=days===null?'':(days<0?`${Math.abs(days)}d overdue`:days===0?'Due today!':days===1?'Due tomorrow':days+'d');
     const borderColor=cls==='overdue'?'var(--red)':cls==='soon'?'var(--orange)':'#2e9e6e';
+    // min-width:0 on every span below (2026-08-20) — a flex ITEM's default
+    // min-width is `auto`, which for text content resolves to its full
+    // single-line width, not the width of its longest word; flex-wrap on
+    // the row only wraps whole ITEMS onto a new line, so without this a
+    // long client/service name's span refused to wrap internally and
+    // instead overflowed the row — invisible with realistic short names
+    // but real: it's what pushed the whole page wider than the viewport
+    // at very narrow (~390px) phone widths with a long name, the same
+    // family of bug as the calendar's now-fixed truncation, just
+    // "overflow" instead of "ellipsis" as the failure mode.
     return `<div style="display:flex;align-items:stretch;gap:0;border-radius:10px;border:1px solid var(--border);margin-bottom:8px;overflow:hidden;background:var(--bg);">
       <div style="width:4px;background:${borderColor};flex-shrink:0;"></div>
       <div style="flex:1;padding:10px 12px;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
-          <span style="font-size:12px;font-weight:700;color:var(--text-dark);">${svc.name}</span>
-          <span style="font-size:10px;color:var(--text-light);">→ ${c.name}${svc._locationName?' — '+svc._locationName:''}${c.code?` <span style="font-size:9px;background:var(--bg2);padding:1px 5px;border-radius:4px;">${c.code}</span>`:''}
+          <span style="font-size:12px;font-weight:700;color:var(--text-dark);min-width:0;overflow-wrap:anywhere;">${svc.name}</span>
+          <span style="font-size:10px;color:var(--text-light);min-width:0;overflow-wrap:anywhere;">→ ${c.name}${svc._locationName?' — '+svc._locationName:''}${c.code?` <span style="font-size:9px;background:var(--bg2);padding:1px 5px;border-radius:4px;">${c.code}</span>`:''}
           </span>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--text-mid);">
-          <span>📅 <strong>${svc.due||'No date'}</strong>${daysLabel?' ('+daysLabel+')':''}</span>
-          <span>👤 ${_svcAssigneeNames(svc)||'Unassigned'}</span>
-          ${svc.freqLabel&&svc.freqLabel!==svc.freq?`<span>🔁 ${svc.freqLabel}</span>`:''}
+          <span style="min-width:0;overflow-wrap:anywhere;">📅 <strong>${svc.due||'No date'}</strong>${daysLabel?' ('+daysLabel+')':''}</span>
+          <span style="min-width:0;overflow-wrap:anywhere;">👤 ${_svcAssigneeNames(svc)||'Unassigned'}</span>
+          ${svc.freqLabel&&svc.freqLabel!==svc.freq?`<span style="min-width:0;overflow-wrap:anywhere;">🔁 ${svc.freqLabel}</span>`:''}
         </div>
       </div>
       ${SESSION.isAdmin?`<div style="display:flex;align-items:center;padding-right:10px;"><button class="btn btn-xs btn-outline" onclick="openAddServiceModal('${c.id}','${svc.id}'${svc._locationId?`,'${svc._locationId}'`:''})">✏️</button></div>`:''}
     </div>`;
   }
 
+  // Column min-width (2026-08-20): the empty-column branch used to be
+  // min-width:0 while the populated branch used 280px — that asymmetry
+  // was the actual bug behind a real horizontal-overflow found while
+  // verifying the ~390px phone width: the OUTER row's flex-wrap decides
+  // whether to stack columns based on their MIN-WIDTHS, not their real
+  // content, so a "Yearly Services"/"Other" column offered only 0 as its
+  // floor never triggered the outer wrap even when the sliver of space it
+  // was actually given (whatever's left after Monthly's 280px) was far too
+  // narrow for its own un-wrappable header label — the header text just
+  // overflowed instead. Both branches now share the same 220px floor
+  // (comfortably fits any of the three header labels + icon + count
+  // badge), so once the combined floors exceed the container's width the
+  // outer row correctly stacks columns vertically instead of squeezing
+  // one into an unreadable, overflowing sliver.
   function renderCol(rows, label, icon){
-    if(!rows.length) return `<div style="flex:1;min-width:0;">
-      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
-        <span>${icon}</span><span>${label}</span>
+    if(!rows.length) return `<div style="flex:1;min-width:220px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+        <span>${icon}</span><span style="min-width:0;overflow-wrap:anywhere;">${label}</span>
         <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">0</span>
       </div>
       <div style="font-size:12px;color:var(--text-light);padding:20px 0;">No services.</div>
     </div>`;
-    return `<div style="flex:1;min-width:280px;">
-      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
-        <span>${icon}</span><span>${label}</span>
+    return `<div style="flex:1;min-width:220px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+        <span>${icon}</span><span style="min-width:0;overflow-wrap:anywhere;">${label}</span>
         <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">${rows.length}</span>
       </div>
       ${rows.map(renderRow).join('')}
@@ -6884,6 +6928,15 @@ function init(){
 //  SCHEDULE VIEW TOGGLE
 // ═══════════════════════════════════════════════════════
 let _scheduleView='calendar';
+// Phone default (2026-08-20): even wrapped-and-grown, 7 calendar columns
+// are too cramped to read on a phone-width screen — the List view (see
+// renderSchedule(), already fluid: flex-wrap, min-width:0/280px, no
+// truncation) is the readable phone experience instead. This is a DEFAULT
+// only, applied once, the first time the Service Schedule page is opened
+// this page-load — not a live override, so switching to Calendar via the
+// toggle (still fully available on phone) sticks even if the window is
+// then resized. Below, per the task's own "~≤700px" framing.
+let _scheduleViewPhoneDefaultApplied=false;
 function setScheduleView(v){
   _scheduleView=v;
   const isCal=v==='calendar';
@@ -6994,20 +7047,35 @@ function _calEventBarColor(ev, todayStr){
   return done?'#aaa':over?'var(--red)':soon?'var(--orange)':'#2e9e6e';
 }
 // Compact event card — service/project name and client name each on their
-// own (small) line, a color bar, and a click target. Deliberately kept
-// small (see the 2026-07-29 fix below) — the first cut of this redesign
-// used a much bigger card with no per-day cap, which made any day with
-// more than a couple of items scroll forever; this is always paired with
+// own line, a color bar, and a click target. Deliberately kept compact
+// (see the 2026-07-29 fix below) — the first cut of this redesign used a
+// much bigger card with no per-day cap, which made any day with more than
+// a couple of items scroll forever; this is always paired with
 // _calDayCell()'s cap, never rendered unbounded per day anymore.
+//
+// WRAP, don't truncate (2026-08-20): both lines used to be
+// `white-space:nowrap;overflow:hidden;text-overflow:ellipsis`, which reads
+// fine on a wide column but degrades to 1-2 unreadable letters + "…" once
+// the column narrows below the text's own width — exactly the symptom
+// Sarah flagged. `white-space:normal;overflow-wrap:anywhere` lets the text
+// wrap onto more lines instead (breaking mid-word only if a single word
+// is itself wider than the column — a long unbroken name never forces
+// horizontal overflow). The card is no longer a fixed-line-count box: it
+// grows to whatever height its wrapped text needs, and because
+// .cal-week-grid now sets align-items:start (not a per-cell align-self),
+// only THAT day's cell — and the grid row it's in — grows to match; a
+// short/empty neighboring day never stretches with it. The `title`
+// attribute (full text on hover) stays as a redundant assist, not a
+// substitute — it was never the primary way to read this before either.
 function _calEventCard(ev, todayStr){
   const barColor=_calEventBarColor(ev, todayStr);
   const icon=ev.type==='service'?'↻':'▣';
   return `<div onclick="calShowDay('${ev.due}')" title="${ev.client}: ${ev.label} (${ev.agent||'Unassigned'})"
     style="display:flex;flex-direction:column;gap:1px;padding:4px 6px;margin-bottom:3px;border-radius:6px;background:${barColor}14;border-left:3px solid ${barColor};cursor:pointer;">
-    <div style="display:flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;color:var(--text-dark);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-      <span style="font-size:9px;color:${barColor};flex-shrink:0;">${icon}</span>${escHtmlClient(ev.label)}
+    <div style="display:flex;align-items:flex-start;gap:4px;font-size:10.5px;font-weight:700;color:var(--text-dark);white-space:normal;overflow-wrap:anywhere;">
+      <span style="font-size:9px;color:${barColor};flex-shrink:0;margin-top:1px;">${icon}</span><span>${escHtmlClient(ev.label)}</span>
     </div>
-    <div style="font-size:9px;color:var(--text-light);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(ev.client)}${ev.agent?' · '+escHtmlClient(ev.agent):''}</div>
+    <div style="font-size:9px;color:var(--text-light);white-space:normal;overflow-wrap:anywhere;">${escHtmlClient(ev.client)}${ev.agent?' · '+escHtmlClient(ev.agent):''}</div>
   </div>`;
 }
 // Light, deliberate "nothing due" placeholder — an empty day used to just
@@ -7090,15 +7158,13 @@ function _renderWeekGrid(){
     const isToday=ds===todayStr;
     const weekend=_calIsWeekendCol(i);
     const evs=evMap[ds]||[];
-    // align-self:start — without it, a grid item stretches to fill its
-    // row's height by default, so one busy day would force every OTHER
-    // day in the same week row (including empty ones) to stretch just as
-    // tall, showing as a big empty box. Capping each day's card count
-    // (see _calDayCell) plus this keeps every day only as tall as its own
-    // actual content. Weekend columns (no work is ever due there — see
-    // adjustOffWeekend()) are grayed out to signal "nothing scheduled here"
-    // even before checking whether the day actually has events.
-    html+=`<div style="padding:8px 6px;align-self:start;min-width:0;${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.03);':'')}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
+    // align-items:start on .cal-week-grid (not a per-cell align-self
+    // anymore) keeps every day only as tall as its own actual content —
+    // one busy/wrapped day never stretches an empty neighbor in the same
+    // week row to match it. Weekend columns (no work is ever due there —
+    // see adjustOffWeekend()) are grayed out to signal "nothing scheduled
+    // here" even before checking whether the day actually has events.
+    html+=`<div style="padding:8px 6px;min-width:0;${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.03);':'')}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
   });
   html+=`</div>`;
   const wrap=_el('cal-grid-wrap');
@@ -7159,11 +7225,12 @@ function _renderMonthGrid(){
     // month's empty day."
     const cellBody=isCur?_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds):'';
 
-    // align-self:start (see _renderWeekGrid()'s comment) — keeps an empty
-    // or light day from stretching to match a busier day in the same row.
-    // Weekend columns (Sat/Sun) grayed out same as _renderWeekGrid() — no
-    // work is ever due there (see adjustOffWeekend()).
-    html+=`<div style="padding:8px 7px 6px;align-self:start;min-width:0;${borderRight}${borderBottom}${todayBg}">
+    // align-items:start on .cal-week-grid (see _renderWeekGrid()'s
+    // comment) — keeps an empty or light day from stretching to match a
+    // busier/wrapped day in the same row. Weekend columns (Sat/Sun) grayed
+    // out same as _renderWeekGrid() — no work is ever due there (see
+    // adjustOffWeekend()).
+    html+=`<div style="padding:8px 7px 6px;min-width:0;${borderRight}${borderBottom}${todayBg}">
       <div style="margin-bottom:5px;"><span style="${dayNumStyle}">${cellDay}</span></div>
       ${cellBody}
     </div>`;

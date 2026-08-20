@@ -311,15 +311,30 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
   .admin-sidebar.open{transform:translateX(0);}
 }
 .admin-content{padding:28px 32px;}
-/* Overview's top row (Team Assessment + Recent Activity) — fills the full
-   width via fr units already (no fixed-px cap to remove), but never
-   collapsed to one column on a narrow window, squeezing both cards. Stacks
-   at the same 900px breakpoint the sidebar already uses, so the two
-   thresholds move together instead of drifting apart over time. */
-.ov-top-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start;}
-@media(max-width:900px){
-  .ov-top-grid{grid-template-columns:1fr;}
-}
+/* Overview's top row (Team Assessment + Recent Activity). Revised
+   2026-08-20 — the single hard 900px breakpoint (media query flipping
+   grid-template-columns from `1.5fr 1fr` to `1fr`) reflowed correctly at
+   exactly 900px but jumped abruptly right at that line, and gave each
+   card a fixed WIDTH RATIO rather than a size that responds to how much
+   room is actually available. `repeat(auto-fit,minmax(420px,1fr))`
+   replaces both: each card gets AT LEAST 420px (enough for Team
+   Assessment's row layout — avatar, name/role, %, sparkline — not to feel
+   cramped) and grows to fill any extra space with `1fr`; auto-fit means
+   the browser puts as many 420px+ tracks on one row as actually fit, so
+   the two cards sit side by side above ~858px (2×420 + 18px gap) and
+   stack below it — continuously computed from the cards' own minimum
+   width, not a magic viewport number decoupled from their content, and
+   with no dead gap or overflow at any width in between. This does mean
+   the two cards are now equal-width when side by side (never a fixed
+   1.5:1 ratio) — an accepted side effect of the fluid-grid technique
+   asked for here, not a separate design decision. min-width:0 on the
+   cards themselves (not just the grid track) stops either card's own
+   content from forcing it wider than its track — see the Recent Activity
+   fix a few lines into card-body's #ov-activity-list rendering, which
+   used to truncate to an ellipsis for the same underlying reason the
+   calendar's event text did. */
+.ov-top-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;align-items:start;}
+.ov-top-grid>.card{min-width:0;}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
 .admin-stat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;text-align:center;}
 .as-val{font-family:'Poppins',sans-serif;font-size:26px;color:var(--text-dark);}
@@ -9217,12 +9232,24 @@ function refreshAdminOverview(){
       // service work, see the filter above), so a single small green
       // checkmark replaces the old per-type icon/color lookup rather than
       // varying by event subtype.
+      //
+      // WRAP, don't truncate (2026-08-20): this used `white-space:nowrap;
+      // overflow:hidden;text-overflow:ellipsis` — the same truncate-to-a-
+      // sliver pattern flagged as unreadable on the Service Schedule
+      // calendar, just here it's a long client/service description on a
+      // narrower card (once .ov-top-grid's cards can be as narrow as
+      // 420px) instead of a calendar cell. `white-space:normal;
+      // overflow-wrap:anywhere` lets it wrap onto more lines instead;
+      // align-items:flex-start (not center) so the checkmark sits with the
+      // FIRST line rather than centering oddly against a taller wrapped
+      // block, and the row grows to fit — same principle as the calendar
+      // fix, applied here since the pattern is identical.
       activityEl.innerHTML = actEvents.map(e=>{
         const when = _timeSince(e.time||e.ts);
         const sub  = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;">
-          <span style="color:var(--green);font-size:13px;flex-shrink:0;" title="Done">✓</span>
-          <div style="flex:1;min-width:0;font-size:12.5px;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:8px;">
+          <span style="color:var(--green);font-size:13px;flex-shrink:0;margin-top:1px;" title="Done">✓</span>
+          <div style="flex:1;min-width:0;font-size:12.5px;color:var(--text-dark);white-space:normal;overflow-wrap:anywhere;">
             <span style="font-weight:600;">${e.desc||''}</span><span style="color:var(--text-light);font-weight:400;"> — ${sub}</span>
           </div>
         </div>`;
