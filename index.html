@@ -328,9 +328,7 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
    purpose). min-width:0 on Recent Activity only (not Team Assessment,
    which has a real fixed width and nothing to shrink from) lets its own
    content wrap instead of forcing itself wider than its allotted space. */
-.ov-top-grid{display:flex;gap:18px;align-items:flex-start;}
-.ov-top-grid > :first-child{flex:0 0 460px;width:460px;}
-.ov-top-grid > :last-child{flex:1;min-width:0;}
+.ov-top-grid{display:flex;flex-direction:column;gap:18px;}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
 .admin-stat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;text-align:center;}
 .as-val{font-family:'Poppins',sans-serif;font-size:26px;color:var(--text-dark);}
@@ -1248,13 +1246,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
         <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
       </div>
-      <!-- Team Assessment (fixed-width numbers table) + Recent Activity
-           (flexible, internally-scrolling) — see .ov-top-grid's comment
-           above for why these two no longer share the old "both cards
-           reflow fluidly" treatment (2026-08-20). align-items:flex-start
-           keeps each card's own height independent of the other — Team
-           Assessment is now a short, bounded table; Recent Activity can
-           run to 30 rows, capped by its own internal scroll instead. -->
+      <!-- Team Assessment, then Recent Activity below it, each full width
+           (2026-08-20 stacked layout — replaces the earlier side-by-side
+           fixed/flexible split). Team Assessment's table gets the full
+           width so all 6 columns breathe; Recent Activity keeps its own
+           internal scroll (max-height on #ov-activity-list below) since it
+           can run to 30 rows — the page itself never grows unbounded to
+           fit it. -->
       <div class="ov-top-grid">
         <div class="card">
           <div class="card-header">
@@ -9377,11 +9375,11 @@ function refreshAdminOverview(){
       // "let the card grow unbounded" decision, but that decision's own
       // reasoning no longer applies: it existed to stop Recent Activity's
       // container being stretched tall by Team Assessment's unbounded
-      // roster in the same CSS Grid row; Team Assessment is now a fixed-
-      // width, naturally-short table (align-items:flex-start on
-      // .ov-top-grid already stops any stretch-to-match regardless), so a
-      // bounded, internally-scrolling Recent Activity no longer reintroduces
-      // that bug.
+      // roster in the same CSS Grid row. Team Assessment and Recent
+      // Activity are now stacked full-width cards (.ov-top-grid, 2026-08-20)
+      // rather than side-by-side, so there's no shared row to stretch
+      // against at all — a bounded, internally-scrolling Recent Activity
+      // doesn't reintroduce that bug either way.
       activityEl.innerHTML = actEvents.map(e=>{
         const when = _timeSince(e.time||e.ts);
         const sub  = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
