@@ -32,14 +32,22 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 // Friday", "next week", "end of month") — the model has no other way to
 // know what day "today" is. Computed fresh per request from the real
 // clock, never hardcoded — this is plain server-side Date usage (not a
-// Workflow script, where Date.now()/new Date() are restricted).
-function buildTaskEmailSystemPrompt(rosterDisplayList) {
-  const now = new Date();
-  const todayIso = now.toISOString().slice(0, 10);
-  const weekday = WEEKDAY_NAMES[now.getUTCDay()];
+// Workflow script, where Date.now()/new Date() are restricted). Passed in
+// by the caller (rather than computed here) so handleTaskEmailMode can
+// reuse the exact same todayIso as the assignedDate fallback below —
+// one clock read per request, not two that could disagree across a
+// millisecond boundary.
+function buildTaskEmailSystemPrompt(rosterDisplayList, todayIso) {
+  // todayIso is itself a UTC calendar date (see handleTaskEmailMode), so
+  // forcing UTC here keeps the reported weekday consistent with it —
+  // never `new Date(todayIso)` alone, which parses as UTC midnight but
+  // would report a LOCAL weekday, silently mismatching on this server.
+  const weekday = WEEKDAY_NAMES[new Date(`${todayIso}T00:00:00Z`).getUTCDay()];
   return `You extract action items from an email or pasted transcript for a small marketing agency called Weblight Media, for a work-tracking tool. The text may be a raw .eml file (with visible headers like From/Subject/Date) or a plain pasted email/transcript.
 
-Today's date is ${todayIso} (a ${weekday}). Use this as the reference point for any relative date language in the text.
+Today's real date (the day this text is being parsed, NOT necessarily the date the text itself is about) is ${todayIso} (a ${weekday}).
+
+First, determine the "assignedDate" for this text AS A WHOLE — the date the meeting, transcript, or email was itself dated, which can be well before today's real date above (e.g. an old meeting transcript pasted in days later). Look for a meeting/transcript header or title carrying a date (e.g. "Meeting — June 8", "Standup 8/18"), an email "Date:" header, or an explicit phrase like "as of 8/18" or "on 8/18". If a year isn't stated, assume whichever year makes the date most recent without landing AFTER today's real date, unless the text clearly implies otherwise. If you cannot find any such date anywhere in the text, use today's real date (${todayIso}) as the assignedDate instead — every parse must produce one, never leave it blank. Every task extracted from this text shares this SAME assignedDate.
 
 For EACH distinct task or action item you find:
 - "subject": a concise one-line summary (under 12 words).
@@ -47,7 +55,7 @@ For EACH distinct task or action item you find:
 - "tags": an array of short relevant keyword strings (can be empty array).
 - "category": exactly one of ${JSON.stringify(TASK_CATEGORIES)} — "Invoices/Payments" for billing/invoice/payment items, "Other" only if truly nothing else fits.
 - "priority": exactly one of ${JSON.stringify(TASK_PRIORITIES)} — infer from urgency language, default "Normal" if unclear.
-- "dueDate": an ISO YYYY-MM-DD date. Resolve relative language against today's date above: "by <weekday>" or "this <weekday>" means the very next occurrence of that weekday (today itself if today IS that weekday); "next <weekday>" means that weekday in the FOLLOWING week (never this week, even if that day hasn't happened yet this week); "next week" means next week's Monday; "end of month"/"end of the month" means the last calendar day of the CURRENT month; "tomorrow" and "today" mean exactly that; "in N days"/"in N weeks" means today plus that many days. If no due date is mentioned or clearly implied at all, return an empty string — never invent one just because a task exists.
+- "dueDate": an ISO YYYY-MM-DD date. Resolve relative language AGAINST THE ASSIGNEDDATE YOU DETERMINED ABOVE, not today's real date, since the text may have been written well before it's parsed: "by <weekday>" or "this <weekday>" means the very next occurrence of that weekday counting from the assignedDate (the assignedDate itself if the assignedDate IS that weekday); "next <weekday>" means that weekday in the week AFTER the assignedDate's own week (never the same week, even if that day hasn't happened yet within it); "next week" means the Monday of the week following the assignedDate; "end of month"/"end of the month" means the last calendar day of the month the assignedDate falls in; "tomorrow" means the day right after the assignedDate, "today" means the assignedDate itself; "in N days"/"in N weeks" means the assignedDate plus that many days. Example: if the assignedDate is 2026-08-18 (a Tuesday) and the text says "by end of week", that resolves to Friday 2026-08-21 — even though today's real date above may be later than that. If no due date is mentioned or clearly implied at all, return an empty string — never invent one just because a task exists.
 - "senderEmail": the sender's email address if the text contains one (e.g. a "From:" header), otherwise empty string.
 - "senderName": the sender's display name if available, otherwise empty string.
 - "recipientEmail": the primary recipient's email address if the text contains one (e.g. a "To:" header, or who a WebLight team member is writing/replying to), otherwise empty string.
@@ -60,7 +68,7 @@ For EACH distinct task or action item you find:
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","ownerName":"","alreadyDone":false}]}`;
+{"assignedDate":"YYYY-MM-DD","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","ownerName":"","alreadyDone":false}]}`;
 }
 
 // A malformed or out-of-range date from the model must never reach storage
@@ -294,6 +302,10 @@ async function handleTaskEmailMode(req, res) {
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  // Single clock read for this request — reused as both the prompt's
+  // "today's real date" reference and the assignedDate fallback below, so
+  // the two can never disagree across a millisecond boundary.
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   try {
     const message = await client.messages.create({
@@ -302,7 +314,7 @@ async function handleTaskEmailMode(req, res) {
       system: buildTaskEmailSystemPrompt(roster.map(p => {
         const title = p.title || p.level;
         return title ? `${p.name} — ${title}` : p.name;
-      })),
+      }), todayIso),
       messages: [{ role: 'user', content: text.trim() }],
     });
 
@@ -317,6 +329,13 @@ async function handleTaskEmailMode(req, res) {
     }
 
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+    // Never blank, per this feature's own requirement: an invalid/missing
+    // model-reported assignedDate (empty, malformed, or an impossible date
+    // per validDueDate's round-trip check) falls back to today's real date
+    // — the same "no actionable date reaches storage uncontested" guard
+    // validDueDate already applies to dueDate itself. Every task from this
+    // parse shares this one value, deliberately not asked for per-task.
+    const assignedDate = validDueDate(parsed.assignedDate) || todayIso;
 
     // Owner-matching and the role-scoped filter below run over EVERY
     // extracted task before any of it is returned — a member/manager-tier
@@ -337,6 +356,7 @@ async function handleTaskEmailMode(req, res) {
           category: TASK_CATEGORIES.includes(t.category) ? t.category : 'Other',
           priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
           dueDate: validDueDate(t.dueDate),
+          assignedDate,
           clientId: matchedClient ? matchedClient.id : null,
           clientName: matchedClient ? matchedClient.name : '',
           source: 'parsed-email',
