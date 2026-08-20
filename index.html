@@ -1439,6 +1439,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-sm" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
         <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
         <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
+        <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
       </div>
 
       <div id="ta-subtab-parse">
@@ -1504,6 +1505,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
+            <button class="btn btn-sm btn-outline" id="taFilterUnassignedBtn" onclick="toggleTaQuickFilter('unassigned')">Unassigned</button>
           </div>
         </div>
         <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
@@ -1581,6 +1583,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div id="ta-subtab-person" style="display:none;">
         <div id="ta-person-roster"></div>
         <div id="ta-person-roster-empty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active team members yet.</div>
+      </div>
+
+      <!-- "Needs Attention" (2026-08-20) — one screen consolidating what
+           otherwise means checking several filters/tabs one at a time:
+           every task that's Overdue, Due today, Blocked, or Unassigned,
+           grouped, team-wide. Task-scope only (ops_tasks) — this does not
+           pull in Client Health/Workload's separate service-level
+           overdue/"Stuck" signals, which stay their own dashboards; see
+           CLAUDE.md for why. Each row reuses openTaDetailPanel() — the
+           same click-through, edit, and write-rules as every other task
+           view in this file, nothing new. -->
+      <div id="ta-subtab-attention" style="display:none;">
+        <div id="ta-attention-body"></div>
       </div>
     </div>
 
@@ -7802,6 +7817,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[]);
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
+    if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -8410,7 +8426,7 @@ const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
 const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
 
 let _taView = 'list';
-let _taQuickFilter = null; // null | 'overdue' | 'dueToday'
+let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned'
 let _taCalDate = new Date();
 let _taDetailTaskId = null;
 let _taParseFileTexts = [];
@@ -8518,14 +8534,18 @@ function setTaSubtab(tab){
   document.getElementById('taSubtabParseBtn').className = 'btn btn-sm '+(tab==='parse'?'':'btn-outline');
   document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm '+(tab==='assigned'?'':'btn-outline');
   document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm '+(tab==='person'?'':'btn-outline');
+  document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm '+(tab==='attention'?'':'btn-outline');
   document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('taSubtabAttentionBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
   document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
   document.getElementById('ta-subtab-person').style.display = tab==='person' ? '' : 'none';
+  document.getElementById('ta-subtab-attention').style.display = tab==='attention' ? '' : 'none';
   if(tab==='assigned') renderTaskAssignments();
   if(tab==='person') renderTaPersonRoster();
+  if(tab==='attention') renderTaNeedsAttention();
 }
 
 // ── Per-person Daily Tasks view (admin) — 2026-08-20. _taPersonViewId,
@@ -8602,6 +8622,50 @@ function renderTaPersonRoster(){
   }).join('');
 }
 
+// ── "Needs Attention" (2026-08-20) — one consolidated, team-wide,
+// grouped view: Overdue · Due today · Blocked · Unassigned. Task-scope
+// only (ops_tasks) — deliberately does not fold in Client Health/
+// Workload's separate service-level signals, see the HTML comment above
+// ta-subtab-attention. Each bucket reuses the exact same predicates
+// already established elsewhere in this file (_taIsOverdue/_taIsDueToday/
+// status==='Blocked'/no assigneeId — the same ones the Unassigned quick
+// filter and the Blocked badge already use), so this view can never
+// disagree with what the List view's own filters would show. ──
+function _taNeedsAttentionBuckets(){
+  const tasks = _taTasks();
+  return {
+    overdue: tasks.filter(t=>_taIsOverdue(t)),
+    dueToday: tasks.filter(t=>_taIsDueToday(t)),
+    blocked: tasks.filter(t=>t.status==='Blocked'),
+    unassigned: tasks.filter(t=>!t.assigneeId),
+  };
+}
+const TA_ATTENTION_SECTIONS = [
+  { key:'overdue', label:'🔴 Overdue', color:'var(--red,#c94a4a)' },
+  { key:'dueToday', label:'🟠 Due Today', color:'#d9822b' },
+  { key:'blocked', label:'🚧 Blocked', color:'var(--red,#c94a4a)' },
+  { key:'unassigned', label:'❔ Unassigned', color:'var(--text-light)' },
+];
+function renderTaNeedsAttention(){
+  const container = document.getElementById('ta-attention-body');
+  if(!container) return;
+  const buckets = _taNeedsAttentionBuckets();
+  container.innerHTML = TA_ATTENTION_SECTIONS.map(sec=>{
+    const rows = buckets[sec.key];
+    const rowsHtml = rows.length ? rows.map(t=>`
+      <div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;padding:9px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtmlAdmin(t.clientName||'—')} · ${escHtmlAdmin(_taPersonName(t.assigneeId))}${t.dueDate?` · Due ${t.dueDate}`:''}</div>
+        </div>
+      </div>`).join('') : `<div style="font-size:12px;color:var(--text-light);padding:6px 0 2px;font-style:italic;">Nothing here — all clear.</div>`;
+    return `<div class="card" style="margin-bottom:16px;">
+      <div class="card-header"><div class="card-title" style="color:${sec.color};">${sec.label} (${rows.length})</div></div>
+      <div class="card-body">${rowsHtml}</div>
+    </div>`;
+  }).join('');
+}
+
 const TA_VIEW_BTN_IDS = {list:'taViewListBtn', day:'taViewDayBtn', week:'taViewWeekBtn', month:'taViewMonthBtn'};
 const TA_VIEW_WRAP_IDS = {list:'taListWrap', day:'taDayWrap', week:'taWeekWrap', month:'taCalWrap'};
 function setTaView(v){
@@ -8627,6 +8691,7 @@ function toggleTaQuickFilter(kind){
   // width:100% and made the active button balloon to fill the row).
   document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='overdue'?' btn-toggle-active':'');
   document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='dueToday'?' btn-toggle-active':'');
+  document.getElementById('taFilterUnassignedBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='unassigned'?' btn-toggle-active':'');
   renderTaskAssignments();
 }
 
@@ -8664,6 +8729,7 @@ function _taFilteredTasks(){
     if(reply && !(t.replyStatus||'').toLowerCase().includes(reply)) return false;
     if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
     if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
+    if(_taQuickFilter==='unassigned' && t.assigneeId) return false;
     if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
     return true;
   });

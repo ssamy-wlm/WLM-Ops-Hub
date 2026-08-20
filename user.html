@@ -74,6 +74,16 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .btn-blue:hover{background:var(--text-dark);}
 .btn-outline{background:transparent;color:var(--text);border:1.5px solid var(--border-hover);}
 .btn-outline:hover{background:var(--bg);border-color:var(--text);}
+/* Consistent-size toggle-active state (2026-08-20, mirrors index.html's own
+   #246 fix, hand-duplicated per the zero-shared-code rule) — a filter/view
+   toggle button's BASE class must always stay "btn btn-sm btn-outline"
+   between active and inactive states; only this modifier is added/removed,
+   so the button's own box (padding+border) never changes size. Never
+   btn-primary (width:100%) or a bare btn (no border) for a toggle's active
+   state — both of those visibly resize/reflow the button, which is exactly
+   the bug this class exists to avoid. */
+.btn-toggle-active{background:var(--btn);color:#fff;border-color:var(--btn);}
+.btn-toggle-active:hover{background:var(--btn-hover);border-color:var(--btn-hover);color:#fff;}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
 .btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
@@ -999,7 +1009,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div id="dtTabMine">
           <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
           <div style="display:flex;gap:6px;margin-bottom:12px;">
-            <button class="btn btn-sm" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
+            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
             <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
           </div>
           <div id="dtListWrap">
@@ -1549,9 +1559,14 @@ function _dtAgeLabel(days){
 function loadDailyTasks(){
   const pillsEl = document.getElementById('dtCategoryPills');
   if(pillsEl){
+    // Base class ("btn btn-sm btn-outline") never changes between active and
+    // inactive — only btn-toggle-active is added/removed (2026-08-20, same
+    // fix as index.html's #246 — btn-primary sets width:100%, which made
+    // the active pill balloon out to fill its row instead of just
+    // changing color).
     pillsEl.innerHTML = ['All', ...DT_CATEGORIES].map(c=>{
       const active = (c==='All' && !_dtActiveCategory) || c===_dtActiveCategory;
-      return `<button class="btn btn-sm ${active?'btn-primary':'btn-outline'}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
+      return `<button class="btn btn-sm btn-outline${active?' btn-toggle-active':''}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
   renderDailyTasks();
@@ -1571,8 +1586,12 @@ function setDtTab(tab){
 
 function setDtView(v){
   _dtView = v;
-  document.getElementById('dtViewListBtn').className = 'btn btn-sm '+(v==='list'?'':'btn-outline');
-  document.getElementById('dtViewCalBtn').className = 'btn btn-sm '+(v==='calendar'?'':'btn-outline');
+  // Same fixed-size toggle pattern as the category pills above — base
+  // class is always "btn btn-sm btn-outline", never a bare "btn" (which
+  // has no border and rendered inconsistently against admin's own List/
+  // Day/Week/Month toggle).
+  document.getElementById('dtViewListBtn').className = 'btn btn-sm btn-outline'+(v==='list'?' btn-toggle-active':'');
+  document.getElementById('dtViewCalBtn').className = 'btn btn-sm btn-outline'+(v==='calendar'?' btn-toggle-active':'');
   document.getElementById('dtListWrap').style.display = v==='list' ? '' : 'none';
   document.getElementById('dtCalWrap').style.display = v==='calendar' ? '' : 'none';
   renderDailyTasks();

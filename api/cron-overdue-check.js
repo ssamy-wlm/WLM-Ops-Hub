@@ -51,6 +51,13 @@ function isInactiveService(s) { return s.status === 'cancelled' || s.status === 
 function isDoneThisCycle(svc, t) { return !!(svc.lastDone && !(svc.due && svc.due < t)); }
 function isOverdue(svc, t) { return !isInactiveService(svc) && !isDoneThisCycle(svc, t) && !!svc.due && svc.due < t; }
 
+// Same predicates as index.html's _taIsOverdue()/_taIsDueToday() — kept in
+// sync deliberately (task-scope "Needs Attention" digest/reminders below,
+// 2026-08-20), never imported since this is a completely separate runtime
+// from the browser-side file.
+function taskIsOverdue(t, today) { return !!t.dueDate && t.dueDate < today && t.status !== 'Done'; }
+function taskIsDueToday(t, today) { return t.dueDate === today && t.status !== 'Done'; }
+
 async function loadDirectory(supabase) {
   const [{ data: usersData }, { data: adminsData }, { data: teamPrefRows }] = await Promise.all([
     supabase.from('ops_users').select('id, data'),
@@ -154,6 +161,93 @@ export default async function handler(req, res) {
           summary.notificationsSent = rows.length;
         }
       }
+    }
+
+    // ── Task "Needs Attention" digest + self-reminders (2026-08-20) —
+    // entirely separate from the service-overdue escalation block above
+    // (different table, different notification types, different
+    // recipients) and deliberately NOT gated behind the `overdueEnabled`
+    // toggle above, which only ever governed service-overdue escalation —
+    // runs every invocation, same as the backup snapshot below. No
+    // per-item idempotency stamp (unlike the service block above): a
+    // digest/reminder is SUPPOSED to repeat every single day the
+    // underlying task is still overdue/due-today, so "today's real state"
+    // computed fresh each run is exactly correct, not a bug to guard
+    // against.
+    //
+    // Owner digest -> every super/owner admin, one row each, with the
+    // team-wide counts + who's affected. Employee self-reminders -> one
+    // row per person who has at least one of their OWN overdue/due-today
+    // tasks, framed as a nudge to them, not a report about them (worded in
+    // second person, no mention of what admins/managers see).
+    try {
+      const { data: taskRows, error: taskErr } = await supabase.from('ops_tasks').select('id, data');
+      if (taskErr) {
+        warnings.push(`tasks: ${taskErr.message}`);
+      } else {
+        const today = new Date().toISOString().slice(0, 10);
+        const tasks = (taskRows || []).map(r => ({ id: r.id, ...r.data }));
+        const overdueTasks = tasks.filter(t => taskIsOverdue(t, today));
+        const dueTodayTasks = tasks.filter(t => taskIsDueToday(t, today));
+        const blockedTasks = tasks.filter(t => t.status === 'Blocked');
+        const unassignedTasks = tasks.filter(t => !t.assigneeId);
+        summary.tasksOverdue = overdueTasks.length;
+        summary.tasksDueToday = dueTodayTasks.length;
+        summary.tasksBlocked = blockedTasks.length;
+        summary.tasksUnassigned = unassignedTasks.length;
+
+        const { users, admins } = await loadDirectory(supabase);
+        const notifRows = [];
+
+        // Owner digest.
+        const affectedIds = new Set([...overdueTasks, ...dueTodayTasks, ...blockedTasks].map(t => t.assigneeId).filter(Boolean));
+        const affectedNames = [...affectedIds].map(id => personOf(id, users.find(u => u.id === id) ? 'user' : 'admin', { users, admins })?.name).filter(Boolean);
+        const digestBody = `Overdue: ${overdueTasks.length} · Due today: ${dueTodayTasks.length} · Blocked: ${blockedTasks.length} · Unassigned: ${unassignedTasks.length}`
+          + (affectedNames.length ? ` — affecting ${affectedNames.join(', ')}` : '');
+        admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => {
+          notifRows.push({
+            type: 'attentionDigest', recipientId: a.id, recipientKind: 'admin',
+            recipientName: a.name || '', recipientEmail: a.email || '',
+            title: 'Daily task summary', body: digestBody, link: '', context: {},
+          });
+        });
+        summary.digestSent = admins.filter(a => a.level === 'super' || a.level === 'owner').length;
+
+        // Employee self-reminders — one row per affected person, counting
+        // only THEIR own overdue/due-today tasks (never Blocked/Unassigned,
+        // which aren't "your own work" concepts).
+        const ownCounts = new Map();
+        [...overdueTasks, ...dueTodayTasks].forEach(t => {
+          if (!t.assigneeId) return;
+          const bucket = ownCounts.get(t.assigneeId) || { overdue: 0, dueToday: 0 };
+          if (taskIsOverdue(t, today)) bucket.overdue++;
+          if (taskIsDueToday(t, today)) bucket.dueToday++;
+          ownCounts.set(t.assigneeId, bucket);
+        });
+        let remindersSent = 0;
+        ownCounts.forEach((counts, personId) => {
+          const kind = users.find(u => u.id === personId) ? 'user' : 'admin';
+          const person = personOf(personId, kind, { users, admins });
+          if (!person) return;
+          const parts = [];
+          if (counts.overdue) parts.push(`${counts.overdue} overdue`);
+          if (counts.dueToday) parts.push(`${counts.dueToday} due today`);
+          notifRows.push({
+            type: 'taskReminder', recipientId: personId, recipientKind: kind,
+            recipientName: person.name || '', recipientEmail: person.email || '',
+            title: 'You have tasks that need attention',
+            body: `You have ${parts.join(' and ')}. Take a look when you get a chance!`,
+            link: '', context: {},
+          });
+          remindersSent++;
+        });
+        summary.remindersSent = remindersSent;
+
+        await insertNotifications(supabase, notifRows, warnings);
+      }
+    } catch (err) {
+      await logError({ endpoint: 'cron-overdue-check:taskAttention', error: err });
+      warnings.push(`taskAttention: ${err.message}`);
     }
 
     // Daily backup snapshot — see the header comment above. Runs every
