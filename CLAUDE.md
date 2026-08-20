@@ -1624,6 +1624,147 @@ commit, then re-run the exact same post-commit assertions they always
 had; both re-run clean. The schedule-tab and button/calendar suites needed
 no changes and re-run clean as-is.
 
+**Task Assignments/Daily Tasks: undo-import, "New" highlight, phonetic
+name-matching, date write-rules (2026-08-20).** A five-part batch, one PR,
+touching `api/process-transcript.js`, `api/ops-sync.js`, and both
+`index.html`/`user.html`.
+
+1. **Phonetic/fuzzy name-matching.** `buildTaskEmailSystemPrompt()`'s
+   `ownerName` bullet gained the same near-miss/mis-heard tolerance
+   `clientName` already had (e.g. "Shereen"/"Shireen" → "Sherine"), with an
+   explicit example. `clientName`'s existing guidance was left functionally
+   unchanged (it already covered this — see the 2026-08-19 "client
+   detection widened" entry). On the code side, `matchClientByName()` (the
+   deterministic re-validation of the model's own output against the real
+   client list) gained a phonetic fallback: exact match first, then a
+   Levenshtein-distance-based similarity check (`_phoneticSimilarity()`,
+   normalized lowercase/alnum-only strings, 0.7 threshold, 4-char minimum,
+   unambiguous-best-match-only) — catches the model returning something
+   close-but-not-exact without ever guessing on a genuinely weak signal.
+   `matchOwner()` was deliberately NOT given the same code-side fuzzy
+   fallback — the task only asked for it on the client side, and a wrong
+   client match is worse than a wrong owner match (owner is just
+   assignment, easily reassigned; client drives what a task is "about").
+2. **Effort-based due-date estimation.** The `dueDate` prompt bullet used
+   to return an empty string whenever no due-date language was found.
+   Replaced with an ESTIMATE requirement: quick/low-effort tasks (a short
+   email, a call, a single post) land a few days out; substantial
+   multi-step tasks (build a website, produce a video) land proportionally
+   further out — weeks or more, no fixed maximum — still resolved relative
+   to `assignedDate`, never today's real date. `validDueDate()`'s
+   round-trip guard is unchanged and still the only thing standing between
+   a malformed/impossible model-reported date and storage.
+3. **Date write-rules, server-enforced in `api/ops-sync.js`:**
+   `assignedDate` is now FULLY immutable post-creation — the admin-update
+   branch no longer reads `inc.assignedDate` at all, only ever
+   `cur.assignedDate`, so not even a direct API call can change it (there
+   was already no UI path to attempt this — `assignedDate` has never had
+   an editable input in either portal). `dueDate` gets a new
+   `dueDateLocked` boolean: false at creation (both admin- and
+   member-created paths), and the first time an admin's incoming `dueDate`
+   actually differs from what's stored, it flips to `true` and every
+   subsequent `dueDate` on that task is ignored server-side thereafter —
+   an unchanged resave never locks it. `dueDateLocked` was added to
+   `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` (a member could never touch `dueDate`
+   itself already, but the new boolean needed the same protection).
+   `index.html`'s edit modal mirrors this optimistically (disables the
+   `tem-due` input and shows a "🔒 Locked" label once `dueDateLocked` is
+   true) so the UI reflects the lock immediately rather than waiting on
+   the next pull; `saveTaskEdit()` computes the same lock transition
+   client-side the server will independently re-derive. **Reconciled, not
+   silently dropped:** an earlier draft of this same request also asked
+   for a hard "member's own due date capped to today+14 days" rule; the
+   final, more deliberately-written version of the spec replaced that with
+   "no fixed maximum" (item 2 above) and its own date-rules section no
+   longer mentioned a member cap at all. Treated the later, fully-formatted
+   version as the authoritative one and did not implement the +14-day cap
+   — flagged back to the user rather than silently included or silently
+   dropped, since the two drafts genuinely contradicted each other.
+4. **Undo an import.** Every task from one parse action — staged or
+   already committed — now carries an `importBatchId` (client-generated,
+   one per parse call, purely a grouping key, never a permission/audit
+   field). Pre-commit: the staging list groups rows by batch and offers an
+   "Undo this import" button per batch that clears just those staged rows,
+   no network call (nothing in staging has ever reached `ops_tasks`).
+   Post-commit: a new `tombstones.taskIds` block in `api/ops-sync.js`
+   issues a genuine hard SQL DELETE against `ops_tasks` — deliberately NOT
+   the soft `deleted_at` tombstone pattern `ops_org_nodes`/`ops_org_links`
+   use, since `ops_tasks` is a plain document-model table with no
+   `deleted_at` column and no append-only guard (confirmed by reading its
+   migration before choosing this). Permission scoping: admin/super may
+   delete any task id; a member may only delete a task where they
+   themselves are `assignedById` — enforced against the real stored row,
+   never trusted from the client — which is exactly "a batch they
+   themselves committed," since `assignedById` is always server-forced to
+   the caller at insert time regardless of what the client sends. Each
+   portal tracks its own session-only `_taRecentImportBatches`/
+   `_dtRecentImportBatches` (in-memory, cleared on reload) mapping a
+   committed batch to the specific task ids IT created, rendered as a
+   small "Undo this import" strip on the parse sub-tab; deliberately
+   excludes merge-candidate rows from the delete set — a merge only ever
+   appends notes/tags/etc. to a PRE-EXISTING task, so "undo" for a merge
+   would mean un-appending text, which was out of scope and not attempted
+   (flagged here, not built). The tombstone-id push itself reuses the
+   exact same "already-sent" localStorage dedup pattern
+   `deletedOrgNodeIds`/`deletedOrgLinkIds` already established in
+   `index.html`'s `cloudPushAll()`, hand-duplicated into `user.html`'s
+   `cloudPushData()` (which had no tombstone mechanism at all before this).
+5. **"New" highlight — reuses the Roadmap tab's existing `_rmIsNew`/
+   `rm-card-new`/`rm-new-tag` pattern, but the two portals needed two
+   different anchors for what "new" means, not one shared mechanism:**
+   `index.html` (admin) added `_taIsNew()`, the same page-load-timestamp
+   marker `_rmIsNew` already uses (`wl_ta_page_load` in sessionStorage,
+   recorded once per session in `loadTaskAssignments()`), compared against
+   a new `lastAssignedAt` timestamp that's bumped whenever a task's
+   assigneeId actually changes — a brand-new task, a reassignment via the
+   list row's inline dropdown (`_taReassign()`), or a reassignment via the
+   edit modal (`saveTaskEdit()`) all bump it; this reads as "recently
+   added or (re)assigned, so you can see what just came in," clearing only
+   on the next page load, same as Roadmap's own cards. `user.html`
+   (employee) does NOT use a page-load marker at all — `_dtIsNew()` is
+   simply "not yet in my own `wl_dt_seen_ids`," reusing the EXACT existing
+   mechanism `renderDailyTasks()` already maintained for the "N new
+   assigned" count badge (an id is added to that list only in
+   `openDtDetailPanel()`) — this maps directly onto "shows a highlight
+   until the assignee has seen it, clearing when they open it," which a
+   page-load marker cannot express (a task assigned to me yesterday that I
+   still haven't opened must stay flagged today). `openDtDetailPanel()`
+   now also re-renders the list immediately after marking an id seen, so
+   opening a task visibly drops its own highlight right away rather than
+   waiting for an unrelated re-render. Every staged (not-yet-committed) row
+   in both portals' staging lists is unconditionally shown with the New
+   treatment — staging is by definition always "from the current import."
+   New CSS: `.ta-row-new`/`.ta-staging-new` (index.html, reusing
+   `.rm-new-tag` directly for the pill) and `.dt-row-new`/
+   `.dt-staging-new`/`.dt-new-tag` (user.html, a full hand-duplicated copy
+   since this file shares no CSS with index.html either).
+
+No new `api/*.js` file — still exactly 12 files under `api/`, same Hobby-
+plan headroom as before. Verified: `node --check` on both server files;
+`node:test`'s `--experimental-test-module-mocks` against the real,
+byte-identical `api/ops-sync.js` with an in-memory fake Supabase client
+(18/18 — dueDateLocked lifecycle, assignedDate immutability against a raw
+API call, member write-restriction rejections, admin-vs-member tombstone
+delete scoping); a similarly real-code Node check against
+`api/process-transcript.js` (23/23 — phonetic match/no-match/ambiguous-tie
+cases, prompt content, `validDueDate`/`matchOwner` regressions unchanged).
+Playwright against the real `index.html` UI (21/21: staging batch
+grouping + New tags + pre-commit undo with zero network calls, commit
+pushes and renders the New highlight, recent-imports strip fires a real
+`tombstones.taskIds` request and empties the list, due-date lock UI
+disables after one change) and the real `user.html` UI (14/14: same batch/
+undo/New-highlight flow, plus confirming opening one task clears only its
+own tag and a member's undo is scoped to their own committed batch).
+Four pre-existing Task Assignments Playwright suites re-run: three passed
+unmodified; `verify_ta_staging.js` needed one selector update
+(`#ta-staging-list > div` → `.ta-staging-new`) since the new per-batch
+grouping added a wrapper level — a structural change from this task, not a
+regression — and passes 26/26 after the fix. Two unrelated pre-existing
+failures (`verify_task_assignments_ui.js`'s stale `#taViewCalBtn`
+reference from before the Day/Week/Month schedule tab existed;
+`verify_overview_revamp.js`/`verify_progress_reports.js`, both from other
+in-flight/unmerged work) were confirmed to fail identically against
+unmodified `main` and are out of scope for this PR.
 **Overview revamp: Team Assessment as a numbers table + Recent Activity
 wrap/scroll (2026-08-20).** Two related layout/content changes to
 Overview's top row, one PR.

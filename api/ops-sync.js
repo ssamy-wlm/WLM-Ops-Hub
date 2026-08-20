@@ -8,8 +8,8 @@
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, payroll?,
 // summaries?, settings?, orgNodes?, orgLinks?, catalogSuggestions?,
-// notifications?, salesFunnel?, salesFunnelGrants? },
-// tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids] },
+// notifications?, salesFunnel?, salesFunnelGrants?, tasks? },
+// tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids], taskIds?: [ids] },
 // restoreUserIds?: [ids] }
 //
 // orgNodes/orgLinks tombstones set `deleted_at` on the targeted row(s) in
@@ -17,6 +17,12 @@
 // table — those tables already carry/gain a `deleted_at` column for this
 // exact purpose (see the migration adding it to ops_org_links). ops-state.js
 // filters both on `deleted_at is null`. Never a hard SQL DELETE.
+//
+// tombstones.taskIds is the one exception to that: ops_tasks has no
+// deleted_at column at all, so "undo this import" (Task Assignments/Daily
+// Tasks) really does issue a hard SQL DELETE against ops_tasks — see the
+// dedicated block below for the permission scoping (admin: any id;
+// member: only a task where they themselves are assignedById).
 //
 // Every array in `changes` is a list of ONLY the records that actually
 // changed (new or edited) — never the full dataset. Role comes from the
@@ -231,7 +237,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // notes/tags update forever. Never re-add it without handling that.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
-  'category', 'priority', 'dueDate', 'source', 'origin',
+  'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate',
 ];
 
@@ -1492,12 +1498,16 @@ export default async function handler(req, res) {
           // every parsed task, but a manually-created task (either portal's
           // "New Task"/self-add path) needs the same guarantee, so it's
           // forced here too rather than trusted from the client.
+          // dueDateLocked always starts false at creation — a task's due
+          // date isn't "locked" until an admin later CHANGES it once (see
+          // the isAdmin update branch below); a client-sent true here is
+          // never honored.
           const assignedDate = inc.assignedDate || todayIsoUtc();
           if (isAdmin) {
-            row = { ...inc, assignedById: inc.assignedById || session.id, assignedDate };
+            row = { ...inc, assignedById: inc.assignedById || session.id, assignedDate, dueDateLocked: false };
           } else {
             const assigneeId = creatableAssigneeIds.has(inc.assigneeId) ? inc.assigneeId : session.id;
-            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate };
+            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false };
           }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
@@ -1506,10 +1516,30 @@ export default async function handler(req, res) {
           // client that hasn't pulled back the server-assigned value yet
           // (e.g. a second quick edit within the same 30s poll window)
           // would otherwise silently overwrite it with null on every save.
-          // assignedDate gets the identical treatment — it's an aging/
-          // due-date-resolution anchor, not something an accidental blank
-          // resave should ever reset to "today."
-          row = { ...inc, assignedById: inc.assignedById || cur.assignedById || null, assignedDate: inc.assignedDate || cur.assignedDate || todayIsoUtc() };
+          //
+          // assignedDate is fully immutable once a task exists — this ONLY
+          // ever reads cur.assignedDate, never inc.assignedDate, so not
+          // even an admin hitting this endpoint directly can change it
+          // after creation (the brand-new-row branch above is the only
+          // place it's ever chosen).
+          //
+          // dueDate may be changed by an admin exactly ONCE: the first time
+          // an admin's incoming dueDate actually differs from what's
+          // stored, it locks (dueDateLocked=true) and every subsequent
+          // incoming value is ignored, keeping that date forever after —
+          // an accidental resave that leaves dueDate unchanged never locks it.
+          const dueDateLocked = !!cur.dueDateLocked;
+          const dueDate = dueDateLocked
+            ? cur.dueDate
+            : (typeof inc.dueDate === 'string' ? inc.dueDate : (cur.dueDate || ''));
+          const dueDateJustLocked = !dueDateLocked && dueDate !== (cur.dueDate || '');
+          row = {
+            ...inc,
+            assignedById: inc.assignedById || cur.assignedById || null,
+            assignedDate: cur.assignedDate || todayIsoUtc(),
+            dueDate,
+            dueDateLocked: dueDateLocked || dueDateJustLocked,
+          };
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else {
@@ -1538,6 +1568,42 @@ export default async function handler(req, res) {
       }
       applied.tasks = n;
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
+    }
+
+    // ── Task import undo — genuine hard SQL DELETE. ops_tasks has no
+    // deleted_at column and no append-only guard trigger (unlike
+    // ops_org_nodes/ops_org_links's soft-tombstone convention above, or
+    // ops_feed/ops_time_off_ledger's insert-only guard) — a plain
+    // document-model table, so reversing an entire parse-import batch
+    // really does remove those rows, per this feature's own "normal
+    // per-record delete" instruction. Admin/super may delete any task id; a
+    // member may only delete a task where THEY are assignedById — i.e. a
+    // batch they themselves committed — which can never be spoofed by the
+    // client, since assignedById is always server-forced to the caller at
+    // insert time (see the tasks-write block above), never trusted from
+    // the client on create. ──
+    if (Array.isArray(tombstones?.taskIds) && tombstones.taskIds.length) {
+      const idsToDelete = [...new Set(tombstones.taskIds.filter(id => typeof id === 'string' && id))];
+      if (idsToDelete.length) {
+        let deletableIds = idsToDelete;
+        if (!isAdmin) {
+          const { data: rows, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').in('id', idsToDelete);
+          if (fetchErr) {
+            warnings.push(`taskIds delete: ${fetchErr.message}`);
+            deletableIds = [];
+          } else {
+            deletableIds = (rows || []).filter(r => r.data?.assignedById === session.id).map(r => r.id);
+            idsToDelete
+              .filter(id => !deletableIds.includes(id))
+              .forEach(id => rejected.push({ table: 'tasks', id, reason: 'not your own import batch' }));
+          }
+        }
+        if (deletableIds.length) {
+          const { error } = await supabase.from('ops_tasks').delete().in('id', deletableIds);
+          if (error) warnings.push(`taskIds delete: ${error.message}`);
+          else applied.deletedTaskIds = deletableIds.length;
+        }
+      }
     }
 
     applied.goals = await upsertRows(supabase, 'ops_goals', (c.goals || []).filter(validGeneric), warnings);
