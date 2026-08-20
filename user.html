@@ -1039,6 +1039,25 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
               <div id="dtParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
             </div>
           </div>
+
+          <!-- Review-before-assign staging (2026-08-20) — same pattern as
+               index.html's admin side: parsing never writes to your task
+               list directly. No assignee picker here — you can't assign to
+               anyone else, same existing role split; client/due/priority/
+               category are still editable. See _dtStagedTasks/
+               runDtEmailParse()/commitDtStagedTasks(). -->
+          <div id="dt-staging-wrap" style="display:none;">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <div class="card-title">🔎 Review before adding</div>
+                  <div class="card-sub">Edit anything, or discard a row you don't want, before committing.</div>
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="commitDtStagedTasks()">✅ Save these (<span id="dtStagingCount">0</span>)</button>
+              </div>
+              <div class="card-body" id="dt-staging-list"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1438,8 +1457,13 @@ async function cloudPushData(){
 // self-origin one via the Add/Import tab. ──
 const DT_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const DT_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+const DT_PRIORITIES = ['Urgent','High','Normal','Low'];
 
 let _dtTab = 'mine';
+// Review-before-assign staging (2026-08-20) — same in-memory-only pattern
+// as index.html's _taStagedTasks; nothing here is written to your task
+// list until commitDtStagedTasks() runs.
+let _dtStagedTasks = [];
 let _dtView = 'list';
 let _dtActiveCategory = null;
 let _dtCalDate = new Date();
@@ -1449,6 +1473,12 @@ let _dtParseFileTexts = [];
 function _dtGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
 function _dtMyTasks(){ return (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.assigneeId===currentUser?.id); }
 function _dtToday(){ return new Date().toISOString().slice(0,10); }
+// Same shared wl_clients_db this file already reads elsewhere (My
+// Assignments/My Work — see _ASSIGN_CL_KEY below) — no DB_KEYS.clients
+// entry exists (tasks never needed a client LIST before, only the id/name
+// already resolved onto each task), so this reads the same key directly,
+// same convention as index.html's _taActiveClients().
+function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active'); }catch(e){ return []; } }
 function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
 
 // Same y/m/d-components-not-raw-string construction as index.html's
@@ -1686,35 +1716,17 @@ async function runDtEmailParse(){
       statusEl.textContent = 'No tasks found in that text.';
       return;
     }
-    // assignedById is forced server-side to this member's own id regardless
-    // of what's sent — set sensibly here too so the local list looks right
-    // before the next pull confirms it. assigneeId defaults to the server's
-    // roster-matched owner when the pasted text named a specific person
-    // (api/process-transcript.js already scoped that to "me, or one of my
-    // own direct reports" — a manager-tier employee like Sherine parsing an
-    // email about Rana's work), falling back to self exactly like before
-    // this change for everyone else.
-    const tasks = dbGet(DB_KEYS.tasks)||[];
-    let createdCount = 0, mergedCount = 0;
+    // Review-before-assign staging (2026-08-20) — same "parsing must NOT
+    // commit to the live task list" rule as index.html's admin side.
+    // assigneeId defaults to the server's roster-matched owner when the
+    // pasted text named a specific person (api/process-transcript.js
+    // already scoped that to "me, or one of my own direct reports" — a
+    // manager-tier employee like Sherine parsing an email about Rana's
+    // work), falling back to self otherwise — shown read-only in the
+    // staging row (no assignee dropdown; a member can't assign to anyone
+    // else, same existing role split), not editable there either.
     extracted.forEach(et=>{
-      // Same narrow, additive merge as index.html's runTaskEmailParse() —
-      // the server already matched this against an existing NOT-done task
-      // within this employee's own scope (self, or a direct report if
-      // they're a manager-tier employee). Only notes/tags/dueDate(if
-      // missing)/status(Done only) are touched; every other field of the
-      // existing task is left alone.
-      if(et.mergeIntoId){
-        const existing = tasks.find(x=>x.id===et.mergeIntoId);
-        if(existing){
-          if(et.notes) existing.notes = existing.notes ? `${existing.notes}\n${et.notes}` : et.notes;
-          existing.tags = [...new Set([...(existing.tags||[]), ...(et.tags||[])])];
-          if(!existing.dueDate && et.dueDate) existing.dueDate = et.dueDate;
-          if(et.status==='Done') existing.status = 'Done';
-          mergedCount++;
-          return;
-        }
-      }
-      tasks.push({
+      _dtStagedTasks.push({
         id: _dtGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
@@ -1723,24 +1735,118 @@ async function runDtEmailParse(){
         status: et.status||'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
-        // The server already resolved this (the parsed text's own date, or
-        // today if none was found) — defaulting to today here too only
-        // matters if a future client omits it, never in practice.
         assignedDate: et.assignedDate||_dtToday(),
+        mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
       });
-      createdCount++;
     });
-    dbSet(DB_KEYS.tasks, tasks);
-    _scheduleCloudPush();
     document.getElementById('dtParseText').value = '';
     document.getElementById('dtParseFileInput').value = '';
     _dtParseFileTexts = [];
-    statusEl.textContent = `✅ ${createdCount} new task(s)${mergedCount?`, ${mergedCount} merged into existing task(s)`:''} added.`;
+    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — review below before adding.`;
+    _renderDtStaging();
   } catch(e){
     statusEl.textContent = `❌ ${e.message}`;
   } finally {
     btn.disabled = false;
   }
+}
+
+function _dtUpdateStaged(id, field, value){
+  const row = _dtStagedTasks.find(x=>x.id===id);
+  if(!row) return;
+  row[field] = value || null;
+  if(field==='clientId'){
+    const c = _dtActiveClients().find(x=>x.id===value);
+    row.clientName = c ? c.name : '';
+  }
+}
+
+function discardDtStagedTask(id){
+  _dtStagedTasks = _dtStagedTasks.filter(x=>x.id!==id);
+  _renderDtStaging();
+}
+
+function _renderDtStaging(){
+  const wrap = document.getElementById('dt-staging-wrap');
+  const list = document.getElementById('dt-staging-list');
+  const countEl = document.getElementById('dtStagingCount');
+  if(!wrap || !list) return;
+  if(!_dtStagedTasks.length){
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  if(countEl) countEl.textContent = _dtStagedTasks.length;
+  const clients = _dtActiveClients();
+  list.innerHTML = _dtStagedTasks.map(row=>{
+    const rowStyle = 'padding:12px 0;border-bottom:1px solid var(--border);';
+    if(row.mergeIntoId){
+      // Same reasoning as index.html: a merge mutates an EXISTING task
+      // (narrow/additive only) rather than creating a new one, so no
+      // editable fields here — they'd never actually apply.
+      return `<div style="${rowStyle}">
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(row.subject||'')}</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlUser(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
+        <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button></div>
+      </div>`;
+    }
+    // No assignee picker — a member can't assign to anyone else (same
+    // role split as everywhere in this file); shown read-only instead.
+    // _dtAssignedByName() is a plain id->name lookup despite its name
+    // (built for the "Assigned by" detail-panel row), reused as-is here.
+    return `<div style="${rowStyle}">
+      <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlUser(row.subject||'')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
+          <option value="">No client</option>
+          ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
+        </select>
+        <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_dtUpdateStaged('${row.id}','dueDate',this.value)">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','priority',this.value)">
+          ${DT_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
+        </select>
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','category',this.value)">
+          ${DT_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${DT_CATEGORY_LABELS[c]||c}</option>`).join('')}
+        </select>
+        <button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Commits every remaining staged row to this member's own task list — see
+// index.html's commitStagedTasks() for the identical reasoning (deferred
+// narrow merge, plain-row creation from whatever was left/edited in the
+// staging table). Switches to "My assigned tasks" afterward so the result
+// is immediately visible.
+function commitDtStagedTasks(){
+  if(!_dtStagedTasks.length) return;
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  let createdCount = 0, mergedCount = 0;
+  _dtStagedTasks.forEach(row=>{
+    if(row.mergeIntoId){
+      const existing = tasks.find(x=>x.id===row.mergeIntoId);
+      if(existing){
+        if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
+        existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
+        if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
+        if(row.status==='Done') existing.status = 'Done';
+        mergedCount++;
+        return;
+      }
+    }
+    const { mergeIntoId, mergeIntoSubject, ...task } = row;
+    tasks.push(task);
+    createdCount++;
+  });
+  dbSet(DB_KEYS.tasks, tasks);
+  _scheduleCloudPush();
+  _dtStagedTasks = [];
+  _renderDtStaging();
+  showToast(`✅ ${createdCount} task(s) added${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
+  setDtTab('mine');
 }
 
 // ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────

@@ -1439,6 +1439,24 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div id="taParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
           </div>
         </div>
+
+        <!-- Review-before-assign staging (2026-08-20): parsing never
+             writes to ops_tasks directly — extracted tasks land here for
+             review/edit/discard first. Nothing exists in Assigned Tasks
+             until "Save / assign these" is clicked. See _taStagedTasks/
+             runTaskEmailParse()/commitStagedTasks(). -->
+        <div id="ta-staging-wrap" style="display:none;">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">🔎 Review before assigning</div>
+                <div class="card-sub">Auto-detected assignee/client are pre-filled — edit anything, or discard a row you don't want, before committing.</div>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="commitStagedTasks()">✅ Save / assign these (<span id="taStagingCount">0</span>)</button>
+            </div>
+            <div class="card-body" id="ta-staging-list"></div>
+          </div>
+        </div>
       </div>
 
       <div id="ta-subtab-assigned" style="display:none;">
@@ -8284,6 +8302,12 @@ let _taQuickFilter = null; // null | 'overdue' | 'dueToday'
 let _taCalDate = new Date();
 let _taDetailTaskId = null;
 let _taParseFileTexts = [];
+// Review-before-assign staging (2026-08-20) — parsing populates this array
+// ONLY; nothing here is written to ops_tasks (via _taSaveTasks/
+// cloudAutoSync) until commitStagedTasks() runs. Purely an in-memory
+// working set, never persisted to localStorage/cloud itself — a page
+// reload with unstaged rows loses them, same as any other unsaved form.
+let _taStagedTasks = [];
 
 function _taGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
 function _taActiveClients(){ return _getClientDB().filter(c=>c.status==='active'); }
@@ -8737,67 +8761,149 @@ async function runTaskEmailParse(){
       statusEl.textContent = 'No tasks found in that text.';
       return;
     }
-    const tasks = _taTasks();
-    let createdCount = 0, mergedCount = 0;
+    // Review-before-assign staging (2026-08-20): parsing must NEVER commit
+    // to the live task list — not a new row, and not a merge into an
+    // existing one either, since a merge also mutates ops_tasks. Every
+    // extracted task (including merge candidates) lands in _taStagedTasks
+    // for review/edit/discard; nothing reaches ops_tasks/notifications/
+    // Assigned Tasks until commitStagedTasks() runs. et.mergeIntoId/
+    // mergeIntoSubject (from api/process-transcript.js's existing dedupe
+    // pass) are carried through unresolved — see commitStagedTasks() for
+    // where the actual narrow additive merge now happens.
     extracted.forEach(et=>{
-      // The server already matched this task against an existing NOT-done
-      // one within scope (same subject/client/assignee, deterministically —
-      // see api/process-transcript.js's isSameTask). Merging here is
-      // deliberately narrow and additive ONLY: notes appended, tags
-      // unioned, due date filled only if the existing task doesn't already
-      // have one, status escalated to Done only if the text says so. Every
-      // other field of the existing task (assignee, client, category,
-      // priority, service, replyStatus, etc.) is left completely
-      // untouched — a wrong fuzzy match costs at most a stray note, never
-      // corrupts someone's real tracked work.
-      if(et.mergeIntoId){
-        const existing = tasks.find(x=>x.id===et.mergeIntoId);
-        if(existing){
-          if(et.notes) existing.notes = existing.notes ? `${existing.notes}\n${et.notes}` : et.notes;
-          existing.tags = [...new Set([...(existing.tags||[]), ...(et.tags||[])])];
-          if(!existing.dueDate && et.dueDate) existing.dueDate = et.dueDate;
-          if(et.status==='Done') existing.status = 'Done';
-          mergedCount++;
-          return;
-        }
-        // Existing row not found in the currently-loaded local list (rare)
-        // — fall through and create a new task rather than silently
-        // dropping this mention.
-      }
-      tasks.push({
+      _taStagedTasks.push({
         id: _taGenId(),
         subject: et.subject, notes: et.notes||'', tags: et.tags||[],
         clientId: et.clientId||null, clientName: et.clientName||'',
-        // The server already matched an "assign this to X" mention in the
-        // text against the real roster (api/process-transcript.js) — use it
-        // as the default assignee here so it shows up pre-filled below
-        // instead of forcing every admin parse through a manual assign
-        // step; still just a default, freely reassignable in the table.
+        // Auto-detected assignee/client are pre-filled but editable — see
+        // _renderTaStaging(); still just a default, freely changed there.
         assigneeId: et.assigneeId||null, assignedById: null,
         category: et.category, priority: et.priority,
         status: et.status||'Not started', dueDate: et.dueDate||'',
         source: 'parsed-email', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         replyStatus: '',
-        // The server already resolved this (the parsed text's own date, or
-        // today if none was found) — defaulting to today here too only
-        // matters if a future client omits it, never in practice.
         assignedDate: et.assignedDate||_taToday(),
+        mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
       });
-      createdCount++;
     });
-    _taSaveTasks(tasks);
-    cloudAutoSync();
     document.getElementById('taParseText').value = '';
     document.getElementById('taParseFileInput').value = '';
     _taParseFileTexts = [];
-    statusEl.textContent = `✅ ${createdCount} new task(s)${mergedCount?`, ${mergedCount} merged into existing task(s)`:''} — assign them below.`;
-    renderTaskAssignments();
+    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — review below before assigning.`;
+    _renderTaStaging();
   } catch(e){
     statusEl.textContent = `❌ ${e.message}`;
   } finally {
     btn.disabled = false;
   }
+}
+
+function _taUpdateStaged(id, field, value){
+  const row = _taStagedTasks.find(x=>x.id===id);
+  if(!row) return;
+  row[field] = value || null;
+  if(field==='clientId'){
+    const c = _taActiveClients().find(x=>x.id===value);
+    row.clientName = c ? c.name : '';
+  }
+}
+
+function discardStagedTask(id){
+  _taStagedTasks = _taStagedTasks.filter(x=>x.id!==id);
+  _renderTaStaging();
+}
+
+function _renderTaStaging(){
+  const wrap = document.getElementById('ta-staging-wrap');
+  const list = document.getElementById('ta-staging-list');
+  const countEl = document.getElementById('taStagingCount');
+  if(!wrap || !list) return;
+  if(!_taStagedTasks.length){
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  if(countEl) countEl.textContent = _taStagedTasks.length;
+  const roster = _timeOffRoster();
+  const clients = _taActiveClients();
+  list.innerHTML = _taStagedTasks.map(row=>{
+    const rowStyle = 'padding:12px 0;border-bottom:1px solid var(--border);';
+    if(row.mergeIntoId){
+      // A merge candidate mutates an EXISTING task (narrow/additive —
+      // notes/tags/dueDate-if-missing/status-if-done only, same as
+      // before this feature) rather than creating a new one, so editable
+      // assignee/client/etc. fields here would be misleading — they'd
+      // never actually apply. Shown read-only with just a Discard option.
+      return `<div style="${rowStyle}">
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(row.subject||'')}</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlAdmin(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
+        <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button></div>
+      </div>`;
+    }
+    return `<div style="${rowStyle}">
+      <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlAdmin(row.subject||'')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
+          <option value="">Unassigned</option>
+          ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
+        </select>
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','clientId',this.value)">
+          <option value="">No client</option>
+          ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlAdmin(c.name)}</option>`).join('')}
+        </select>
+        <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_taUpdateStaged('${row.id}','dueDate',this.value)">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','priority',this.value)">
+          ${TA_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
+        </select>
+        <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','category',this.value)">
+          ${TA_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${TA_CATEGORY_LABELS[c]||c}</option>`).join('')}
+        </select>
+        <button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Commits every remaining staged row — and ONLY these rows — to ops_tasks
+// in one action: a plain row becomes a new task with whatever fields were
+// left/edited in the staging table; a merge-candidate row applies the same
+// narrow, additive-only merge (notes appended, tags unioned, due date
+// filled only if missing, status escalated to Done only if the text said
+// so) that used to happen automatically at parse time — now deferred here,
+// after review, per this feature's whole point ("parsing must NOT commit
+// to the live task list"). Switches to Assigned Tasks afterward so the
+// commit's result is immediately visible, same as "moves them over."
+function commitStagedTasks(){
+  if(!_taStagedTasks.length) return;
+  const tasks = _taTasks();
+  let createdCount = 0, mergedCount = 0;
+  _taStagedTasks.forEach(row=>{
+    if(row.mergeIntoId){
+      const existing = tasks.find(x=>x.id===row.mergeIntoId);
+      if(existing){
+        if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
+        existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
+        if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
+        if(row.status==='Done') existing.status = 'Done';
+        mergedCount++;
+        return;
+      }
+      // Existing row no longer in the currently-loaded local list (rare)
+      // — fall through and create a new task rather than silently
+      // dropping this one.
+    }
+    const { mergeIntoId, mergeIntoSubject, ...task } = row;
+    tasks.push(task);
+    createdCount++;
+  });
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  _taStagedTasks = [];
+  _renderTaStaging();
+  showToast(`✅ ${createdCount} task(s) assigned${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
+  setTaSubtab('assigned');
 }
 
 // ═══════════════════════════════════════════════════════════

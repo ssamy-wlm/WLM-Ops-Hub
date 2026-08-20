@@ -1535,6 +1535,95 @@ session's pre-existing Task Assignments Playwright regression suites
 (button/calendar, schedule tab, dedupe/merge, 19-task completeness) re-run
 clean against the combined file — 43/43, no regressions from this change.
 
+**Task parser: client roster in prompt + broadened owner detection +
+review-before-assign staging (2026-08-20).** Three related changes, one
+PR, since the third depends on knowing both auto-detected fields exist.
+
+**A. Client detection** — `buildTaskEmailSystemPrompt()` now takes the
+live active client name list (same list `matchClientByTextMention()`
+already draws from, including "WebLight Media (Internal)") and asks the
+model for a new `clientName` field per task, matched to the EXACT name in
+that list, best-matching a near-miss/phonetic spelling (e.g. "surf pro" →
+"Servpro") rather than requiring an exact spelling in the source text.
+Server-side, `matchClientByName()` re-validates the model's output against
+the real list before trusting it — a hallucinated or slightly-off name is
+never treated as a match. This is the PRIMARY client-detection signal now,
+checked before the existing code-side `matchClient()` (email/domain/text-
+mention), which remains as the fallback for whatever the model leaves
+empty or gets wrong — same precedence relationship `ownerName`/
+`matchOwner()` already has with the roster.
+
+**B. Owner detection broadened** — the `ownerName` prompt bullet now
+explicitly covers per-person ownership language beyond an explicit
+"assigned to X": possessive framing ("X's priorities", "X's tasks" — a
+list introduced this way belongs to X for every item under it), stated
+future commitments ("X will…", "X agreed to…", "X is going to…"), and
+reported speech ("X shared they'll…", "X mentioned she's going to…").
+Still only ever resolves to a name from the live roster (`matchOwner()`
+unchanged); still empty if no specific person is identifiable.
+
+**C. Review-before-assign staging (the main change)** — parsing no longer
+writes anywhere. `runTaskEmailParse()` (`index.html`) and
+`runDtEmailParse()` (`user.html`) now populate an in-memory-only
+`_taStagedTasks`/`_dtStagedTasks` array instead of pushing into the real
+task list and calling `cloudAutoSync()`/`_scheduleCloudPush()` — nothing
+reaches `ops_tasks`, no assignment notification fires, and nothing shows
+in Assigned Tasks/My assigned tasks until a new "✅ Save / assign these"
+button (`commitStagedTasks()`/`commitDtStagedTasks()`) is clicked. This
+applies to EVERY extracted task, including a dedupe-matched merge
+candidate (`mergeIntoId`) — a merge also mutates `ops_tasks`, so it waits
+for commit too, deferred from where it used to happen automatically at
+parse time. A staged row renders as an editable review card: subject
+(read-only), then either (a) a new-task row with editable assignee
+(`index.html` only — `user.html` shows a read-only "👤 &lt;name&gt;" badge
+instead, since a member can't assign to anyone else, the same existing
+role split every other member-facing surface in this app already
+enforces), client, due date, priority, and category selects, all
+pre-filled from the server's auto-detection but freely changed before
+committing; or (b) a merge-candidate row, shown read-only ("↪ Will merge
+into existing task: X") with no editable fields, since editing them
+wouldn't apply to a merge anyway — just a Discard button. Discarding a row
+removes it from staging only, no network call, nothing committed.
+Committing applies the identical narrow/additive merge logic that used to
+run automatically (notes appended, tags unioned, due date filled only if
+missing, status escalated to Done only if the text said so) to whichever
+rows still carry a `mergeIntoId`, builds a plain new task from every other
+row's current (possibly edited) field values, pushes both in one
+`_taSaveTasks()`/`dbSet(DB_KEYS.tasks)` + sync call, clears staging, and
+switches to Assigned Tasks/My assigned tasks so the result is immediately
+visible. The role-scope filter on parse itself (`callerTaskScope()` in
+`api/process-transcript.js`) is unchanged — a member/manager-tier caller
+still never receives an out-of-scope task in the HTTP response, staging or
+otherwise.
+
+No new `api/*.js` file — both parts touch only the existing
+`process-transcript.js` endpoint and are pure client-side state in the two
+portals; still exactly 12 files under `api/`.
+
+Verified with a Node script against the real, byte-identical
+`api/process-transcript.js` (13/13: exact clientName match, "WebLight
+Media (Internal)" exact match, empty-clientName fallback to the existing
+`matchClient()` domain signal, a hallucinated clientName never trusted,
+and the prompt itself carrying the live client list plus the broadened
+ownerName language) — the existing 53/53 process-transcript checks re-run
+clean alongside it. Playwright against the real `index.html` UI: 26/26
+(staging populates without touching Assigned Tasks or firing an ops-sync
+call, auto-detected client/owner pre-filled, editing a field takes effect,
+discarding a row drops it, committing pushes exactly the remaining rows
+with edits intact and switches to Assigned Tasks) + 9/9 (a merge row
+committed applies the exact same additive merge as before, with no
+duplicate row created). Playwright against the real `user.html` UI: 17/17
+(no assignee select anywhere in staging — exactly the client/priority/
+category selects — the assignee shown as read-only text instead, editing
+the client takes effect, committing lands in My assigned tasks only).
+Three pre-existing Task Assignments Playwright suites needed updating (not
+because of a regression — because they asserted the OLD auto-commit
+behavior this task deliberately replaced): the dedupe/merge suite and the
+19-task completeness suite now check the staging state first, then click
+commit, then re-run the exact same post-commit assertions they always
+had; both re-run clean. The schedule-tab and button/calendar suites needed
+no changes and re-run clean as-is.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
