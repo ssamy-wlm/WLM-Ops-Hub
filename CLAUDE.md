@@ -1850,6 +1850,25 @@ old Team Assessment Playwright suite is now obsolete, not a regression —
 it asserted card-list/sparkline/due-label behavior that no longer exists
 by design; superseded by the new suite above.
 
+**Overview: Team Assessment/Recent Activity stacked instead of
+side-by-side (2026-08-20).** The fixed/flexible two-column split from the
+entry above (Team Assessment pinned to 460px, Recent Activity taking the
+rest) was replaced with a simple stacked layout: `.ov-top-grid` is now
+`display:flex;flex-direction:column` (dropped the per-child `flex:0 0
+460px`/`flex:1` rules entirely) — Team Assessment renders first, full
+width, with Recent Activity below it, also full width. Nothing inside
+either card changed — Team Assessment's 6-column table, Recent Activity's
+wrap/scroll behavior (`#ov-activity-list`'s bounded `max-height`/
+`overflow-y:auto`), the sparkline removal, all untouched. Verified with a
+new Playwright suite (13/13: Team Assessment is the first child and sits
+above Recent Activity, both cards match the grid's full width at two
+different viewport widths, table content and wrap/scroll both regression-
+checked) and by updating the prior suite's now-superseded "Team Assessment
+stays fixed-width" assertion to its opposite ("Team Assessment now resizes
+like Recent Activity, and the two are stacked, not side-by-side") — that
+suite's other 21 checks (data correctness, sparkline removal, wrap/scroll)
+re-run clean, confirming this was a pure layout change.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
