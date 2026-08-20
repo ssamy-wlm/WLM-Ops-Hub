@@ -311,15 +311,20 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
   .admin-sidebar.open{transform:translateX(0);}
 }
 .admin-content{padding:28px 32px;}
-/* Overview's top row (Team Assessment + Recent Activity) — fills the full
-   width via fr units already (no fixed-px cap to remove), but never
-   collapsed to one column on a narrow window, squeezing both cards. Stacks
-   at the same 900px breakpoint the sidebar already uses, so the two
-   thresholds move together instead of drifting apart over time. */
-.ov-top-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start;}
-@media(max-width:900px){
-  .ov-top-grid{grid-template-columns:1fr;}
-}
+/* Overview's top row (Team Assessment + Recent Activity) — continuous
+   reflow instead of a hard breakpoint snap: flex-wrap with a per-card
+   flex-basis (not a grid auto-fit/minmax, which would force both cards to
+   equal width the moment they share a row, losing Team Assessment's
+   intentionally-wider treatment). Team Assessment's larger basis (380px,
+   flex-grow 1.5) keeps it visually dominant whenever there's room for
+   both; either card wraps to its own full-width row on its own the moment
+   it no longer fits, no sudden jump at one fixed width. min-width:0 lets
+   each card's own content (e.g. long names in the roster) wrap instead of
+   forcing horizontal overflow. */
+.ov-top-grid{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;}
+.ov-top-grid > *{min-width:0;}
+.ov-top-grid > :first-child{flex:1.5 1 380px;}
+.ov-top-grid > :last-child{flex:1 1 280px;}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
 .admin-stat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;text-align:center;}
 .as-val{font-family:'Poppins',sans-serif;font-size:26px;color:var(--text-dark);}

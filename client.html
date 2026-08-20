@@ -106,18 +106,19 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
    2 narrower weekend, matching CAL_GRID_COLS in JS; keep these two in sync
    if that constant ever changes) that fill the card width via fr units.
    min-width:0 on every cell (set inline per-cell in _renderWeekGrid()/
-   _renderMonthGrid()) is what actually lets a long client/service name
-   truncate with its existing ellipsis styling instead of forcing the whole
-   grid — and the page — wider than the viewport, at any width down through
-   the narrowest verified (768px). A true vertical single-column stack on a
-   phone-width screen is deliberately NOT done here: the header row and day
-   cells are flat siblings of one shared grid on purpose (see the
-   2026-07-29 alignment-fix comment above _renderWeekGrid) so collapsing to
-   1 column would interleave all 7 headers before all 7 day cells instead
-   of pairing each day with its header — fixing that needs a DOM
-   restructure, not a CSS rule, so it's out of scope for this presentational
-   pass. Flagged as a follow-up rather than silently skipped. */
-.cal-week-grid{display:grid;grid-template-columns:repeat(5,1fr) repeat(2,0.55fr);}
+   _renderMonthGrid()) lets a column actually shrink instead of forcing the
+   whole grid — and the page — wider than the viewport. Event/service text
+   in a day cell WRAPS instead of truncating (see _calEventCard's
+   white-space:normal;overflow-wrap:anywhere) and cells grow taller to fit
+   — align-items:start here (plus each cell's own align-self:start, set
+   inline) keeps a short/empty day from stretching to match a tall
+   neighbor's wrapped content in the same row. Below ~700px this calendar
+   isn't shown at all — Service Schedule defaults to the List view instead
+   (see _scheduleViewUserSet/SCHEDULE_PHONE_BREAKPOINT), since the header
+   row and day cells are flat siblings of one shared grid on purpose (see
+   the 2026-07-29 alignment-fix comment above _renderWeekGrid) and a true
+   vertical stack would need a DOM restructure, not a CSS rule. */
+.cal-week-grid{display:grid;grid-template-columns:repeat(5,1fr) repeat(2,0.55fr);align-items:start;}
 
 /* ── BUTTONS ── */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:9px;font-family:'Poppins',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:all .18s;white-space:nowrap;}
@@ -7025,10 +7026,10 @@ function _calEventCard(ev, todayStr){
   const icon=ev.type==='service'?'↻':'▣';
   return `<div onclick="calShowDay('${ev.due}')" title="${ev.client}: ${ev.label} (${ev.agent||'Unassigned'})"
     style="display:flex;flex-direction:column;gap:1px;padding:4px 6px;margin-bottom:3px;border-radius:6px;background:${barColor}14;border-left:3px solid ${barColor};cursor:pointer;">
-    <div style="display:flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;color:var(--text-dark);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+    <div style="display:flex;align-items:flex-start;gap:4px;font-size:10.5px;font-weight:700;color:var(--text-dark);white-space:normal;overflow-wrap:anywhere;">
       <span style="font-size:9px;color:${barColor};flex-shrink:0;">${icon}</span>${escHtmlClient(ev.label)}
     </div>
-    <div style="font-size:9px;color:var(--text-light);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(ev.client)}${ev.agent?' · '+escHtmlClient(ev.agent):''}</div>
+    <div style="font-size:9px;color:var(--text-light);white-space:normal;overflow-wrap:anywhere;">${escHtmlClient(ev.client)}${ev.agent?' · '+escHtmlClient(ev.agent):''}</div>
   </div>`;
 }
 // Light, deliberate "nothing due" placeholder — an empty day used to just
