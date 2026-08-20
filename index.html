@@ -311,20 +311,26 @@ body.restrict-insights-actions #clearFeedBtn{display:none!important;}
   .admin-sidebar.open{transform:translateX(0);}
 }
 .admin-content{padding:28px 32px;}
-/* Overview's top row (Team Assessment + Recent Activity) — continuous
-   reflow instead of a hard breakpoint snap: flex-wrap with a per-card
-   flex-basis (not a grid auto-fit/minmax, which would force both cards to
-   equal width the moment they share a row, losing Team Assessment's
-   intentionally-wider treatment). Team Assessment's larger basis (380px,
-   flex-grow 1.5) keeps it visually dominant whenever there's room for
-   both; either card wraps to its own full-width row on its own the moment
-   it no longer fits, no sudden jump at one fixed width. min-width:0 lets
-   each card's own content (e.g. long names in the roster) wrap instead of
-   forcing horizontal overflow. */
-.ov-top-grid{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;}
-.ov-top-grid > *{min-width:0;}
-.ov-top-grid > :first-child{flex:1.5 1 380px;}
-.ov-top-grid > :last-child{flex:1 1 280px;}
+/* Overview's top row (Team Assessment + Recent Activity). Revised
+   2026-08-20 (again) — Sarah's explicit ask this time inverts the earlier
+   "both cards reflow fluidly" design: Team Assessment (now a compact
+   numbers table, see refreshAdminOverview()) is a FIXED-width column that
+   never resizes or reflows on its own; Recent Activity alone takes
+   whatever width is left and is the only thing that reflows on resize.
+   No flex-wrap here on purpose — the two columns never stack into rows,
+   at any width, per "must not reflow or resize" — so a window narrower
+   than ~460px + Recent Activity's own practical minimum will scroll the
+   PAGE horizontally rather than collapsing Team Assessment. That's an
+   accepted, deliberate tradeoff of this explicit instruction, not an
+   oversight (contrast with every other Overview/Service-Schedule
+   responsive pass in this codebase, which treated any horizontal page
+   scroll as a bug to fix — this one specific column is exempted on
+   purpose). min-width:0 on Recent Activity only (not Team Assessment,
+   which has a real fixed width and nothing to shrink from) lets its own
+   content wrap instead of forcing itself wider than its allotted space. */
+.ov-top-grid{display:flex;gap:18px;align-items:flex-start;}
+.ov-top-grid > :first-child{flex:0 0 460px;width:460px;}
+.ov-top-grid > :last-child{flex:1;min-width:0;}
 .admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
 .admin-stat{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;text-align:center;}
 .as-val{font-family:'Poppins',sans-serif;font-size:26px;color:var(--text-dark);}
@@ -1242,27 +1248,41 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
         <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
       </div>
-      <!-- align-items:start — without it, CSS Grid's default stretch makes
-           both cards match the taller one's height every row, so once Team
-           Assessment renders its full (now-unbounded) roster, Recent
-           Activity's card container stretched to match while its own
-           content stayed a short, fixed-height 460px scroll box — a nested
-           scrollbar floating in a big empty gap. Each card now sizes to its
-           own content; if the page overall needs to scroll, the page
-           scrolls, not a box inside it (2026-08-07). -->
+      <!-- Team Assessment (fixed-width numbers table) + Recent Activity
+           (flexible, internally-scrolling) — see .ov-top-grid's comment
+           above for why these two no longer share the old "both cards
+           reflow fluidly" treatment (2026-08-20). align-items:flex-start
+           keeps each card's own height independent of the other — Team
+           Assessment is now a short, bounded table; Recent Activity can
+           run to 30 rows, capped by its own internal scroll instead. -->
       <div class="ov-top-grid">
         <div class="card">
           <div class="card-header">
             <div>
               <div class="card-title">Team Assessment</div>
-              <div class="card-sub">% done, when their next work is due, and completion trend — every employee &amp; admin against their assigned work</div>
+              <div class="card-sub">Tasks and services assigned vs. done, per person — every employee &amp; admin against their assigned work</div>
             </div>
           </div>
-          <div class="card-body" id="ov-team-assessment"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">Loading…</div></div>
+          <div class="card-body" style="padding:0;">
+            <table style="width:100%;">
+              <thead>
+                <tr>
+                  <th style="padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Person</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Tasks</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Svcs</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                  <th style="padding:10px 14px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Total %</th>
+                </tr>
+              </thead>
+              <tbody id="ov-team-assessment"><tr><td colspan="6" style="padding:12px 14px;font-size:13px;color:var(--text-light);">Loading…</td></tr></tbody>
+            </table>
+            <div id="ov-team-assessment-empty" style="display:none;text-align:center;padding:24px 14px;color:var(--text-light);font-size:13px;">No assigned work yet.</div>
+          </div>
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Recent Activity</div></div>
-          <div class="card-body" id="ov-activity-list"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No recent activity.</div></div>
+          <div class="card-body" id="ov-activity-list" style="max-height:460px;overflow-y:auto;"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No recent activity.</div></div>
         </div>
       </div>
     </div>
@@ -9050,54 +9070,40 @@ function refreshAdminOverview(){
   }
   const allFeed = dbGet(DB_KEYS.feed)||[];
 
-  // Team Assessment — per-person productivity dashboard (replaces the old
-  // "Team Progress" bundles-by-assignee list). Read-only aggregation only.
+  // Team Assessment — per-person numbers table (revised 2026-08-20 from a
+  // card-list-with-sparkline into a plain table; the sparkline and its
+  // whole underlying "done events over the last 10 weeks" trend
+  // computation are removed outright, not just hidden — nothing else in
+  // this file reads taWeekKeys/taDoneWeeksByName, so keeping that
+  // machinery around unused would just be dead code). Read-only
+  // aggregation only, no writes.
   //
-  // % done: count of assigned services with workStatus==='done' ÷ total
-  // assigned services (Sarah's explicit decision, 2026-08-06). A service
-  // with no workStatus set counts as NOT done — it's in the denominator,
-  // never excluded. This dashboard originally shipped computing % done from
-  // _chIsDoneThisCycle (Client Health's "has a lastDone AND isn't currently
-  // overdue" heuristic — a snapshot of whether the CURRENT cycle looks
-  // caught up, not whether the person ever actually marked anything done).
-  // That produced misleadingly high numbers for anyone whose services
-  // simply have far-future due dates regardless of real completion —
-  // confirmed live: Sherine, 43 assigned / 0 ever marked done, showed 97%.
-  // Fixed to read the real workStatus field instead; see _taSvcDueStatus
-  // below for the matching due-status bucketing (also workStatus-aware now,
-  // via its own local copy rather than editing the shared _chSvcDueStatus —
-  // that function also drives Client Health, which nobody reported as wrong
-  // and is out of scope here).
+  // Five columns: Tasks assigned, Tasks done, Services assigned, Services
+  // done, Total % done. "Done" for BOTH tasks and services is the literal,
+  // already-established definition (status/workStatus==='done') — Sarah
+  // confirmed keeping this rather than reintroducing Client Health's
+  // _chIsDoneThisCycle heuristic (lastDone-is-set-and-not-overdue) for the
+  // services column specifically, since that heuristic is exactly what
+  // this same dashboard's % done was ALREADY changed away from on
+  // 2026-08-06 after it produced a misleading 97% for someone (Sherine)
+  // who had never actually marked anything done — reusing it here would
+  // silently reintroduce that bug into the new Total % column too, since
+  // it shares the same denominator/numerator idea.
   //
-  // Roster (_timeOffRoster — users + admins, deduped), assignee resolution
-  // (_wlSvcAssigneeIds/_wlSvcAssignedTo), and service universe (active
-  // clients' c.services[] + c.locations[].services[]) are unchanged — same
-  // helpers Client Health/Workload already use, hand-reused within this
-  // file (zero-shared-code rule: no import, no shared module).
+  // Tasks come from ops_tasks (dbGet(DB_KEYS.tasks), the same store
+  // Task Assignments/Daily Tasks read/write) filtered by assigneeId — no
+  // "active/inactive" concept exists on a task (only Not started/In
+  // progress/Done), so every task assigned to a person counts, unlike
+  // services below.
   //
-  // FLAG: c.recurringServices[] — a separate, legacy index.html-only
-  // service array (see its own comment where it's defined) — is NOT
-  // included here, same as Workload doesn't include it today. Including it
-  // here while Workload doesn't would make this dashboard's overdue counts
-  // NOT match Workload for anyone with legacy recurringServices, which
-  // would break this task's own acceptance criterion ("Overdue counts
-  // match the Workload view for the same person") — so this dashboard
-  // intentionally carries the same known gap Workload already has, rather
-  // than silently fixing one screen and not the other.
-  //
-  // Completed-over-time trend: the ONLY completion history that exists
-  // anywhere is these same "done" feed events — a service record itself
-  // keeps just one current lastDone, never a log of past completions.
-  // On-time completion rate is deliberately OMITTED, not faked: every
-  // completion event's own detail text shows the NEXT due date rolled
-  // forward AFTER completion (e.g. "...marked done. Next due: 2026-09-05"),
-  // never the due date that completion actually satisfied — confirmed by
-  // reading every pushNotif() call site that fires on completion. With
-  // neither the feed event nor the post-completion service record
-  // retaining the due date a completion was measured against, there is no
-  // real data to compare a completion timestamp to, so this metric cannot
-  // be built honestly yet.
+  // Services: active clients' c.services[] + c.locations[].services[],
+  // excluding cancelled/archived (_chIsInactiveService — "same filter as
+  // Client Health" per this task's own instruction) — same roster
+  // (_timeOffRoster) and assignee-matching (_wlSvcAssignedTo) helpers
+  // Client Health/Workload already use, hand-reused here (zero-shared-code
+  // rule: no import, no shared module).
   const taContainer = document.getElementById('ov-team-assessment');
+  const taEmptyEl = document.getElementById('ov-team-assessment-empty');
   if(taContainer){
     const taClients = _getClientDB().filter(c=>(c.status||'active')==='active');
     const taAllServices = [];
@@ -9105,178 +9111,47 @@ function refreshAdminOverview(){
       (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s));
       (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s)));
     });
-    const taAdmins = dbGet(DB_KEYS.admins)||[];
-    const taToday = new Date().toISOString().slice(0,10);
-
-    const TA_WEEKS = 10;
-    function _taWeekStartKey(d){
-      const dt = new Date(d); const day = (dt.getDay()+6)%7; // Mon=0..Sun=6
-      dt.setDate(dt.getDate()-day); dt.setHours(0,0,0,0);
-      return dt.toISOString().slice(0,10);
-    }
-    const taWeekKeys = []; // oldest -> newest, TA_WEEKS entries
-    { const cur=new Date(); for(let i=TA_WEEKS-1;i>=0;i--){ const d=new Date(cur); d.setDate(d.getDate()-i*7); taWeekKeys.push(_taWeekStartKey(d)); } }
-    // Name -> [weekKey,...] for every "done" event in the trailing window.
-    // e.user is a NAME, not a stable id (same as every other feed event —
-    // Recent Activity has the same constraint) — matched case-insensitively
-    // against the roster, the same fuzzy-name fallback already used by
-    // _wlSvcAssignedTo/_timeOffRoster elsewhere in this file.
-    const taDoneWeeksByName = {};
-    allFeed.forEach(e=>{
-      if(e.type!=='client' || !_isDoneActivity(e)) return;
-      // e.time (ISO string, logActivity) or e.ts (epoch ms, client.html's
-      // direct pushNotif->feed write) — both real shapes, see Recent
-      // Activity below for the same fallback.
-      const rawTs = e.time||e.ts; if(!rawTs) return;
-      const wk = _taWeekStartKey(rawTs);
-      if(!taWeekKeys.includes(wk)) return;
-      const key = (e.user||'').trim().toLowerCase(); if(!key) return;
-      (taDoneWeeksByName[key]=taDoneWeeksByName[key]||[]).push(wk);
-    });
+    const taAllTasks = dbGet(DB_KEYS.tasks)||[];
 
     function _taPctColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
 
-    // % done was previously computed from _chIsDoneThisCycle (Client
-    // Health's "has a lastDone AND isn't currently overdue" heuristic) —
-    // that answers "is this person's CURRENT cycle caught up", not "did
-    // they actually mark this done", so someone who never marks anything
-    // done but simply has far-future due dates showed a near-100% rate
-    // (confirmed live: Sherine — 43 assigned, 0 ever marked done — showed
-    // 97%). Sarah's decided formula is the literal, honest one: count only
-    // services with workStatus==='done' as done, over ALL assigned
-    // services (services with no workStatus set count as NOT done, not
-    // excluded). Deliberately a LOCAL due-status helper (_taSvcDueStatus),
-    // not a change to the shared _chSvcDueStatus — that function also
-    // drives Client Health, which is out of scope for this fix and not
-    // reported as wrong; changing it here would have silently changed
-    // Client Health's overdue/at-risk counts too.
-    // 'pending' (2026-08-10): same rule PR #220 added to the shared
-    // _chSvcDueStatus, hand-reused here rather than imported (this
-    // function's whole reason to exist is staying independent of that one
-    // — see the comment above it) — not done this cycle, not overdue, not
-    // within the 7-day Due Soon window, but still due somewhere in the
-    // CURRENT calendar month. per-request/one-time are excluded from due-
-    // status entirely here too, same as #220, for the same reason: neither
-    // is a cadence this rollup should ever call overdue.
-    function _taSvcDueStatus(svc, todayStr){
-      if(svc.workStatus==='done') return 'ok'; // completed this cycle — not overdue/at-risk
-      if(!svc.due || svc.freq==='per-request' || svc.freq==='one-time') return 'ok';
-      if(svc.due<todayStr) return 'overdue';
-      const soon=new Date(); soon.setDate(soon.getDate()+CH_DUE_SOON_DAYS);
-      if(svc.due<=soon.toISOString().slice(0,10)) return 'soon';
-      return svc.due.slice(0,7)===todayStr.slice(0,7) ? 'pending' : 'ok';
-    }
-    // Plain-integer day count between two 'YYYY-MM-DD' strings (later minus
-    // earlier) — parsed via Date.UTC so this never drifts with local
-    // timezone offset the way `new Date(dateStr)` on a bare date string can.
-    function _taDaysBetween(earlier, later){
-      const p = s => { const [y,m,d]=s.slice(0,10).split('-').map(Number); return Date.UTC(y,m-1,d); };
-      return Math.round((p(later)-p(earlier))/86400000);
-    }
-    // "due in X days" label (2026-08-07, replaces the old "N overdue · N at
-    // risk" wording — Sarah: "at risk" isn't actionable and the number
-    // doesn't map to an obvious window). Built from the same not-done,
-    // dated services already being bucketed above — most-overdue service
-    // wins if any are overdue, else the single soonest upcoming one.
-    function _taDueLabel(overdueDates, upcomingDates, todayStr){
-      if(overdueDates.length){
-        const mostOverdue = overdueDates.reduce((a,b)=>a<b?a:b); // earliest date = most overdue
-        const days = _taDaysBetween(mostOverdue, todayStr);
-        return { text:`overdue by ${days} day${days===1?'':'s'}`, color:'var(--red)' };
-      }
-      if(!upcomingDates.length) return { text:'nothing due', color:'var(--text-light)' };
-      const soonest = upcomingDates.reduce((a,b)=>a<b?a:b);
-      if(soonest===todayStr) return { text:'due today', color:'var(--orange)' };
-      const days = _taDaysBetween(todayStr, soonest);
-      return { text:`due in ${days} day${days===1?'':'s'}`, color: days<=7?'var(--orange)':'var(--text-light)' };
-    }
-
     const taRows = _timeOffRoster().map(person=>{
-      const admin = taAdmins.find(a=>a.id===person.id);
-      const roleLabel = admin ? _getLevelInfo(admin.level).label : (person.role||'Contractor');
-      let ok=0, soon=0, overdue=0, done=0, pending=0;
-      const overdueDates=[], upcomingDates=[]; let dueThisWeek=0;
-      taAllServices.forEach(s=>{
-        if(!_wlSvcAssignedTo(s, person.id, person.name)) return;
-        const status=_taSvcDueStatus(s, taToday);
-        // 'pending' gets its own bucket, never folded into overdue — the
-        // catch-all else below would otherwise silently miscount it, same
-        // bug PR #220 found and fixed in Workload/My Team's Work.
-        if(status==='ok') ok++; else if(status==='soon') soon++; else if(status==='pending') pending++; else overdue++;
-        if(s.workStatus==='done'){ done++; return; }
-        // Same per-request/one-time exclusion as _taSvcDueStatus just above —
-        // without it, a per-request/one-time service with a stale due date
-        // would still land in overdueDates below and make dueLabel say
-        // "overdue by N days" for a service the bucket counts just correctly
-        // classified as 'ok', a real mismatch this fix would otherwise
-        // introduce between the two.
-        if(!s.due || s.freq==='per-request' || s.freq==='one-time') return;
-        if(s.due<taToday) overdueDates.push(s.due);
-        else {
-          upcomingDates.push(s.due);
-          if(s.due<=(()=>{ const d=new Date(); d.setDate(d.getDate()+CH_DUE_SOON_DAYS); return d.toISOString().slice(0,10); })()) dueThisWeek++;
-        }
-      });
-      // pending counts toward total (it's still an assigned, countable
-      // service, just not urgent yet) — leaving it out would shrink the
-      // "done ÷ ALL assigned services" denominator below the real assigned
-      // count the moment a service becomes pending instead of "ok".
-      const total = ok+soon+overdue+pending;
-      // 0 assigned services -> null (renders as "—"), never a false 100%
-      // (the David-type bug: nothing assigned still showed 100% before).
-      const pctDone = total ? Math.round(done/total*100) : null;
-      const nameKey = (person.name||'').trim().toLowerCase();
-      const doneWeeks = taDoneWeeksByName[nameKey]||[];
-      const weekCounts = taWeekKeys.map(wk=>doneWeeks.filter(w=>w===wk).length);
-      const maxWeek = Math.max(1, ...weekCounts);
-      const dueLabel = _taDueLabel(overdueDates, upcomingDates, taToday);
-      return { id:person.id, name:person.name||'(unnamed)', roleLabel, total, overdue, soon, pending, pctDone, weekCounts, maxWeek, dueLabel, dueThisWeek };
+      const tasksForPerson = taAllTasks.filter(t=>t.assigneeId===person.id);
+      const tasksAssigned = tasksForPerson.length;
+      const tasksDone = tasksForPerson.filter(t=>t.status==='Done').length;
+      const servicesForPerson = taAllServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
+      const servicesAssigned = servicesForPerson.length;
+      const servicesDone = servicesForPerson.filter(s=>s.workStatus==='done').length;
+      const totalAssigned = tasksAssigned+servicesAssigned;
+      // 0 assigned (of either kind) -> null (renders as "—"), never a
+      // false 100% (the David-type bug: nothing assigned still showed
+      // 100% before this dashboard's 2026-08-06 fix).
+      const pctDone = totalAssigned ? Math.round((tasksDone+servicesDone)/totalAssigned*100) : null;
+      return { id:person.id, name:person.name||'(unnamed)', tasksAssigned, tasksDone, servicesAssigned, servicesDone, pctDone };
     })
-      // No total>0 filter — a person with zero assigned services still
-      // shows (0%/"—"), per Sarah's explicit acceptance criterion, instead
-      // of being silently hidden from the roster.
-      // Most-behind-on-this-month's-work first: overdue+pending combined is
-      // the primary key (someone piling up pending work should surface
-      // before someone with a single stray overdue item and nothing else
-      // brewing), then plain overdue as a tiebreak so of two people with an
-      // equal combined count, the one with more ALREADY-overdue work still
-      // ranks first, then the same soon/total/name tiebreak chain Workload
-      // already uses.
-      .sort((a,b)=>((b.overdue+b.pending)-(a.overdue+a.pending))||(b.overdue-a.overdue)||(b.soon-a.soon)||(b.total-a.total)||a.name.localeCompare(b.name));
+      // No totalAssigned>0 filter — a person with zero assigned work still
+      // shows (0%/"—"), per this dashboard's existing acceptance criterion,
+      // instead of being silently hidden from the roster. Alphabetical —
+      // this is now a plain numbers table, not an urgency-ranked list, so
+      // there's no "most behind" concept left to sort by.
+      .sort((a,b)=>a.name.localeCompare(b.name));
 
     if(!taRows.length){
-      taContainer.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:12px 0;">No assigned service work yet.</div>';
+      taContainer.innerHTML='';
+      if(taEmptyEl) taEmptyEl.style.display='block';
     } else {
+      if(taEmptyEl) taEmptyEl.style.display='none';
       taContainer.innerHTML = taRows.map(r=>{
-        const initials = r.name.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
         const pctColor = _taPctColor(r.pctDone);
         const pctLabel = r.pctDone==null ? '—' : r.pctDone+'%';
-        const sparkline = r.weekCounts.map(c=>{
-          const h = Math.max(3, Math.round((c/r.maxWeek)*22));
-          return `<div title="${c} completed this week" style="width:5px;height:22px;display:flex;align-items:flex-end;">
-            <div style="width:100%;height:${h}px;background:${c>0?'var(--btn)':'var(--bg2)'};border-radius:1px;"></div>
-          </div>`;
-        }).join('');
-        return `<div style="padding:14px 0;border-bottom:1px solid var(--border);">
-          <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
-            <div class="avatar" style="width:32px;height:32px;font-size:11px;flex-shrink:0;">${initials}</div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.name}</div>
-              <div style="font-size:11px;color:var(--text-light);">${r.roleLabel}</div>
-            </div>
-            <div style="text-align:right;flex-shrink:0;">
-              <div style="font-size:15px;font-weight:800;color:${pctColor};">${pctLabel}</div>
-              <div style="font-size:9px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">done</div>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:14px;padding-left:41px;">
-            <div style="font-size:11px;white-space:nowrap;">
-              <span style="font-weight:700;color:${r.dueLabel.color};">${r.dueLabel.text}</span>${r.dueThisWeek>0?` <span style="color:var(--text-light);">· ${r.dueThisWeek} due this week</span>`:''}${r.pending>0?` <span style="color:var(--accent);">· ${r.pending} pending this month</span>`:''}
-            </div>
-            <div style="flex:1;"></div>
-            <div style="display:flex;gap:2px;align-items:flex-end;height:22px;flex-shrink:0;" title="Completions, last ${TA_WEEKS} weeks">${sparkline}</div>
-          </div>
-        </div>`;
+        return `<tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
+          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
+          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
+          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesAssigned}</td>
+          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesDone}</td>
+          <td style="padding:10px 14px;text-align:right;font-size:12.5px;font-weight:700;color:${pctColor};">${pctLabel}</td>
+        </tr>`;
       }).join('');
     }
   }
@@ -9328,12 +9203,31 @@ function refreshAdminOverview(){
       // service work, see the filter above), so a single small green
       // checkmark replaces the old per-type icon/color lookup rather than
       // varying by event subtype.
+      //
+      // WRAP, don't truncate (2026-08-20): this row used white-space:
+      // nowrap;overflow:hidden;text-overflow:ellipsis — a long event
+      // description/detail line was cut off mid-sentence with no way to
+      // read the rest and no scrollbar to reach it. Replaced with
+      // white-space:normal so the full sentence wraps onto as many lines
+      // as it needs; align-items:flex-start (not center) so the checkmark
+      // sits with the FIRST line rather than centering oddly against a
+      // taller wrapped block. The card itself (#ov-activity-list) now
+      // scrolls vertically past a bounded height (see its style attribute)
+      // instead of growing the whole page — this reverses the 2026-08-07
+      // "let the card grow unbounded" decision, but that decision's own
+      // reasoning no longer applies: it existed to stop Recent Activity's
+      // container being stretched tall by Team Assessment's unbounded
+      // roster in the same CSS Grid row; Team Assessment is now a fixed-
+      // width, naturally-short table (align-items:flex-start on
+      // .ov-top-grid already stops any stretch-to-match regardless), so a
+      // bounded, internally-scrolling Recent Activity no longer reintroduces
+      // that bug.
       activityEl.innerHTML = actEvents.map(e=>{
         const when = _timeSince(e.time||e.ts);
         const sub  = [e.user||'', e.detail||'', when].filter(Boolean).join(' · ');
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;">
-          <span style="color:var(--green);font-size:13px;flex-shrink:0;" title="Done">✓</span>
-          <div style="flex:1;min-width:0;font-size:12.5px;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:8px;">
+          <span style="color:var(--green);font-size:13px;flex-shrink:0;margin-top:1px;" title="Done">✓</span>
+          <div style="flex:1;min-width:0;font-size:12.5px;color:var(--text-dark);white-space:normal;overflow-wrap:anywhere;">
             <span style="font-weight:600;">${e.desc||''}</span><span style="color:var(--text-light);font-weight:400;"> — ${sub}</span>
           </div>
         </div>`;
