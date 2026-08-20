@@ -1869,6 +1869,89 @@ like Recent Activity, and the two are stacked, not side-by-side") — that
 suite's other 21 checks (data correctness, sparkline removal, wrap/scroll)
 re-run clean, confirming this was a pure layout change.
 
+**Task Assignments: per-person Daily Tasks view (admin) + "Blocked" task
+status (2026-08-20).** Two parts, one PR, `index.html`-only for part A,
+both portals for part B — no new `api/*.js` file, still 12.
+
+**A. Per-person Daily Tasks view.** A third Task Assignments sub-tab,
+"👤 By Person" (`ta-subtab-person`), lists every active member/admin from
+`_timeOffRoster()` with a tasks-assigned/done/% summary and a red (has an
+overdue task)/amber (has a Blocked one, no overdue)/no-dot indicator. The
+per-person summary itself is NOT a new computation — `refreshAdminOverview()`'s
+inline Team Assessment math (tasksAssigned/tasksDone/servicesAssigned/
+servicesDone/pctDone) was pulled out into a shared `_personWorkSummary()` +
+`_activeServicesForAssessment()`/`_pctDoneColor()`, and BOTH Team Assessment
+and this new roster call the same functions — the explicit "per-person
+counts match Team Assessment" requirement is structural, not just tested.
+
+Clicking a person does NOT build a second, parallel rendering path.
+`openPersonDailyView(personId)` sets a new `_taPersonViewId`, which
+`_taFilteredTasks()` checks ahead of the normal assignee-filter dropdown —
+so the EXISTING Assigned Tasks List/Day/Week/Month rendering, inline
+reassign-dropdown, "New" flag, and edit-modal machinery all apply for free,
+now narrowed to one person. The assignee filter select is hidden (it's
+redundant once locked to one person) and replaced with a "Viewing X's
+tasks · ← Back to team" banner; the nav highlight is flipped back onto
+"By Person" so it doesn't look like you silently landed on a different
+tab. `closePersonDailyView()` clears `_taPersonViewId`, restores the
+filter, and returns to the roster. This reuse choice was deliberate over
+literally reusing `user.html`'s simpler Daily Tasks render markup (which
+the original ask suggested) — the admin's own Assigned Tasks view already
+has every capability this feature needs (reassign, edit, due-date lock UI)
+and is a strict superset of the data an employee sees; rebuilding a second
+render pipeline just to match column count exactly would have meant
+duplicating (and now maintaining in two places) all of that editing logic
+for no functional gain.
+
+**B. "Blocked" status + `blockReason`.** Added to both portals' status
+selects (`tem-status` in `index.html`, `dt-status-select` in `user.html`),
+ordered Not started → In progress → Blocked → Done. A required
+`blockReason` text field appears only when status is set to Blocked
+(`_taToggleBlockReasonField()`/`_dtToggleBlockReasonField()`), validated
+client-side the same way `saveTaskEdit()` already requires a non-empty
+`subject` — no server-side requiredness check, matching that existing
+convention (this is a data-quality nicety, not a permission boundary).
+Clearing status away from Blocked clears `blockReason` too, in both
+portals, so a stale reason never lingers on a task that's moved on.
+Server-side, `blockReason` is deliberately NOT added to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` (documented inline) — a member marking
+their OWN task Blocked needs to write `status` (already allowed) and
+`blockReason` together in one request, and treating it like status/notes/
+tags is what makes that possible with zero other server change; the
+existing "not your task" ownership check still applies regardless, so this
+only ever widens what a member can touch on a task already theirs, never
+whose tasks they can touch. Visually mirrors (not duplicates under a third
+name) Workload's existing "Stuck" service-status red treatment: a
+`_taStatusColor()`/`_dtStatusColor()` red for the status text, a small
+"🚧 Blocked" badge next to the subject (tooltipped with the reason), and a
+light red row tint (`.ta-row-blocked`/`.dt-row-blocked`, hand-duplicated
+per the zero-shared-code rule) that combines harmlessly with the existing
+amber "New" row tint if a task happens to be both.
+
+Verified: `node --check` on `api/ops-sync.js`; div-balance on both HTML
+files (delta unchanged vs. `main`); a `node:test`
+`--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (22/22, extending the existing date-rules suite — a
+member can set `status:'Blocked'`+`blockReason` on their own task, and a
+DIFFERENT member still can't touch that task at all, confirming
+`blockReason` widens field-scope only, never the ownership check); a new
+Playwright suite against the real `index.html` UI (22/22: roster
+summary/dots, per-person counts cross-checked directly against
+`_personWorkSummary()`, entering/exiting person view, editing/reassigning
+from inside it and confirming the sync push, the Blocked-with-no-reason
+save rejection, the Blocked badge/row-tint rendering); a new Playwright
+suite against `user.html` (10/10: the Blocked option, the required-reason
+rejection, the badge/tint, and blockReason clearing when status moves off
+Blocked). Every pre-existing Task Assignments/Overview/Daily Tasks
+Playwright suite re-run clean (no regressions).
+
+**Deferred to a follow-up PR, per the task's own instruction ("build after
+the above"):** a team-wide "Needs Attention" view (Overdue/Due
+today/Blocked/Unassigned across everyone, in one place) plus a daily
+digest email to the owner and auto-reminders to employees, reusing the
+existing 13:00 UTC `cron-overdue-check` + `insertNotifications`/Resend
+pipeline rather than a new endpoint. Not started.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

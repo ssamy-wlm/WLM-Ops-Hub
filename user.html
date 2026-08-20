@@ -440,6 +440,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .dt-row-new td{background:rgba(245,158,11,.07)!important;}
 .dt-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .dt-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
+/* "Blocked" task status (2026-08-20) — same red treatment as index.html's
+   own copy (hand-duplicated, zero-shared-code) and Workload's "Stuck"
+   service status. Combines harmlessly with .dt-row-new. */
+.dt-row-blocked td{background:rgba(224,85,85,.05)!important;}
 </style>
 </head>
 <body>
@@ -1575,7 +1579,7 @@ function setDtView(v){
 }
 
 function _dtStatusColor(status){
-  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
+  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='Blocked' ? 'var(--red,#c94a4a)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
 }
 
 function renderDailyTasks(){
@@ -1615,9 +1619,11 @@ function _renderDtListTable(tasks){
   body.innerHTML = tasks.map(t=>{
     const overdue = _dtIsOverdue(t);
     const isNew = _dtIsNew(t, seen);
-    return `<tr class="${isNew?'dt-row-new':''}" style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
+    const blocked = t.status==='Blocked';
+    const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlUser(t.blockReason||'')}">🚧 Blocked</span>` : '';
+    return `<tr class="${isNew?'dt-row-new':''}${blocked?' dt-row-blocked':''}" style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${DT_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_dtFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlUser(t.clientName||'—')}</td>
@@ -1688,14 +1694,25 @@ function openDtDetailPanel(id){
       ${t.source==='parsed-email' ? `<div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>` : ''}
     </div>
     <label class="form-label">Status</label>
-    <select class="form-input" id="dt-status-select"><option>Not started</option><option>In progress</option><option>Done</option></select>
+    <select class="form-input" id="dt-status-select" onchange="_dtToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
+    <div id="dt-block-reason-wrap" style="display:none;margin-top:10px;">
+      <label class="form-label">Why is this blocked? <span style="color:var(--red,#c94a4a);">*</span></label>
+      <input class="form-input" id="dt-block-reason-input" placeholder="e.g. waiting on client feedback">
+    </div>
     <label class="form-label" style="margin-top:10px;">Notes</label>
     <textarea class="form-input" id="dt-notes-input" rows="3"></textarea>
     <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
   `;
   document.getElementById('dt-status-select').value = t.status || 'Not started';
+  document.getElementById('dt-block-reason-input').value = t.blockReason || '';
+  _dtToggleBlockReasonField();
   document.getElementById('dt-notes-input').value = t.notes || '';
   document.getElementById('dtDetailOverlay').classList.add('open');
+}
+// Same Blocked-reason toggle as index.html's _taToggleBlockReasonField().
+function _dtToggleBlockReasonField(){
+  const blocked = document.getElementById('dt-status-select').value === 'Blocked';
+  document.getElementById('dt-block-reason-wrap').style.display = blocked ? '' : 'none';
 }
 function closeDtDetailPanel(){
   document.getElementById('dtDetailOverlay').classList.remove('open');
@@ -1711,7 +1728,13 @@ function saveDtTaskUpdate(id){
   const tasks = dbGet(DB_KEYS.tasks)||[];
   const t = tasks.find(x=>x.id===id);
   if(!t) return;
-  t.status = document.getElementById('dt-status-select').value;
+  const status = document.getElementById('dt-status-select').value;
+  const blockReason = document.getElementById('dt-block-reason-input').value.trim();
+  if(status==='Blocked' && !blockReason){ showToast('A reason is required when status is Blocked'); return; }
+  t.status = status;
+  // Cleared whenever status isn't Blocked, so a stale reason never
+  // lingers on a task that's since moved on (matches index.html's copy).
+  t.blockReason = status==='Blocked' ? blockReason : '';
   t.notes = document.getElementById('dt-notes-input').value;
   dbSet(DB_KEYS.tasks, tasks);
   _scheduleCloudPush();

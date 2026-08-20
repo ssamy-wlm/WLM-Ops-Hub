@@ -1438,6 +1438,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
         <button class="btn btn-sm" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
         <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
+        <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
       </div>
 
       <div id="ta-subtab-parse">
@@ -1479,6 +1480,16 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <div id="ta-subtab-assigned" style="display:none;">
+        <!-- Per-person Daily Tasks view (2026-08-20) — entered via
+             openPersonDailyView() from the "By Person" roster below. This
+             reuses the Assigned Tasks List/Day/Week/Month rendering
+             entirely (see _taFilteredTasks()'s _taPersonViewId check) —
+             the same editing/reassign/New-flag machinery, just narrowed to
+             one person's tasks, rather than a separate render path. -->
+        <div id="ta-person-banner" style="display:none;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;">
+          <div style="font-weight:700;font-size:13px;color:var(--text-dark);">👤 Viewing <span id="ta-person-banner-name"></span>'s tasks</div>
+          <button class="btn btn-sm btn-outline" onclick="closePersonDailyView()">← Back to team</button>
+        </div>
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
           <div style="display:flex;gap:6px;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
@@ -1558,6 +1569,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- "By Person" roster (2026-08-20) — every active member/admin from
+           the live roster, with a per-person tasks-assigned/done/% summary
+           (see _personWorkSummary(), shared with Team Assessment so the
+           two can never disagree) and a red/amber dot for anyone with an
+           overdue or blocked task. Clicking a person calls
+           openPersonDailyView(), which switches into the Assigned Tasks
+           view above, filtered to just them. -->
+      <div id="ta-subtab-person" style="display:none;">
+        <div id="ta-person-roster"></div>
+        <div id="ta-person-roster-empty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active team members yet.</div>
       </div>
     </div>
 
@@ -2741,7 +2764,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div>
           <label class="form-label">Status</label>
-          <select class="form-input" id="tem-status"><option>Not started</option><option>In progress</option><option>Done</option></select>
+          <select class="form-input" id="tem-status" onchange="_taToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
         </div>
         <div>
           <label class="form-label">Due date <span id="tem-due-lock" style="display:none;font-size:10px;font-weight:700;color:var(--text-light);">🔒 Locked</span></label>
@@ -2751,6 +2774,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <label class="form-label">Service</label>
           <input class="form-input" id="tem-service" placeholder="Optional">
         </div>
+      </div>
+      <div id="tem-block-reason-wrap" style="display:none;margin-top:12px;">
+        <label class="form-label">Why is this blocked? <span style="color:var(--red,#c94a4a);">*</span></label>
+        <input class="form-input" id="tem-block-reason" placeholder="e.g. waiting on client feedback">
       </div>
       <label class="form-label" style="margin-top:12px;">Notes</label>
       <textarea class="form-input" id="tem-notes" rows="3" placeholder="Optional"></textarea>
@@ -5114,6 +5141,45 @@ function _wlSvcAssignedTo(svc, personId, personName){
   return svc.assigneeId===personId || svc.assigneeId===personName ||
          svc.assigneeName===personName || svc.assignee===personName || svc.assignee===personId;
 }
+// Active clients' services (top-level + franchise locations), excluding
+// cancelled/archived — the exact set Team Assessment/Client Health already
+// treat as "real active work." Hoisted out to its own function so both
+// Team Assessment (Overview) and Task Assignments' "By Person" roster
+// (2026-08-20) read the identical set — see _personWorkSummary() below.
+function _activeServicesForAssessment(){
+  const clients = _getClientDB().filter(c=>(c.status||'active')==='active');
+  const services = [];
+  clients.forEach(c=>{
+    (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>services.push(s));
+    (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>services.push(s)));
+  });
+  return services;
+}
+// Per-person tasks+services summary — pulled out of what used to be
+// refreshAdminOverview()'s own inline Team Assessment computation
+// (2026-08-20) so Task Assignments' new "By Person" roster can show the
+// exact same numbers without any risk of the two ever drifting apart
+// (explicit requirement: "per-person counts match Team Assessment").
+// "Done" for both tasks and services is the literal status/workStatus
+// field, deliberately NOT Client Health's lastDone-based heuristic — see
+// the fuller history in CLAUDE.md's Overview-revamp entry.
+function _personWorkSummary(person, allTasks, allServices){
+  const tasksForPerson = allTasks.filter(t=>t.assigneeId===person.id);
+  const tasksAssigned = tasksForPerson.length;
+  const tasksDone = tasksForPerson.filter(t=>t.status==='Done').length;
+  const servicesForPerson = allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
+  const servicesAssigned = servicesForPerson.length;
+  const servicesDone = servicesForPerson.filter(s=>s.workStatus==='done').length;
+  const totalAssigned = tasksAssigned+servicesAssigned;
+  // 0 assigned (of either kind) -> null (renders as "—"), never a false
+  // 100% — see the 2026-08-06 Sherine-97% incident this dashboard already
+  // fixed once.
+  const pctDone = totalAssigned ? Math.round((tasksDone+servicesDone)/totalAssigned*100) : null;
+  return { tasksForPerson, tasksAssigned, tasksDone, servicesAssigned, servicesDone, totalAssigned, pctDone };
+}
+// Shared pct->color scale (green/orange/red), used by both Team Assessment
+// and the "By Person" roster's summary figure.
+function _pctDoneColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
 // Status Dropdown feature — own copy (zero-shared-code rule) of the same
 // Not Started/In Progress/Stuck/Done field client.html/user.html write to
 // each service. NOTE: "workStatus", not "status" — svc.status is a
@@ -5876,6 +5942,12 @@ window.switchAdminTab = function(el, tab){
    <div> rows. See _taIsNew()/_renderTaListTable()/_renderTaStaging(). */
 .ta-row-new td{background:rgba(245,158,11,.07)!important;}
 .ta-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
+/* "Blocked" task status (2026-08-20) — same red treatment as Workload's
+   "Stuck" service status (SERVICE_STATUSES' stuck color/bg), mirrored
+   here rather than a third separate visual language for "work has
+   stopped." Combines harmlessly with .ta-row-new (a task can be both
+   newly assigned AND blocked). */
+.ta-row-blocked td{background:rgba(224,85,85,.05)!important;}
 .rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
 .rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
 .rm-archive-header:hover{background:var(--bg2);}
@@ -7729,6 +7801,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
     _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[]);
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
+    if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -8444,11 +8517,89 @@ function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(
 function setTaSubtab(tab){
   document.getElementById('taSubtabParseBtn').className = 'btn btn-sm '+(tab==='parse'?'':'btn-outline');
   document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm '+(tab==='assigned'?'':'btn-outline');
+  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm '+(tab==='person'?'':'btn-outline');
   document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
   document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
+  document.getElementById('ta-subtab-person').style.display = tab==='person' ? '' : 'none';
   if(tab==='assigned') renderTaskAssignments();
+  if(tab==='person') renderTaPersonRoster();
+}
+
+// ── Per-person Daily Tasks view (admin) — 2026-08-20. _taPersonViewId,
+// when set, narrows _taFilteredTasks() below to exactly that one person's
+// tasks — the List/Day/Week/Month rendering, editing, reassign, and "New"
+// flag machinery all come along for free since it's the same render path
+// Assigned Tasks already uses, just pre-filtered. ──
+let _taPersonViewId = null;
+function openPersonDailyView(personId){
+  _taPersonViewId = personId;
+  setTaSubtab('assigned');
+  // setTaSubtab('assigned') just marked "Assigned Tasks" active — this is
+  // still conceptually "By Person" drilled into one person, so flip the
+  // nav highlight back to that tab rather than leaving a confusing state
+  // ("clicked By Person, now Assigned Tasks looks selected").
+  document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline';
+  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm';
+  const p = _timeOffRoster().find(x=>x.id===personId);
+  const nameEl = document.getElementById('ta-person-banner-name');
+  if(nameEl) nameEl.textContent = p ? p.name : '(unknown)';
+  document.getElementById('ta-person-banner').style.display = 'flex';
+  // The assignee filter is now redundant (overridden by _taPersonViewId)
+  // and would otherwise show a stale/confusing value — hide it while in
+  // person view rather than leave two conflicting "who" controls visible.
+  const assigneeSel = document.getElementById('taFilterAssignee');
+  if(assigneeSel) assigneeSel.style.display = 'none';
+  renderTaskAssignments();
+}
+function closePersonDailyView(){
+  _taPersonViewId = null;
+  document.getElementById('ta-person-banner').style.display = 'none';
+  const assigneeSel = document.getElementById('taFilterAssignee');
+  if(assigneeSel) assigneeSel.style.display = '';
+  setTaSubtab('person');
+}
+// Red = has an overdue (not-done) task; amber = no overdue but has a
+// Blocked one; null = neither. Checked in that priority order — overdue
+// is the more urgent signal.
+function _personAttentionDot(personId, allTasks){
+  const tasksForPerson = allTasks.filter(t=>t.assigneeId===personId);
+  if(tasksForPerson.some(t=>_taIsOverdue(t))) return 'red';
+  if(tasksForPerson.some(t=>t.status==='Blocked')) return 'amber';
+  return null;
+}
+function renderTaPersonRoster(){
+  const container = document.getElementById('ta-person-roster');
+  const emptyEl = document.getElementById('ta-person-roster-empty');
+  if(!container) return;
+  const roster = _timeOffRoster();
+  if(!roster.length){
+    container.innerHTML = '';
+    if(emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+  if(emptyEl) emptyEl.style.display = 'none';
+  const allTasks = _taTasks();
+  const allServices = _activeServicesForAssessment();
+  const rows = roster.map(person=>{
+    const sum = _personWorkSummary(person, allTasks, allServices);
+    return { id:person.id, name:person.name||'(unnamed)', dot:_personAttentionDot(person.id, allTasks), ...sum };
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+  container.innerHTML = rows.map(r=>{
+    const dotColor = r.dot==='red' ? 'var(--red,#c94a4a)' : r.dot==='amber' ? '#f5b301' : '';
+    const dotTitle = r.dot==='red' ? 'Has overdue task(s)' : r.dot==='amber' ? 'Has blocked task(s)' : '';
+    const dotHtml = r.dot ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-left:6px;" title="${dotTitle}"></span>` : '';
+    const pctLabel = r.pctDone==null ? '—' : r.pctDone+'%';
+    return `<div class="card" style="cursor:pointer;padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;" onclick="openPersonDailyView('${r.id}')">
+      <div>
+        <div style="font-weight:700;font-size:14px;color:var(--text-dark);">${escHtmlAdmin(r.name)}${dotHtml}</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">${r.tasksAssigned} task(s) assigned · ${r.tasksDone} done</div>
+      </div>
+      <div style="font-size:16px;font-weight:800;color:${_pctDoneColor(r.pctDone)};">${pctLabel}</div>
+    </div>`;
+  }).join('');
 }
 
 const TA_VIEW_BTN_IDS = {list:'taViewListBtn', day:'taViewDayBtn', week:'taViewWeekBtn', month:'taViewMonthBtn'};
@@ -8500,7 +8651,10 @@ function _taSortByDue(tasks){
 
 function _taFilteredTasks(){
   const search = (document.getElementById('taSearchInput')?.value||'').trim().toLowerCase();
-  const assignee = document.getElementById('taFilterAssignee')?.value||'';
+  // _taPersonViewId (set by openPersonDailyView()) overrides the normal
+  // assignee filter dropdown entirely — narrows every view (List/Day/
+  // Week/Month) to exactly one person's tasks.
+  const assignee = _taPersonViewId || (document.getElementById('taFilterAssignee')?.value||'');
   const client = document.getElementById('taFilterClient')?.value||'';
   const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
   const filtered = _taTasks().filter(t=>{
@@ -8517,7 +8671,7 @@ function _taFilteredTasks(){
 }
 
 function _taStatusColor(status){
-  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
+  return status==='Done' ? 'var(--green,#2e9e6e)' : status==='Blocked' ? 'var(--red,#c94a4a)' : status==='In progress' ? '#d9822b' : 'var(--text-light)';
 }
 function _taPersonName(id){
   if(!id) return '—';
@@ -8547,10 +8701,12 @@ function _renderTaListTable(tasks){
   body.innerHTML = tasks.map(t=>{
     const overdue = _taIsOverdue(t);
     const isNew = _taIsNew(t);
+    const blocked = t.status==='Blocked';
     const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
-    return `<tr class="${isNew?'ta-row-new':''}" style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
+    const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlAdmin(t.blockReason||'')}">🚧 Blocked</span>` : '';
+    return `<tr class="${isNew?'ta-row-new':''}${blocked?' ta-row-blocked':''}" style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_taFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>
@@ -8702,6 +8858,7 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Service</div><div>${escHtmlAdmin(t.service||'—')}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlAdmin(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Status</div><div style="color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</div>
+      ${t.status==='Blocked' && t.blockReason ? `<div style="color:var(--text-light);">Blocked reason</div><div style="color:var(--red,#c94a4a);">${escHtmlAdmin(t.blockReason)}</div>` : ''}
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_taFormatShortDate(t.assignedDate)} · ${_taAgeLabel(_taDaysSinceAssigned(t))}` : '—'}</div>
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
@@ -8720,6 +8877,14 @@ function closeTaDetailPanel(){
   _taDetailTaskId = null;
 }
 
+// Shows/hides the required block-reason field based on the status
+// select's current value — same "Blocked" concept as Workload's services
+// use ("Stuck"), mirrored here rather than duplicated under a third name.
+function _taToggleBlockReasonField(){
+  const blocked = document.getElementById('tem-status').value === 'Blocked';
+  document.getElementById('tem-block-reason-wrap').style.display = blocked ? '' : 'none';
+}
+
 function openTaskEditModal(id){
   const isNew = !id;
   document.getElementById('taskEditModalTitle').textContent = isNew ? 'New Task' : 'Edit Task';
@@ -8731,6 +8896,8 @@ function openTaskEditModal(id){
   document.getElementById('tem-category').value = t.category || TA_CATEGORIES[0];
   document.getElementById('tem-priority').value = t.priority || 'Normal';
   document.getElementById('tem-status').value = t.status || 'Not started';
+  document.getElementById('tem-block-reason').value = t.blockReason || '';
+  _taToggleBlockReasonField();
   document.getElementById('tem-due').value = t.dueDate || '';
   // Locks after one admin change (see saveTaskEdit()/api/ops-sync.js) —
   // disabling the input here is the UX signal; the actual immutability is
@@ -8768,6 +8935,9 @@ function saveTaskEdit(){
   else if(existing.dueDateLocked){ dueDate = existing.dueDate; dueDateLocked = true; }
   else { dueDate = newDueDate; dueDateLocked = newDueDate !== (existing.dueDate||''); }
   const nowIso = new Date().toISOString();
+  const status = document.getElementById('tem-status').value;
+  const blockReason = document.getElementById('tem-block-reason').value.trim();
+  if(status==='Blocked' && !blockReason){ showToast('A reason is required when status is Blocked','warn'); return; }
   const t = {
     ...existing,
     id,
@@ -8781,7 +8951,10 @@ function saveTaskEdit(){
     clientName: clientSel.value ? (clientSel.options[clientSel.selectedIndex]?.textContent || '') : '',
     category: document.getElementById('tem-category').value,
     priority: document.getElementById('tem-priority').value,
-    status: document.getElementById('tem-status').value,
+    status,
+    // Cleared whenever status isn't Blocked, so a stale reason never
+    // lingers on a task that's since moved on.
+    blockReason: status==='Blocked' ? blockReason : '',
     dueDate, dueDateLocked,
     service: document.getElementById('tem-service').value.trim(),
     notes: document.getElementById('tem-notes').value,
@@ -9263,29 +9436,12 @@ function refreshAdminOverview(){
   const taContainer = document.getElementById('ov-team-assessment');
   const taEmptyEl = document.getElementById('ov-team-assessment-empty');
   if(taContainer){
-    const taClients = _getClientDB().filter(c=>(c.status||'active')==='active');
-    const taAllServices = [];
-    taClients.forEach(c=>{
-      (c.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s));
-      (c.locations||[]).forEach(loc=>(loc.services||[]).filter(s=>!_chIsInactiveService(s)).forEach(s=>taAllServices.push(s)));
-    });
+    const taAllServices = _activeServicesForAssessment();
     const taAllTasks = dbGet(DB_KEYS.tasks)||[];
 
-    function _taPctColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
-
     const taRows = _timeOffRoster().map(person=>{
-      const tasksForPerson = taAllTasks.filter(t=>t.assigneeId===person.id);
-      const tasksAssigned = tasksForPerson.length;
-      const tasksDone = tasksForPerson.filter(t=>t.status==='Done').length;
-      const servicesForPerson = taAllServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
-      const servicesAssigned = servicesForPerson.length;
-      const servicesDone = servicesForPerson.filter(s=>s.workStatus==='done').length;
-      const totalAssigned = tasksAssigned+servicesAssigned;
-      // 0 assigned (of either kind) -> null (renders as "—"), never a
-      // false 100% (the David-type bug: nothing assigned still showed
-      // 100% before this dashboard's 2026-08-06 fix).
-      const pctDone = totalAssigned ? Math.round((tasksDone+servicesDone)/totalAssigned*100) : null;
-      return { id:person.id, name:person.name||'(unnamed)', tasksAssigned, tasksDone, servicesAssigned, servicesDone, pctDone };
+      const sum = _personWorkSummary(person, taAllTasks, taAllServices);
+      return { id:person.id, name:person.name||'(unnamed)', ...sum };
     })
       // No totalAssigned>0 filter — a person with zero assigned work still
       // shows (0%/"—"), per this dashboard's existing acceptance criterion,
@@ -9300,7 +9456,7 @@ function refreshAdminOverview(){
     } else {
       if(taEmptyEl) taEmptyEl.style.display='none';
       taContainer.innerHTML = taRows.map(r=>{
-        const pctColor = _taPctColor(r.pctDone);
+        const pctColor = _pctDoneColor(r.pctDone);
         const pctLabel = r.pctDone==null ? '—' : r.pctDone+'%';
         return `<tr style="border-bottom:1px solid var(--border);">
           <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
