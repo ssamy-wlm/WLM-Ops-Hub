@@ -102,6 +102,22 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .content{padding:22px 26px;flex:1;}
 .page-section{display:none;}
 .page-section.active{display:block;}
+/* Service Schedule calendar (week + month views) — 7 columns (5 weekday +
+   2 narrower weekend, matching CAL_GRID_COLS in JS; keep these two in sync
+   if that constant ever changes) that fill the card width via fr units.
+   min-width:0 on every cell (set inline per-cell in _renderWeekGrid()/
+   _renderMonthGrid()) is what actually lets a long client/service name
+   truncate with its existing ellipsis styling instead of forcing the whole
+   grid — and the page — wider than the viewport, at any width down through
+   the narrowest verified (768px). A true vertical single-column stack on a
+   phone-width screen is deliberately NOT done here: the header row and day
+   cells are flat siblings of one shared grid on purpose (see the
+   2026-07-29 alignment-fix comment above _renderWeekGrid) so collapsing to
+   1 column would interleave all 7 headers before all 7 day cells instead
+   of pairing each day with its header — fixing that needs a DOM
+   restructure, not a CSS rule, so it's out of scope for this presentational
+   pass. Flagged as a follow-up rather than silently skipped. */
+.cal-week-grid{display:grid;grid-template-columns:repeat(5,1fr) repeat(2,0.55fr);}
 
 /* ── BUTTONS ── */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:9px;font-family:'Poppins',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:all .18s;white-space:nowrap;}
@@ -7058,7 +7074,7 @@ function _renderWeekGrid(){
   // columns different widths than the header grid's, so SUN/MON/... no
   // longer sat above the right day. One shared grid guarantees every
   // column is exactly the same width in both rows, always.
-  let html=`<div style="display:grid;grid-template-columns:${CAL_GRID_COLS};">`;
+  let html=`<div class="cal-week-grid">`;
   days.forEach((d,i)=>{
     const isToday=_dateStr(d)===todayStr;
     const weekend=_calIsWeekendCol(i);
@@ -7082,7 +7098,7 @@ function _renderWeekGrid(){
     // actual content. Weekend columns (no work is ever due there — see
     // adjustOffWeekend()) are grayed out to signal "nothing scheduled here"
     // even before checking whether the day actually has events.
-    html+=`<div style="padding:8px 6px;align-self:start;${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.03);':'')}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
+    html+=`<div style="padding:8px 6px;align-self:start;min-width:0;${i<6?'border-right:1px solid var(--border);':''}${weekend?'background:var(--bg2);opacity:.6;':(isToday?'background:rgba(45,107,182,0.03);':'')}">${_calDayCell(evs, todayStr, CAL_MAX_VISIBLE_PER_DAY, ds)}</div>`;
   });
   html+=`</div>`;
   const wrap=_el('cal-grid-wrap');
@@ -7110,7 +7126,7 @@ function _renderMonthGrid(){
   // container — same 2026-07-29 alignment fix as _renderWeekGrid() above;
   // two independent 7-column grids can size their columns differently and
   // drift out of alignment with each other.
-  let html=`<div style="display:grid;grid-template-columns:${CAL_GRID_COLS};">`;
+  let html=`<div class="cal-week-grid">`;
   DAY_HDRS.forEach((d,i)=>{
     const weekend=_calIsWeekendCol(i);
     html+=`<div style="padding:10px 0;font-size:${weekend?'9px':'10px'};font-weight:800;color:var(--text-light);text-align:center;letter-spacing:.06em;text-transform:uppercase;border-bottom:2px solid var(--border);${weekend?'background:var(--bg2);opacity:.55;':''}">${d}</div>`;
@@ -7147,7 +7163,7 @@ function _renderMonthGrid(){
     // or light day from stretching to match a busier day in the same row.
     // Weekend columns (Sat/Sun) grayed out same as _renderWeekGrid() — no
     // work is ever due there (see adjustOffWeekend()).
-    html+=`<div style="padding:8px 7px 6px;align-self:start;${borderRight}${borderBottom}${todayBg}">
+    html+=`<div style="padding:8px 7px 6px;align-self:start;min-width:0;${borderRight}${borderBottom}${todayBg}">
       <div style="margin-bottom:5px;"><span style="${dayNumStyle}">${cellDay}</span></div>
       ${cellBody}
     </div>`;
