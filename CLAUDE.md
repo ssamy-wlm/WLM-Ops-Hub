@@ -1765,6 +1765,90 @@ reference from before the Day/Week/Month schedule tab existed;
 `verify_overview_revamp.js`/`verify_progress_reports.js`, both from other
 in-flight/unmerged work) were confirmed to fail identically against
 unmodified `main` and are out of scope for this PR.
+**Overview revamp: Team Assessment as a numbers table + Recent Activity
+wrap/scroll (2026-08-20).** Two related layout/content changes to
+Overview's top row, one PR.
+
+**Layout (`.ov-top-grid`):** inverted the earlier "both cards reflow
+fluidly" design (2026-08-20, same day, earlier revision) — Team
+Assessment is now a FIXED-width column (`flex:0 0 460px`) that never
+resizes or reflows on its own; Recent Activity alone takes whatever width
+is left and is the only thing that reflows on resize. No `flex-wrap` at
+all now — the two columns never stack into rows at any width, which is a
+deliberate, explicit exception to every other Overview/Service-Schedule
+responsive pass in this codebase (all of which treated any horizontal
+page scroll as a bug to fix): a window narrower than roughly Team
+Assessment's fixed width plus Recent Activity's practical minimum will
+now scroll the page horizontally rather than collapsing Team Assessment,
+per this task's explicit "must not reflow or resize" instruction.
+
+**Team Assessment, replaced (not just restyled):** the old card-list-
+with-sparkline is now a plain 6-column table (Person, Tasks assigned,
+Tasks done, Services assigned, Services done, Total % done) — the
+sparkline and its entire underlying "done events over the last 10 weeks"
+trend computation (`taWeekKeys`/`taDoneWeeksByName`) are removed outright,
+along with the now-unused due-date bucketing/labeling
+(`_taSvcDueStatus`/`_taDueLabel`/`_taDaysBetween`) none of the new columns
+need. Tasks come from `ops_tasks` (`dbGet(DB_KEYS.tasks)`) filtered by
+`assigneeId`, done = `status==='Done'` — no active/inactive concept
+exists on a task. Services come from active clients'
+`c.services[]`/`c.locations[].services[]`, excluding cancelled/archived
+(`_chIsInactiveService` — "same filter as Client Health" per this task's
+own instruction), done = `workStatus==='done'`. Total % = (tasks done +
+services done) ÷ (tasks assigned + services assigned); 0-of-either still
+renders (0%/"—"), never hidden from the roster.
+
+**Confirmed with Sarah before building, not guessed:** the task's own
+wording for the services-done column was "done = done-this-cycle" —
+which is the literal name of Client Health's `_chIsDoneThisCycle`
+heuristic (`lastDone` is set AND not currently overdue). This dashboard's
+own % done was changed AWAY from that exact heuristic on 2026-08-06 after
+it produced a real misleading result (Sherine: 43 services assigned, 0
+ever marked done, showed 97%, because her due dates were simply far in
+the future) — reusing it here for the services-done column would have
+silently reintroduced that same failure mode into the new Total % column
+too, since it shares the same numerator/denominator idea. Asked directly;
+confirmed keeping the already-fixed `workStatus==='done'` definition for
+both tasks and services, not the cycle heuristic.
+
+**Recent Activity — wrap, don't truncate, and scroll:** the per-event row
+had `white-space:nowrap;overflow:hidden;text-overflow:ellipsis` — a long
+description/detail line was cut off mid-sentence with no way to read the
+rest and no scrollbar to reach it (the exact truncate-to-a-sliver pattern
+already fixed on the Service Schedule calendar and (separately,
+independently) on this exact row by two different concurrent sessions
+earlier this same day — except neither of those actually touched this
+row; re-confirmed by reading the live code before starting, not assumed
+from memory). Fixed the same way: `white-space:normal;overflow-wrap:
+anywhere`, `align-items:flex-start` so the checkmark sits with the first
+line. `#ov-activity-list` itself now has `max-height:460px;overflow-y:
+auto` so a long list (capped at 30 events) scrolls inside its own card
+instead of growing the page — this reverses the 2026-08-07 "let the card
+grow unbounded" decision, but that decision's own reasoning (Team
+Assessment's then-unbounded roster stretching Recent Activity's container
+via CSS Grid's default stretch) no longer applies: Team Assessment is now
+a fixed-width, naturally-short table, and `align-items:flex-start` on
+`.ov-top-grid` already prevents any stretch-to-match regardless of either
+card's height.
+
+Verified with Playwright against the real `index.html` UI (23/23): table
+data correctness for a person with mixed tasks/services (including a
+cancelled service correctly excluded, and a service with `lastDone` set
+but `workStatus` not `'done'` correctly counted as NOT done — proving the
+cycle heuristic isn't back in play) and a person with zero assigned work
+(renders 0/"—", not a false 100%); zero sparkline bars or trend text left
+over; Team Assessment's width unchanged across a resize while Recent
+Activity's width changes; a long Recent Activity description renders in
+full with zero ellipsis characters and a visibly taller (wrapped) row;
+`#ov-activity-list` has a real bounded `max-height` with `overflow-y:
+auto` and content taller than its box (genuinely scrollable, not just
+styled to look like it); page height stays reasonable rather than being
+blown out by 15 long wrapped rows. Existing Recent Activity
+filtering/ordering suite re-run clean (18/18, unaffected — only the
+row's own CSS changed, not which events qualify or their order). The
+old Team Assessment Playwright suite is now obsolete, not a regression —
+it asserted card-list/sparkline/due-label behavior that no longer exists
+by design; superseded by the new suite above.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
