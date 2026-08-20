@@ -3025,7 +3025,15 @@ function showPage(name, el){
     populateDropdowns(); populateServiceDropdown(); populateScheduleClientFilter(); filterClients();
     setTimeout(()=>_maybeShowTip('savedFilters','button[onclick="saveCurrentFilter()"]','Save this filter combo for one-click reuse later.'),50);
   }
-  if(name==='services-schedule'){ populateScheduleClientFilter(); setScheduleView(_scheduleView||'list'); }
+  if(name==='services-schedule'){
+    populateScheduleClientFilter();
+    // Apply the phone-width List default only until the user has explicitly
+    // chosen a view themselves (see SCHEDULE_PHONE_BREAKPOINT above) —
+    // re-checked every time this page is opened, so a later visit on a
+    // wider window still gets the normal Calendar default.
+    if(!_scheduleViewUserSet) _scheduleView = window.innerWidth<=SCHEDULE_PHONE_BREAKPOINT ? 'list' : 'calendar';
+    setScheduleView(_scheduleView||'list', false);
+  }
   if(name==='my-work'){ renderMyWork(); }
   if(name==='recurring-catalog'){ renderCatalog(); }
   if(name==='sales-funnel'){
@@ -6252,14 +6260,14 @@ function renderSchedule(){
 
   function renderCol(rows, label, icon){
     if(!rows.length) return `<div style="flex:1;min-width:0;">
-      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
         <span>${icon}</span><span>${label}</span>
         <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">0</span>
       </div>
       <div style="font-size:12px;color:var(--text-light);padding:20px 0;">No services.</div>
     </div>`;
     return `<div style="flex:1;min-width:280px;">
-      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;">
+      <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:12px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
         <span>${icon}</span><span>${label}</span>
         <span style="font-size:10px;background:var(--bg2);color:var(--text-light);padding:1px 8px;border-radius:20px;font-weight:600;">${rows.length}</span>
       </div>
@@ -6884,8 +6892,21 @@ function init(){
 //  SCHEDULE VIEW TOGGLE
 // ═══════════════════════════════════════════════════════
 let _scheduleView='calendar';
-function setScheduleView(v){
+// Becomes true the moment the user explicitly clicks the List/Calendar
+// toggle — once set, the phone-width auto-default below never overrides
+// their choice again for the rest of this page session.
+let _scheduleViewUserSet=false;
+// Phone-width default: the 7-column calendar grid can compress down to
+// 768px (see PR #248) but genuinely can't become a readable single-column
+// view without restructuring the header/day-cell flat-sibling grid (see the
+// 2026-07-29 alignment-fix comment on _renderWeekGrid) — so below ~700px,
+// default to the already-vertical, already-mobile-friendly List view
+// instead. The toggle stays available either way; this only decides what
+// shows FIRST, on a screen the user hasn't manually picked a view on yet.
+const SCHEDULE_PHONE_BREAKPOINT=700;
+function setScheduleView(v, fromUser=true){
   _scheduleView=v;
+  if(fromUser) _scheduleViewUserSet=true;
   const isCal=v==='calendar';
   // Toggle containers
   const lw=_el('schedule-list-wrap'), cw=_el('schedule-cal-wrap');
