@@ -37,7 +37,7 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 // reuse the exact same todayIso as the assignedDate fallback below —
 // one clock read per request, not two that could disagree across a
 // millisecond boundary.
-function buildTaskEmailSystemPrompt(rosterDisplayList, todayIso) {
+function buildTaskEmailSystemPrompt(rosterDisplayList, todayIso, clientNames) {
   // todayIso is itself a UTC calendar date (see handleTaskEmailMode), so
   // forcing UTC here keeps the reported weekday consistent with it —
   // never `new Date(todayIso)` alone, which parses as UTC midnight but
@@ -62,13 +62,14 @@ For EACH distinct task or action item you find:
 - "recipientName": the primary recipient's display name if available, otherwise empty string.
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
-- "ownerName": if the text clearly assigns this specific task to one specific person on the team, that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
+- "clientName": if this task is clearly about work for one specific client from this list: ${JSON.stringify(clientNames)}, output that client's name EXACTLY as it appears in the list. If the text has a near-miss or misspelled version of a client's name (a typo, a phonetic spelling, a partial name — e.g. "surf pro" for "Servpro"), still match it to the single closest real name in this exact list — best-match, don't require an exact spelling in the text itself. If the task is about WebLight Media's own internal work rather than a client's, and "WebLight Media (Internal)" appears in this list, use that. If genuinely no client from this list is identifiable for this task, leave this an empty string — never invent a name that isn't in the list.
+- "ownerName": the specific person this task belongs to. Look for an explicit assignment ("assigned to X", "X will handle this") AND per-person ownership language even without an explicit assignment verb — e.g. "X's priorities" or "X's tasks" (a list introduced this way belongs to X for every item under it), "X will …" / "X agreed to …" / "X is going to …" (a stated commitment BY X), "X shared they'll …" / "X mentioned she's going to …" (X's own intended action, even when reported by someone else). In every case, use that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. Otherwise empty string. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
 - "alreadyDone": true if the text itself says this specific item is already finished/sent/completed (e.g. "already posted the update", "done", "sent yesterday"), false otherwise. Only true when the text says so explicitly for THIS item — never infer completion just because a task sounds simple or routine.
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"assignedDate":"YYYY-MM-DD","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","ownerName":"","alreadyDone":false}]}`;
+{"assignedDate":"YYYY-MM-DD","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","clientName":"","ownerName":"","alreadyDone":false}]}`;
 }
 
 // A malformed or out-of-range date from the model must never reach storage
@@ -190,6 +191,23 @@ function matchClient(task, activeClients) {
     || byDomain(senderDomain) || byDomain(recipientDomain)
     || matchClientByTextMention(task, activeClients)
     || null;
+}
+
+// Deterministic exact-match re-validation of the model's own "clientName"
+// output against the SAME live active-client list handed to it in the
+// prompt — the model was told to only ever output a name from that exact
+// list (best-matching a near-miss spelling to the closest real one), but a
+// hallucinated or slightly-off name must never silently pass through as if
+// it were a real match, so this checks it against the real list rather
+// than trusting the model's text at face value. This is the PRIMARY
+// client-detection signal (the model sees the full pasted text, a strictly
+// richer signal than matchClient()'s email/domain/text-mention heuristics
+// below), checked first; matchClient() is the fallback for whatever this
+// leaves empty or unmatched.
+function matchClientByName(clientName, activeClients) {
+  const q = String(clientName || '').trim().toLowerCase();
+  if (!q) return null;
+  return activeClients.find(c => String(c.name || '').trim().toLowerCase() === q) || null;
 }
 
 function matchClientByTextMention(task, activeClients) {
@@ -314,7 +332,7 @@ async function handleTaskEmailMode(req, res) {
       system: buildTaskEmailSystemPrompt(roster.map(p => {
         const title = p.title || p.level;
         return title ? `${p.name} — ${title}` : p.name;
-      }), todayIso),
+      }), todayIso, activeClients.map(c => c.name)),
       messages: [{ role: 'user', content: text.trim() }],
     });
 
@@ -347,7 +365,11 @@ async function handleTaskEmailMode(req, res) {
     const tasks = rawTasks
       .filter(t => t && typeof t.subject === 'string' && t.subject.trim())
       .map(t => {
-        const matchedClient = matchClient(t, activeClients);
+        // clientName (model, from the live roster of client names) is the
+        // primary signal, matchClient() (email/domain/text-mention) the
+        // fallback — same precedence relationship ownerName/matchOwner()
+        // already has.
+        const matchedClient = matchClientByName(t.clientName, activeClients) || matchClient(t, activeClients);
         const owner = matchOwner(t.ownerName, roster);
         return {
           subject: t.subject.trim(),
