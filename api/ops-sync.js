@@ -235,6 +235,11 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // client stops sending the field at all (JSON.stringify(cur.type) !==
 // JSON.stringify(undefined)), rejecting an otherwise-legitimate status/
 // notes/tags update forever. Never re-add it without handling that.
+// 'blockReason' is likewise deliberately excluded (2026-08-20, "Blocked"
+// status) — a member marking their OWN task Blocked needs to write both
+// `status` (already allowed) and `blockReason` together in the same
+// request; treating blockReason like status/notes/tags here is what makes
+// that possible without any other server change.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
