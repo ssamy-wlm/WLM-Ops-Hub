@@ -1950,7 +1950,111 @@ the above"):** a team-wide "Needs Attention" view (Overdue/Due
 today/Blocked/Unassigned across everyone, in one place) plus a daily
 digest email to the owner and auto-reminders to employees, reusing the
 existing 13:00 UTC `cron-overdue-check` + `insertNotifications`/Resend
-pipeline rather than a new endpoint. Not started.
+pipeline rather than a new endpoint. **Built 2026-08-20 — see the entry
+below.**
+
+**Needs Attention view + Unassigned filter + digest/reminders + fix
+user-side filter buttons (2026-08-20).** The follow-up from the entry
+above, plus two more items bundled into the same PR. `index.html` +
+`user.html` + `api/cron-overdue-check.js` — no new `api/*.js` file, still
+12.
+
+**A. "Needs Attention" view.** A fourth Task Assignments sub-tab,
+"⚠️ Needs Attention" (`ta-subtab-attention`), groups every task team-wide
+into four sections — Overdue, Due Today, Blocked, Unassigned — via a new
+`_taNeedsAttentionBuckets()`. Each bucket reuses the EXACT SAME predicates
+already established elsewhere in this file (`_taIsOverdue()`/
+`_taIsDueToday()`, `status==='Blocked'`, `!assigneeId`) rather than
+inventing new ones, so this view can never disagree with what the List
+view's own quick filters or the Blocked badge would show for the same
+task. Each row's click-through reuses `openTaDetailPanel()` — the exact
+same detail/edit path every other task view in this file already uses, so
+editing/reassigning/status changes from here go through the normal
+`ops_tasks` sync and the same write-rules (assignedDate immutable,
+dueDate-locks-after-one-change) automatically. **Scope decision, flagged
+rather than assumed:** this view is task-scope only (`ops_tasks`) — it
+does NOT pull in Client Health/Workload's separate service-level overdue/
+"Stuck" signals, even though the original spec's own wording ("consolidates
+what's scattered across Client Health/Workload/Task Assignments") could be
+read more broadly. The four bucket names (Blocked/Unassigned specifically)
+are task-only concepts in this codebase, and the digest counts in Part C
+below map 1:1 onto these same four task buckets — mixing in a fifth,
+service-shaped data source would have been a materially larger, riskier
+feature than what the acceptance criteria actually describes. Client
+Health and Workload remain untouched, their own dashboards.
+
+**B. "Unassigned" as a quick filter, not a tab.** Added to the existing
+Overdue/Due Today quick-filter row (`taFilterUnassignedBtn`,
+`toggleTaQuickFilter('unassigned')`) — `_taQuickFilter` gained a third
+value, same single-select toggle mechanism, same `.btn-toggle-active`
+sizing convention as the other two. `_taFilteredTasks()` gained one more
+line (`!t.assigneeId`). "Assignable inline" needed no new code at all —
+the List view's existing per-row assignee `<select>` (`_taReassign()`)
+already works on any row the filter surfaces, including an unassigned one
+(whose select just defaults to "Unassigned").
+
+**C. Daily digest + employee self-reminders — reuses `cron-overdue-check`,
+no new function, no new cron entry.** A new block in the SAME handler,
+entirely separate from the pre-existing service-overdue escalation block
+above it (different table, different notification `type`s, different
+recipients) and deliberately NOT gated behind the existing `overdueEnabled`
+toggle, which only ever governed that service-side escalation — this new
+block always runs, same as the daily backup snapshot already does in this
+file. Computes the same four buckets `_taNeedsAttentionBuckets()` computes
+client-side (hand-duplicated server-side as `taskIsOverdue()`/
+`taskIsDueToday()`, mirroring `_taIsOverdue()`/`_taIsDueToday()`) fresh
+from `ops_tasks` on every invocation — no per-item idempotency stamp,
+unlike the service-overdue block's `overdueNotifiedFor`, because a daily
+digest/reminder is SUPPOSED to repeat every day the underlying task is
+still overdue/due-today; stamping to suppress repeats would be exactly
+backwards for this feature. Two notification types: `attentionDigest` (one
+row per super/owner admin — "the owner" — with a single summary line:
+counts for all four buckets plus a comma-list of affected people's names)
+and `taskReminder` (one row per person who has at least one of THEIR OWN
+overdue/due-today tasks, counting only those two buckets — never Blocked/
+Unassigned, which aren't "your own work" concepts — worded in second
+person, e.g. "You have 2 overdue and 1 due today. Take a look when you get
+a chance!", deliberately not framed as a report visible to anyone else).
+Both ride the exact same `insertNotifications()` (in-app + Resend email
+when configured) every other notification type in this codebase already
+uses.
+
+**D. Fixed employee-side filter/view buttons (`user.html`) to match
+admin's #246 convention.** Two spots had the exact bug #246 already fixed
+on the admin side: the category pills (`dtCategoryPills`, in
+`loadDailyTasks()`) used `btn-primary` for their active state — `width:
+100%`, so the active pill visibly ballooned to fill its row instead of
+just changing color — and the List/Calendar view toggle (`setDtView()`)
+used a bare `btn` (no `btn-outline`) for active, which has no border and
+so subtly changed the button's own box size between states. Both fixed
+the same way admin's copy already was: base class always `btn btn-sm
+btn-outline`, only a new `.btn-toggle-active` modifier (added to
+`user.html`'s stylesheet, hand-duplicated from `index.html`'s copy —
+zero-shared-code rule) toggled on top. `dtTabMineBtn`/`dtTabImportBtn`
+(the My-assigned/Add-import SUB-TAB buttons) were deliberately left
+untouched — admin's own equivalent sub-tab buttons (Add/Import, Assigned
+Tasks, By Person, Needs Attention) still use the older bare-`btn`-active
+pattern too, so leaving these alone actually matches admin's current look
+more faithfully than "fixing" them would have.
+
+Verified: `node --check` on `api/cron-overdue-check.js`; syntax-checked
+both HTML files' inline `<script>` blocks; div-balance on both (delta
+unchanged vs. `main`); a `node:test` `--experimental-test-module-mocks`
+run against the real, byte-identical `api/cron-overdue-check.js` with an
+in-memory fake Supabase client (13/13 — all four bucket counts, the digest
+notification's recipient/body/affected-names, the reminder notification's
+recipient/body/framing); a new Playwright suite against the real
+`index.html` UI (16/16 — all four Needs Attention sections with correct
+counts/subjects, a Done task never appearing in any bucket, row
+click-through opening the real detail panel, the Unassigned filter
+narrowing the list, inline reassignment clearing a task out of the
+Unassigned filter view, toggling the filter off restoring the full list);
+a new Playwright suite against `user.html` (10/10 — the view toggle and
+category pills both using `btn-toggle-active` correctly, no `btn-primary`
+anywhere in the pills, real bounding-box checks confirming no resize on
+toggle, and that filtering by category still actually filters). Every
+pre-existing Task Assignments/Overview/Daily Tasks Playwright suite
+re-run clean (no regressions).
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
