@@ -432,7 +432,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
            Notifications/Library below, which index.html's own top nav already
            provides (bell + 📚 Library) for every admin viewer. -->
       <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)">My work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
-      <div class="nav-item" id="nav-reports" onclick="showPage('reports',this)">Progress reports</div>
       <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)">Service catalog</div>
       <div class="nav-item funnel-access-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)" style="display:none;">Sales funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
     </div>
@@ -724,21 +723,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <button class="btn btn-outline btn-sm" onclick="markAllNotifsRead();renderNotifPage();">Mark all read</button>
       </div>
       <div id="notif-page-list"></div>
-    </div>
-
-    <!-- ═══ PAGE: PROGRESS REPORTS ═══ -->
-    <div id="page-reports" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-size:17px;font-weight:800;color:var(--text-dark);">📊 Progress Reports</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Monthly & yearly client progress overview</div>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <select id="rpt-client" class="form-input" style="font-size:11px;padding:5px 10px;" onchange="renderReports()"><option value="">All Active Clients</option></select>
-          <select id="rpt-year" class="form-input" style="font-size:11px;padding:5px 10px;" onchange="renderReports()"></select>
-        </div>
-      </div>
-      <div id="reports-body"></div>
     </div>
 
   </div><!-- /content -->
@@ -2316,10 +2300,10 @@ function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archi
 // count as "done" in one place and "not done" in the other.
 function _svcIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
 // Shared "how many services are actually current" calc — reused by the
-// client-detail header's "X of Y done this cycle" headline and the Overview
-// tab's stat cards, so both always agree and there's exactly one place this
-// math lives. Same scope/definition as PR #124: top-level c.services only
-// (matching the Progress Reports metrics in renderReports(), not the
+// client-detail header's "X of Y done this cycle" headline, the Overview
+// tab's stat cards, and (2026-08-21) each client card's own progress line,
+// so all three always agree and there's exactly one place this math lives.
+// Same scope/definition as PR #124: top-level c.services only (not the
 // franchise-inclusive _allClientServices used by due-alerts/My Work), "this
 // month" = due date's
 // YYYY-MM prefix matches today's. Read-only — never touches lastDone or any
@@ -2693,28 +2677,6 @@ function recalcProgress(clients, clientId, projId){
 }
 
 // ═══════════════════════════════════════════════════════
-//  PROGRESS REPORTS — honest per-service metrics
-//  Three deliberately SEPARATE, labeled numbers (renderReports() below never
-//  blends them into one %). Exact, provable definitions — derived only from
-//  the due/lastDone/freq fields already stored on each service, since this
-//  schema keeps no completion-history ledger (only the latest lastDone):
-//   - "done this month" = lastDone falls in the current calendar month.
-//   - "due this month"  = due date falls in the current calendar month.
-//   - "overdue"         = due date < today AND not done for that cycle
-//                          (lastDone empty, or dated before the current due).
-//  Dedicated to this report only — deliberately NOT reusing or changing
-//  _svcIsDoneThisCycle/_svcCycleStats (Overview tab + client-detail header),
-//  which encode a looser "not currently overdue" idea of "done"; that's a
-//  separate, already-shipped feature and out of scope for this report fix.
-// ═══════════════════════════════════════════════════════
-function _rptIsOverdue(s, t){
-  if(!s.due||s.due>=t) return false;
-  if(s.lastDone&&s.lastDone>=s.due) return false; // already satisfied this due cycle
-  return true;
-}
-function _rptPctColor(pct){ return pct===null?'var(--text-light)':pct>=80?'#22A06B':pct>=40?'#d97706':'#e05555'; }
-
-// ═══════════════════════════════════════════════════════
 //  NOTIFICATIONS (cross-module)
 // ═══════════════════════════════════════════════════════
 function getNotifs(){ return db(CL_KEYS.notifications)||[]; }
@@ -2830,159 +2792,6 @@ function readNotif(id){
     _navigateToServiceInTracker(clientId, serviceId);
   }
 }
-function renderReports(){
-  const el=_el('reports-body'); if(!el) return;
-  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const now=new Date();
-  const curYear=now.getFullYear();
-  const t=today();
-  const thisMonthStr=`${curYear}-${String(now.getMonth()+1).padStart(2,'0')}`;
-
-  // Populate year filter
-  const yrSel=_el('rpt-year');
-  if(yrSel&&!yrSel.options.length){
-    for(let y=curYear;y>=curYear-3;y--) yrSel.add(new Option(y,y,y===curYear,y===curYear));
-  }
-  const selYear=parseInt(yrSel?.value||curYear,10);
-
-  // Populate client filter
-  const clSel=_el('rpt-client');
-  if(clSel&&clSel.options.length<=1){
-    getClients().filter(c=>c.status==='active').forEach(c=>clSel.add(new Option(c.name,c.id)));
-  }
-  const selClient=clSel?.value||'';
-
-  const clients=getClients().filter(c=>(c.status==='active'||c.status==='paused')&&(!selClient||c.id===selClient));
-  if(!clients.length){ el.innerHTML='<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">No active clients</div></div>'; return; }
-
-  let html='';
-  clients.forEach(c=>{
-    const allProjs=c.projects||[];
-    const svcs=(c.services||[]).filter(s=>!_isInactiveService(s)); // "Only ACTIVE services count"
-    const color=c.color||_hashClientColor(c.name);
-    const initials=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-    const bundleNames=new Set();
-    svcs.forEach(s=>{ const cat=findCatalogEntryForService(s); if(cat?.bundle) bundleNames.add(cat.bundle); });
-    const bundleCount=bundleNames.size+allProjs.filter(p=>!p.isRecurringService).length;
-
-    // ── Metric 1: This Month — done this month ÷ due this month ──
-    const dueThisMonthSvcs=svcs.filter(s=>s.due&&s.due.startsWith(thisMonthStr));
-    const doneOfDueThisMonth=dueThisMonthSvcs.filter(s=>s.lastDone&&s.lastDone.startsWith(thisMonthStr));
-    const monthPct=dueThisMonthSvcs.length?Math.round(doneOfDueThisMonth.length/dueThisMonthSvcs.length*100):null;
-
-    // ── Metric 2: This Year — active services completed at least once this
-    // calendar year ÷ total active services. Counts SERVICES, not frequency-
-    // weighted occurrences (the previous version multiplied weekly services
-    // by weeks-elapsed and monthly by months-elapsed, producing confusing
-    // denominators like "55 of 55" or "113 of 113" that had nothing to do
-    // with headcount) — and only counts a REAL completion (lastDone dated
-    // this year), never crediting a service just because it isn't currently
-    // overdue.
-    const completedThisYearSvcs=svcs.filter(s=>s.lastDone&&s.lastDone.slice(0,4)===String(curYear));
-    const yearTotal=svcs.length;
-    const yearPct=yearTotal>0?Math.round(completedThisYearSvcs.length/yearTotal*100):null;
-
-    // ── Metric 3: Health — overdue vs upcoming, right now ──
-    const overdueSvcs=svcs.filter(s=>_rptIsOverdue(s,t));
-    const healthTotal=svcs.length;
-    const overduePctOfTotal=healthTotal?Math.round(overdueSvcs.length/healthTotal*100):0;
-
-    // ── Monthly table (Jan–Dec of selYear), same exact definitions above ──
-    const monthRows=MONTHS.map((m,mi)=>{
-      const monthStr=`${selYear}-${String(mi+1).padStart(2,'0')}`;
-      const dueSvcs=svcs.filter(s=>s.due&&s.due.startsWith(monthStr));
-      const doneCount=svcs.filter(s=>s.lastDone&&s.lastDone.startsWith(monthStr)).length;
-      const overdueCount=dueSvcs.filter(s=>_rptIsOverdue(s,t)).length;
-      return {m, mi, due:dueSvcs.length, done:doneCount, overdue:overdueCount};
-    });
-
-    // Recent progress log entries (all projects, sorted desc) — unchanged, not a % metric
-    const allLogs=[];
-    allProjs.forEach(p=>{ (p.progressLog||[]).forEach(e=>allLogs.push({...e,proj:p.name})); });
-    allLogs.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    const recentLogs=allLogs.slice(0,4);
-
-    const monthMetric=monthPct===null
-      ?`<div style="font-size:20px;font-weight:900;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No work due this month</div>`
-      :`<div style="font-size:20px;font-weight:900;color:${_rptPctColor(monthPct)};">${monthPct}%</div><div style="font-size:9px;color:var(--text-mid);">${doneOfDueThisMonth.length} of ${dueThisMonthSvcs.length} done</div>`;
-    const yearMetric=yearPct===null
-      ?`<div style="font-size:20px;font-weight:900;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No active services</div>`
-      :`<div style="font-size:20px;font-weight:900;color:${_rptPctColor(yearPct)};">${yearPct}%</div><div style="font-size:9px;color:var(--text-mid);">${completedThisYearSvcs.length} of ${yearTotal}</div>`;
-    const healthMetric=healthTotal===0
-      ?`<div style="font-size:14px;font-weight:800;color:var(--text-light);">—</div><div style="font-size:9px;color:var(--text-mid);">No active services</div>`
-      :`<div style="font-size:14px;font-weight:800;color:${overdueSvcs.length?'#e05555':'#22A06B'};">${overdueSvcs.length?overdueSvcs.length+' overdue':'On track'}</div>
-         <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:5px;background:var(--border);">
-           <div style="width:${overduePctOfTotal}%;background:#e05555;"></div>
-           <div style="width:${100-overduePctOfTotal}%;background:#22A06B;"></div>
-         </div>`;
-
-    html+=`
-    <div class="card" style="margin-bottom:18px;overflow:hidden;">
-      <div style="height:4px;background:${color};"></div>
-      <div class="card-body" style="padding:16px;">
-        <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:14px;">
-          <div style="width:38px;height:38px;border-radius:10px;background:${color};display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:13px;flex-shrink:0;">${initials}</div>
-          <div style="flex:1;">
-            <div style="font-size:14px;font-weight:800;color:var(--text-dark);">${c.name}${c.code?` <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code}</span>`:''}</div>
-            <div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap;">
-              <span style="font-size:10px;color:var(--text-mid);">📁 ${bundleCount} bundle${bundleCount!==1?'s':''}</span>
-              <span style="font-size:10px;color:var(--text-mid);">🔁 ${svcs.length} service${svcs.length!==1?'s':''}</span>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
-          <div style="background:var(--bg);border-radius:10px;padding:10px 12px;text-align:center;" title="Services done this month ÷ services due this month — expect this to read low early in the month.">
-            <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">This Month</div>
-            ${monthMetric}
-          </div>
-          <div style="background:var(--bg);border-radius:10px;padding:10px 12px;text-align:center;" title="Active services completed at least once this calendar year ÷ total active services. Real completions only.">
-            <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">This Year</div>
-            ${yearMetric}
-          </div>
-          <div style="background:var(--bg);border-radius:10px;padding:10px 12px;text-align:center;" title="Overdue vs. upcoming active services, right now.">
-            <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Health</div>
-            ${healthMetric}
-          </div>
-        </div>
-
-        <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px;overflow-x:auto;">
-          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Monthly Breakdown · ${selYear}</div>
-          <table class="service-table">
-            <thead><tr><th>Month</th><th style="text-align:right;">Due</th><th style="text-align:right;">Done</th><th style="text-align:right;">Overdue</th></tr></thead>
-            <tbody>
-              ${monthRows.map(r=>{
-                const isCur=r.mi===now.getMonth()&&selYear===curYear;
-                return `<tr style="${isCur?'background:rgba(45,107,182,.07);':''}">
-                  <td style="font-weight:${isCur?700:400};color:${isCur?color:'var(--text-dark)'};">${r.m}${isCur?' <span style="font-size:8px;font-weight:700;">(current)</span>':''}</td>
-                  <td style="text-align:right;">${r.due||'—'}</td>
-                  <td style="text-align:right;">${r.done||'—'}</td>
-                  <td style="text-align:right;color:${r.overdue?'#e05555':'var(--text-light)'};font-weight:${r.overdue?700:400};">${r.overdue||'—'}</td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-
-        ${recentLogs.length?`
-        <div>
-          <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;">Recent Progress Updates</div>
-          ${recentLogs.map(e=>`
-            <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
-              <span style="font-size:16px;font-weight:900;color:${color};min-width:38px;">${e.pct}%</span>
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:11px;font-weight:700;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.proj}</div>
-                ${e.note?`<div style="font-size:10px;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.note}</div>`:''}
-              </div>
-              <div style="font-size:9px;color:var(--text-light);white-space:nowrap;">${e.date||''} · ${e.user||''}</div>
-            </div>`).join('')}
-        </div>`:''}
-      </div>
-    </div>`;
-  });
-  el.innerHTML=html;
-}
-
 // ═══════════════════════════════════════════════════════
 //  SERVICE ALERTS
 // ═══════════════════════════════════════════════════════
@@ -3012,7 +2821,6 @@ const PAGE_META={
   'recurring-catalog': ['Service Catalog','All services offered — recurring and one-time'],
   'sales-funnel':      ['Sales Funnel','New client intake and prospect pipeline'],
   'notifications':     ['Notifications','Client assignments, updates and reminders'],
-  'reports':            ['Progress Reports','Monthly & yearly client progress overview'],
 };
 function showPage(name, el){
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
@@ -3042,7 +2850,6 @@ function showPage(name, el){
     renderFunnelTable();
   }
   if(name==='notifications'){ renderNotifPage(); }
-  if(name==='reports'){ renderReports(); }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3330,6 +3137,13 @@ function renderClientGrid(list){
   list.forEach(c=>{
     const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
     const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
+    // Services done/total this cycle — same _svcCycleStats() the client-detail
+    // header and Overview stat cards already use, so this can never disagree
+    // with either of those (see the shared-definition comment on that
+    // function). Deliberately a SEPARATE line from "Overall progress" above,
+    // which is bundle/project completion %, not service cycle status.
+    const cycle=_svcCycleStats(c);
+    const cyclePct=cycle.activeTotal?Math.round(cycle.activeDone/cycle.activeTotal*100):null;
     const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     const logoHtml=c.logo
       ?`<img src="${escHtmlClient(c.logo)}" onerror="this.style.display='none';this.nextSibling.style.display='flex';" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"><span style="display:none;font-size:16px;font-weight:800;color:#fff;">${escHtmlClient(init)}</span>`
@@ -3365,6 +3179,9 @@ function renderClientGrid(list){
         <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${totalPct}%;background:${c.color||_hashClientColor(c.name)};"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-light);margin-bottom:7px;">
           <span>Overall progress</span><span style="font-weight:800;color:var(--text-dark);">${totalPct}%</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-light);margin-bottom:7px;" title="Active services done this cycle ÷ total active services">
+          <span>Services done</span><span style="font-weight:800;color:var(--text-dark);">${cyclePct===null?'—':`${cycle.activeDone}/${cycle.activeTotal} (${cyclePct}%)`}</span>
         </div>
         <div style="line-height:1.9;">${svcBadges}${svcMore}</div>
       </div>`;
