@@ -1580,18 +1580,15 @@ export default async function handler(req, res) {
     // ops_org_nodes/ops_org_links's soft-tombstone convention above, or
     // ops_feed/ops_time_off_ledger's insert-only guard) — a plain
     // document-model table, so this really does remove the row, per this
-    // feature's own "normal per-record delete" instruction. Originally
-    // built for the import-undo feature (a member could delete only a
-    // batch THEY committed, i.e. assignedById===session.id — "a batch they
-    // themselves committed" can never be spoofed by the client, since
-    // assignedById is always server-forced to the caller at insert time,
-    // see the tasks-write block above). Broadened (2026-08-21) for the
-    // general-purpose Delete button/inline delete: a member may now ALSO
-    // delete a task where they're the assigneeId — the same "your task"
-    // definition already used for every other member-write on this table
-    // (see the "not your task" rejection above) — so deleting a task
-    // assigned to you doesn't require having created it yourself. Admin/
-    // super may still delete any task id, unconditionally.
+    // feature's own "normal per-record delete" instruction. A member may
+    // delete only a task THEY created (assignedById===session.id) — never
+    // just because it's assigned to them — which can never be spoofed by
+    // the client, since assignedById is always server-forced to the
+    // caller at insert time (see the tasks-write block above). Admin/
+    // super may delete any task id, unconditionally. (2026-08-21: briefly
+    // broadened to also allow assigneeId===session.id for the general-
+    // purpose Delete button/inline delete, then narrowed back to
+    // assignedById-only per explicit instruction — self-created only.)
     if (Array.isArray(tombstones?.taskIds) && tombstones.taskIds.length) {
       const idsToDelete = [...new Set(tombstones.taskIds.filter(id => typeof id === 'string' && id))];
       if (idsToDelete.length) {
@@ -1603,7 +1600,7 @@ export default async function handler(req, res) {
             deletableIds = [];
           } else {
             deletableIds = (rows || [])
-              .filter(r => r.data?.assignedById === session.id || r.data?.assigneeId === session.id)
+              .filter(r => r.data?.assignedById === session.id)
               .map(r => r.id);
             idsToDelete
               .filter(id => !deletableIds.includes(id))

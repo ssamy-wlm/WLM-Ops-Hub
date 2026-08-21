@@ -2418,6 +2418,37 @@ Daily Tasks Blocked 10/10, schedule tab 15/15, calendar/buttons 11/11,
 staging 26/26, staging merge 9/9, 19-task completeness 12/12) — no
 regressions from adding a column to the shared list-table markup.
 
+**Task delete permission scope narrowed back to self-created only
+(2026-08-21).** The Task delete feature's server-side scope (PR #269,
+same day) had briefly broadened a member's `tombstones.taskIds` delete
+permission from `assignedById===session.id` (self-created) to also allow
+`assigneeId===session.id` (assigned to them), reasoning that "your task"
+should mean the same thing for delete as it does for every other
+member-write on `ops_tasks`. Per explicit instruction, reverted: a member
+may delete only a task they themselves created (`assignedById`) —
+`assigneeId` is no longer sufficient. Admin/super unaffected, still delete
+any task unconditionally.
+
+**Flagged, not fixed (out of scope for this narrowly-worded change):**
+neither `index.html`'s nor `user.html`'s Delete UI (inline row ✕, edit
+modal/detail-panel button) currently distinguishes "a task I created" from
+"a task merely assigned to me" — both render unconditionally for any task
+a member can see. A member clicking Delete on a task assigned to them but
+created by someone else will now have the optimistic local removal
+silently rejected server-side (surfaced only as a sync `rejected` entry,
+not a UI error), reappearing on the next full pull — a confusing "phantom
+delete" from that member's perspective. Not touched here since the actual
+instruction was a one-line server permission revert, not a UI change;
+worth a follow-up decision (hide the button when `assignedById !==
+currentUser.id`, or surface the rejection as a toast) if this scope is
+meant to stay this narrow going forward.
+
+Verified: `node --check` on `api/ops-sync.js`; re-ran the existing
+`node:test` permission-scope suite with its assertions updated to the
+narrower behavior (6/6 — a member can no longer delete a task merely
+assigned to them; the original self-created case, the unrelated-task
+rejection, and admin's unconditional access are all unchanged) plus the
+pre-existing date-rules suite for regressions (unaffected).
 **Sidebar reorder task — no change needed, already correct (2026-08-21).**
 Asked to reorder the admin sidebar's nav groups to Operations → People &
 HR → Insights → Resources. Read the actual markup before touching
