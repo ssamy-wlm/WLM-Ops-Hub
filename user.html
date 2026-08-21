@@ -1021,6 +1021,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
+                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);"></th>
                     </tr>
                   </thead>
                   <tbody id="dtTableBody"></tbody>
@@ -1496,6 +1497,10 @@ async function cloudPushData(){
 // self-origin one via the Add/Import tab. ──
 const DT_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const DT_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+// Ordered Not started -> In progress -> Blocked -> Done, matching the
+// detail panel's own <select> — shared here so the inline list-row
+// dropdown can never drift out of sync with it.
+const DT_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 const DT_PRIORITIES = ['Urgent','High','Normal','Low'];
 
 let _dtTab = 'mine';
@@ -1646,7 +1651,14 @@ function _renderDtListTable(tasks){
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlUser(t.clientName||'—')}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${_dtStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;color:${_dtStatusColor(t.status)};font-weight:600;" onchange="_dtChangeStatus('${t.id}', this.value, this)">
+          ${DT_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
+        <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);" title="Delete task" onclick="deleteDtTaskInline('${t.id}')">✕</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -1719,7 +1731,10 @@ function openDtDetailPanel(id){
     </div>
     <label class="form-label" style="margin-top:10px;">Notes</label>
     <textarea class="form-input" id="dt-notes-input" rows="3"></textarea>
-    <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary btn-sm" style="flex:1;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
+      <button class="btn btn-outline btn-sm" style="color:var(--red,#c94a4a);border-color:var(--red,#c94a4a);" onclick="deleteDtTaskFromPanel('${t.id}')">🗑 Delete</button>
+    </div>
   `;
   document.getElementById('dt-status-select').value = t.status || 'Not started';
   document.getElementById('dt-block-reason-input').value = t.blockReason || '';
@@ -1759,6 +1774,62 @@ function saveDtTaskUpdate(id){
   closeDtDetailPanel();
   renderDailyTasks();
   showToast('Task updated ✓');
+}
+
+// Inline status-dropdown change from the list row — same write path
+// (dbSet + _scheduleCloudPush) as saveDtTaskUpdate() above, no separate
+// mechanism. Blocked requires a reason exactly like the detail panel
+// does; prompt() stands in for the panel's own required text field since
+// there's no second input available inline. Cancelling or leaving it
+// empty reverts the <select> to its previous value rather than silently
+// saving Blocked with no reason.
+function _dtChangeStatus(id, newStatus, selectEl){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  const prevStatus = t.status || 'Not started';
+  if(newStatus===prevStatus) return;
+  let blockReason = t.blockReason || '';
+  if(newStatus==='Blocked'){
+    blockReason = (prompt('Why is this blocked?', blockReason) || '').trim();
+    if(!blockReason){
+      if(selectEl) selectEl.value = prevStatus;
+      return;
+    }
+  } else {
+    blockReason = '';
+  }
+  t.status = newStatus;
+  t.blockReason = blockReason;
+  dbSet(DB_KEYS.tasks, tasks);
+  _scheduleCloudPush();
+  showToast('Status updated ✓');
+  renderDailyTasks();
+}
+
+// Hard delete — reuses the exact same tombstones.taskIds mechanism the
+// import-undo feature already established for this portal (see
+// undoDtCommittedImportBatch() above / api/ops-sync.js). Server-side scope:
+// a member may delete a task they created (assignedById) OR one assigned
+// to them (assigneeId) — the same "your task" definition every other
+// member-write on this table already uses.
+function _dtDeleteTask(id){
+  if(!confirm('Delete this task? This cannot be undone.')) return false;
+  const tasks = (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.id!==id);
+  dbSet(DB_KEYS.tasks, tasks);
+  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
+  if(!tomb.includes(id)) tomb.push(id);
+  dbSet(DB_KEYS.deletedTaskIds, tomb);
+  _scheduleCloudPush();
+  renderDailyTasks();
+  showToast('Task deleted');
+  return true;
+}
+function deleteDtTaskInline(id){
+  _dtDeleteTask(id);
+}
+function deleteDtTaskFromPanel(id){
+  if(_dtDeleteTask(id)) closeDtDetailPanel();
 }
 
 function _onDtParseFilesChosen(event){
