@@ -2056,6 +2056,40 @@ toggle, and that filtering by category still actually filters). Every
 pre-existing Task Assignments/Overview/Daily Tasks Playwright suite
 re-run clean (no regressions).
 
+**Task parser: structured `[Name]` owner markers (2026-08-21).**
+`buildTaskEmailSystemPrompt()`'s `ownerName` bullet gained explicit
+guidance for the team's own meeting-notes/Quick-Notes export format —
+"Next steps: [Name] Task: …" — which the existing prose-only patterns
+("X will…", "X's priorities", etc.) didn't cover: a task line prefixed
+with a person's name in brackets (`[Abby Conklin] Process payments…`), a
+"Name — task" or "Name: task" prefix, or a bulleted/listed task under a
+heading that names a person. These structured markers are explicitly
+called out as AT LEAST as strong a signal as the prose patterns, and the
+prompt now says a task carrying one should almost never end up with an
+empty `ownerName` — the marker itself already names the owner, so there's
+nothing left to infer. Pure prompt-content change; `matchOwner()`'s own
+exact/unambiguous-first-name matching and the review-before-assign staging
+flow (`et.assigneeId||null` pre-filling the staged row) were already
+correct for this — once the model extracts the right `ownerName`, the
+existing pipeline (server-side `matchOwner()` -> `assigneeId` in the
+response -> staging's pre-filled assignee dropdown, freely editable by the
+admin) already satisfies "arrives already chosen, admin reviews/edits, no
+hunting through the transcript" with no further code change needed.
+`process-transcript.js` only, per the task's own scope — nothing else
+touched.
+
+Verified with `node --check` and a Node script against the real,
+byte-identical `buildTaskEmailSystemPrompt()`/`matchOwner()` (13/13 — the
+new prompt content for all three marker forms and the "should almost
+never be empty" language, existing prose/phonetic guidance still present,
+and `matchOwner()` correctly resolving each of the acceptance example's 5
+names — Abby, Sherine, Michael, Rana, David — against a matching roster).
+The pre-existing phonetic/prompt-content regression suite re-run clean
+(23/23) — no live-model call is possible in this environment (no API
+access), so the model's own extraction accuracy on a real transcript
+still needs a click-through verification on the Vercel preview before
+merge.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
