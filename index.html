@@ -1739,6 +1739,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <option value="report">Reports</option>
             <option value="nav">Navigation</option>
           </select>
+          <button class="btn btn-outline btn-sm" id="feedRefreshBtn" onclick="refreshLiveFeedFromCloud()">🔄 Refresh</button>
           <button class="btn btn-danger btn-sm" id="clearFeedBtn" onclick="clearFeed()">🗑 Clear Feed</button>
         </div>
       </div>
@@ -1785,6 +1786,48 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          elsewhere keys off that id, not the label. ══ -->
     <div id="admin-summaries" class="page-section">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+    <!-- ══ SUMMARIES — now the Team Production Analytics home ══ -->
+    <div id="admin-summaries" class="page-section">
+      <div style="margin-bottom:18px;">
+        <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📊 Team Production Analytics</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Team-wide and per-person tasks &amp; services — assigned vs. done, overdue/blocked, and a weekly completion trend</div>
+      </div>
+
+      <!-- Team-wide totals -->
+      <div id="tpa-team-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px;"></div>
+
+      <!-- Per-person analytics table -->
+      <div class="card" style="margin-bottom:18px;overflow-x:auto;">
+        <div class="card-header"><div class="card-title">By Person</div></div>
+        <div class="card-body" style="padding:0;">
+          <table class="service-table" style="width:100%;">
+            <thead><tr>
+              <th style="padding:10px 14px;">Person</th>
+              <th style="padding:10px 14px;text-align:right;">Tasks</th>
+              <th style="padding:10px 14px;text-align:right;">Services</th>
+              <th style="padding:10px 14px;text-align:right;">% Complete</th>
+              <th style="padding:10px 14px;text-align:right;">Overdue</th>
+              <th style="padding:10px 14px;text-align:right;">Blocked/Stuck</th>
+            </tr></thead>
+            <tbody id="tpa-person-rows"></tbody>
+          </table>
+          <div id="tpa-person-empty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No one has any tasks or services assigned yet.</div>
+        </div>
+      </div>
+
+      <!-- Weekly completion trend -->
+      <div class="card" style="margin-bottom:28px;">
+        <div class="card-header"><div class="card-title">Weekly Completion Trend</div></div>
+        <div class="card-body">
+          <div id="tpa-trend-chart" style="display:flex;align-items:flex-end;gap:10px;height:120px;"></div>
+          <div style="font-size:10.5px;color:var(--text-light);margin-top:10px;">
+            Based on services' recorded completion dates (<code>lastDone</code>) — <code>ops_tasks</code> doesn't yet retain a completion timestamp, so this trend reflects services only.
+          </div>
+        </div>
+      </div>
+
+      <div class="section-divider">Progress Summary Generator (legacy)</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
         <div>
           <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Team Production Analytics</div>
           <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Per-person &amp; team totals — tasks/services assigned vs. done, overdue, blocked, and a weekly completion trend</div>
@@ -5115,6 +5158,120 @@ function _personWorkSummary(person, allTasks, allServices){
 // Shared pct->color scale (green/orange/red), used by both Team Assessment
 // and the "By Person" roster's summary figure.
 function _pctDoneColor(pct){ return pct==null?'var(--text-light)':pct>=80?'var(--green)':pct>=40?'var(--orange)':'var(--red)'; }
+
+// ── Team Production Analytics (Summaries tab repurpose, 2026-08-21) ──────
+// Team-wide + per-person tasks & services: assigned vs done, overdue/
+// blocked counts, and a weekly completion trend. Reuses the exact same
+// data/helpers already established for Team Assessment and Task
+// Assignments' "By Person" roster (_personWorkSummary, _taTasks,
+// _taIsOverdue) and Workload's per-service overdue definition
+// (_chSvcDueStatus) — no new "done"/"overdue" definition invented here, so
+// this view can never disagree with what those other views already show
+// for the same person/service. Read-only aggregation over data already
+// pulled via the existing /api/ops-state sync — no new endpoint.
+function _tpaPersonOverdueBlocked(person, allTasks, allServices){
+  const tasksForPerson = allTasks.filter(t=>t.assigneeId===person.id);
+  const servicesForPerson = allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
+  const tasksOverdue = tasksForPerson.filter(t=>_taIsOverdue(t)).length;
+  const tasksBlocked = tasksForPerson.filter(t=>t.status==='Blocked').length;
+  const servicesOverdue = servicesForPerson.filter(s=>_chSvcDueStatus(s)==='overdue').length;
+  // No literal "blocked" concept for services — 'stuck' (the self-service
+  // status field's own name for the same idea) is the closest analog, so
+  // the column is explicitly labeled "Blocked/Stuck" rather than implying
+  // the two are the same thing.
+  const servicesBlocked = servicesForPerson.filter(s=>_svcStatus(s)==='stuck').length;
+  return { overdue: tasksOverdue+servicesOverdue, blocked: tasksBlocked+servicesBlocked };
+}
+// Last 8 ISO (Mon-start) weeks of service completions, from each active
+// service's lastDone date — the only completion timestamp this schema
+// actually stores. ops_tasks has no equivalent field (no completion
+// history ledger — ops_tasks is a plain mutable table, see CLAUDE.md), so
+// this trend deliberately covers services only rather than faking a task
+// trend from assignedDate (an assignment time, not a completion time) —
+// flagged in the UI caption, not silently guessed.
+function _tpaWeeklyTrend(allServices){
+  const weeks=[];
+  const now=new Date();
+  const monday=new Date(now); monday.setHours(0,0,0,0); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
+  for(let i=7;i>=0;i--){
+    const start=new Date(monday); start.setDate(start.getDate()-7*i);
+    const end=new Date(start); end.setDate(end.getDate()+6);
+    weeks.push({start:start.toISOString().slice(0,10), end:end.toISOString().slice(0,10), count:0});
+  }
+  allServices.forEach(s=>{
+    if(!s.lastDone) return;
+    const w=weeks.find(w=>s.lastDone>=w.start && s.lastDone<=w.end);
+    if(w) w.count++;
+  });
+  return weeks;
+}
+function renderTeamProductionAnalytics(){
+  const statsEl=document.getElementById('tpa-team-stats');
+  const rowsEl=document.getElementById('tpa-person-rows');
+  const emptyEl=document.getElementById('tpa-person-empty');
+  const trendEl=document.getElementById('tpa-trend-chart');
+  if(!statsEl||!rowsEl) return;
+
+  const allTasks=_taTasks();
+  const allServices=_activeServicesForAssessment();
+  const roster=_timeOffRoster();
+
+  const rows=roster.map(person=>{
+    const sum=_personWorkSummary(person, allTasks, allServices);
+    const ob=_tpaPersonOverdueBlocked(person, allTasks, allServices);
+    return { id:person.id, name:person.name||'(unnamed)', ...sum, ...ob };
+  }).filter(r=>r.totalAssigned>0)
+    .sort((a,b)=>(b.overdue-a.overdue)||(b.blocked-a.blocked)||a.name.localeCompare(b.name));
+
+  const teamTasksAssigned=rows.reduce((s,r)=>s+r.tasksAssigned,0);
+  const teamTasksDone=rows.reduce((s,r)=>s+r.tasksDone,0);
+  const teamServicesAssigned=rows.reduce((s,r)=>s+r.servicesAssigned,0);
+  const teamServicesDone=rows.reduce((s,r)=>s+r.servicesDone,0);
+  const teamOverdue=rows.reduce((s,r)=>s+r.overdue,0);
+  const teamBlocked=rows.reduce((s,r)=>s+r.blocked,0);
+  const teamTotal=teamTasksAssigned+teamServicesAssigned;
+  const teamPct=teamTotal?Math.round((teamTasksDone+teamServicesDone)/teamTotal*100):null;
+
+  const statCard=(label,val,color)=>`<div class="card" style="padding:14px 16px;text-align:center;">
+    <div style="font-size:22px;font-weight:900;color:${color||'var(--text-dark)'};">${val}</div>
+    <div style="font-size:10px;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-top:3px;">${label}</div>
+  </div>`;
+  statsEl.innerHTML =
+    statCard('Tasks Done', `${teamTasksDone}/${teamTasksAssigned}`) +
+    statCard('Services Done', `${teamServicesDone}/${teamServicesAssigned}`) +
+    statCard('% Complete', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct)) +
+    statCard('Overdue', teamOverdue, teamOverdue?'var(--red)':'var(--text-light)') +
+    statCard('Blocked/Stuck', teamBlocked, teamBlocked?'var(--orange)':'var(--text-light)');
+
+  if(!rows.length){
+    rowsEl.innerHTML='';
+    if(emptyEl) emptyEl.style.display='block';
+  } else {
+    if(emptyEl) emptyEl.style.display='none';
+    rowsEl.innerHTML=rows.map(r=>`<tr>
+      <td style="padding:10px 14px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
+      <td style="padding:10px 14px;text-align:right;">${r.tasksDone}/${r.tasksAssigned}</td>
+      <td style="padding:10px 14px;text-align:right;">${r.servicesDone}/${r.servicesAssigned}</td>
+      <td style="padding:10px 14px;text-align:right;font-weight:700;color:${_pctDoneColor(r.pctDone)};">${r.pctDone==null?'—':r.pctDone+'%'}</td>
+      <td style="padding:10px 14px;text-align:right;font-weight:700;color:${r.overdue?'var(--red)':'var(--text-light)'};">${r.overdue||''}</td>
+      <td style="padding:10px 14px;text-align:right;font-weight:700;color:${r.blocked?'var(--orange)':'var(--text-light)'};">${r.blocked||''}</td>
+    </tr>`).join('');
+  }
+
+  if(trendEl){
+    const weeks=_tpaWeeklyTrend(allServices);
+    const max=Math.max(1, ...weeks.map(w=>w.count));
+    trendEl.innerHTML=weeks.map(w=>{
+      const h=Math.round((w.count/max)*100);
+      const label=new Date(w.start+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="${w.start} – ${w.end}: ${w.count} completed">
+        <div style="font-size:10px;font-weight:700;color:var(--text-dark);margin-bottom:3px;">${w.count||''}</div>
+        <div style="width:100%;max-width:28px;height:${Math.max(h,2)}%;background:var(--accent);border-radius:4px 4px 0 0;"></div>
+        <div style="font-size:9px;color:var(--text-light);margin-top:5px;white-space:nowrap;">${label}</div>
+      </div>`;
+    }).join('');
+  }
+}
 // Status Dropdown feature — own copy (zero-shared-code rule) of the same
 // Not Started/In Progress/Stuck/Done field client.html/user.html write to
 // each service. NOTE: "workStatus", not "status" — svc.status is a
@@ -5139,12 +5296,25 @@ function _svcStatus(svc){ return svc?.workStatus || 'not_started'; }
 // call, same pattern as _bmExpanded in client.html's Bundle Manager.
 let _workloadExpanded=new Set();
 function toggleWorkloadDetail(personId){
-  if(_workloadExpanded.has(personId)) _workloadExpanded.delete(personId); else _workloadExpanded.add(personId);
+  const isMtw = String(personId).startsWith('mtw_');
+  if(_workloadExpanded.has(personId)){
+    _workloadExpanded.delete(personId);
+  }else{
+    // Accordion within the Workload dashboard: opening one person's
+    // details collapses any other Workload person already open. My Team's
+    // Work rows share this same Set (via the 'mtw_' prefix below) but are
+    // deliberately left alone here — only the Workload view was asked to
+    // become an accordion.
+    if(!isMtw){
+      [..._workloadExpanded].forEach(id=>{ if(!String(id).startsWith('mtw_')) _workloadExpanded.delete(id); });
+    }
+    _workloadExpanded.add(personId);
+  }
   // My Team's Work rows are stored with an 'mtw_' prefix specifically so
   // the two dashboards' expand state can't collide for the same person —
   // re-render whichever table this toggle actually belongs to, or the
   // other one silently never reflects the click.
-  if(String(personId).startsWith('mtw_')) renderMyTeamsWork();
+  if(isMtw) renderMyTeamsWork();
   else renderWorkloadDashboard();
 }
 function _svcBreakdownRow(person, clientName, s){
@@ -5770,6 +5940,10 @@ window.switchAdminTab = function(el, tab){
   if(tab==='tracker'){ _checkServiceAlerts(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
   if(tab==='summaries'){ renderTeamProductionAnalytics(); }
+  if(tab==='livefeed'){ refreshLiveFeedFromCloud(); }
+  if(tab==='summaries'){ refreshSummaryLists(); }
+  if(tab==='livefeed'){ refreshLiveFeed(); }
+  if(tab==='summaries'){ renderTeamProductionAnalytics(); refreshSummaryLists(); }
 };
 </script>
 
@@ -6683,6 +6857,24 @@ function refreshLiveFeed(){
   updateFeedStats(allEvents);
   populateFeedUserFilter(allEvents);
   renderFeedList(allEvents);
+}
+
+// Pulls fresh ops_feed (and everything else) from the cloud before
+// rendering — cloudPullAll() already calls the plain refreshLiveFeed()
+// above at the end of its own pull, so this must NOT call it a second
+// time itself (that would just re-render, harmlessly, but redundantly).
+// Used only at genuine user-facing entry points (opening the Live Feed
+// tab, the Refresh button) — not at every local-write refresh site.
+async function refreshLiveFeedFromCloud(){
+  const btn = document.getElementById('feedRefreshBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Refreshing…'; }
+  try{
+    await cloudPullAll(true);
+  }catch(e){
+    refreshLiveFeed();
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🔄 Refresh'; }
+  }
 }
 
 function updateFeedStats(events){

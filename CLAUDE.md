@@ -2192,6 +2192,99 @@ anything). Re-ran the existing Overview regression suite (24/24) and the
 Task Assignments "By Person"/Blocked suite (22/22) — both share
 `_personWorkSummary()`/`_activeServicesForAssessment()`/`_pctDoneColor()`
 with the new view and passed unchanged, confirming those weren't touched.
+**Removed the standalone Progress Reports tab; per-client progress now
+lives on each client card (2026-08-21).** `client.html` had its own
+"📊 Progress Reports" nav item/page (`nav-reports`/`page-reports`,
+`renderReports()`) — a per-client breakdown of three separate metrics
+(this month's done÷due, this year's completion, current overdue health)
+plus a 12-month table and recent progress-log entries. Removed outright:
+the nav item, the page section, `renderReports()`, its two small helpers
+(`_rptIsOverdue()`/`_rptPctColor()`), and the `PAGE_META`/`showPage()`
+entries that referenced it. In its place, each client card in the Client &
+Production Tracker's grid now shows a "Services done" line — `X/Y (Z%)`,
+or "—" when a client has zero active services — computed via the
+already-existing `_svcCycleStats(c)` (the exact same active-services-done-
+this-cycle math the client-detail header and Overview's stat cards already
+share, so this can never disagree with either). This is deliberately a
+SEPARATE line from the card's pre-existing "Overall progress" bar, which
+is bundle/project completion % — a different metric that stayed untouched.
+
+Removing the page surfaced one real cross-file dependency, found by
+reading the code rather than assumed: `user.html`'s own sidebar had a
+"Progress Reports" nav item (`openTrackerPage('reports',this)`) that deep-
+linked into the now-gone `client.html?page=reports` — left as-is, this
+would have silently blanked the entire embedded Tracker (every
+`.page-section` gets deactivated by `showPage()` before it tries and fails
+to activate the missing one). Removed that nav item too, plus its now-
+dangling `HELP_CONTENT.reports` entry and its key in
+`EMPLOYEE_HELP_SECTION_KEYS` — all three were wired to the same dead
+target. `index.html`'s own, unrelated "📊 Reports" nav/section
+(`showSection('reports')`, a static-demo daily/weekly/monthly personal
+work-report screen with no connection to client/service data) was
+confirmed to be a completely different, pre-existing feature and left
+untouched.
+
+Verified: syntax-checked extracted `<script>` blocks in both `client.html`
+and `user.html`; div-balance on both (delta unchanged vs. `main` in each);
+a new Playwright suite against the real `client.html` UI (10/10 — the nav
+item and page section are both gone, a client with a 2-of-3-done mix of
+active/cancelled services shows "2/3 (67%)" with the cancelled service
+correctly excluded from the denominator, a zero-active-service client
+shows "—" with no `NaN`, and the pre-existing "Overall progress" line is
+untouched) and a new Playwright suite against the real `user.html` UI
+(5/5 — the nav item is gone, the help-panel keys/content no longer
+reference it, and the remaining Tracker nav item still opens the iframe
+successfully).
+**Live Feed refresh actually pulls fresh cloud data + Workload accordion
+(2026-08-21).** Two small independent fixes, one PR, `index.html` only.
+
+**Live Feed.** `refreshLiveFeed()` was purely local — it only ever read
+`dbGet(DB_KEYS.feed)` and re-rendered, so an admin with the tab already
+open (or reopening it) saw whatever `ops_feed` happened to be cached
+locally, never a fresh pull, unless the unrelated 30s live-sync poll
+(`cloudPullAll()`, which already calls the plain `refreshLiveFeed()` at
+its own end) happened to have run recently. Fixed by adding a new
+`refreshLiveFeedFromCloud()` wrapper that awaits `cloudPullAll(true)`
+rather than duplicating the read+render itself — `cloudPullAll()` already
+calls `refreshLiveFeed()` internally once the pull lands, so having the
+new wrapper call it too would just be a redundant second render, and
+having `refreshLiveFeed()` itself call `cloudPullAll()` would recurse
+infinitely against `cloudPullAll`'s own existing call back into it. The
+new wrapper is used at exactly the two user-facing entry points this task
+asked for — the Live Feed tab-switch handler and a new "🔄 Refresh" button
+placed next to the existing "🗑 Clear Feed" button — while every other
+existing call site of the plain `refreshLiveFeed()` (right after a local
+`dbPush(DB_KEYS.feed, event)`, `clearFeed()`'s own post-clear render, the
+pre-existing 15s local-only auto-refresh interval) is left untouched,
+since none of those are meant to trigger a network round-trip. The button
+disables itself with a "⏳ Refreshing…" label for the duration of the pull
+and restores afterward, including on a failed pull (falls back to a plain
+local `refreshLiveFeed()` so the button never gets stuck mid-request).
+
+**Workload accordion.** `_workloadExpanded` is a single `Set` shared
+between two separate dashboards — the main Workload view and "My Team's
+Work" (whose row ids carry an `'mtw_'` prefix specifically so the two
+can't collide in the same Set) — confirmed by reading `toggleWorkloadDetail()`
+before changing it. The ask was for the Workload view specifically, so the
+accordion behavior only clears other non-`mtw_`-prefixed ids from the Set
+before adding the newly-opened one; "My Team's Work" keeps its existing
+independent multi-expand behavior, since changing that wasn't asked for
+and the two dashboards' state already can't collide by id prefix. Opening
+one Workload person's "▸ Details" now auto-collapses any other Workload
+person already expanded; closing the only open one leaves all collapsed.
+
+Verified: syntax-check on the extracted `<script>` blocks, div-balance
+(delta unchanged vs. `main`, confirming the only additions were two
+`<button>` elements plus JS with no HTML div impact), and a new Playwright
+suite against the real `index.html` UI (14/14 — the Refresh button's
+presence, that opening the Live Feed tab and clicking Refresh both issue a
+fresh `/api/ops-state` call and render newly-appeared team activity, that
+the button re-enables/relabels itself afterward, and the full Workload
+accordion sequence: two people's details expand and collapse correctly,
+opening a second person's details collapses the first, and closing the
+only open one leaves both collapsed). The pre-existing Recent Activity
+Playwright suite (an unrelated Overview-page feed, not this Live Feed tab)
+re-run clean — no regressions.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
