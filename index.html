@@ -104,13 +104,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .su-actions{display:flex;gap:4px;margin-top:8px;}
 .su-btn{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;}
 .su-btn:hover{background:var(--bg2);color:var(--text);}
-/* Creative/Production/Account Manager: Live Feed's Clear button is hidden
-   for these three levels — toggled via a body class (not per-element hiding)
-   so it also covers a freshly re-rendered button. Team Production Analytics
-   (2026-08-21, repurposed from the old manually-generated Summaries feature)
-   has no write actions of its own left to restrict — it's a read-only
-   dashboard, like Workload/Client Health. See applyAdminRoleRestrictions(). */
-body.restrict-insights-actions #clearFeedBtn{display:none!important;}
 
 /* ── MAIN ── */
 .main{margin-left:240px;flex:1;min-width:0;min-height:100vh;display:flex;flex-direction:column;}
@@ -1732,16 +1725,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </select>
           <select class="form-select" id="feed-filter-type" onchange="filterFeed()" style="font-size:13px;width:160px;">
             <option value="">All Activity</option>
-            <option value="goal">Goals</option>
             <option value="login">Logins</option>
-            <option value="client">Tasks &amp; Services</option>
-            <option value="timeoff">Time Off</option>
-            <option value="admin">Admin</option>
-            <option value="report">Reports</option>
             <option value="nav">Navigation</option>
+            <option value="admin">Admin</option>
+            <option value="timeoff">Time Off</option>
           </select>
-          <button class="btn btn-outline btn-sm" id="feedRefreshBtn" onclick="refreshLiveFeedFromCloud()">🔄 Refresh</button>
-          <button class="btn btn-danger btn-sm" id="clearFeedBtn" onclick="clearFeed()">🗑 Clear Feed</button>
         </div>
       </div>
       <!-- Live stats bar -->
@@ -6698,8 +6686,19 @@ window.showSection = function(id, el){
 
 
 // ── LIVE FEED FUNCTIONS ──
+// User/employee activity only (2026-08-21) — login, nav, admin, and timeoff
+// (an HR action, not client-service work) are the only types this feed ever
+// shows. Everything else — client (service done/overdue/client updates),
+// goal, report, message, blocker — belongs in the Tracker, Client Health,
+// Team Production Analytics, or notifications, never here. Applied once,
+// here, so every consumer (stats, user-filter options, the list itself)
+// reads from the identical already-scoped set and can never disagree.
+const LIVE_FEED_USER_ACTIVITY_TYPES = ['login','nav','admin','timeoff'];
+function _feedUserActivityOnly(events){
+  return events.filter(e=>LIVE_FEED_USER_ACTIVITY_TYPES.includes(e.type));
+}
 function refreshLiveFeed(){
-  const allEvents = dbGet(DB_KEYS.feed) || [];
+  const allEvents = _feedUserActivityOnly(dbGet(DB_KEYS.feed) || []);
   updateFeedStats(allEvents);
   populateFeedUserFilter(allEvents);
   renderFeedList(allEvents);
@@ -6709,17 +6708,14 @@ function refreshLiveFeed(){
 // rendering — cloudPullAll() already calls the plain refreshLiveFeed()
 // above at the end of its own pull, so this must NOT call it a second
 // time itself (that would just re-render, harmlessly, but redundantly).
-// Used only at genuine user-facing entry points (opening the Live Feed
-// tab, the Refresh button) — not at every local-write refresh site.
+// Called automatically every time the Live Feed tab is opened (see
+// switchAdminTab's own hook) — there is no manual Refresh button anymore;
+// this IS the auto-refresh.
 async function refreshLiveFeedFromCloud(){
-  const btn = document.getElementById('feedRefreshBtn');
-  if(btn){ btn.disabled = true; btn.textContent = '⏳ Refreshing…'; }
   try{
     await cloudPullAll(true);
   }catch(e){
     refreshLiveFeed();
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '🔄 Refresh'; }
   }
 }
 
@@ -6740,7 +6736,7 @@ function populateFeedUserFilter(events){
 }
 
 function filterFeed(){
-  const allEvents = dbGet(DB_KEYS.feed) || [];
+  const allEvents = _feedUserActivityOnly(dbGet(DB_KEYS.feed) || []);
   const userF = document.getElementById('feed-filter-user')?.value || '';
   const typeF = document.getElementById('feed-filter-type')?.value || '';
   const filtered = allEvents.filter(e=>{
@@ -6756,9 +6752,12 @@ function renderFeedList(events){
     list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet.</div>';
     return;
   }
-  const icons = {blocker:'🚧',login:'🔑',nav:'🧭',goal:'🎯',report:'📊',client:'🏢',timeoff:'🏖',admin:'🔧',message:'💬'};
-  const iconClass = {blocker:'feed-icon-blocker',login:'feed-icon-login',nav:'feed-icon-nav',goal:'feed-icon-goal',report:'feed-icon-nav',client:'feed-icon-nav',timeoff:'feed-icon-goal',admin:'feed-icon-nav',message:'feed-icon-login'};
-  const badgeStyle = {blocker:'background:#fff8e8;color:var(--orange)',login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',goal:'background:#fdf4ff;color:#9333ea',report:'background:rgba(45,107,182,.1);color:var(--text)',client:'background:rgba(45,107,182,.1);color:var(--text)',timeoff:'background:#fdf4ff;color:#9333ea',admin:'background:var(--bg2);color:var(--text-mid)',message:'background:rgba(45,107,182,.1);color:var(--text)'};
+  // Only login/nav/admin/timeoff ever reach here (see _feedUserActivityOnly
+  // — both callers of renderFeedList() already filter through it), so these
+  // maps only cover those four types now.
+  const icons = {login:'🔑',nav:'🧭',timeoff:'🏖',admin:'🔧'};
+  const iconClass = {login:'feed-icon-login',nav:'feed-icon-nav',timeoff:'feed-icon-goal',admin:'feed-icon-nav'};
+  const badgeStyle = {login:'background:rgba(45,107,182,.1);color:var(--text)',nav:'background:var(--bg2);color:var(--text-mid)',timeoff:'background:#fdf4ff;color:#9333ea',admin:'background:var(--bg2);color:var(--text-mid)'};
   list.innerHTML = events.map(e=>{
     const t = new Date(e.time);
     const timeStr = t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' · ' + e.date;
@@ -6771,14 +6770,6 @@ function renderFeedList(events){
       </div>
     </div>`;
   }).join('');
-}
-
-function clearFeed(){
-  if(!confirm('Clear the entire activity feed? This cannot be undone.')) return;
-  dbSet(DB_KEYS.feed, []);
-  refreshLiveFeed();
-  cloudAutoSync(true);
-  showToast('Live feed cleared');
 }
 
 // Auto-refresh feed every 15 seconds if tab is active
@@ -10992,16 +10983,6 @@ function applyAdminRoleRestrictions(level, adminObj){
   const myTeamsWorkNav = document.querySelector('.admin-nav-item[onclick*="\'myTeamsWork\'"]');
   if(myTeamsWorkNav) myTeamsWorkNav.style.display = _adminManagesTeam ? '' : 'none';
 
-  // Creative/Production/Account Manager: Team Production Analytics and Live
-  // Feed are visible (see below); Analytics is read-only for everyone by
-  // nature now (no generate/delete actions left to restrict), Live Feed's
-  // Clear button is still hidden for these three levels. Set independently
-  // of the nav-visibility branches below since production_manager's nav
-  // already showed both tabs before this restriction existed. See
-  // CLAUDE.md's permission project.
-  const isRestrictedManagerLevel = level === CREATIVE_MANAGER_ROLE || RESTRICTED_ADMIN_ROLES.includes(level);
-  document.body.classList.toggle('restrict-insights-actions', isRestrictedManagerLevel);
-
   // Shell title-strip person badge: job title if this admin has one set,
   // else falls back to their access-level label (see _getLevelInfo() — its
   // fallback for an unmatched/missing level already reads as fully
@@ -11120,8 +11101,9 @@ function applyAdminRoleRestrictions(level, adminObj){
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
   // so she keeps Business Setup; Account Manager stays clients-only. Both now
-  // keep Team Production Analytics/Live Feed (Live Feed's Clear button is
-  // view-only — see restrict-insights-actions above) instead of Live Feed
+  // keep Team Production Analytics/Live Feed (both fully read-only for
+  // everyone now — Live Feed's own Clear button was removed, see the
+  // 2026-08-21 "user activity only" entry in CLAUDE.md) instead of Live Feed
   // being hidden for account_manager. 'users' is
   // hidden for both — see CLAUDE.md's permission project Step 1, which also
   // hard-blocks this server-side (canEditUsers()) so this is UX convenience,
