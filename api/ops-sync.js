@@ -1575,18 +1575,23 @@ export default async function handler(req, res) {
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
     }
 
-    // ── Task import undo — genuine hard SQL DELETE. ops_tasks has no
+    // ── Task hard delete — genuine hard SQL DELETE. ops_tasks has no
     // deleted_at column and no append-only guard trigger (unlike
     // ops_org_nodes/ops_org_links's soft-tombstone convention above, or
     // ops_feed/ops_time_off_ledger's insert-only guard) — a plain
-    // document-model table, so reversing an entire parse-import batch
-    // really does remove those rows, per this feature's own "normal
-    // per-record delete" instruction. Admin/super may delete any task id; a
-    // member may only delete a task where THEY are assignedById — i.e. a
-    // batch they themselves committed — which can never be spoofed by the
-    // client, since assignedById is always server-forced to the caller at
-    // insert time (see the tasks-write block above), never trusted from
-    // the client on create. ──
+    // document-model table, so this really does remove the row, per this
+    // feature's own "normal per-record delete" instruction. Originally
+    // built for the import-undo feature (a member could delete only a
+    // batch THEY committed, i.e. assignedById===session.id — "a batch they
+    // themselves committed" can never be spoofed by the client, since
+    // assignedById is always server-forced to the caller at insert time,
+    // see the tasks-write block above). Broadened (2026-08-21) for the
+    // general-purpose Delete button/inline delete: a member may now ALSO
+    // delete a task where they're the assigneeId — the same "your task"
+    // definition already used for every other member-write on this table
+    // (see the "not your task" rejection above) — so deleting a task
+    // assigned to you doesn't require having created it yourself. Admin/
+    // super may still delete any task id, unconditionally.
     if (Array.isArray(tombstones?.taskIds) && tombstones.taskIds.length) {
       const idsToDelete = [...new Set(tombstones.taskIds.filter(id => typeof id === 'string' && id))];
       if (idsToDelete.length) {
@@ -1597,10 +1602,12 @@ export default async function handler(req, res) {
             warnings.push(`taskIds delete: ${fetchErr.message}`);
             deletableIds = [];
           } else {
-            deletableIds = (rows || []).filter(r => r.data?.assignedById === session.id).map(r => r.id);
+            deletableIds = (rows || [])
+              .filter(r => r.data?.assignedById === session.id || r.data?.assigneeId === session.id)
+              .map(r => r.id);
             idsToDelete
               .filter(id => !deletableIds.includes(id))
-              .forEach(id => rejected.push({ table: 'tasks', id, reason: 'not your own import batch' }));
+              .forEach(id => rejected.push({ table: 'tasks', id, reason: 'not your task' }));
           }
         }
         if (deletableIds.length) {

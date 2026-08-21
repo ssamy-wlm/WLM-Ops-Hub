@@ -1522,6 +1522,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                     <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
                     <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
                     <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Priority</th>
+                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);"></th>
                   </tr>
                 </thead>
                 <tbody id="taTableBody"></tbody>
@@ -2834,6 +2835,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="margin-top:16px;display:flex;gap:10px;">
         <button class="btn btn-primary" onclick="saveTaskEdit()">Save</button>
         <button class="btn btn-outline" onclick="closeModal('taskEditModal')">Cancel</button>
+        <button class="btn btn-outline" id="tem-delete-btn" style="margin-left:auto;color:var(--red,#c94a4a);border-color:var(--red,#c94a4a);" onclick="deleteTaskFromModal()">🗑 Delete</button>
       </div>
     </div>
   </div>
@@ -8147,6 +8149,10 @@ function startLiveSync(level){
 const TA_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
 const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
+// Ordered Not started -> In progress -> Blocked -> Done, matching the edit
+// modal's own <select> — shared here so the inline list-row dropdown can
+// never drift out of sync with it.
+const TA_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 
 let _taView = 'list';
 let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned'
@@ -8506,9 +8512,16 @@ function _renderTaListTable(tasks){
         </select>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
+        <select class="form-input" style="font-size:12px;padding:5px 8px;color:${_taStatusColor(t.status)};font-weight:600;" onchange="_taChangeStatus('${t.id}', this.value, this)">
+          ${TA_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.replyStatus||'—')}</td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.priority||'Normal')}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
+        <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);" title="Delete task" onclick="deleteTaskInline('${t.id}')">✕</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -8535,6 +8548,67 @@ function _taReassign(id, newAssigneeId){
   cloudAutoSync();
   showToast('Task reassigned ✓');
   renderTaskAssignments();
+}
+
+// Inline status-dropdown change from the list row — same write path as
+// every other edit here (dbSet + cloudAutoSync), no separate mechanism.
+// Blocked requires a reason exactly like the edit modal does; prompt()
+// stands in for the modal's own required text field since there's no
+// second input available inline. Cancelling or leaving it empty reverts
+// the <select> to its previous value rather than silently saving Blocked
+// with no reason.
+function _taChangeStatus(id, newStatus, selectEl){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t) return;
+  const prevStatus = t.status || 'Not started';
+  if(newStatus===prevStatus) return;
+  let blockReason = t.blockReason || '';
+  if(newStatus==='Blocked'){
+    blockReason = (prompt('Why is this blocked?', blockReason) || '').trim();
+    if(!blockReason){
+      if(selectEl) selectEl.value = prevStatus;
+      return;
+    }
+  } else {
+    blockReason = '';
+  }
+  t.status = newStatus;
+  t.blockReason = blockReason;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  showToast('Status updated ✓');
+  renderTaskAssignments();
+}
+
+// Hard delete — reuses the exact same tombstones.taskIds mechanism the
+// import-undo feature (#256) already established (ops_tasks has no
+// deleted_at column, so this is a genuine SQL DELETE, not a soft state).
+// api/ops-sync.js scopes it server-side: admin/super may delete any task;
+// a member may delete one they created (assignedById) OR one assigned to
+// them (assigneeId) — index.html is admin-only, so every caller here
+// already qualifies as admin regardless. No local pre-check needed;
+// a rejection (if any) would just surface via the normal sync-warning
+// path, same as every other write in this file.
+function _taDeleteTask(id){
+  if(!confirm('Delete this task? This cannot be undone.')) return false;
+  const tasks = _taTasks().filter(t=>t.id!==id);
+  _taSaveTasks(tasks);
+  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
+  if(!tomb.includes(id)) tomb.push(id);
+  dbSet(DB_KEYS.deletedTaskIds, tomb);
+  cloudAutoSync();
+  renderTaskAssignments();
+  showToast('Task deleted');
+  return true;
+}
+function deleteTaskInline(id){
+  _taDeleteTask(id);
+}
+function deleteTaskFromModal(){
+  const id = document.getElementById('tem-id').value;
+  if(!id) return; // brand-new, unsaved task — nothing to delete server-side
+  if(_taDeleteTask(id)) closeModal('taskEditModal');
 }
 
 // One shared "current period" anchor (_taCalDate) for all three schedule
@@ -8699,6 +8773,8 @@ function openTaskEditModal(id){
   document.getElementById('tem-email-received').value = t.emailReceivedDate || '';
   document.getElementById('tem-reply-status').value = t.replyStatus || '';
   document.getElementById('tem-email-fields').style.display = t.source==='parsed-email' ? 'block' : 'none';
+  // Nothing to delete server-side for a brand-new, unsaved task.
+  document.getElementById('tem-delete-btn').style.display = isNew ? 'none' : '';
   closeTaDetailPanel();
   openModal('taskEditModal');
 }

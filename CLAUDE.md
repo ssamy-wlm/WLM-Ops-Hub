@@ -2354,6 +2354,70 @@ but an overdue+stuck service still shows nonzero Overdue/Blocked, the
 `#admin-summaries` element exists, and the discarded session's
 `_tpaPersonOverdueBlocked()` helper is gone).
 
+**Task delete button + inline status dropdown (2026-08-21).** Two related
+additions to Task Assignments (`index.html`) and Daily Tasks (`user.html`),
+one PR, both files, no new `api/*.js` file — still 12.
+
+**1. Hard delete.** A "🗑 Delete" button in the Edit Task modal
+(`index.html`)/detail panel (`user.html`), plus an inline ✕ button on every
+task-list row in both portals. Reuses the exact same `tombstones.taskIds`
+hard-SQL-DELETE mechanism the import-undo feature (2026-08-20) already
+established in `api/ops-sync.js` — `ops_tasks` has no `deleted_at` column,
+so this was already a genuine delete, not a soft state; no schema change
+needed. The ONE server-side change: broadened the member permission check
+from `assignedById===session.id` only (the import-undo feature's own
+narrower "a batch you yourself committed" scope) to
+`assignedById===session.id OR assigneeId===session.id`, so a member can
+now also delete a task simply because it's assigned to them — the same
+"your task" definition already used for every other member-write on this
+table (the `cur.assigneeId !== session.id` "not your task" rejection right
+above it in the same file). This was a deliberate, reasoned generalization
+of the existing mechanism rather than a literal re-read of "reuse the same
+permission scope" — the import-undo feature's assignedById-only rule made
+sense for *that* feature (undoing your own import batch) but would have
+been inconsistent and confusing as the definition of "your task" for a
+general-purpose Delete button, which a member reaches from a task actually
+assigned to them. Admin/super still delete any task unconditionally,
+exactly as before. Client-side, deleting removes the task from the local
+list, appends its id to the existing `DB_KEYS.deletedTaskIds` tombstone
+queue (already wired into both portals' sync-push functions since the
+import-undo feature — no new push-side code needed), and re-renders. The
+modal/panel Delete button is hidden for a brand-new, unsaved task (nothing
+exists server-side yet to delete).
+
+**2. Inline status dropdown.** The task list's Status column is now a
+`<select>` (Not started/In progress/Blocked/Done) in both portals, writing
+through the normal sync path immediately on change — no separate save
+step, matching the existing inline-reassign dropdown's own convention.
+Setting Blocked prompts (via `prompt()`, standing in for the edit modal's
+own required text field since there's no second input available inline)
+for a reason exactly like the modal/panel already requires; cancelling or
+leaving it empty reverts the dropdown to its previous value and pushes
+nothing, rather than silently saving a reason-less Blocked status.
+Existing server-side write-rules (member-touchable fields, due-date lock,
+etc.) are unaffected — this only ever writes `status`/`blockReason`,
+already-allowed fields.
+
+Verified: `node --check` on `api/ops-sync.js`; syntax-checked both HTML
+files' inline `<script>` blocks; div-balance on both (delta unchanged vs.
+`main`); `ls api/*.js | wc -l` still 12; a `node:test`
+`--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (6/6 — a member can now delete a task assigned to them
+even if someone else created it, the original "created it themselves" case
+still works unchanged, an unrelated task is still rejected with a clear
+reason, admin/super still deletes anything); a new Playwright suite against
+the real `index.html` UI (17/17 — inline status dropdown writes through
+immediately, Blocked prompts and requires a non-empty reason, cancelling
+reverts the dropdown with no sync call, inline row delete and modal delete
+both remove the task and send a real tombstone request, the modal's Delete
+button is hidden for a new task) and the real `user.html` UI (15/15 — same
+coverage for the inline dropdown, detail-panel delete, and inline row
+delete). Every pre-existing Task Assignments/Daily Tasks Playwright suite
+re-run clean (By Person/Blocked 22/22, Needs Attention/Unassigned 16/16,
+Daily Tasks Blocked 10/10, schedule tab 15/15, calendar/buttons 11/11,
+staging 26/26, staging merge 9/9, 19-task completeness 12/12) — no
+regressions from adding a column to the shared list-table markup.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
