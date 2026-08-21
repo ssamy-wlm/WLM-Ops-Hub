@@ -2177,6 +2177,56 @@ untouched) and a new Playwright suite against the real `user.html` UI
 (5/5 — the nav item is gone, the help-panel keys/content no longer
 reference it, and the remaining Tracker nav item still opens the iframe
 successfully).
+**Live Feed refresh actually pulls fresh cloud data + Workload accordion
+(2026-08-21).** Two small independent fixes, one PR, `index.html` only.
+
+**Live Feed.** `refreshLiveFeed()` was purely local — it only ever read
+`dbGet(DB_KEYS.feed)` and re-rendered, so an admin with the tab already
+open (or reopening it) saw whatever `ops_feed` happened to be cached
+locally, never a fresh pull, unless the unrelated 30s live-sync poll
+(`cloudPullAll()`, which already calls the plain `refreshLiveFeed()` at
+its own end) happened to have run recently. Fixed by adding a new
+`refreshLiveFeedFromCloud()` wrapper that awaits `cloudPullAll(true)`
+rather than duplicating the read+render itself — `cloudPullAll()` already
+calls `refreshLiveFeed()` internally once the pull lands, so having the
+new wrapper call it too would just be a redundant second render, and
+having `refreshLiveFeed()` itself call `cloudPullAll()` would recurse
+infinitely against `cloudPullAll`'s own existing call back into it. The
+new wrapper is used at exactly the two user-facing entry points this task
+asked for — the Live Feed tab-switch handler and a new "🔄 Refresh" button
+placed next to the existing "🗑 Clear Feed" button — while every other
+existing call site of the plain `refreshLiveFeed()` (right after a local
+`dbPush(DB_KEYS.feed, event)`, `clearFeed()`'s own post-clear render, the
+pre-existing 15s local-only auto-refresh interval) is left untouched,
+since none of those are meant to trigger a network round-trip. The button
+disables itself with a "⏳ Refreshing…" label for the duration of the pull
+and restores afterward, including on a failed pull (falls back to a plain
+local `refreshLiveFeed()` so the button never gets stuck mid-request).
+
+**Workload accordion.** `_workloadExpanded` is a single `Set` shared
+between two separate dashboards — the main Workload view and "My Team's
+Work" (whose row ids carry an `'mtw_'` prefix specifically so the two
+can't collide in the same Set) — confirmed by reading `toggleWorkloadDetail()`
+before changing it. The ask was for the Workload view specifically, so the
+accordion behavior only clears other non-`mtw_`-prefixed ids from the Set
+before adding the newly-opened one; "My Team's Work" keeps its existing
+independent multi-expand behavior, since changing that wasn't asked for
+and the two dashboards' state already can't collide by id prefix. Opening
+one Workload person's "▸ Details" now auto-collapses any other Workload
+person already expanded; closing the only open one leaves all collapsed.
+
+Verified: syntax-check on the extracted `<script>` blocks, div-balance
+(delta unchanged vs. `main`, confirming the only additions were two
+`<button>` elements plus JS with no HTML div impact), and a new Playwright
+suite against the real `index.html` UI (14/14 — the Refresh button's
+presence, that opening the Live Feed tab and clicking Refresh both issue a
+fresh `/api/ops-state` call and render newly-appeared team activity, that
+the button re-enables/relabels itself afterward, and the full Workload
+accordion sequence: two people's details expand and collapse correctly,
+opening a second person's details collapses the first, and closing the
+only open one leaves both collapsed). The pre-existing Recent Activity
+Playwright suite (an unrelated Overview-page feed, not this Live Feed tab)
+re-run clean — no regressions.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
