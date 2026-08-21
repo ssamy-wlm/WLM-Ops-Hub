@@ -104,12 +104,12 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .su-actions{display:flex;gap:4px;margin-top:8px;}
 .su-btn{flex:1;text-align:center;padding:5px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid var(--border);color:var(--text-mid);background:var(--card);transition:all .15s;}
 .su-btn:hover{background:var(--bg2);color:var(--text);}
-/* Creative/Production/Account Manager: Summaries and Live Feed are view-only
+/* Creative/Production/Account Manager: Live Feed's Clear button is hidden
    for these three levels — toggled via a body class (not per-element hiding)
-   so it also covers elements re-rendered later (e.g. a fresh deleteSummary
-   button on every refreshSummaryLists() call). See applyAdminRoleRestrictions(). */
-body.restrict-insights-actions #summaryGenerateBtns,
-body.restrict-insights-actions .summary-del-btn,
+   so it also covers a freshly re-rendered button. Team Production Analytics
+   (2026-08-21, repurposed from the old manually-generated Summaries feature)
+   has no write actions of its own left to restrict — it's a read-only
+   dashboard, like Workload/Client Health. See applyAdminRoleRestrictions(). */
 body.restrict-insights-actions #clearFeedBtn{display:none!important;}
 
 /* ── MAIN ── */
@@ -1155,7 +1155,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
 
       <div class="admin-nav-group-label">Insights</div>
-      <div class="admin-nav-item" onclick="switchAdminTab(this,'summaries')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg></span>Summaries</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'summaries')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg></span>Team analytics</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>Live feed</div>
 
       <div class="admin-nav-group-label">Resources</div>
@@ -1773,6 +1773,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
     </div>
 
+    <!-- ══ SUMMARIES ══ -->
+    <!-- ══ TEAM PRODUCTION ANALYTICS (repurposed from the old manually-
+         generated Weekly/Monthly/Yearly "Progress Summaries" — 2026-08-21).
+         Read-only aggregation only, no writes, no generated/saved records —
+         reads ops_tasks (dbGet(DB_KEYS.tasks)) + active client services
+         (_activeServicesForAssessment()), same shared helpers Team
+         Assessment (Overview) and Task Assignments' "By Person" roster
+         already use, so the numbers here can never disagree with either.
+         Internal tab id/page-section id ('summaries'/admin-summaries) is
+         left unchanged on purpose — every role-visibility/restriction rule
+         elsewhere keys off that id, not the label. ══ -->
+    <div id="admin-summaries" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
     <!-- ══ SUMMARIES — now the Team Production Analytics home ══ -->
     <div id="admin-summaries" class="page-section">
       <div style="margin-bottom:18px;">
@@ -1816,37 +1829,48 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="section-divider">Progress Summary Generator (legacy)</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
         <div>
-          <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📝 Progress Summaries</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Auto-compiled from the production tracker — progress logs, tasks completed, and milestones</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Team Production Analytics</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Per-person &amp; team totals — tasks/services assigned vs. done, overdue, blocked, and a weekly completion trend</div>
         </div>
-        <div style="display:flex;gap:8px;" id="summaryGenerateBtns">
-          <button class="btn btn-blue" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openWeeklySummaryModal()">📋 Weekly</button>
-          <button class="btn btn-primary" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;" onclick="openMonthlySummaryModal()">📊 Monthly</button>
-          <button class="btn" style="flex:0 0 110px;width:110px;margin:0;justify-content:center;background:var(--accent);color:#fff;" onclick="openYearlySummaryModal()">📅 Yearly</button>
-        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderTeamProductionAnalytics()">↺ Refresh</button>
       </div>
 
-      <!-- Weekly summaries list -->
-      <div id="sum-tab-weekly">
-        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Weekly Summaries</div>
-        <div id="weekly-summaries-list">
-          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No weekly summaries yet. Click <strong>📋 Weekly</strong> to generate one.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Services Completed — Last 8 Weeks</div>
+            <div class="card-sub">Team-wide, bucketed by the week each service was last marked done. Tasks have no completion date stored in this schema yet, so this trend is services-only — never a guessed task number.</div>
+          </div>
         </div>
+        <div class="card-body" id="tpa-weekly-trend" style="display:flex;align-items:flex-end;gap:10px;min-height:130px;padding-top:14px;"></div>
       </div>
 
-      <!-- Monthly reports list -->
-      <div id="sum-tab-monthly" style="margin-top:28px;">
-        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Monthly Reports</div>
-        <div id="monthly-summaries-list">
-          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No monthly reports yet. Click <strong>📊 Monthly</strong> to generate one.</div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Per-Person Breakdown</div>
+            <div class="card-sub">Tasks and services assigned vs. done, plus overdue &amp; blocked tasks — every employee &amp; admin against their assigned work</div>
+          </div>
         </div>
-      </div>
-
-      <!-- Yearly summaries list -->
-      <div id="sum-tab-yearly" style="margin-top:28px;">
-        <div style="font-size:13px;font-weight:800;color:var(--text-dark);margin-bottom:10px;">Yearly Summaries</div>
-        <div id="yearly-summaries-list">
-          <div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No yearly summaries yet. Click <strong>📅 Yearly</strong> to generate one.</div>
+        <div class="card-body" style="padding:0;">
+          <table style="width:100%;">
+            <thead>
+              <tr>
+                <th style="padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Person</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Tasks</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Svcs</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Overdue</th>
+                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Blocked</th>
+                <th style="padding:10px 14px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Total %</th>
+              </tr>
+            </thead>
+            <tbody id="tpa-person-table"><tr><td colspan="8" style="padding:12px 14px;font-size:13px;color:var(--text-light);">Loading…</td></tr></tbody>
+          </table>
+          <div id="tpa-person-empty" style="display:none;text-align:center;padding:24px 14px;color:var(--text-light);font-size:13px;">No assigned work yet.</div>
         </div>
       </div>
     </div>
@@ -3348,106 +3372,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
-    </div>
-  </div>
-</div>
-
-<!-- Weekly Summary Modal -->
-<div id="weeklySummaryModal" class="modal-overlay">
-  <div class="modal" style="width:700px;max-width:96vw;">
-    <div class="modal-header">
-      <div><div class="modal-title">📋 Generate Weekly Summary</div><div class="modal-sub">Auto-compiled from the production tracker</div></div>
-      <button class="modal-close" onclick="closeModal('weeklySummaryModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-row" style="margin-bottom:16px;">
-        <div class="form-group"><label class="form-label">Week Start</label><input class="form-input" type="date" id="ws-start-date" onchange="previewWeeklySummary()"></div>
-        <div class="form-group"><label class="form-label">Week End</label><input class="form-input" type="date" id="ws-end-date" onchange="previewWeeklySummary()"></div>
-      </div>
-      <div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:14px;max-height:280px;overflow-y:auto;">
-        <div style="font-size:12px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Tracker Activity in Range</div>
-        <div id="ws-eod-preview" style="font-size:13px;color:var(--text-mid);">Select dates above to preview</div>
-      </div>
-      <div class="form-group"><label class="form-label">Summary Title</label><input class="form-input" id="ws-title" placeholder="e.g. Week of June 2–8, 2026"></div>
-      <div class="form-group"><label class="form-label">Admin Notes (optional)</label>
-        <textarea class="form-textarea" id="ws-notes" rows="3" placeholder="Observations or highlights for this week…"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('weeklySummaryModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="generateWeeklySummary()">Generate & Save ✓</button>
-    </div>
-  </div>
-</div>
-
-<!-- Monthly Summary Modal -->
-<div id="monthlySummaryModal" class="modal-overlay">
-  <div class="modal" style="width:700px;max-width:96vw;">
-    <div class="modal-header">
-      <div><div class="modal-title">📊 Generate Monthly Report</div><div class="modal-sub">Auto-compiled from the production tracker</div></div>
-      <button class="modal-close" onclick="closeModal('monthlySummaryModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-row" style="margin-bottom:16px;">
-        <div class="form-group"><label class="form-label">Month</label>
-          <select class="form-select" id="ms-month" onchange="previewMonthlySummary()">
-            <option value="0">January</option><option value="1">February</option><option value="2">March</option>
-            <option value="3">April</option><option value="4">May</option><option value="5">June</option>
-            <option value="6">July</option><option value="7">August</option><option value="8">September</option>
-            <option value="9">October</option><option value="10">November</option><option value="11">December</option>
-          </select>
-        </div>
-        <div class="form-group"><label class="form-label">Year</label><input class="form-input" type="number" id="ms-year" value="2026" min="2024" max="2030" onchange="previewMonthlySummary()"></div>
-      </div>
-      <div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:14px;max-height:280px;overflow-y:auto;">
-        <div style="font-size:12px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Tracker Activity This Month</div>
-        <div id="ms-overview" style="font-size:13px;color:var(--text-mid);">Select month and year above to preview</div>
-      </div>
-      <div class="form-group"><label class="form-label">Report Title</label><input class="form-input" id="ms-title" placeholder="e.g. June 2026 — Monthly Progress Report"></div>
-      <div class="form-group"><label class="form-label">Executive Summary (optional)</label>
-        <textarea class="form-textarea" id="ms-summary" rows="3" placeholder="High-level notes on this month's performance…"></textarea>
-      </div>
-      <div class="form-group"><label class="form-label">Key Wins (optional)</label>
-        <textarea class="form-textarea" id="ms-wins" rows="2" placeholder="Major achievements and highlights…"></textarea>
-      </div>
-      <div class="form-group"><label class="form-label">Issues &amp; Actions (optional)</label>
-        <textarea class="form-textarea" id="ms-issues" rows="2" placeholder="Issues and required actions…"></textarea>
-      </div>
-      <div class="form-group"><label class="form-label">Goals for Next Month (optional)</label>
-        <textarea class="form-textarea" id="ms-goals" rows="2" placeholder="Targets for next month…"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('monthlySummaryModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="generateMonthlySummary()">Generate & Save ✓</button>
-    </div>
-  </div>
-</div>
-
-<!-- Yearly Summary Modal -->
-<div id="yearlySummaryModal" class="modal-overlay">
-  <div class="modal" style="width:560px;max-width:96vw;">
-    <div class="modal-header">
-      <div><div class="modal-title">📅 Generate Yearly Summary</div><div class="modal-sub">Full-year snapshot from the production tracker</div></div>
-      <button class="modal-close" onclick="closeModal('yearlySummaryModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group" style="margin-bottom:16px;">
-        <label class="form-label">Year</label>
-        <input class="form-input" type="number" id="ys-year" value="2026" min="2024" max="2030" onchange="previewYearlySummary()">
-      </div>
-      <div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:14px;max-height:260px;overflow-y:auto;">
-        <div style="font-size:12px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;">Year at a Glance</div>
-        <div id="ys-preview" style="font-size:13px;color:var(--text-mid);">Select year above to preview</div>
-      </div>
-      <div class="form-group"><label class="form-label">Report Title</label><input class="form-input" id="ys-title" placeholder="e.g. 2026 Annual Progress Report"></div>
-      <div class="form-group"><label class="form-label">Notes (optional)</label>
-        <textarea class="form-textarea" id="ys-notes" rows="3" placeholder="Year-end observations…"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('yearlySummaryModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="generateYearlySummary()">Generate & Save ✓</button>
     </div>
   </div>
 </div>
@@ -5682,9 +5606,9 @@ const HELP_CONTENT = {
   payroll: { label: 'Payroll', sel: '.admin-nav-item[onclick*="\'payroll\'"]',
     tip: "Calculates hours and pay for your whole team.",
     learnMore: "Pulls logged hours and pay rates into a period total. Admin-level and Super Admin have full access; it's hidden specifically from Account, Production, and Creative Managers. (Production Manager still keeps the Time off ledger.)" },
-  summaries: { label: 'Summaries', sel: '.admin-nav-item[onclick*="\'summaries\'"]',
-    tip: "Reports on tracker activity over a period or this month.",
-    learnMore: "Use these for client reporting and to see what got done in a date range." },
+  summaries: { label: 'Team Production Analytics', sel: '.admin-nav-item[onclick*="\'summaries\'"]',
+    tip: "Per-person and team totals for tasks and services — assigned, done, overdue, blocked, and a weekly trend.",
+    learnMore: "Read-only — reads live from Task Assignments and the Tracker's client services, no separate report to generate or save." },
   livefeed: { label: 'Live feed', sel: '.admin-nav-item[onclick*="\'livefeed\'"]',
     tip: "A running log of team activity across the app.",
     learnMore: "See saves, assignments, and updates as they happen. Sensitive payroll details are hidden from anyone who shouldn't see them." },
@@ -6014,6 +5938,8 @@ const __origSwitchAdmin2 = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
   if(tab==='tracker'){ _checkServiceAlerts(); }
+  if(tab==='livefeed'){ refreshLiveFeed(); }
+  if(tab==='summaries'){ renderTeamProductionAnalytics(); }
   if(tab==='livefeed'){ refreshLiveFeedFromCloud(); }
   if(tab==='summaries'){ refreshSummaryLists(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
@@ -6158,9 +6084,6 @@ window.switchAdminTab = function(el, tab){
 
 const DB_KEYS = {
   feed:     'wl_live_feed',
-  weeklySummaries: 'wl_weekly_summaries',
-  monthlySummaries: 'wl_monthly_summaries',
-  yearlySummaries:  'wl_yearly_summaries',
   users:    'wl_users_db',
   coc:      'wl_coc_data',
   settings: 'wl_settings',
@@ -7019,371 +6942,130 @@ setInterval(()=>{
   }
 }, 15000);
 
-// ── SUMMARY FUNCTIONS ──
-function switchSummaryTab(el, tab){
-  document.querySelectorAll('#admin-summaries .report-tab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('sum-tab-weekly').style.display  = tab==='weekly'  ? 'block':'none';
-  document.getElementById('sum-tab-monthly').style.display = tab==='monthly' ? 'block':'none';
-  document.getElementById('sum-tab-yearly').style.display  = tab==='yearly'  ? 'block':'none';
-}
+// ══════════════════════════════════════════════
+// TEAM PRODUCTION ANALYTICS (repurposed from the old manually-generated
+// Weekly/Monthly/Yearly "Progress Summaries" — 2026-08-21). Read-only
+// aggregation, no writes. Tasks come from ops_tasks (dbGet(DB_KEYS.tasks));
+// services from _activeServicesForAssessment() (active clients' top-level +
+// franchise-location services, excluding cancelled/archived) — the exact
+// same sources and _personWorkSummary()/_pctDoneColor() helpers Overview's
+// Team Assessment and Task Assignments' "By Person" roster already share,
+// so these numbers can never disagree with either of those.
+// ══════════════════════════════════════════════
 
-// ── Core data collector: reads wl_clients_db and returns all tracker events in [start,end] ──
-function _collectTrackerData(start, end){
-  const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
-  const result  = { progressLogs:[], tasksDone:[], milestones:[], projsCompleted:[] };
-  clients.forEach(c=>{
-    (c.projects||[]).forEach(p=>{
-      // Progress logs
-      (p.progressLog||[]).forEach(log=>{
-        if(log.date && log.date>=start && log.date<=end)
-          result.progressLogs.push({clientId:c.id,clientName:c.name,clientColor:c.color||'var(--btn)',projId:p.id,projName:p.name,date:log.date,pct:log.pct,note:log.note,user:log.user});
-      });
-      // Task completions
-      const checkTask=(task,spName)=>{
-        if(task.done && task.completedAt){
-          const d=task.completedAt.slice(0,10);
-          if(d>=start && d<=end)
-            result.tasksDone.push({clientId:c.id,clientName:c.name,clientColor:c.color||'var(--btn)',projId:p.id,projName:p.name,taskName:task.name,spName:spName||null,completedBy:task.completedBy||'—',completedAt:task.completedAt});
-        }
-      };
-      (p.tasks||[]).forEach(t=>checkTask(t,null));
-      (p.subprojects||[]).forEach(sp=>(sp.tasks||[]).forEach(t=>checkTask(t,sp.name)));
-      // Milestones
-      (p.milestones||[]).forEach(ms=>{
-        if(ms.date && ms.date>=start && ms.date<=end)
-          result.milestones.push({clientId:c.id,clientName:c.name,clientColor:c.color||'var(--btn)',projId:p.id,projName:p.name,title:ms.title,date:ms.date,notes:ms.notes||''});
-      });
-    });
-  });
-  return result;
-}
-
-function _renderTrackerPreview(data){
-  const total = data.progressLogs.length + data.tasksDone.length + data.milestones.length;
-  if(!total) return '<div style="color:var(--text-light);font-size:12px;">No tracker activity found in this period.</div>';
-  const statBar=`<div style="display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap;">
-    <span style="font-size:12px;font-weight:700;color:var(--btn);">📈 ${data.progressLogs.length} progress update${data.progressLogs.length!==1?'s':''}</span>
-    <span style="font-size:12px;font-weight:700;color:#2e9e6e;">✅ ${data.tasksDone.length} task${data.tasksDone.length!==1?'s':''} completed</span>
-    <span style="font-size:12px;font-weight:700;color:var(--accent);">🏁 ${data.milestones.length} milestone${data.milestones.length!==1?'s':''}</span>
-  </div>`;
-  // Group by client
-  const clients={};
-  [...data.progressLogs,...data.tasksDone,...data.milestones].forEach(e=>{
-    if(!clients[e.clientId]) clients[e.clientId]={name:e.clientName,color:e.clientColor,logs:[],tasks:[],miles:[]};
-  });
-  data.progressLogs.forEach(e=>clients[e.clientId].logs.push(e));
-  data.tasksDone.forEach(e=>clients[e.clientId].tasks.push(e));
-  data.milestones.forEach(e=>clients[e.clientId].miles.push(e));
-  const rows=Object.values(clients).map(cl=>`
-    <div style="margin-bottom:10px;padding:10px;background:var(--card);border-radius:8px;border-left:3px solid ${cl.color};">
-      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">${escHtmlAdmin(cl.name)}</div>
-      ${cl.logs.map(l=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">📈 <b>${escHtmlAdmin(l.projName)}</b> — ${escHtmlAdmin(l.note||'Progress updated')} (${l.pct}%) · ${l.date}</div>`).join('')}
-      ${cl.tasks.map(t=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">✅ <b>${escHtmlAdmin(t.projName)}</b>${t.spName?' › '+escHtmlAdmin(t.spName):''} — ${escHtmlAdmin(t.taskName)} · ${escHtmlAdmin(t.completedBy)}</div>`).join('')}
-      ${cl.miles.map(m=>`<div style="font-size:11px;color:var(--text-mid);padding:2px 0;">🏁 <b>${escHtmlAdmin(m.projName)}</b> — ${escHtmlAdmin(m.title)} · ${m.date}</div>`).join('')}
-    </div>`).join('');
-  return statBar+rows;
-}
-
-// ── WEEKLY ──
-function openWeeklySummaryModal(){
-  const t=new Date(); const mon=new Date(t); mon.setDate(t.getDate()-t.getDay()+1);
-  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
-  document.getElementById('ws-start-date').value=mon.toISOString().slice(0,10);
-  document.getElementById('ws-end-date').value=sun.toISOString().slice(0,10);
-  document.getElementById('ws-title').value='Week of '+mon.toLocaleDateString('en-US',{month:'long',day:'numeric'})+' – '+sun.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
-  document.getElementById('ws-notes').value='';
-  previewWeeklySummary();
-  openModal('weeklySummaryModal');
-}
-
-function previewWeeklySummary(){
-  const start=document.getElementById('ws-start-date')?.value;
-  const end=document.getElementById('ws-end-date')?.value;
-  const el=document.getElementById('ws-eod-preview'); if(!el) return;
-  if(!start||!end){el.innerHTML='<span style="color:var(--text-light);">Select dates above to preview.</span>';return;}
-  el.innerHTML=_renderTrackerPreview(_collectTrackerData(start,end));
-}
-
-function generateWeeklySummary(){
-  const start=document.getElementById('ws-start-date').value;
-  const end=document.getElementById('ws-end-date').value;
-  const title=document.getElementById('ws-title').value||('Week Summary '+start);
-  const notes=document.getElementById('ws-notes').value;
-  if(!start||!end){showToast('Please select start and end dates');return;}
-  const data=_collectTrackerData(start,end);
-  const summary={id:Date.now(),type:'weekly',title,start,end,adminNotes:notes,
-    totalProgressLogs:data.progressLogs.length,totalTasksDone:data.tasksDone.length,totalMilestones:data.milestones.length,
-    progressLogs:data.progressLogs,tasksDone:data.tasksDone,milestones:data.milestones,
-    createdAt:new Date().toISOString(),createdBy:'Admin'};
-  const existing=dbGet(DB_KEYS.weeklySummaries)||[];
-  existing.unshift(summary);
-  dbSet(DB_KEYS.weeklySummaries,existing);
-  logActivity('report','Admin','Generated weekly summary: '+title,'');
-  closeModal('weeklySummaryModal');
-  refreshSummaryLists();
-  showToast('Weekly summary generated ✓');
-}
-
-// ── MONTHLY ──
-function openMonthlySummaryModal(){
+// Monday-anchored week buckets, oldest first, for the last N weeks
+// (including the current, in-progress one). Deliberately NOT reusing
+// Date.now()-style "N days ago" math — a week boundary should always be a
+// real Monday–Sunday range, not a rolling 7-day window, so the label under
+// each bar reads as a real calendar week.
+function _tpaWeekBuckets(weeks){
   const now=new Date();
-  document.getElementById('ms-month').value=now.getMonth();
-  document.getElementById('ms-year').value=now.getFullYear();
-  document.getElementById('ms-title').value='';
-  ['ms-summary','ms-wins','ms-issues','ms-goals'].forEach(id=>document.getElementById(id).value='');
-  previewMonthlySummary();
-  openModal('monthlySummaryModal');
+  const dow=(now.getDay()+6)%7; // Mon=0 .. Sun=6
+  const thisMonday=new Date(now); thisMonday.setDate(now.getDate()-dow);
+  const buckets=[];
+  for(let i=weeks-1;i>=0;i--){
+    const monday=new Date(thisMonday); monday.setDate(thisMonday.getDate()-i*7);
+    const sunday=new Date(monday); sunday.setDate(monday.getDate()+6);
+    buckets.push({ start:monday.toISOString().slice(0,10), end:sunday.toISOString().slice(0,10), count:0 });
+  }
+  return buckets;
 }
 
-function previewMonthlySummary(){
-  const month=parseInt(document.getElementById('ms-month').value);
-  const year=parseInt(document.getElementById('ms-year').value);
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const start=new Date(year,month,1).toISOString().slice(0,10);
-  const end=new Date(year,month+1,0).toISOString().slice(0,10);
-  const el=document.getElementById('ms-overview'); if(!el) return;
-  el.innerHTML=_renderTrackerPreview(_collectTrackerData(start,end));
-  if(!document.getElementById('ms-title').value)
-    document.getElementById('ms-title').value=MONTHS[month]+' '+year+' — Monthly Progress Report';
-}
+function renderTeamProductionAnalytics(){
+  const statsEl=document.getElementById('tpa-team-stats');
+  const trendEl=document.getElementById('tpa-weekly-trend');
+  const tbody=document.getElementById('tpa-person-table');
+  const emptyEl=document.getElementById('tpa-person-empty');
+  if(!statsEl||!tbody) return;
 
-function generateMonthlySummary(){
-  const month=parseInt(document.getElementById('ms-month').value);
-  const year=parseInt(document.getElementById('ms-year').value);
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const start=new Date(year,month,1).toISOString().slice(0,10);
-  const end=new Date(year,month+1,0).toISOString().slice(0,10);
-  const title=document.getElementById('ms-title').value||(MONTHS[month]+' '+year+' Report');
-  const data=_collectTrackerData(start,end);
-  const summary={id:Date.now(),type:'monthly',title,month,year,start,end,
-    executiveSummary:document.getElementById('ms-summary').value,
-    keyWins:document.getElementById('ms-wins').value,
-    issuesActions:document.getElementById('ms-issues').value,
-    nextMonthGoals:document.getElementById('ms-goals').value,
-    totalProgressLogs:data.progressLogs.length,totalTasksDone:data.tasksDone.length,totalMilestones:data.milestones.length,
-    progressLogs:data.progressLogs,tasksDone:data.tasksDone,milestones:data.milestones,
-    createdAt:new Date().toISOString(),createdBy:'Admin'};
-  const existing=dbGet(DB_KEYS.monthlySummaries)||[];
-  existing.unshift(summary);
-  dbSet(DB_KEYS.monthlySummaries,existing);
-  logActivity('report','Admin','Generated monthly report: '+title,'');
-  closeModal('monthlySummaryModal');
-  refreshSummaryLists();
-  showToast('Monthly report generated ✓');
-}
+  const allServices=_activeServicesForAssessment();
+  const allTasks=dbGet(DB_KEYS.tasks)||[];
 
-// ── YEARLY ──
-function openYearlySummaryModal(){
-  document.getElementById('ys-year').value=new Date().getFullYear();
-  document.getElementById('ys-title').value='';
-  document.getElementById('ys-notes').value='';
-  previewYearlySummary();
-  openModal('yearlySummaryModal');
-}
+  const rows=_timeOffRoster().map(person=>{
+    const sum=_personWorkSummary(person, allTasks, allServices);
+    // "Overdue"/"Blocked" are Task Assignments' own established vocabulary
+    // (_taIsOverdue(), status==='Blocked') — services don't have a Blocked
+    // concept, so both columns are task-only, same as Task Assignments'
+    // own Needs Attention view.
+    const overdue=sum.tasksForPerson.filter(_taIsOverdue).length;
+    const blocked=sum.tasksForPerson.filter(t=>t.status==='Blocked').length;
+    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked };
+  }).sort((a,b)=>a.name.localeCompare(b.name));
 
-function previewYearlySummary(){
-  const year=parseInt(document.getElementById('ys-year').value);
-  const el=document.getElementById('ys-preview'); if(!el) return;
-  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  let totalLogs=0,totalTasks=0,totalMiles=0;
-  const monthRows=MONTHS.map((mn,i)=>{
-    const start=new Date(year,i,1).toISOString().slice(0,10);
-    const end=new Date(year,i+1,0).toISOString().slice(0,10);
-    const d=_collectTrackerData(start,end);
-    totalLogs+=d.progressLogs.length; totalTasks+=d.tasksDone.length; totalMiles+=d.milestones.length;
-    const total=d.progressLogs.length+d.tasksDone.length+d.milestones.length;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
-      <div style="font-size:11px;font-weight:700;color:var(--text-mid);width:28px;flex-shrink:0;">${mn}</div>
-      ${total?`<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;"><div style="height:100%;background:var(--btn);border-radius:3px;width:${Math.min(100,total*8)}%;"></div></div>`:'<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px;"></div>'}
-      <div style="font-size:10px;color:var(--text-light);flex-shrink:0;min-width:80px;text-align:right;">${d.progressLogs.length} upd · ${d.tasksDone.length} tasks · ${d.milestones.length} ms</div>
-    </div>`;
-  }).join('');
-  el.innerHTML=`<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-    <span style="font-size:12px;font-weight:700;color:var(--btn);">📈 ${totalLogs} updates</span>
-    <span style="font-size:12px;font-weight:700;color:#2e9e6e;">✅ ${totalTasks} tasks done</span>
-    <span style="font-size:12px;font-weight:700;color:var(--accent);">🏁 ${totalMiles} milestones</span>
-  </div>${monthRows}`;
-  if(!document.getElementById('ys-title').value)
-    document.getElementById('ys-title').value=year+' Annual Progress Report';
-}
+  // Team totals — plain sums over the same per-person rows the table below
+  // renders, so the totals row can never disagree with what's in the table.
+  const totals=rows.reduce((acc,r)=>{
+    acc.tasksAssigned+=r.tasksAssigned; acc.tasksDone+=r.tasksDone;
+    acc.servicesAssigned+=r.servicesAssigned; acc.servicesDone+=r.servicesDone;
+    acc.overdue+=r.overdue; acc.blocked+=r.blocked;
+    return acc;
+  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0});
+  const totalAssigned=totals.tasksAssigned+totals.servicesAssigned;
+  const totalDone=totals.tasksDone+totals.servicesDone;
+  const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
 
-function generateYearlySummary(){
-  const year=parseInt(document.getElementById('ys-year').value);
-  const title=document.getElementById('ys-title').value||(year+' Annual Progress Report');
-  const notes=document.getElementById('ys-notes').value;
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const byMonth=MONTHS.map((mn,i)=>{
-    const start=new Date(year,i,1).toISOString().slice(0,10);
-    const end=new Date(year,i+1,0).toISOString().slice(0,10);
-    const d=_collectTrackerData(start,end);
-    return {month:i,monthName:mn,start,end,...d};
-  });
-  const summary={id:Date.now(),type:'yearly',title,year,notes,byMonth,
-    totalProgressLogs:byMonth.reduce((a,m)=>a+m.progressLogs.length,0),
-    totalTasksDone:byMonth.reduce((a,m)=>a+m.tasksDone.length,0),
-    totalMilestones:byMonth.reduce((a,m)=>a+m.milestones.length,0),
-    createdAt:new Date().toISOString(),createdBy:'Admin'};
-  const existing=dbGet(DB_KEYS.yearlySummaries)||[];
-  existing.unshift(summary);
-  dbSet(DB_KEYS.yearlySummaries,existing);
-  logActivity('report','Admin','Generated yearly summary: '+title,'');
-  closeModal('yearlySummaryModal');
-  refreshSummaryLists();
-  showToast('Yearly summary generated ✓');
-}
+  const statCard=(label,val,color)=>`<div class="card" style="padding:12px 14px;margin:0;text-align:center;">
+    <div style="font-size:20px;font-weight:800;color:${color||'var(--text-dark)'};">${val}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
+  </div>`;
+  statsEl.innerHTML=[
+    statCard('Tasks Assigned', totals.tasksAssigned),
+    statCard('Tasks Done', totals.tasksDone),
+    statCard('Services Assigned', totals.servicesAssigned),
+    statCard('Services Done', totals.servicesDone),
+    statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null),
+    statCard('Blocked', totals.blocked, totals.blocked?'var(--orange)':null),
+    statCard('Team % Done', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct)),
+  ].join('');
 
-// ── REFRESH & RENDER ──
-function refreshSummaryLists(){
-  renderWeeklySummaries();
-  renderMonthlySummaries();
-  renderYearlySummaries();
-}
-
-function _renderSummaryClientBreakdown(data){
-  if(!data) return '';
-  const clients={};
-  [...(data.progressLogs||[]),...(data.tasksDone||[]),...(data.milestones||[])].forEach(e=>{
-    if(!clients[e.clientId]) clients[e.clientId]={name:e.clientName,color:e.clientColor||'var(--btn)',logs:[],tasks:[],miles:[]};
-  });
-  (data.progressLogs||[]).forEach(e=>clients[e.clientId].logs.push(e));
-  (data.tasksDone||[]).forEach(e=>clients[e.clientId].tasks.push(e));
-  (data.milestones||[]).forEach(e=>clients[e.clientId].miles.push(e));
-  return Object.values(clients).map(cl=>`
-    <div style="margin-bottom:10px;padding:12px 14px;background:var(--bg);border-radius:10px;border-left:3px solid ${cl.color};">
-      <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:7px;">${escHtmlAdmin(cl.name)}</div>
-      ${cl.logs.map(l=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">📈 <span style="font-weight:600;">${escHtmlAdmin(l.projName)}</span> — ${escHtmlAdmin(l.note||'Progress logged')} <span style="color:var(--btn);font-weight:700;">${l.pct}%</span> <span style="color:var(--text-light);">· ${l.date} · ${escHtmlAdmin(l.user||'—')}</span></div>`).join('')}
-      ${cl.tasks.map(t=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">✅ <span style="font-weight:600;">${escHtmlAdmin(t.projName)}</span>${t.spName?' › '+escHtmlAdmin(t.spName):''} — ${escHtmlAdmin(t.taskName)} <span style="color:var(--text-light);">· ${escHtmlAdmin(t.completedBy)} · ${t.completedAt?.slice(0,10)||''}</span></div>`).join('')}
-      ${cl.miles.map(m=>`<div style="font-size:11.5px;color:var(--text-mid);padding:2px 0;">🏁 <span style="font-weight:600;">${escHtmlAdmin(m.projName)}</span> — ${escHtmlAdmin(m.title)} <span style="color:var(--text-light);">· ${m.date}</span></div>`).join('')}
-    </div>`).join('');
-}
-
-function renderWeeklySummaries(){
-  const list=document.getElementById('weekly-summaries-list'); if(!list) return;
-  const sums=dbGet(DB_KEYS.weeklySummaries)||[];
-  if(!sums.length){list.innerHTML='<div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No weekly summaries yet. Click <strong>📋 Weekly</strong> to generate one.</div>';return;}
-  list.innerHTML=sums.map(s=>`<div class="summary-card">
-    <div class="summary-card-header">
-      <div>
-        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${s.start} → ${s.end} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
-        <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
-        <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-        <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('weekly',${s.id})">✕</button>
-      </div>
-    </div>
-    <div class="summary-card-body">
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalProgressLogs||0}</div><div class="sum-metric-label">Progress Updates</div></div>
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalTasksDone||0}</div><div class="sum-metric-label">Tasks Completed</div></div>
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalMilestones||0}</div><div class="sum-metric-label">Milestones</div></div>
-      </div>
-      ${_renderSummaryClientBreakdown(s)}
-      ${s.adminNotes?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px 16px;margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Admin Notes</div><div style="font-size:13px;color:var(--text-mid);">${escHtmlAdmin(s.adminNotes)}</div></div>`:''}
-    </div>
-  </div>`).join('');
-}
-
-function renderMonthlySummaries(){
-  const list=document.getElementById('monthly-summaries-list'); if(!list) return;
-  const sums=dbGet(DB_KEYS.monthlySummaries)||[];
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  if(!sums.length){list.innerHTML='<div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No monthly reports yet. Click <strong>📊 Monthly</strong> to generate one.</div>';return;}
-  list.innerHTML=sums.map(s=>`<div class="summary-card">
-    <div class="summary-card-header">
-      <div>
-        <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${MONTHS[s.month]} ${s.year} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
-        <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
-        <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-        <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('monthly',${s.id})">✕</button>
-      </div>
-    </div>
-    <div class="summary-card-body">
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalProgressLogs||0}</div><div class="sum-metric-label">Progress Updates</div></div>
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalTasksDone||0}</div><div class="sum-metric-label">Tasks Completed</div></div>
-        <div class="sum-metric"><div class="sum-metric-val">${s.totalMilestones||0}</div><div class="sum-metric-label">Milestones Hit</div></div>
-      </div>
-      ${s.executiveSummary?`<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">Executive Summary</div><div style="font-size:13px;color:var(--text-mid);line-height:1.7;">${escHtmlAdmin(s.executiveSummary)}</div></div>`:''}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
-        ${s.keyWins?`<div style="background:#e8f8f0;border:1px solid rgba(46,158,110,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">✅ Key Wins</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.keyWins)}</div></div>`:''}
-        ${s.issuesActions?`<div style="background:#fff8e8;border:1px solid rgba(217,119,6,.2);border-radius:10px;padding:12px;"><div style="font-size:11px;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">⚠ Issues &amp; Actions</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.issuesActions)}</div></div>`:''}
-      </div>
-      ${s.nextMonthGoals?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px;margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">🎯 Next Month Goals</div><div style="font-size:12px;color:var(--text-dark);white-space:pre-line;">${escHtmlAdmin(s.nextMonthGoals)}</div></div>`:''}
-      ${_renderSummaryClientBreakdown(s)}
-    </div>
-  </div>`).join('');
-}
-
-function renderYearlySummaries(){
-  const list=document.getElementById('yearly-summaries-list'); if(!list) return;
-  const sums=dbGet(DB_KEYS.yearlySummaries)||[];
-  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  if(!sums.length){list.innerHTML='<div style="text-align:center;padding:60px;color:var(--text-light);font-size:13px;">No yearly summaries yet. Click <strong>📅 Yearly</strong> to generate one.</div>';return;}
-  list.innerHTML=sums.map(s=>{
-    const monthGrid=(s.byMonth||[]).map(m=>{
-      const total=m.progressLogs.length+m.tasksDone.length+m.milestones.length;
-      return `<div style="text-align:center;padding:8px 4px;background:${total?'var(--btn)18':'var(--bg)'};border-radius:8px;border:1px solid var(--border);">
-        <div style="font-size:10px;font-weight:700;color:var(--text-light);">${MONTHS[m.month]}</div>
-        <div style="font-size:18px;font-weight:800;color:${total?'var(--btn)':'var(--text-light)'};">${total}</div>
-        <div style="font-size:9px;color:var(--text-light);">events</div>
+  // Weekly trend — SERVICES ONLY. ops_tasks has no completion-date field
+  // (only assignedDate/dueDate), so a task "done per week" trend can't be
+  // built from real data without guessing — per CLAUDE.md rule #7, this
+  // stays services-only and says so in the card's own subtitle, rather
+  // than fabricating a task number.
+  if(trendEl){
+    const buckets=_tpaWeekBuckets(8);
+    allServices.forEach(s=>{
+      if(!s.lastDone) return;
+      const b=buckets.find(b=>s.lastDone>=b.start && s.lastDone<=b.end);
+      if(b) b.count++;
+    });
+    const max=Math.max(1, ...buckets.map(b=>b.count));
+    trendEl.innerHTML=buckets.map(b=>{
+      const barH=b.count ? Math.round(b.count/max*90)+10 : 4;
+      const label=new Date(b.start+'T00:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric'});
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;" title="Week of ${b.start} – ${b.end}: ${b.count} done">
+        <div style="font-size:11px;font-weight:700;color:var(--text-dark);">${b.count}</div>
+        <div style="width:100%;max-width:28px;background:var(--accent);border-radius:4px 4px 0 0;height:${barH}px;"></div>
+        <div style="font-size:9px;color:var(--text-light);">${label}</div>
       </div>`;
     }).join('');
-    return `<div class="summary-card">
-      <div class="summary-card-header">
-        <div>
-          <div style="font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);">${escHtmlAdmin(s.title)}</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Full year ${s.year} · Created ${new Date(s.createdAt).toLocaleDateString()}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <span class="status-badge badge-blue">${s.totalProgressLogs||0} updates</span>
-          <span class="status-badge badge-working">${s.totalTasksDone||0} tasks</span>
-          <span class="status-badge badge-pending">${s.totalMilestones||0} milestones</span>
-          <button class="btn btn-sm btn-danger summary-del-btn" onclick="deleteSummary('yearly',${s.id})">✕</button>
-        </div>
-      </div>
-      <div class="summary-card-body">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;">
-          <div class="sum-metric"><div class="sum-metric-val">${s.totalProgressLogs||0}</div><div class="sum-metric-label">Progress Updates</div></div>
-          <div class="sum-metric"><div class="sum-metric-val">${s.totalTasksDone||0}</div><div class="sum-metric-label">Tasks Completed</div></div>
-          <div class="sum-metric"><div class="sum-metric-val">${s.totalMilestones||0}</div><div class="sum-metric-label">Milestones Hit</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:18px;">${monthGrid}</div>
-        ${s.notes?`<div style="background:var(--cream);border:1px solid var(--cream-dark);border-radius:10px;padding:12px 16px;margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Notes</div><div style="font-size:13px;color:var(--text-mid);">${s.notes}</div></div>`:''}
-        <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Monthly Breakdown</div>
-        ${(s.byMonth||[]).filter(m=>m.progressLogs.length+m.tasksDone.length+m.milestones.length>0).map(m=>`
-          <div style="margin-bottom:6px;">
-            <div style="font-size:11px;font-weight:700;color:var(--text-mid);margin-bottom:4px;">${m.monthName} ${s.year}</div>
-            ${_renderSummaryClientBreakdown(m)}
-          </div>`).join('')}
-      </div>
-    </div>`;
-  }).join('');
-}
+  }
 
-function deleteSummary(type, id){
-  if(!confirm('Delete this summary?')) return;
-  const key = type==='weekly' ? DB_KEYS.weeklySummaries : type==='yearly' ? DB_KEYS.yearlySummaries : DB_KEYS.monthlySummaries;
-  const arr = (dbGet(key)||[]).filter(s=>s.id!==id);
-  dbSet(key, arr);
-  refreshSummaryLists();
-  showToast('Summary deleted');
+  // Per-person table — no totalAssigned>0 filter, same acceptance criterion
+  // Team Assessment already established: a person with zero assigned work
+  // still shows (0%/"—"), instead of being silently hidden from the roster.
+  if(!rows.length){
+    tbody.innerHTML='';
+    if(emptyEl) emptyEl.style.display='block';
+  } else {
+    if(emptyEl) emptyEl.style.display='none';
+    tbody.innerHTML=rows.map(r=>{
+      const pctColor=_pctDoneColor(r.pctDone);
+      const pctLabel=r.pctDone==null?'—':r.pctDone+'%';
+      return `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesAssigned}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesDone}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.overdue?700:400};color:${r.overdue?'var(--red)':'var(--text-light)'};">${r.overdue||''}</td>
+        <td style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.blocked?700:400};color:${r.blocked?'var(--orange)':'var(--text-light)'};">${r.blocked||''}</td>
+        <td style="padding:10px 14px;text-align:right;font-size:12.5px;font-weight:700;color:${pctColor};">${pctLabel}</td>
+      </tr>`;
+    }).join('');
+  }
 }
-
-// ── Init on page load ──
-document.addEventListener('DOMContentLoaded', ()=>{
-  // Set ms date inputs
-  const now = new Date();
-  if(document.getElementById('ms-month')) document.getElementById('ms-month').value = now.getMonth();
-  if(document.getElementById('ms-year'))  document.getElementById('ms-year').value  = now.getFullYear();
-});
 
 // ══════════════════════════════════════════════
 // ANNOUNCEMENT BROADCAST
@@ -11301,7 +10983,7 @@ window.openAddUserModal = function(){
 // new shell's thin title strip does.
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TAB_TITLES = {
-  overview:'Overview', users:'Users', summaries:'Summaries', livefeed:'Live feed',
+  overview:'Overview', users:'Users', summaries:'Team Production Analytics', livefeed:'Live feed',
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
   clientHealth:'Client Health', myTeamsWork:"My Team's Work",
@@ -11340,7 +11022,7 @@ const ADMIN_COLORS = [
 
 // Access level config — value, label, description, badge colour
 const ADMIN_LEVELS = [
-  { value:'account_manager',    label:'Account Manager',    desc:'Assigned users only — Clients, Bundles, Reports & Summaries — no payroll or settings', color:'#0891b2' },
+  { value:'account_manager',    label:'Account Manager',    desc:'Assigned users only — Clients, Bundles, Reports & Team Production Analytics — no payroll or settings', color:'#0891b2' },
   { value:'production_manager', label:'Production Manager', desc:'Clients, Bundles, Live Feed & Business Setup — no payroll or admin management', color:'#059669' },
   { value:'creative_manager',   label:'Creative Manager',   desc:'Clients & Tracker only — can edit services/projects & dates — no reports, payroll or settings', color:'#e07b39' },
   { value:'admin',              label:'Admin',              desc:'Full access to users, settings & reports',        color:'#2E5DA6' },
@@ -11379,11 +11061,13 @@ function applyAdminRoleRestrictions(level, adminObj){
   const myTeamsWorkNav = document.querySelector('.admin-nav-item[onclick*="\'myTeamsWork\'"]');
   if(myTeamsWorkNav) myTeamsWorkNav.style.display = _adminManagesTeam ? '' : 'none';
 
-  // Creative/Production/Account Manager: Summaries and Live Feed are visible
-  // (see below) but strictly view-only — no generating/deleting summaries,
-  // no clearing the feed. Set independently of the nav-visibility branches
-  // below since production_manager's nav already showed both tabs before
-  // this restriction existed. See CLAUDE.md's permission project.
+  // Creative/Production/Account Manager: Team Production Analytics and Live
+  // Feed are visible (see below); Analytics is read-only for everyone by
+  // nature now (no generate/delete actions left to restrict), Live Feed's
+  // Clear button is still hidden for these three levels. Set independently
+  // of the nav-visibility branches below since production_manager's nav
+  // already showed both tabs before this restriction existed. See
+  // CLAUDE.md's permission project.
   const isRestrictedManagerLevel = level === CREATIVE_MANAGER_ROLE || RESTRICTED_ADMIN_ROLES.includes(level);
   document.body.classList.toggle('restrict-insights-actions', isRestrictedManagerLevel);
 
@@ -11505,8 +11189,9 @@ function applyAdminRoleRestrictions(level, adminObj){
   if(!RESTRICTED_ADMIN_ROLES.includes(level)) return; // full access — do nothing
   // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
   // so she keeps Business Setup; Account Manager stays clients-only. Both now
-  // keep Summaries/Live Feed (view-only — see restrict-insights-actions
-  // above) instead of Live Feed being hidden for account_manager. 'users' is
+  // keep Team Production Analytics/Live Feed (Live Feed's Clear button is
+  // view-only — see restrict-insights-actions above) instead of Live Feed
+  // being hidden for account_manager. 'users' is
   // hidden for both — see CLAUDE.md's permission project Step 1, which also
   // hard-blocks this server-side (canEditUsers()) so this is UX convenience,
   // not the actual security boundary.
