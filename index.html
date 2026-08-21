@@ -1470,7 +1470,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div class="card-header">
               <div>
                 <div class="card-title">🔎 Review before assigning</div>
-                <div class="card-sub">Auto-detected assignee/client are pre-filled — edit anything, or discard a row you don't want, before committing.</div>
               </div>
               <button class="btn btn-sm btn-primary" onclick="commitStagedTasks()">✅ Save / assign these (<span id="taStagingCount">0</span>)</button>
             </div>
@@ -9115,6 +9114,13 @@ async function runTaskEmailParse(){
         // Auto-detected assignee/client are pre-filled but editable — see
         // _renderTaStaging(); still just a default, freely changed there.
         assigneeId: et.assigneeId||null, assignedById: null,
+        // Debug/visibility only (2026-08-21) — the model's raw ownerName,
+        // carried through even when it couldn't be resolved to anyone on
+        // the roster, so _renderTaStaging() can show what the model
+        // actually said instead of leaving a silent blank. Never written
+        // to ops_tasks — stripped out in commitStagedTasks() along with
+        // mergeIntoId/mergeIntoSubject.
+        ownerRaw: et.ownerRaw||'',
         category: et.category, priority: et.priority,
         status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
         source: 'parsed-email', origin: 'admin',
@@ -9210,6 +9216,7 @@ function _renderTaStaging(){
             <option value="">Unassigned</option>
             ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
           </select>
+          ${!row.assigneeId && row.ownerRaw ? `<span style="font-size:11px;color:var(--text-light);font-style:italic;">detected: ${escHtmlAdmin(row.ownerRaw)}.</span>` : ''}
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','clientId',this.value)">
             <option value="">No client</option>
             ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlAdmin(c.name)}</option>`).join('')}
@@ -9272,7 +9279,7 @@ function commitStagedTasks(){
       // — fall through and create a new task rather than silently
       // dropping this one.
     }
-    const { mergeIntoId, mergeIntoSubject, ...task } = row;
+    const { mergeIntoId, mergeIntoSubject, ownerRaw, ...task } = row;
     tasks.push(task);
     createdCount++;
     const bid = task.importBatchId || '_none';

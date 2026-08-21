@@ -2090,6 +2090,50 @@ access), so the model's own extraction accuracy on a real transcript
 still needs a click-through verification on the Vercel preview before
 merge.
 
+**Task parser: staging debug hint for an unmatched `ownerName` +
+dropped instructional subtext (2026-08-21).** Two small changes off the
+same request, `process-transcript.js` + `index.html` only (per the task's
+own final scope — an earlier draft of the same request had also asked for
+`user.html`, but the request was revised down to admin-only before this
+was built, so `user.html`'s staging view is untouched).
+
+1. `handleTaskEmailMode()`'s per-task response object gained `ownerRaw` —
+   the model's raw `ownerName` string, carried through unconditionally
+   (even when `matchOwner()` couldn't resolve it to anyone on the roster).
+   Purely a debug/visibility field: nothing server-side ever reads it back,
+   it exists only so the staging UI can show what the model actually said
+   when the auto-fill from the previous entry (structured `[Name]` markers,
+   see above) comes up empty.
+2. `runTaskEmailParse()` carries `ownerRaw` onto the staged row;
+   `_renderTaStaging()` shows a small "detected: {ownerRaw}." hint next to
+   the assignee dropdown, but ONLY when `assigneeId` is still null AND
+   `ownerRaw` is non-empty — a task the model already matched shows no
+   hint at all, since there's nothing to debug there. `commitStagedTasks()`
+   strips `ownerRaw` out (alongside the pre-existing `mergeIntoId`/
+   `mergeIntoSubject` strip) before anything reaches `ops_tasks` — it was
+   never meant to be a stored field.
+3. The staging card's instructional subtext ("Auto-detected assignee/
+   client are pre-filled — edit anything...") was removed outright, per
+   the task's own explicit "admin doesn't need it" — the card title
+   ("🔎 Review before assigning") and the existing per-batch "N task(s)
+   from this import" line (added for the undo-import feature) are both
+   untouched.
+
+Verified with `node --check` on `process-transcript.js`; syntax-check +
+div-balance on `index.html` (delta unchanged vs. `main`); a `node:test`
+`--experimental-test-module-mocks` run against the real
+`handleTaskEmailMode()` with the Anthropic SDK itself mocked to a
+deterministic fake response (7/7 — a matched task still carries `ownerRaw`
+alongside its resolved `assigneeId`, an unmatched task gets `assigneeId:
+null` + the raw string, and a task with no `ownerName` at all gets
+`ownerRaw: ''` rather than `undefined`); a new Playwright suite against
+the real `index.html` UI (6/6 — the old subtext is gone while the title
+and per-batch count line remain, the hint renders only for the unmatched
+task and never for the matched one, and `ownerRaw` never leaks into a
+committed `ops_tasks` row). Every pre-existing Task Assignments Playwright
+suite and the phonetic/prompt-content regression suite re-run clean (no
+regressions).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

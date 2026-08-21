@@ -431,6 +431,13 @@ async function handleTaskEmailMode(req, res) {
           emailReceivedDate: typeof t.emailReceivedDate === 'string' ? t.emailReceivedDate : '',
           emailThreadId: typeof t.emailThreadId === 'string' ? t.emailThreadId : '',
           assigneeId: owner ? owner.id : null,
+          // Debug/visibility field (2026-08-21) — the model's raw ownerName
+          // output, kept alongside the resolved assigneeId even when
+          // matchOwner() couldn't resolve it to anyone on the roster. Purely
+          // informational: nothing server-side reads this back, it only
+          // lets the staging UI show what the model actually said when it
+          // didn't produce a usable match.
+          ownerRaw: typeof t.ownerName === 'string' ? t.ownerName.trim() : '',
           alreadyDone: t.alreadyDone === true,
         };
       })
