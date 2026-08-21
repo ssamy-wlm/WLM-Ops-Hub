@@ -2134,6 +2134,65 @@ committed `ops_tasks` row). Every pre-existing Task Assignments Playwright
 suite and the phonetic/prompt-content regression suite re-run clean (no
 regressions).
 
+**Repurposed the Summaries tab into Team Production Analytics (2026-08-21).**
+The old "📝 Progress Summaries" feature (manually-triggered Weekly/Monthly/
+Yearly write-ups, generated from `wl_clients_db`'s legacy project/task/
+progressLog model via `_collectTrackerData()`, saved local-only to
+`wl_weekly_summaries`/`wl_monthly_summaries`/`wl_yearly_summaries` —
+confirmed these three keys were never pushed through `cloudPullAll()`'s
+`_applyServerArray()` calls, i.e. genuinely local-only, never synced) is
+removed outright: the 3 generate buttons, their 3 modals, and every
+function that supported them (`_collectTrackerData()`,
+`_renderTrackerPreview()`, `open*SummaryModal()`, `preview*Summary()`,
+`generate*Summary()`, `refreshSummaryLists()`, `render*Summaries()`,
+`deleteSummary()`, `switchSummaryTab()`).
+
+In its place: a read-only **Team Production Analytics** view, reading
+`ops_tasks` (`dbGet(DB_KEYS.tasks)`) + active client services
+(`_activeServicesForAssessment()`) — no new endpoint, reusing the exact
+same `_personWorkSummary()`/`_pctDoneColor()` helpers Overview's Team
+Assessment and Task Assignments' "By Person" roster already share, so
+these numbers can never disagree with either. Three parts: (1) team-wide
+stat cards (Tasks/Services Assigned & Done, Overdue, Blocked, Team % Done);
+(2) a per-person table extending Team Assessment's own 6 columns with two
+more — Overdue and Blocked, both task-only concepts (`_taIsOverdue()`,
+`status==='Blocked'`) since services have neither; (3) a "Services
+Completed — Last 8 Weeks" bar chart, Monday-anchored real calendar weeks,
+bucketed by each service's `lastDone`. The weekly trend is deliberately
+**services-only** — `ops_tasks` has no completion-date field (only
+`assignedDate`/`dueDate`), so a task-completion trend can't be built from
+real data without guessing; per rule #7, the card's own subtitle says so
+rather than fabricating a task number.
+
+The internal tab id (`'summaries'`/`#admin-summaries`) is unchanged on
+purpose — every role-visibility rule in `applyAdminRoleRestrictions()`
+keys off that id, not the label, so leaving it alone kept the existing
+Creative/Production/Account Manager visibility rules working with zero
+risk. Only the user-visible label changed (nav: "Team analytics"; page
+header, help-panel entry, `ADMIN_TAB_TITLES`, and the Account Manager
+role's own description text: "Team Production Analytics"). The
+`restrict-insights-actions` CSS rule and its accompanying comments were
+trimmed — the old `#summaryGenerateBtns`/`.summary-del-btn` selectors are
+gone along with the elements they targeted, since the new view has no
+write actions left to restrict at all (read-only for everyone, same as
+Workload/Client Health); Live Feed's Clear button restriction is
+untouched.
+
+Verified: syntax-checked extracted `<script>` blocks; div-balance (delta
+unchanged vs. `main`); `ls api/*.js | wc -l` still 12; grepped clean for
+every removed identifier (`weeklySummaries`, `generateWeeklySummary`,
+`refreshSummaryLists`, `summaryGenerateBtns`, etc. — zero remaining
+references); a new Playwright suite against the real `index.html` UI
+(20/20 — nav label and page header repurposed, all three old modals gone,
+team stat cards match hand-computed totals across 2 people/3 tasks/2
+services including one overdue and one blocked, the per-person table
+shows both new columns correctly, the weekly trend renders and is honestly
+labeled services-only, and the Refresh button re-renders without clearing
+anything). Re-ran the existing Overview regression suite (24/24) and the
+Task Assignments "By Person"/Blocked suite (22/22) — both share
+`_personWorkSummary()`/`_activeServicesForAssessment()`/`_pctDoneColor()`
+with the new view and passed unchanged, confirming those weren't touched.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
