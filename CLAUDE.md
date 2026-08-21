@@ -2286,6 +2286,74 @@ only open one leaves both collapsed). The pre-existing Recent Activity
 Playwright suite (an unrelated Overview-page feed, not this Live Feed tab)
 re-run clean — no regressions.
 
+**Hotfix: `client.html` was fatally broken on `main` after two parallel
+Claude sessions independently did the same three tasks (2026-08-21).**
+Two separate Claude sessions were dispatched the identical "Live Feed
+refresh/Workload accordion, remove Progress Reports/add per-client card
+progress, repurpose Summaries into Team Production Analytics" batch at
+essentially the same time. Both produced their own PRs for all three
+(#262/#265/#267 from one session, #263/#264/#266 from the other) — #263
+(the calendar cell-height fix, isolated, no overlap) merged cleanly, but
+the other five all touched the same `client.html`/`index.html` regions and
+were merged with an incompletely-resolved conflict, confirmed live on
+`main` by actually parsing the files rather than assuming: `client.html`
+had `const cycle` declared TWICE in the same scope inside
+`renderClientGrid()`'s per-card loop — a real `SyntaxError`
+("Identifier 'cycle' has already been declared") that failed the ENTIRE
+inline `<script>` block, meaning the whole Client & Production Tracker
+(embedded in both `index.html` and `user.html`) was non-functional, not
+just the per-client-progress feature. `index.html` had two
+`<div id="admin-summaries">` blocks nested inside each other, two
+`id="tpa-team-stats"` elements, and two `function
+renderTeamProductionAnalytics(){` definitions, with one session's "legacy
+generator" section divider ending up wrapping the OTHER session's analytics
+markup — non-fatal (duplicate `function` declarations don't throw, unlike
+`const`) but genuinely broken (duplicate ids, unreachable/dead markup,
+whichever function definition happened to load last silently winning).
+
+Fixed by reconciling to ONE coherent implementation per spot, not by
+picking one PR wholesale — each session's version was actually read and
+compared before deciding:
+- **Client card ("Services done" line):** kept the version with an
+  `activeOverdue` count and overdue badge (`Services: X/Y done (Z%)` +
+  `N overdue`) over the plainer version with no overdue signal — genuinely
+  more complete, and `_svcCycleStats()`'s `activeOverdue` field itself
+  had already merged in cleanly with no duplication, so nothing else
+  needed to change to use it.
+- **Team Production Analytics:** kept this session's own version (correct,
+  established "never hide a zero-assigned person" convention — see the
+  2026-08-06 Sherine-97%-incident entry above — vs. the other session's
+  `.filter(r=>r.totalAssigned>0)`, which silently re-introduced exactly the
+  bug that convention exists to prevent) as the base, but ADOPTED the other
+  session's genuinely better idea: Overdue/Blocked now combine BOTH tasks
+  (`_taIsOverdue()`, `status==='Blocked'`) AND services
+  (`_chSvcDueStatus()==='overdue'`, `_svcStatus()==='stuck'`, services'
+  closest analog to "blocked") instead of counting task-side only — this
+  session's original version undercounted by ignoring service-side
+  overdue/stuck entirely. Column/stat-card label changed to "Blocked/Stuck"
+  to stay honest about now meaning two different underlying concepts, same
+  reasoning the other session used for its own version of this label.
+
+Verified: actually parsed all three files with `new Function()` per
+extracted `<script>` block (confirms the fatal `client.html` error is
+gone, and `index.html`/`user.html` remain clean); div-balance on all three
+against their established baselines (`client.html` 0, `index.html` -2,
+`user.html` -1 — all matched, no new imbalance); grepped for zero
+remaining duplicate ids (`id="..."` occurring more than once) and zero
+duplicate top-level `function` declarations in both files (one
+pre-existing, unrelated duplicate — `addPlatformRow()` in `index.html` —
+confirmed via `git show` to already exist before ANY of today's PRs, so
+left alone as out of scope for this hotfix); re-ran every one of today's
+own Playwright regression suites (Live Feed/Workload 14/14, Overview
+24/24, Task Assignments By-Person/Blocked 22/22, per-client-card-progress
+10/10 — 2 assertions updated to match the intentionally-kept richer design,
+not a regression) plus a new suite specifically exercising the consolidated
+service-side overdue/stuck logic (7/7 — confirms a person with zero tasks
+but an overdue+stuck service still shows nonzero Overdue/Blocked, the
+"Blocked/Stuck" label appears everywhere it should, exactly one
+`#admin-summaries` element exists, and the discarded session's
+`_tpaPersonOverdueBlocked()` helper is gone).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
