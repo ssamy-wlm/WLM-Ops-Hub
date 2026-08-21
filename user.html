@@ -530,7 +530,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="showSection('dailyTasks',this)" id="nav-dailytasks"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Daily tasks<span class="msg-nav-badge" id="daily-tasks-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
-      <div class="nav-item" onclick="openTrackerPage('reports',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>Progress Reports</div>
       <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
       <div class="nav-group-label">Resources</div>
       <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Weblight media library</div>
@@ -2097,8 +2096,6 @@ const HELP_CONTENT = {
   tracker: { label: 'Tracker', sel: '#nav-tracker',
     tip: "See every client your team manages (view only for you).",
     learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
-  reports: { label: 'Progress Reports', sel: '.nav-item[onclick*="\'reports\'"]',
-    tip: "See how your work is tracking over time.", learnMore: null },
   serviceCatalog: { label: 'Service Catalog', sel: '.nav-item[onclick*="recurring-catalog"]',
     tip: "Reference list of all services your team offers.", learnMore: null },
   companyOverview: { label: 'Company Overview', sel: '.nav-item[onclick*="\'companyOverview\'"]',
@@ -2151,7 +2148,7 @@ function _employeeTourSteps(){
 //   - 'library' (Weblight media library, external link — index.html's
 //     admin copy of this same link DOES have an entry; this employee-side
 //     copy doesn't)
-const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','tracker','reports','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
+const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','tracker','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
 function _currentEmployeeHelpKey(){
   const active = document.querySelector('#userApp .page-section.active');
   return active ? active.id.replace(/^sec-/,'') : '';

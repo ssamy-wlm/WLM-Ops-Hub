@@ -2301,6 +2301,13 @@ function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archi
 function _svcIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
 // Shared "how many services are actually current" calc — reused by the
 // client-detail header's "X of Y done this cycle" headline, the Overview
+// tab's stat cards, and (2026-08-21) each client card's own progress line,
+// so all three always agree and there's exactly one place this math lives.
+// Same scope/definition as PR #124: top-level c.services only (not the
+// franchise-inclusive _allClientServices used by due-alerts/My Work), "this
+// month" = due date's
+// YYYY-MM prefix matches today's. Read-only — never touches lastDone or any
+// stored data.
 // tab's stat cards, and the per-client progress line on each Tracker client
 // card (renderClientGrid()), so all three always agree and there's exactly
 // one place this math lives. Same scope/definition as PR #124: top-level
@@ -3140,6 +3147,13 @@ function renderClientGrid(list){
   list.forEach(c=>{
     const allProj=(c.projects||[]).filter(p=>!p.isRecurringService);
     const totalPct=allProj.length?Math.round(allProj.reduce((s,p)=>s+(p.progress||0),0)/allProj.length):0;
+    // Services done/total this cycle — same _svcCycleStats() the client-detail
+    // header and Overview stat cards already use, so this can never disagree
+    // with either of those (see the shared-definition comment on that
+    // function). Deliberately a SEPARATE line from "Overall progress" above,
+    // which is bundle/project completion %, not service cycle status.
+    const cycle=_svcCycleStats(c);
+    const cyclePct=cycle.activeTotal?Math.round(cycle.activeDone/cycle.activeTotal*100):null;
     const init=(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     const logoHtml=c.logo
       ?`<img src="${escHtmlClient(c.logo)}" onerror="this.style.display='none';this.nextSibling.style.display='flex';" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"><span style="display:none;font-size:16px;font-weight:800;color:#fff;">${escHtmlClient(init)}</span>`
@@ -3183,6 +3197,9 @@ function renderClientGrid(list){
         <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${totalPct}%;background:${c.color||_hashClientColor(c.name)};"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-light);margin-bottom:7px;">
           <span>Overall progress</span><span style="font-weight:800;color:var(--text-dark);">${totalPct}%</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-light);margin-bottom:7px;" title="Active services done this cycle ÷ total active services">
+          <span>Services done</span><span style="font-weight:800;color:var(--text-dark);">${cyclePct===null?'—':`${cycle.activeDone}/${cycle.activeTotal} (${cyclePct}%)`}</span>
         </div>
         ${svcPct===null?'':`
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:9px;color:var(--text-light);margin-bottom:7px;padding-top:6px;border-top:1px dashed var(--border);">

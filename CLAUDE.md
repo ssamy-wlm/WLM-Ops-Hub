@@ -2134,6 +2134,49 @@ committed `ops_tasks` row). Every pre-existing Task Assignments Playwright
 suite and the phonetic/prompt-content regression suite re-run clean (no
 regressions).
 
+**Removed the standalone Progress Reports tab; per-client progress now
+lives on each client card (2026-08-21).** `client.html` had its own
+"📊 Progress Reports" nav item/page (`nav-reports`/`page-reports`,
+`renderReports()`) — a per-client breakdown of three separate metrics
+(this month's done÷due, this year's completion, current overdue health)
+plus a 12-month table and recent progress-log entries. Removed outright:
+the nav item, the page section, `renderReports()`, its two small helpers
+(`_rptIsOverdue()`/`_rptPctColor()`), and the `PAGE_META`/`showPage()`
+entries that referenced it. In its place, each client card in the Client &
+Production Tracker's grid now shows a "Services done" line — `X/Y (Z%)`,
+or "—" when a client has zero active services — computed via the
+already-existing `_svcCycleStats(c)` (the exact same active-services-done-
+this-cycle math the client-detail header and Overview's stat cards already
+share, so this can never disagree with either). This is deliberately a
+SEPARATE line from the card's pre-existing "Overall progress" bar, which
+is bundle/project completion % — a different metric that stayed untouched.
+
+Removing the page surfaced one real cross-file dependency, found by
+reading the code rather than assumed: `user.html`'s own sidebar had a
+"Progress Reports" nav item (`openTrackerPage('reports',this)`) that deep-
+linked into the now-gone `client.html?page=reports` — left as-is, this
+would have silently blanked the entire embedded Tracker (every
+`.page-section` gets deactivated by `showPage()` before it tries and fails
+to activate the missing one). Removed that nav item too, plus its now-
+dangling `HELP_CONTENT.reports` entry and its key in
+`EMPLOYEE_HELP_SECTION_KEYS` — all three were wired to the same dead
+target. `index.html`'s own, unrelated "📊 Reports" nav/section
+(`showSection('reports')`, a static-demo daily/weekly/monthly personal
+work-report screen with no connection to client/service data) was
+confirmed to be a completely different, pre-existing feature and left
+untouched.
+
+Verified: syntax-checked extracted `<script>` blocks in both `client.html`
+and `user.html`; div-balance on both (delta unchanged vs. `main` in each);
+a new Playwright suite against the real `client.html` UI (10/10 — the nav
+item and page section are both gone, a client with a 2-of-3-done mix of
+active/cancelled services shows "2/3 (67%)" with the cancelled service
+correctly excluded from the denominator, a zero-active-service client
+shows "—" with no `NaN`, and the pre-existing "Overall progress" line is
+untouched) and a new Playwright suite against the real `user.html` UI
+(5/5 — the nav item is gone, the help-panel keys/content no longer
+reference it, and the remaining Tracker nav item still opens the iframe
+successfully).
 **Live Feed refresh actually pulls fresh cloud data + Workload accordion
 (2026-08-21).** Two small independent fixes, one PR, `index.html` only.
 
