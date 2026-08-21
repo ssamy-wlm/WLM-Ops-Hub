@@ -2418,6 +2418,70 @@ Daily Tasks Blocked 10/10, schedule tab 15/15, calendar/buttons 11/11,
 staging 26/26, staging merge 9/9, 19-task completeness 12/12) — no
 regressions from adding a column to the shared list-table markup.
 
+**Sidebar reorder task — no change needed, already correct (2026-08-21).**
+Asked to reorder the admin sidebar's nav groups to Operations → People &
+HR → Insights → Resources. Read the actual markup before touching
+anything (same "verify against primary sources" discipline as the earlier
+#263 investigation this session) and found the four
+`admin-nav-group-label` divs are already in exactly that order, with no
+JS anywhere that reorders them at runtime. Confirmed via a diff against
+`origin/main` — zero changes. Flagged back rather than opening a no-op PR.
+
+**Live Feed narrowed to user/employee activity only, manual buttons
+removed (2026-08-21).** Two changes, one PR, `index.html` only.
+
+**Type allowlist.** `LIVE_FEED_USER_ACTIVITY_TYPES = ['login','nav',
+'admin','timeoff']` — a new shared filter (`_feedUserActivityOnly()`)
+applied once, at the point both `refreshLiveFeed()` and `filterFeed()`
+read `dbGet(DB_KEYS.feed)`, so the list, the type-filter's own option set,
+and the three stat cards (Total Events/Sessions Today/Active Users) all
+compute from the identical already-scoped array and can never disagree.
+`client` (service done/overdue/client updates — the thing this task
+explicitly says never belongs here), `goal`, `report` (now just the
+broadcast-announcement feature, since the old summary-generator's own
+`report` events were removed along with that feature on 2026-08-21
+earlier the same day), and `message` are all excluded now, not just
+`client` — the task's own wording ("Show only ... login, nav, admin")
+read as an allowlist, not "exclude client and leave everything else." The
+type-filter `<select>`'s options were trimmed to match (Goals/Tasks &
+Services/Reports removed) — leaving them would have offered choices that
+can only ever show "No activity recorded," which is worse than not
+offering them. `timeoff` included per the task's own suggested default
+("if you want HR actions") — it's unambiguously employee activity, not
+client-service work, so no reason to leave it out.
+
+**No manual buttons.** Removed the "🔄 Refresh" button (added earlier
+today by the Live Feed refresh PR) and "🗑 Clear Feed" outright, along
+with `clearFeed()`. `refreshLiveFeedFromCloud()` — the exact `cloudPullAll
+(true)` wrapper #262 built — is kept and still fires automatically every
+time the Live Feed tab is opened (`switchAdminTab`'s own hook, unchanged);
+that tab-open trigger IS the "auto-refresh every session" this task asks
+for, so no new plumbing was needed, only removing the now-redundant manual
+button and its disable/relabel logic. Removing Clear Feed made the whole
+`restrict-insights-actions` body-class mechanism fully dead — it existed
+for exactly one purpose (hiding that button for Creative/Production/
+Account Manager) and Team Production Analytics had already taken its only
+other consumer away in an earlier change today — so the CSS rule, the
+`isRestrictedManagerLevel` toggle, and their comments were removed too,
+rather than left as an inert no-op mechanism.
+
+Verified: syntax-checked the extracted `<script>` block; div-balance
+(delta unchanged vs. `main`); `ls api/*.js | wc -l` still 12; grepped clean
+for `feedRefreshBtn`/`clearFeedBtn`/`clearFeed(`/`restrict-insights-
+actions` — zero remaining references; a new Playwright suite against the
+real `index.html` UI (23/23 — opening the tab auto-pulls, neither manual
+button exists anywhere, all four allowed types render, all five excluded
+types are absent, the type-filter dropdown offers only the four allowed
+options, the three stat cards compute from the same filtered set, and
+filtering by type still works against the reduced set). Re-ran the Live
+Feed/Workload accordion suite from earlier today — its Refresh-button
+assertions were rewritten to match the new no-button/auto-refresh-on-open
+behavior (not a regression, that suite's own premise was superseded by
+this task) and its unrelated Workload-accordion coverage re-run unchanged,
+13/13. Recent Activity (Overview's separate feed) and the Overview revamp
+suite both re-run clean (18/18, 24/24) — confirming neither reads
+`ops_feed` in a way this change could have touched.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
