@@ -159,6 +159,47 @@ function preserveMissingPayrollFields(incoming, current) {
   return row;
 }
 
+// Same class of incident as preserveMissingPayrollFields/
+// preserveMissingPasswordField above, for clients (2026-08-21): a browser
+// whose local cache predates an out-of-band field being set on this row
+// (e.g. the clientEmails[] salvage import, a hosting/platform note set
+// directly in the DB) genuinely lacks that key on the object it re-saves.
+// upsertRows()/a raw .update() does a full JSONB replace of `data`, not a
+// merge, so without this the field would be silently deleted by ANY
+// unrelated edit to that client. Unlike the payroll helper, this uses key
+// PRESENCE (a plain object spread), not hasContent() — a client-edit form
+// that deliberately clears a field to '' (e.g. website) always wins; only a
+// key entirely ABSENT from the incoming payload falls back to the stored
+// value. Also protects service-level fields (e.g. a service's `platforms`/
+// `sitePlatform`/`hostingProvider`) on any service — top-level or inside a
+// franchise location — present in BOTH the current and incoming arrays,
+// matched by id. A service/location present in `current` but missing
+// entirely from `incoming` is never resurrected here — that's still a
+// legitimate add/remove, unchanged; this only ever fills in missing FIELDS
+// on an item both sides already agree exists.
+function _mergeClientItemsById(currentArr, incomingArr) {
+  if (!Array.isArray(incomingArr)) return currentArr;
+  const curById = new Map((Array.isArray(currentArr) ? currentArr : []).filter(x => x && x.id != null).map(x => [x.id, x]));
+  return incomingArr.map(item => {
+    const cur = item && item.id != null ? curById.get(item.id) : null;
+    return cur ? { ...cur, ...item } : item;
+  });
+}
+function preserveMissingClientFields(incoming, current) {
+  if (!current) return incoming;
+  const merged = { ...current, ...incoming };
+  merged.services = _mergeClientItemsById(current.services, incoming.services);
+  if (Array.isArray(incoming.locations)) {
+    const curLocsById = new Map((current.locations || []).filter(l => l && l.id != null).map(l => [l.id, l]));
+    merged.locations = incoming.locations.map(loc => {
+      const curLoc = loc && loc.id != null ? curLocsById.get(loc.id) : null;
+      if (!curLoc) return loc;
+      return { ...curLoc, ...loc, services: _mergeClientItemsById(curLoc.services, loc.services) };
+    });
+  }
+  return merged;
+}
+
 // ── member client-write validation ──────────────────────────────────────────
 // A member may edit ONLY items they're assigned to: services[]/
 // recurringServices[] (matched by assigneeId/assigneeName/assignedUserIds —
@@ -249,6 +290,17 @@ const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
 export function checkMemberClientWrite(current, incoming, memberId, memberName) {
   for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
+    // A key entirely ABSENT from `incoming` (not just falsy) means this
+    // caller's local cache predates that field ever being set — the same
+    // staleness preserveMissingClientFields() protects against at write
+    // time, below. Treat it as "not touched," not "cleared" — omitting a
+    // key can never sneak a value change through, since the write-time
+    // merge always falls back to the CURRENT stored value for anything
+    // missing here; at most this lets a stale-cache save through, never a
+    // stale-cache save that silently changes a restricted field. A key
+    // present with an actually different value is still rejected exactly
+    // as before.
+    if (!(key in incoming)) continue;
     if (JSON.stringify(current[key]) !== JSON.stringify(incoming[key])) {
       return { allowed: false, reason: `members cannot edit client.${key}` };
     }
@@ -1363,7 +1415,14 @@ export default async function handler(req, res) {
     // ── clients: allowed for every role; members are restricted server-side
     // to their assigned items. A member's out-of-scope edit REJECTS THE WHOLE
     // CLIENT RECORD with a clear reason (see `rejected` in the response) —
-    // never a silent partial merge. ──
+    // never a silent partial merge (that check runs against the raw incoming
+    // payload). What actually reaches storage, however, IS a merge —
+    // preserveMissingClientFields() below fills in any field present on the
+    // current DB row but genuinely absent from this write (a stale local
+    // cache), so a resave from a device that predates an out-of-band field
+    // (clientEmails, sitePlatform/hostingProvider, service platforms, etc.)
+    // can never silently wipe it — see CLAUDE.md's 2026-08-21 field-
+    // preservation entry for the incident this closes. ──
     if (Array.isArray(c.clients) && c.clients.length) {
       const incoming = c.clients.filter(validClient);
       const ids = incoming.map(r => r.id);
@@ -1380,7 +1439,11 @@ export default async function handler(req, res) {
       const reviewEvents = [];
 
       if (isAdmin) {
-        applied.clients = await upsertRows(supabase, 'ops_clients', incoming, warnings, true);
+        // preserveMissingClientFields runs only on what actually reaches
+        // storage — every notification-diff loop below still compares the
+        // RAW `incoming` against `cur.data`, unaffected by the merge.
+        const toStore = incoming.map(inc => preserveMissingClientFields(inc, byId.get(inc.id)?.data));
+        applied.clients = await upsertRows(supabase, 'ops_clients', toStore, warnings, true);
         if (notifSettings.assignment) {
           for (const inc of incoming) {
             const cur = byId.get(inc.id);
@@ -1426,7 +1489,11 @@ export default async function handler(req, res) {
           }
           // status is never part of the check above (members can't touch it),
           // but guard it here too — belt and suspenders against active/inactive drift.
-          const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...inc, status: cur.status } }).eq('id', inc.id);
+          // checkMemberClientWrite() above ran against the RAW `inc` — the merge
+          // only ever fills in fields already absent from `inc`, which never
+          // changes what that check saw.
+          const toStore = preserveMissingClientFields(inc, cur.data);
+          const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...toStore, status: cur.status } }).eq('id', inc.id);
           if (uErr) { warnings.push(`clients(${inc.id}): ${uErr.message}`); continue; }
           n++;
           if (notifSettings.assignment) {
