@@ -2786,6 +2786,99 @@ clicking the row opens the Tracker iframe with both `openClient=` and
 `openProject=` set to the exact ids; and a client with genuinely zero
 assignments still correctly shows the empty state (unaffected).
 
+**View Consolidation + Admin/User Parity batch — PR 1: Team Production
+Analytics replaces Team Assessment as the Overview landing (2026-08-24).**
+Third of five PRs in this batch (order PR4→PR2→**PR1**→PR3→PR5).
+`index.html` only.
+
+Moved Team Production Analytics' entire content (stat cards, "Services
+Completed — Last 8 Weeks" chart, Per-Person Breakdown table — same ids,
+`tpa-team-stats`/`tpa-weekly-trend`/`tpa-person-table`/`tpa-person-empty`,
+same `renderTeamProductionAnalytics()` function, byte-identical logic) from
+its own standalone "Team analytics" tab/page (`#admin-summaries`) onto the
+Overview page (`#admin-overview`), replacing the old "Team Assessment"
+6-column table outright — its computation block in `refreshAdminOverview()`
+is deleted, replaced with a single call to `renderTeamProductionAnalytics()`
+(already fully self-contained: reads its own DOM targets, no-ops if
+they're absent), so nothing is duplicated. Recent Activity stays exactly
+where it was, unchanged, directly below the per-person table inside
+`.ov-top-grid`. The "Team analytics" nav item and the standalone
+`#admin-summaries` page-section are both deleted outright (not just
+hidden) — `HELP_CONTENT.summaries`/its `ADMIN_TOUR_STEPS` entry/its
+`ADMIN_HELP_SECTION_KEYS` entry/its `ADMIN_TAB_TITLES` entry all removed
+alongside it, and `HELP_CONTENT.overview`'s tip/learnMore copy updated to
+describe what's actually on the page now. Since Overview is already the
+default active tab/page-section, "opening the app lands on Team Production
+Analytics" needed no new default-page logic — it's already true once
+Analytics lives there. Live Feed, Workload, and Needs Attention are
+untouched, confirmed via grep (zero lines touched in any of their code).
+
+**Found and fixed as a side effect, not the task's own ask:** the
+`switchAdminTab` wrapper installed to fire `renderTeamProductionAnalytics()`
+on the (now-removed) 'summaries' tab click also called a `refreshSummaryLists()`
+— a function that no longer exists anywhere in the file (its last real
+definition was removed when the old manually-generated Progress Summaries
+feature was repurposed into Team Production Analytics on 2026-08-21, but
+these two call sites survived that cleanup). Since JS throws a
+`ReferenceError` on a call to an undefined function, clicking "Team
+analytics" in production today would have thrown immediately after
+rendering — a real, previously-undiscovered break. Retiring the tab
+removes these dead call sites along with it, closing the bug as a
+byproduct rather than something that needed its own separate fix.
+
+**Role-visibility adjustment required, and made — flagged for visibility
+since it touches a permission-sensitive area:** `applyAdminRoleRestrictions()`'s
+`CREATIVE_MANAGER_ROLE` branch had a `showOnly` whitelist of
+`['tracker','messages','summaries','livefeed', ...]` — she was explicitly
+granted 'summaries' (Team Production Analytics) but NOT 'overview' (the
+old company-wide Team Assessment table wasn't meant for her). Retiring
+'summaries' without any other change would have silently revoked her only
+path to Analytics entirely, the exact "access disappears because the tab
+it lived on disappeared" failure this PR must avoid. Fixed by replacing
+'summaries' with 'overview' in her whitelist — she now sees the Overview
+tab, which (after this PR) contains exactly the content she already had
+access to (Analytics + a Recent Activity strip that shows nothing more
+sensitive than what her existing Tracker access already exposes) — not
+new capability, the same access relocated. The other two restricted roles
+(`account_manager`/`production_manager`) already had BOTH 'overview' and
+'summaries' unhidden before this PR (confirmed by reading `hideTabs`,
+which lists neither), so they needed no equivalent adjustment. Creative
+Manager's pre-existing auto-navigate-to-Tracker-on-login behavior is
+untouched — she still lands on Tracker first, same as before; Overview/
+Analytics is now just a tab she can click to, that she couldn't before.
+
+Verified: syntax-checked all 5 extracted `<script>` blocks (`new Function()`
+per block) — clean. Div-balance delta unchanged vs. `main` (−2, both). A
+new Playwright suite against the real `index.html` UI (16/16): the "Team
+analytics" nav item and `#admin-summaries` page-section are both gone;
+Overview (default-active) shows the Per-Person Breakdown table, the weekly
+trend chart, and the stat cards; the old "Team Assessment" title is gone;
+Recent Activity still renders with the real feed event; Live Feed/Workload
+nav items still exist; clicking Live Feed then back to Overview throws no
+JS errors (confirms the dead `refreshSummaryLists()` bug is actually
+closed, not just theoretically); a `creative_manager`-level session now
+sees the Overview nav item and can reach the same Analytics content
+through it, while Users stays hidden (unaffected). Three pre-existing
+suites re-run: `verify_overview_revamp.js`'s layout (Part 1) and Recent
+Activity (Part 3) sections re-run clean (11/11 once its own obsolete
+`#ov-team-assessment` data-correctness section — Part 2 — was skipped,
+noted in the test file as superseded by this PR's own suite, not a
+regression); `verify_overview_stacked_layout.js` re-run with its two
+`#ov-team-assessment`-targeting assertions (both about the literal old
+title/row-count) understood as the same kind of expected supersession,
+its other 11/13 checks (positioning, width, Recent Activity wrap/scroll)
+passing clean; `verify_tpa_service_side_overdue_stuck.js` updated (its
+navigation click to the removed 'summaries' tab is no longer needed since
+Analytics is already on the already-active Overview tab; its
+`#admin-summaries`-count assertion flipped from expecting exactly 1 to
+expecting exactly 0, matching the tab's retirement) and re-run clean,
+7/7. `verify_help_panel.js`'s one pre-existing failure (a stale
+`user.html` expectation predating the 2026-08-21 Progress Reports removal)
+and `verify_help_btn_visibility.js`'s port-8935 dependency (an old one-off
+before/after comparison script, not a standing suite) were both confirmed
+unrelated by reproducing the identical result against unmodified `main` —
+out of scope for this PR.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
