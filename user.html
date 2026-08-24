@@ -2991,51 +2991,6 @@ function toggleEmployeeFavorite(id, evt){
   loadMyAssignments();
 }
 
-// Mark a task done from the team portal and fire a notification into the tracker
-function userMarkTaskDone(clientId, projId, spId, taskId){
-  try{
-    const clients = _getAssignClients();
-    const c = clients.find(x=>x.id===clientId); if(!c) return;
-    const p = (c.projects||[]).find(x=>x.id===projId); if(!p) return;
-    const container = spId ? (p.subprojects||[]).find(x=>x.id===spId) : p;
-    if(!container) return;
-    const task = (container.tasks||[]).find(t=>t.id===taskId); if(!task) return;
-    if(task.done){ showToast('Task already completed'); return; }
-    task.done = true;
-    task.completedBy = currentUser?.name||'Team member';
-    task.completedAt = new Date().toISOString();
-    // Recalc progress
-    let total=0, done=0;
-    (p.tasks||[]).forEach(t=>{total++;if(t.done)done++;});
-    (p.subprojects||[]).forEach(sp=>(sp.tasks||[]).forEach(t=>{total++;if(t.done)done++;}));
-    const pct = total>0 ? Math.round(done/total*100) : p.progress||0;
-    p.progress = pct;
-    // Save back to shared DB
-    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
-    // Push notification to tracker (wl_notifications_db)
-    const notif = {
-      id:'n'+Date.now(),
-      ts: Date.now(), read: false,
-      icon:'✅', color:'rgba(46,158,110,.1)',
-      title:`Task done: ${task.name}`,
-      body:`${task.completedBy} completed "${task.name}" on "${p.name}" · ${c.name}. Progress: ${pct}%.`,
-      forUser:'admin', fromUser: currentUser?.name||''
-    };
-    const existing = JSON.parse(localStorage.getItem(_TRACKER_NOTIF_KEY)||'[]');
-    existing.unshift(notif);
-    localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(existing.slice(0,500)));
-    // Also push to live feed for admin
-    logActivity('client', notif.fromUser, notif.title, notif.body);
-    // Push immediately (not debounced) — a discrete Mark Done click shouldn't risk
-    // being lost to cloud sync if the tab closes before a debounce timer fires.
-    if(typeof cloudPushData==='function') cloudPushData();
-    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
-    // Refresh the my-work panel
-    loadMyAssignments();
-    showToast(`✅ Task marked done · ${pct}% complete`);
-  }catch(e){ showToast('Could not save — try again','warn'); }
-}
-
 // No-weekend-due-dates rule (Sarah, see CLAUDE.md): a due date must never
 // land on Sat/Sun — Sat rolls back to Fri, Sun rolls forward to Mon. This is
 // user.html's OWN copy of client.html's adjustOffWeekend() — zero shared
@@ -3193,8 +3148,8 @@ function userSubmitServiceForReview(clientId, svcId){
 
 // ── Service Updates / Comments thread (Monday feature pack #1) ──
 // svc.updates: [{id, authorId, authorName, text, ts}] — synced via the same
-// whole-client push already used by userMarkServiceDone()/userUpdateProgress()
-// above. postServiceUpdate() mutates the SAME service object already loaded
+// whole-client push already used by userMarkServiceDone() above.
+// postServiceUpdate() mutates the SAME service object already loaded
 // from _getAssignClients() in place, never reconstructing it from a narrower
 // payload — this is what keeps a posted update from ever blanking any other
 // service field (the PR #88 empty-field pattern).
@@ -3375,39 +3330,6 @@ function deleteServiceSubitem(subitemId){
     renderServiceSubitemsList(svc);
     loadMyAssignments();
     showToast('Sub-item removed ✓');
-  }catch(e){ showToast('Could not save — try again','warn'); }
-}
-
-function userUpdateProgress(clientId, projId){
-  try{
-    const pctEl  = document.getElementById('ppct-'+clientId+'-'+projId);
-    const noteEl = document.getElementById('pnote-'+clientId+'-'+projId);
-    if(!pctEl) return;
-    const pct  = parseInt(pctEl.value,10)||0;
-    const note = (noteEl?.value||'').trim();
-    const clients = _getAssignClients();
-    const c = clients.find(x=>x.id===clientId); if(!c) return;
-    const p = (c.projects||[]).find(x=>x.id===projId); if(!p) return;
-    p.progress = pct;
-    if(!p.progressLog) p.progressLog=[];
-    p.progressLog.push({ date: new Date().toISOString().slice(0,10), pct, note, user: currentUser?.name||'Team member' });
-    localStorage.setItem(_ASSIGN_CL_KEY, JSON.stringify(clients));
-    const notif = {
-      id:'n'+Date.now(), ts:Date.now(), read:false,
-      icon:'📈', color:'rgba(45,107,182,.1)',
-      title:`Progress update: ${p.name}`,
-      body:`${currentUser?.name||'Team member'} updated "${p.name}" (${c.name}) to ${pct}%.${note?' Note: '+note:''}`,
-      forUser:'admin', fromUser: currentUser?.name||''
-    };
-    const notifs = JSON.parse(localStorage.getItem(_TRACKER_NOTIF_KEY)||'[]');
-    notifs.unshift(notif);
-    localStorage.setItem(_TRACKER_NOTIF_KEY, JSON.stringify(notifs.slice(0,500)));
-    logActivity('client', notif.fromUser, notif.title, notif.body);
-    if(typeof cloudPushData==='function') cloudPushData();
-    else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
-    if(noteEl) noteEl.value='';
-    loadMyAssignments();
-    showToast(`Progress saved · ${pct}%`);
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
@@ -3678,7 +3600,7 @@ function _myWorkNotesCell(item){
 // openTrackerTo — client.html reads ?openClient= on load and opens that
 // client's detail panel itself), rather than just switching to the Tracker
 // section with no context.
-function openMyWorkItemInTracker(clientId){ openTrackerTo(clientId); }
+function openMyWorkItemInTracker(clientId, projId){ openTrackerTo(clientId, projId||undefined); }
 // One table for every recurring-service assignment (Monday mockup redesign)
 // — myTrackerSvcs (client.html-authored services) and myIdxSvcs (index.html
 // -authored recurring services) are two different data shapes; this
@@ -3705,7 +3627,7 @@ function _myWorkBadges(item){
 }
 function _myWorkServicesTable(items){
   const rows=items.map(item=>`
-    <tr onclick="openMyWorkItemInTracker('${item.clientId}')" style="cursor:pointer;">
+    <tr onclick="openMyWorkItemInTracker('${item.clientId}'${item.projId?`,'${item.projId}'`:''})" style="cursor:pointer;">
       <td>
         <div style="font-weight:700;color:var(--text-dark);">${escHtmlUser(item.name)}${_myWorkBadges(item)}</div>
         <div style="font-size:10px;color:var(--text-light);margin-top:2px;">
@@ -3779,9 +3701,9 @@ function loadMyAssignments(){
   const clientIds=new Set();
   let html=''; let found=false;
   // Recurring services (both data sources) feed the one unified table
-  // (Monday mockup redesign) instead of their own per-service cards —
-  // normalized into one row shape below; ad-hoc project/bundle tasks stay
-  // in their own cards further down, untouched.
+  // (Monday mockup redesign); bundle/project assignments (c.projects[])
+  // feed the SAME table too, as of 2026-08-24 (see the comment on that
+  // block below) — normalized into one row shape here.
   const myServiceItems=[];
 
   clients.forEach(c=>{
@@ -3793,6 +3715,24 @@ function loadMyAssignments(){
     // ── Services from index.html (c.recurringServices[], assignedUserIds schema) ──
     const myIdxSvcs=(c.recurringServices||[]).filter(s=>(s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName));
 
+    // ── Bundle/project assignments (c.projects[]) — RETIRED as their own
+    // "Project Tasks" card grouping on 2026-08-24: that was a separate,
+    // older data model from the newer ops_tasks-based Task Assignments/
+    // Daily Tasks system, had no admin-side equivalent view at all, and its
+    // inline mark-done/progress-update controls (formerly
+    // userMarkTaskDone()/userUpdateProgress()) just duplicated what
+    // clicking through into the Tracker's own Bundles/Projects tab already
+    // does with real parity — client.html's renderProjects() lets anyone
+    // who's on the project (canEdit=SESSION.isAdmin||onProject) check off
+    // tasks and log progress themselves. A genuine assignment is never
+    // dropped silently: it now surfaces as a plain row in the SAME unified
+    // table recurring services use, and clicking it deep-links straight
+    // into the Tracker at that exact project via openTrackerTo's existing
+    // ?openProject= support (the same one the old "Open ↗" link used) —
+    // this is also what makes admin and employee task views consistent,
+    // per this PR's own acceptance criteria: both roles now reach bundle/
+    // project work through the one shared Tracker view, never a personal
+    // duplicate of it.
     (c.projects||[]).forEach(p=>{
       // Skip isRecurringService mirrors — they are displayed via myTrackerSvcs below
       if(p.isRecurringService) return;
@@ -3800,7 +3740,6 @@ function loadMyAssignments(){
       const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>
         (sp.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done)
-                      .map(t=>({...t,_spName:sp.name,_spId:sp.id}))
       );
       const mySubs=(p.subprojects||[]).filter(sp=>(sp.users||[]).some(u=>u===myId||u===myName));
       if(!onProject&&!myTasks.length&&!mySubTasks.length&&!mySubs.length) return;
@@ -3811,64 +3750,16 @@ function loadMyAssignments(){
         if(isOver||isSoon) dueWeekCount++;
         if(isOver||isMonth) dueMonthCount++;
       }
-
-      html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;overflow:hidden;box-shadow:0 2px 12px rgba(37,99,168,.07);">
-        <div style="padding:14px 18px;background:linear-gradient(135deg,${c.color||_hashClientColor(c.name)}18,transparent);border-bottom:1px solid rgba(45,107,182,.1);display:flex;align-items:center;gap:11px;">
-          <div style="width:34px;height:34px;border-radius:9px;background:${c.color||_hashClientColor(c.name)};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;flex-shrink:0;">${(c.name||'?').split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}</div>
-          <div style="flex:1;">
-            <div style="font-size:13px;font-weight:800;color:var(--text-dark);">
-              <span onclick="toggleEmployeeFavorite('${c.id}', event)" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
-              ${c.name} <span style="font-size:9px;font-weight:700;background:rgba(45,107,182,.1);color:var(--text-mid);border-radius:5px;padding:1px 5px;">${c.code||''}</span>
-            </div>
-            <div style="font-size:10px;color:var(--text-light);">${p.name} · <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2E5DA6;">${(p.status||'').replace('-',' ')}</span> · ${p.progress||0}% complete</div>
-          </div>
-          <a href="javascript:void(0)" onclick="openTrackerTo('${c.id}','${p.id}')" style="font-size:10px;color:var(--text-mid);text-decoration:none;padding:4px 9px;border:1px solid rgba(45,107,182,.2);border-radius:7px;">Open ↗</a>
-        </div>
-        <div style="padding:13px 18px;">`;
-
-      if(myTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:5px;letter-spacing:.07em;">My Tasks (${myTasks.length})</div>`;
-        myTasks.forEach(t=>{
-          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-            <span style="font-size:14px;cursor:pointer;" title="Mark done" onclick="userMarkTaskDone('${c.id}','${p.id}','','${t.id}')">⬜</span>
-            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${t.name}</span>
-            ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
-          </div>`;
-        });
-      }
-      if(mySubTasks.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">Sub-Item Tasks (${mySubTasks.length})</div>`;
-        mySubTasks.forEach(t=>{
-          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-            <span style="font-size:14px;cursor:pointer;" title="Mark done" onclick="userMarkTaskDone('${c.id}','${p.id}','${t._spId||''}','${t.id}')">⬜</span>
-            <span style="flex:1;font-size:11px;color:var(--text-dark);">${t.name} <span style="color:var(--text-light);font-size:9px;">· ${t._spName||''}</span></span>
-            ${t.due?`<span style="font-size:9px;color:${t.due<todayStr?'var(--red)':'var(--text-light)'};">📅 ${t.due}</span>`:''}
-          </div>`;
-        });
-      }
-      if(mySubs.length){
-        html+=`<div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin:8px 0 5px;letter-spacing:.07em;">My Sub-Items (${mySubs.length})</div>`;
-        mySubs.forEach(sp=>{
-          html+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-            <span style="width:8px;height:8px;border-radius:50%;background:${c.color||_hashClientColor(c.name)};flex-shrink:0;"></span>
-            <span style="flex:1;font-size:11px;font-weight:600;color:var(--text-dark);">${sp.name}</span>
-            <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:rgba(45,107,182,.08);color:#2E5DA6;">${(sp.status||'').replace('-',' ')}</span>
-          </div>`;
-        });
-      }
-      if(onProject && !myTasks.length && !mySubTasks.length && !mySubs.length){
-        html+=`<div style="font-size:11px;color:var(--text-mid);padding:5px 0;">You're a team member on this bundle.</div>`;
-      }
-      html+=`<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(45,107,182,.08);">
-        <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;margin-bottom:7px;letter-spacing:.07em;">Update Progress</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <input type="range" id="ppct-${c.id}-${p.id}" min="0" max="100" value="${p.progress||0}" style="flex:1;accent-color:#2E5DA6;cursor:pointer;" oninput="document.getElementById('pval-${c.id}-${p.id}').textContent=this.value+'%'">
-          <span id="pval-${c.id}-${p.id}" style="font-size:11px;font-weight:700;color:#2E5DA6;min-width:34px;text-align:right;">${p.progress||0}%</span>
-        </div>
-        <input type="text" id="pnote-${c.id}-${p.id}" placeholder="Add a note (optional)…" style="width:100%;margin-top:7px;padding:6px 10px;border:1px solid rgba(45,107,182,.2);border-radius:8px;font-size:11px;outline:none;box-sizing:border-box;background:#fafbff;">
-        <button onclick="userUpdateProgress('${c.id}','${p.id}')" style="margin-top:7px;width:100%;padding:7px;background:linear-gradient(135deg,#2E5DA6,#1a4f9c);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;">Save Progress Update</button>
-      </div>`;
-      html+=`</div></div>`;
+      const openTaskCount=myTasks.length+mySubTasks.length;
+      const summary = openTaskCount ? `${openTaskCount} open task${openTaskCount===1?'':'s'} assigned to you`
+        : mySubs.length ? `${mySubs.length} sub-item${mySubs.length===1?'':'s'} assigned to you`
+        : `Team member on this bundle`;
+      myServiceItems.push({
+        clientId:c.id, clientName:c.name, svcId:null, projId:p.id, name:p.name,
+        due:p.due||'', freq:'project', category:p.type||'Bundle',
+        notes:`${summary} · ${p.progress||0}% complete`, locationName:'',
+        hasStatus:false, statusValue:null,
+      });
     });
 
     // ── Tracker services (c.services[]) assigned to me → the unified table ──
@@ -3958,15 +3849,12 @@ function loadMyAssignments(){
     if(clientHasWork) clientIds.add(c.id);
   });
 
-  // Clearly labeled as its own, separate/older grouping (owner request) —
-  // an employee scanning this page should never mistake an ad-hoc project
-  // task card (or the opt-in "other work on this client" box) for a row
-  // that belongs in the services table above.
-  const taskCardsHtml=html?`
-    <div style="margin:22px 0 10px;">
-      <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Project Tasks</div>
-      <div style="font-size:11px;color:var(--text-light);margin-top:1px;">A separate, older grouping — ad-hoc bundle/project tasks assigned to you, not recurring services</div>
-    </div>${html}`:'';
+  // Whatever's in `html` at this point is just the opt-in "other work on
+  // this client" boxes (see the ns.scope==='client' block above) — the
+  // "Project Tasks" grouping that used to also land in this same variable
+  // was retired above (folded into myServiceItems instead), so this no
+  // longer needs its own labeled wrapper.
+  const otherClientWorkHtml=html;
   html='';
 
   // ── "Your Assigned Steps" — sub-items assigned to this person on a
@@ -4008,7 +3896,7 @@ function loadMyAssignments(){
 
   const list=document.getElementById('my-assignments-list');
   if(list){
-    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+taskCardsHtml+html):`<div style="text-align:center;padding:60px;color:var(--text-light);">
+    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+otherClientWorkHtml+html):`<div style="text-align:center;padding:60px;color:var(--text-light);">
       <div style="font-size:40px;margin-bottom:12px;">📋</div>
       <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No work assigned yet</div>
       <div style="font-size:12px;">When an admin assigns a task to you from the production tracker, it'll appear here automatically.</div>
