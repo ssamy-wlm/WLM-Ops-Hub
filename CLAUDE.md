@@ -2948,6 +2948,56 @@ goals set yet"; marking Alice's active goal achieved pushes a real
 after re-render; deleting a goal pushes a sync call whose payload no
 longer includes that goal's id.
 
+**View Consolidation + Admin/User Parity batch — PR 5: sub-tab button
+styling parity, the last of five PRs (2026-08-24).** Order was
+PR4→PR2→PR1→PR3→**PR5**. `index.html` + `user.html`, display-only.
+
+The Add/Import vs. Assigned-Tasks/By-Person/Needs-Attention sub-tab
+buttons (`setTaSubtab()`, Task Assignments) and the Add/Import vs.
+My-assigned sub-tab buttons (`setDtTab()`, Daily Tasks) both still
+toggled active state by adding/removing the bare `btn-outline` class
+itself — the exact bug already fixed everywhere else in these two files
+(List/Calendar/Day/Week/Month view toggles, category pills, quick
+filters) via `.btn-toggle-active`: toggling `btn-outline` on/off changes
+the button's border width between states, and `setTaSubtab()`'s very
+first button additionally had NO `btn-outline` in its active-state class
+at all (bare `btn btn-sm`), which — combined with `.btn-primary`'s
+`width:100%` not even being in play here — still meant a visibly
+different box size/weight than its inactive siblings. Fixed both
+functions to always keep `btn btn-sm btn-outline` as the base class,
+toggling only `.btn-toggle-active` on top, matching every other toggle in
+both files. Also found and fixed the same bug at a second call site:
+`openPersonDailyView()` (index.html) manually re-flips the "Assigned
+Tasks"/"By Person" highlight after drilling into one person (so "By
+Person" stays visually selected even though the Assigned Tasks content
+is what's actually showing, pre-filtered) — this used the identical
+bare-class toggle and needed the identical fix.
+
+Purely cosmetic — no tab-switching logic, content, or data changed;
+verified by confirming the actual sub-tab content still swaps correctly
+(not just the button's own class) at every click site touched.
+
+Verified: syntax-checked both files' extracted `<script>` blocks — clean.
+Div-balance unchanged in both (`index.html` −2, `user.html` −1, matching
+`main`). A new Playwright suite (20/20) against both real UIs: each
+button's class always includes `btn-outline` regardless of active state;
+real `boundingBox()` width comparisons confirm zero resize when toggling
+between active/inactive (not just a class-name check); `openPersonDailyView()`
+correctly keeps "By Person" highlighted rather than "Assigned Tasks"; and
+the actual tab content (`#ta-subtab-assigned`, `#dtTabImport`) becomes
+visible on click, confirming the real switch still works, not just its
+button styling. Every pre-existing Task Assignments/Daily Tasks
+Playwright suite touching these buttons re-run clean (schedule tab
+15/15, calendar/buttons 11/11, staging 26/26, 19-task completeness 12/12,
+Daily Tasks Blocked 10/10, Daily Tasks staging 17/17, category-pill fix
+10/10). One pre-existing, unrelated failure
+(`verify_ta_person_view_blocked.js`'s stale `#ov-team-assessment`
+selector, retired by PR 1 above) was confirmed to fail identically
+against unmodified `main` — out of scope for this PR.
+
+**This completes the View Consolidation + Admin/User Parity batch** (PR
+4 → PR 2 → PR 1 → PR 3 → PR 5, all five merged).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
