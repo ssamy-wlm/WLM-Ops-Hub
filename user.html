@@ -527,8 +527,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
     <div class="sidebar-nav">
       <div class="nav-group-label">My Work</div>
       <div class="nav-item active" onclick="showSection('operations',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span>Operations</div>
-      <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Work<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
-      <div class="nav-item" onclick="showSection('dailyTasks',this)" id="nav-dailytasks"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Daily tasks<span class="msg-nav-badge" id="daily-tasks-badge" style="display:none;">0</span></div>
+      <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Services<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
+      <div class="nav-item" onclick="showSection('dailyTasks',this)" id="nav-dailytasks"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>My Tasks<span class="msg-nav-badge" id="daily-tasks-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
       <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
       <div class="nav-group-label">Resources</div>
@@ -564,7 +564,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
               <button class="btn btn-xs btn-outline" onclick="markAssignNotifRead();renderNotifDropdown();">Mark all read</button>
             </div>
             <div id="notifDropdownList" class="notif-dropdown-list"></div>
-            <div class="notif-dropdown-footer"><a href="#" onclick="event.preventDefault();closeNotifDropdown();showSection('mywork',document.getElementById('nav-mywork'));">View all in My Work</a></div>
+            <div class="notif-dropdown-footer"><a href="#" onclick="event.preventDefault();closeNotifDropdown();showSection('mywork',document.getElementById('nav-mywork'));">View all in My Services</a></div>
           </div>
         </div>
         <div class="header-account-info" style="display:flex;align-items:center;gap:6px;">
@@ -937,11 +937,11 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div id="sec-mywork" class="page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
           <div>
-            <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">My work</div>
-            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Tasks assigned to you from the production tracker</div>
+            <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">My Services</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every client service assigned to you, from the production tracker</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
-            <button onclick="toggleNotifSettingsPanel()" class="btn btn-outline btn-sm" title="Choose what My Work shows and counts">🔔 Notifications</button>
+            <button onclick="toggleNotifSettingsPanel()" class="btn btn-outline btn-sm" title="Choose what My Services shows and counts">🔔 Notifications</button>
             <button onclick="showSection('tracker',document.querySelector('.nav-item[onclick*=tracker]'))" class="btn btn-outline btn-sm">🔗 Tracker</button>
             <button class="btn btn-primary btn-sm" id="myWorkRefreshBtn" onclick="refreshMyWork(this)">↺ Refresh</button>
           </div>
@@ -949,7 +949,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 
         <!-- Per-user My Work preferences — local-only, narrows what's shown/counted below; never widens beyond this person's own role-visible data. -->
         <div id="notif-settings-panel" style="display:none;background:#fff;border:1px solid rgba(45,107,182,.15);border-radius:12px;padding:14px 18px;margin-bottom:18px;">
-          <div style="font-size:11px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">What should My Work show?</div>
+          <div style="font-size:11px;font-weight:700;color:var(--text-dark);margin-bottom:10px;">What should My Services show?</div>
           <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px;">
             <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;">
               <input type="radio" name="notif-scope" id="notif-scope-mine" value="mine" checked onchange="saveNotifSettingsFromForm()">
@@ -968,7 +968,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 
         <!-- Stats row — compact tiles (see .mywork-stat above) -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
-          <div class="mywork-stat"><div class="mywork-stat-label">Tasks</div><div class="mywork-stat-value" id="as-proj-count">0</div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Services</div><div class="mywork-stat-value" id="as-proj-count">0</div></div>
           <div class="mywork-stat"><div class="mywork-stat-label">Clients</div><div class="mywork-stat-value" id="as-client-count">0</div></div>
           <div class="mywork-stat"><div class="mywork-stat-label">Due This Week</div><div class="mywork-stat-value" id="as-due-week-count" style="color:var(--orange);">0</div></div>
           <div class="mywork-stat"><div class="mywork-stat-label">Due This Month</div><div class="mywork-stat-value" id="as-due-month-count" style="color:#2E5DA6;">0</div></div>
@@ -996,7 +996,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
            separate section; "My Work" above is completely untouched. ── -->
       <div id="sec-dailyTasks" class="page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-          <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">Daily tasks</div>
+          <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">My Tasks</div>
           <div id="dtNewAssignedBadge" style="display:none;font-size:12px;color:var(--text-mid);">🔔 <span id="dtNewAssignedCount">0</span> new assigned</div>
         </div>
 
@@ -2169,7 +2169,7 @@ function _maybeShowMyWorkTip(){
 // only have a short Tip in the approved doc, no Learn More — those entries
 // carry learnMore:null, which hides the toggle entirely (see _renderTourStep).
 const HELP_CONTENT = {
-  mywork: { label: 'My Work', sel: '#nav-mywork',
+  mywork: { label: 'My Services', sel: '#nav-mywork',
     tip: "Everything assigned to you — services and individual steps.",
     learnMore: "Your daily to-do. Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list." },
   tracker: { label: 'Tracker', sel: '#nav-tracker',
@@ -2636,7 +2636,7 @@ function initApp(){
     try{
       const myId=currentUser?.id||'';
       const unread=_getAssignNotifs().filter(n=>!n.read);
-      if(unread.length>0) showToast(`🔔 ${unread.length} new notification${unread.length>1?'s':''} — check My Work`);
+      if(unread.length>0) showToast(`🔔 ${unread.length} new notification${unread.length>1?'s':''} — check My Services`);
     }catch(e){}
   },800);
   // Render 30-60-90 roadmap
@@ -3280,10 +3280,9 @@ function addServiceSubitem(){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 // clientId/svcId are optional — omitted (the modal's own checkbox onchange)
-// reads the currently-open modal's hidden fields; passed explicitly by the
-// "Your Assigned Steps" My Work list, which toggles a step on a service
-// that isn't necessarily open in any modal (and may not even be one this
-// person is otherwise assigned to).
+// reads the currently-open modal's hidden fields; the explicit-id form
+// exists for a caller toggling a step on a service that isn't necessarily
+// open in any modal.
 function toggleServiceSubitem(subitemId, checked, clientId, svcId){
   if(clientId===undefined){
     clientId=document.getElementById('svcSubitemsClientId').value;
@@ -3299,8 +3298,8 @@ function toggleServiceSubitem(subitemId, checked, clientId, svcId){
     if(typeof cloudPushData==='function') cloudPushData();
     else if(typeof _scheduleCloudPush==='function') _scheduleCloudPush();
     // Only re-render the modal's own list if it's already showing THIS
-    // exact service — a toggle from the "Your Assigned Steps" list must
-    // never clobber a modal open for a different service.
+    // exact service — a toggle triggered for a different service must
+    // never clobber a modal open for the one currently displayed.
     if(document.getElementById('svcSubitemsServiceId').value===svcId) renderServiceSubitemsList(svc);
     loadMyAssignments();
   }catch(e){ showToast('Could not save — try again','warn'); }
@@ -3863,38 +3862,40 @@ function loadMyAssignments(){
   // was retired above (folded into myServiceItems instead), so this no
   // longer needs its own labeled wrapper.
   const otherClientWorkHtml=html;
-  html='';
 
-  // ── "Your Assigned Steps" — sub-items assigned to this person on a
-  // service they are NOT otherwise assigned to (services they ARE assigned
-  // to already show their own steps inline above, via the "your steps"
-  // hint). Never affects myTrackerSvcs/projCount/stats above — this is a
-  // separate, read-mostly list, same as client.html's copy of this feature.
-  // Scans franchise/location services too (_allServicesForClient, see #161)
-  // — a sub-item assigned on a franchise service the person isn't otherwise
-  // assigned to was invisible here until this fix.
-  const myStepEntries=[];
+  // ── Step-only assignments — sub-items assigned to this person on a
+  // service they are NOT otherwise assigned to (a service they ARE
+  // assigned to already shows its own steps inline via the services table
+  // row's sub-items badge). Folded directly into myServiceItems as of
+  // 2026-08-24 (My Services/My Tasks restructure) — this used to be its
+  // own separately-labeled "Your Assigned Steps" box calling itself "a
+  // separate, older grouping," which is exactly the ambiguous wording this
+  // restructure removes. Each row reuses the SAME sub-items badge/modal
+  // (_myWorkBadges()/openServiceSubitemsModal()) a fully-owned service
+  // already uses to check off steps — no new interaction, just the
+  // existing one extended to a service this person only partly owns.
+  // Never affects projCount/stats above (unchanged from before this
+  // restructure) — a step-only assignment doesn't make someone own the
+  // whole service. Scans franchise/location services too
+  // (_allServicesForClient, see #161) — a sub-item assigned on a franchise
+  // service the person isn't otherwise assigned to would otherwise be
+  // invisible here.
   clients.forEach(c=>{
     _allServicesForClient(c).forEach(s=>{
       if(_svcAssignedToMe(s,myId,myName)) return; // already shown above with its own hint
-      (s.subitems||[]).forEach(si=>{
-        if(_isMySubitem(si,myId,myName)) myStepEntries.push({ c, s, si });
+      const myStepsOnThis=(s.subitems||[]).filter(si=>_isMySubitem(si,myId,myName));
+      myStepsOnThis.forEach(si=>{
+        found=true;
+        myServiceItems.push({
+          clientId:c.id, clientName:c.name, svcId:s.id, name:s.name,
+          due:s.due||'', freq:'step', category:'Your Step',
+          notes:`Your step: "${si.text||''}"`, locationName:s._locationName||'',
+          hasStatus:false, statusValue:null,
+          updates:[], subitems:Array.isArray(s.subitems)?s.subitems:[],
+        });
       });
     });
   });
-  if(myStepEntries.length){
-    found=true;
-    html+=`<div style="background:#fff;border:1px solid rgba(45,107,182,.12);border-radius:13px;margin-bottom:14px;padding:11px 16px;">
-      <div style="font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;">Your Assigned Steps (from other services)</div>
-      <div style="font-size:10px;color:var(--text-light);margin:2px 0 7px;">A separate, older grouping — sub-items assigned to you on services you're not otherwise assigned to, so they don't already appear in the table above</div>
-      ${myStepEntries.map(({c,s,si})=>`
-        <div style="display:flex;align-items:center;gap:9px;padding:5px 9px;background:var(--bg);border-radius:8px;margin-bottom:4px;">
-          <input type="checkbox" ${si.done?'checked':''} onchange="toggleServiceSubitem('${si.id}',this.checked,'${c.id}','${s.id}')" style="flex-shrink:0;width:15px;height:15px;">
-          <span style="flex:1;font-size:11px;font-weight:600;${si.done?'color:var(--text-light);text-decoration:line-through;':'color:var(--text-dark);'}">${escHtmlUser(si.text||'')}</span>
-          <span style="font-size:9px;color:var(--text-light);">${c.name} · ${s.name}${s._locationName?` (Franchise · ${s._locationName})`:''}</span>
-        </div>`).join('')}
-    </div>`;
-  }
 
   // Update stats
   const set=(id,v,col)=>{ const e=document.getElementById(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
@@ -3904,7 +3905,7 @@ function loadMyAssignments(){
 
   const list=document.getElementById('my-assignments-list');
   if(list){
-    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+otherClientWorkHtml+html):`<div style="text-align:center;padding:60px;color:var(--text-light);">
+    list.innerHTML=found?(_myWorkServicesTable(myServiceItems)+otherClientWorkHtml):`<div style="text-align:center;padding:60px;color:var(--text-light);">
       <div style="font-size:40px;margin-bottom:12px;">📋</div>
       <div style="font-size:14px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No work assigned yet</div>
       <div style="font-size:12px;">When an admin assigns a task to you from the production tracker, it'll appear here automatically.</div>
@@ -3935,7 +3936,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Work',myassignments:'My Work',companyOverview:'Company Overview',dailyTasks:'Daily tasks'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
