@@ -2513,6 +2513,99 @@ this task) and its unrelated Workload-accordion coverage re-run unchanged,
 suite both re-run clean (18/18, 24/24) — confirming neither reads
 `ops_feed` in a way this change could have touched.
 
+**Client save was wiping `clientEmails` and other non-form fields — fixed
+with a server-side merge, `client.html` needed no changes (2026-08-24).**
+Reported live: `clientEmails` loaded onto ~25 clients (the salvage-import
+field the task parser's client-matching reads — see the 2026-08-19 Task
+Assignments entry above) was blanked after those clients were next saved
+from the UI. Investigated `client.html` first, since that's where the
+report pointed — found NO bug there. `saveClient()`'s edit path already
+does `Object.assign(clients[idx], data)` (a correct merge, not a
+reconstruction) where `data` only holds form-collected fields, so any
+field absent from `data` — like `clientEmails`, which has no UI input
+anywhere in this file by design (loaded via a one-time admin salvage
+import, never member-facing) — survives locally exactly as it already
+was. `saveService()` and `saveNotes()` are the same pattern, and
+`serviceAreas` already had an explicit "never let an absent field
+blank-overwrite a real value" guard predating this task. Confirmed via
+`git diff --stat origin/main -- client.html` that this file is genuinely
+untouched by the fix.
+
+Root cause was entirely server-side, in `api/ops-sync.js`: `upsertRows()`
+(the admin client-write path) and the member write's own
+`.update({data:...})` call both do a raw Postgres JSONB column REPLACE of
+the whole `data` value — never a merge. So the FIRST time any browser
+whose local cache predates `clientEmails` (or `sitePlatform`/
+`hostingProvider`/service `platforms`, etc.) being set out-of-band pushed
+a dirty client row — even for an unrelated edit — that unknown field was
+silently deleted. Fixed by extending the exact pattern already established
+for this class of bug (`preserveMissingPasswordField`/
+`preserveMissingPayrollFields`, both used in this same file): a new
+`preserveMissingClientFields(incoming, current)` that does
+`{...current, ...incoming}` — a key PRESENT in `incoming` (even falsy,
+e.g. a deliberate `website:''` clear) always wins; a key entirely ABSENT
+from `incoming` falls back to `current`. Unlike the payroll helper this
+uses key presence, not `hasContent()`-style truthiness, since a client
+edit form legitimately clears fields to empty strings and that must not
+be un-done. A companion `_mergeClientItemsById()` applies the same
+presence-merge to `services[]` (top-level and nested inside
+`locations[]`) matched by `id` — fills in a missing field on a service
+present on both sides, but never resurrects a service present only in
+`current` (a real delete/removal must still work). Wired in on both write
+paths: admin's `incoming.map(inc => preserveMissingClientFields(inc,
+byId.get(inc.id)?.data))` before `upsertRows()`, and the member path's
+single-row `.update()`. Every existing notification-diff loop and
+`checkMemberClientWrite()`'s scope check still run against the RAW
+`incoming` payload, unaffected by the merge — the merge only changes what
+reaches storage, never what's evaluated for permissions/notifications.
+
+Found and fixed one collateral bug while building this:
+`checkMemberClientWrite()` compared `current[key]` against `incoming[key]`
+for every key in `CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH` (which already
+included `clientEmails`, added during the task-parser work) even when
+`incoming` didn't have the key at all — `undefined !== <real value>`
+rejected the member's ENTIRE write with "members cannot edit
+client.clientEmails" any time their stale cache simply lacked the field,
+even though they never touched it. Fixed by skipping the comparison when
+`!(key in incoming)` — safe because the write-time merge above always
+falls back to `current`'s value for an absent key regardless, so omission
+can never sneak an actual change through; a key present with a genuinely
+different value is still rejected exactly as before.
+
+Deliberately not built: a `clientEmails`/`sitePlatform`/`hostingProvider`
+input in the Edit Client form. The server-side merge already protects
+every browser's cache state regardless of what the form does or doesn't
+expose, and `clientEmails` was intentionally designed admin-salvage-only,
+never member-facing — adding a form field wasn't needed for the fix and
+would have cut against that existing design intent.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test`
+`--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` with an in-memory fake Supabase client (17/17) — an
+admin resave from a stale cache (missing `clientEmails` entirely)
+preserves it while still applying a real edit; a deliberate `website:''`
+clear is honored, not restored; service-level `platforms`/`sitePlatform`/
+`hostingProvider` survive an edit to an unrelated service field, matched
+by id, with no duplication; a service genuinely removed from `incoming`
+is NOT resurrected; the same field-preservation applies recursively to a
+franchise location's nested `services[]`; a member's stale-cache save
+omitting `clientEmails` is no longer wrongly rejected and the field still
+survives; a member EXPLICITLY changing `clientEmails` is still rejected
+(security check intact); a member editing a service not assigned to them
+is still rejected (unrelated regression check). (2) A Playwright run
+against the real `client.html` UI (6/6) — mocked `/api/ops-auth`/
+`/api/ops-state`/`/api/ops-sync`, seeded one client with `clientEmails`
+and one service with `platforms`/`sitePlatform`/`hostingProvider`, opened
+the real Edit Client modal, changed only the Website field, saved, and
+confirmed the captured sync push carried the real edit AND all four
+untouched fields unchanged. Pre-existing regression suites re-run clean:
+`verify_ops_sync_date_rules.mjs`, `verify_task_delete_permission_scope.mjs`,
+and the `checkMemberClientWrite` suite from the submit-for-review feature.
+`node --check` passed on `api/ops-sync.js`; `client.html` (unchanged) was
+still syntax-checked per this task's explicit instruction, since it's the
+exact file broken by the 2026-08-21 parallel-session hotfix. Function
+count unaffected — still 12 files under `api/`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
