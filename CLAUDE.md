@@ -3062,6 +3062,71 @@ this task, from the earlier "retire legacy Project Tasks grouping" PR —
 confirmed via `git stash` comparison against unmodified `main`, identical
 result either way) are unrelated to this change.
 
+**Help tips + guided tour extended to cover every recently-added feature,
+both portals (2026-08-24).** `index.html` + `user.html`. New
+`HELP_CONTENT` entries — `taskAssignments` and `goals` (index.html);
+`dailyTasks` (user.html) — added to each portal's `HELP_CONTENT`,
+tour-steps array, and permanent "?" help-panel section-keys list, plus
+existing entries updated where they'd gone stale: `livefeed` (index.html)
+still described "saves, assignments, and updates" — the exact
+client/service activity the 2026-08-21 "user activity only" change
+explicitly excluded — corrected to describe the real current scope
+(logins, navigation, admin actions, time-off); `mywork` (user.html, "My
+Services") still said "Your daily to-do... services and individual
+steps," conflating it with the newly-separate My Tasks section — split
+into a services-only tip that explicitly points to My Tasks for
+daily/weekly to-dos. `overview` (index.html) already covered Team
+Production Analytics from the 2026-08-24 Overview-redesign PR, so it
+needed no further change here.
+
+This is new copy, not sourced from an approved content doc — flagged
+explicitly, since every existing `HELP_CONTENT` entry in both files
+carries a "verbatim from help-content-DRAFT.md v2 (owner-approved copy;
+never paraphrased here)" header comment, and the established convention
+in this codebase (see the `ptoLedger` note in both files) is to leave a
+screen's help entry out entirely rather than invent copy for it when no
+approved text exists. This task's own instruction ("Every new feature
+gets a clear tip... No new API functions") is a direct, explicit request
+to write this copy, which is why it was written rather than left out —
+but since it's genuinely new wording, not doc-sourced, it's called out
+here for Sarah to review/adjust rather than presented as if it were
+already-approved text.
+
+**Real, previously-undiscovered bug found and fixed as part of this
+sweep, not the task's own ask:** `user.html`'s `EMPLOYEE_TOUR_STEPS_BASE`
+still referenced `HELP_CONTENT.reports` — a key that was deleted from
+`HELP_CONTENT` when the standalone Progress Reports tab was removed
+(2026-08-21), but this one reference into the tour's own step array
+survived that cleanup (the entry above only mentions removing it from
+`EMPLOYEE_HELP_SECTION_KEYS`, not from the tour array). Since
+`_renderTourStep()` does `const step = _tourSteps[_tourIndex]; ...
+document.querySelector(step.sel)` with no null-check, this `undefined`
+array slot meant **every employee's first-login guided tour has thrown a
+TypeError and stopped dead on step 3 (right after My Services/Tracker)
+since 2026-08-21** — nobody would have seen the rest of the tour (Service
+Catalog onward) in that window. Fixed by removing the dead reference and
+replacing its slot with `HELP_CONTENT.dailyTasks` (My Tasks), which had no
+tour coverage at all before this PR anyway.
+
+Verified: syntax-checked all extracted `<script>` blocks in both files
+(`new Function()` per block) — clean. Div-balance unchanged in both
+(`index.html` −2, `user.html` −1, matching `main`). Grepped clean for zero
+remaining `HELP_CONTENT.reports` references (only the explanatory comment
+survives). A new Playwright suite (16/16) against both real UIs: the
+guided tour runs to completion with zero JS errors in BOTH portals — the
+employee-side check is the actual regression test for the dead-reference
+crash above, not just a sanity check; the "?" help panel shows every new
+entry (checked via the real DOM content, not `innerText()`, since the
+accordion CSS-collapses every section except whichever page is currently
+active — a real click-through on Task Assignments confirms its tip
+becomes visible, not just present in markup); the corrected Live
+Feed/My Services copy no longer contains the stale wording and does
+contain the corrected wording. The pre-existing `verify_help_panel.js`
+suite re-runs at the same 25/27 (its one failure is the same
+pre-2026-08-21-Progress-Reports-removal stale expectation already
+confirmed unrelated in an earlier entry above) — confirming no new
+regression from either the added entries or the tour-array fix.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
