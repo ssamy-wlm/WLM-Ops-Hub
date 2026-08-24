@@ -1146,6 +1146,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'goals')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>Goals</div>
 
       <div class="admin-nav-group-label">Insights</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>Live feed</div>
@@ -1843,6 +1844,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card-header"><div class="card-title">Saved Weekly Payrolls</div></div>
         <div class="card-body" id="savedPayrollList"><div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div></div>
       </div>
+    </div>
+
+    <!-- ══ GOALS (admin view, 2026-08-24 View Consolidation batch, PR 3) —
+         read-only visibility into every employee's goals (ops_goals, the
+         same data user.html's own Goals page reads/writes), plus the same
+         mark-achieved/delete actions that page already has, extended to
+         any person's goal rather than just your own. No new API function —
+         goals were already a fully unrestricted read/write table server-
+         side (api/ops-sync.js's ADMIN_TABLES set doesn't include it), so an
+         admin acting on any goal here was already permitted; this only adds
+         the UI. Roster is _timeOffRoster() — the same active-user-or-admin
+         list every other team-wide admin dashboard (Workload, Team
+         Production Analytics) already uses, so "every team member" here
+         can never disagree with those. ══ -->
+    <div id="admin-goals" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Goals</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every team member's goals — read-only visibility, plus the same mark-achieved/delete actions the employee's own Goals page has</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderAdminGoals()">↺ Refresh</button>
+      </div>
+      <div id="admin-goals-list"></div>
     </div>
 
     <!-- ══ TIME OFF REQUESTS ══ -->
@@ -3454,6 +3478,7 @@ function switchAdminTab(el, tab){
   }
   if(tab==='myTeamsWork') renderMyTeamsWork();
   if(tab==='taskAssignments') loadTaskAssignments();
+  if(tab==='goals') renderAdminGoals();
 }
 
 function loadAdminTrackerFrame(){
@@ -6879,6 +6904,61 @@ function renderTeamProductionAnalytics(){
       </tr>`;
     }).join('');
   }
+}
+
+// ══════════════════════════════════════════════
+// GOALS (admin view) — read visibility into every employee's goals, plus
+// the same mark-achieved/delete actions the employee's own Goals page
+// (user.html) already has on their own goals, extended here to any
+// person's. Reuses the exact same ops_goals data/shape
+// ({id, user (name string), title, type, target, due, status,
+// createdAt}) — no new field, no new API function. Goals were already an
+// unrestricted read/write table server-side (not in api/ops-sync.js's
+// ADMIN_TABLES set), so this is purely a UI addition, not a permission
+// change.
+// ══════════════════════════════════════════════
+function renderAdminGoals(){
+  const list = document.getElementById('admin-goals-list');
+  if(!list) return;
+  const allGoals = dbGet(DB_KEYS.goals)||[];
+  const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+
+  list.innerHTML = roster.map(person=>{
+    const myGoals = allGoals.filter(g=>g.user===person.name);
+    const rows = myGoals.length ? myGoals.map(g=>`
+      <div class="goal-item">
+        <div class="goal-header">
+          <div class="goal-title">${escHtmlAdmin(g.title||'')}</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="status-badge ${g.status==='achieved'?'badge-working':'badge-pending'}">${g.status==='achieved'?'✓ Achieved':'In Progress'}</span>
+            <button class="btn btn-sm btn-green" onclick="adminMarkGoalAchieved(${g.id})" style="padding:4px 10px;font-size:11px;" ${g.status==='achieved'?'disabled':''}>✓ Done</button>
+            <button class="btn btn-sm btn-danger" onclick="adminDeleteGoal(${g.id})" style="padding:4px 8px;font-size:11px;">✕</button>
+          </div>
+        </div>
+        <div class="goal-bar-wrap"><div class="goal-bar" style="width:${g.status==='achieved'?100:40}%;${g.status==='achieved'?'background:linear-gradient(90deg,var(--green),#5cd8a0)':''}"></div></div>
+        <div class="goal-vals"><span>${escHtmlAdmin(g.type||'')} · Due: ${escHtmlAdmin(g.due||'TBD')}</span><span>${g.target?'Target: '+escHtmlAdmin(g.target):''}</span></div>
+      </div>`).join('')
+      : `<div style="font-size:12px;color:var(--text-light);padding:8px 0;">No goals set yet.</div>`;
+    return `<div class="card" style="margin-bottom:16px;">
+      <div class="card-header"><div class="card-title">${escHtmlAdmin(person.name||'(unnamed)')}</div></div>
+      <div class="card-body">${rows}</div>
+    </div>`;
+  }).join('') || '<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No team members found.</div>';
+}
+function adminMarkGoalAchieved(id){
+  const all = dbGet(DB_KEYS.goals)||[];
+  const g = all.find(x=>x.id===id);
+  if(!g) return;
+  g.status='achieved';
+  dbSet(DB_KEYS.goals, all);
+  renderAdminGoals();
+  cloudAutoSync();
+}
+function adminDeleteGoal(id){
+  const all = (dbGet(DB_KEYS.goals)||[]).filter(x=>x.id!==id);
+  dbSet(DB_KEYS.goals, all);
+  renderAdminGoals();
+  cloudAutoSync();
 }
 
 // ══════════════════════════════════════════════
@@ -10814,7 +10894,7 @@ const ADMIN_TAB_TITLES = {
   overview:'Overview', users:'Users', livefeed:'Live feed',
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
-  clientHealth:'Client Health', myTeamsWork:"My Team's Work",
+  clientHealth:'Client Health', myTeamsWork:"My Team's Work", goals:'Goals',
 };
 (function patchSwitchAdminTabForTitle(){
   const _origSwitch = window.switchAdminTab;

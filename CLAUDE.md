@@ -2879,6 +2879,75 @@ before/after comparison script, not a standing suite) were both confirmed
 unrelated by reproducing the identical result against unmodified `main` —
 out of scope for this PR.
 
+**View Consolidation + Admin/User Parity batch — PR 3: admin visibility
+into employee Goals (2026-08-24).** Fourth of five PRs in this batch
+(order PR4→PR2→PR1→**PR3**→PR5). `index.html` only.
+
+Employees have a full Goals page (`user.html`, `ops_goals` —
+`{id, user (name string), title, type, target, due, status, createdAt}`)
+but admins had zero visibility into it before this. New "Goals" nav item
+under People & HR (`switchAdminTab(this,'goals')`) + `#admin-goals`
+page-section + `renderAdminGoals()`, listing every active team member
+(`_timeOffRoster()` — the same roster Workload/Team Production Analytics
+already use, so "every team member" here can never disagree with those
+dashboards) with their goals, or "No goals set yet" if none — a person
+with zero goals still appears, never silently hidden, matching this
+codebase's established roster convention. `adminMarkGoalAchieved()`/
+`adminDeleteGoal()` reuse the identical action set (and identical write
+pattern: `dbSet` + `cloudAutoSync()`) the employee's own `markGoalAchieved()`/
+`deleteGoal()` already have on their own goals — extended here to any
+person's, since "edit the goal model" doesn't offer anything beyond
+status/delete on either side. No new field invented (no "approval" status
+— the model has none, and inventing one wasn't asked for). **No new API
+function**, confirmed literal: `ops_goals` was already a fully unrestricted
+read/write table server-side (`api/ops-sync.js`'s `ADMIN_TABLES` set does
+NOT include `'goals'`), so an admin writing any person's goal was already
+permitted by the existing sync endpoint — this PR is UI-only.
+
+**Found, not touched — an entirely separate, pre-existing dead mockup,
+flagged for visibility:** `index.html` already has its OWN, unrelated
+"🎯 Goals" nav item and `#sec-goals` page-section, reached through a
+different top-level nav (`showSection('goals',this)`, not
+`switchAdminTab`) — but it's 100% static fake content (hardcoded
+"3 / 5 completed", a "Create Goal" button that only closes its modal and
+shows a toast) with no read/write to `DB_KEYS.goals` or any real data
+at all. This is a leftover from before the current admin-nav/
+`switchAdminTab` shell existed and is unrelated to the real feature built
+here — left alone, not fixed, since this task was scoped to adding real
+visibility, not auditing every pre-existing dead screen in the file.
+
+**Flagged, not fixed (pre-existing, not introduced here):** neither this
+admin view's delete action nor the employee's own long-standing
+`deleteGoal()` in `user.html` issues an actual server-side delete —
+both just remove the row from the local array and let the normal dirty-
+push sync whatever remains, so a deleted goal's row can persist
+indefinitely in `ops_goals` even though it disappears from every UI.
+Adding a real tombstone mechanism would be a new capability this task's
+"no new API function" scope didn't ask for — flagged for a future
+decision rather than silently building it in.
+
+**Scope decision, flagged rather than assumed:** Creative Manager's
+narrow `showOnly` whitelist (see PR 1's entry above) was NOT given
+`'goals'` — her role is deliberately kept to the smallest set this batch
+already established (Overview, Tracker, Messages, Live feed, plus My
+Team's Work when she manages someone), and this task didn't ask to widen
+that. `production_manager`/`account_manager` see the new tab
+unconditionally (it's not in either role's `hideTabs`), matching how they
+already see every other team-wide dashboard added since their roles were
+scoped.
+
+Verified: syntax-checked all extracted `<script>` blocks (`new Function()`
+per block) — clean. Div-balance delta unchanged vs. `main` (−2, both).
+`git diff --stat origin/main -- user.html` confirms zero changes — the
+employee Goals UI is byte-for-byte untouched. A new Playwright suite
+against the real `index.html` UI (13/13): the Goals nav item exists and
+opens `#admin-goals`; the page title updates to "Goals"; a person with
+goals (Alice) and a person with none (Bob) both appear, Bob showing "No
+goals set yet"; marking Alice's active goal achieved pushes a real
+`ops-sync` call with the updated status and both her goals show Achieved
+after re-render; deleting a goal pushes a sync call whose payload no
+longer includes that goal's id.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
