@@ -4402,7 +4402,7 @@ function saveQuickLinks(){
 
 // Bump this string whenever the default layout changes — every device
 // will reset to the new defaults exactly once on next load.
-const ORG_LAYOUT_VERSION = 'v5_20260501';
+const ORG_LAYOUT_VERSION = 'v6_20260824';
 // Names permanently removed from the org chart — never re-added regardless of users DB or defaults
 const ORG_PERMANENTLY_EXCLUDED = ['social butterfly','rania morsy'];
 
@@ -4423,6 +4423,19 @@ const orgColors = {
 // Elafify". This is a CODE-only cleanup; the corresponding stale rows still
 // sitting in the live ops_org_nodes table are a separate, later, dry-run
 // approved step — see CLAUDE.md.
+//
+// 2026-08-24: this array is the actual root cause of departed people
+// reappearing after being deleted from the chart — orgLoad()'s "no saved
+// data yet / layout version mismatch" fallback resets `orgNodes` straight
+// from THIS array, with no awareness of anything since tombstoned. Emily
+// Rovillo, Mostafa Jamal, and Yehia Elafify have since left — removed here
+// (and from ORG_LINKS_DEFAULT below) so that fallback can never regenerate
+// them again. Sherine's name here had also drifted to "Sherine Magdy" —
+// corrected to "Sherine Amin". The 5 intentional placeholder roles (Carol
+// Rucker/Aileen Casey/Neha/Brian Bynes/Jamil Ahmed) and the rest of the
+// real team (Rana Ayman, Kyle Harriman, Michael Eruzione, Sarah Ibrahim)
+// were ALREADY absent from this array — they live only in the DB, added
+// via the manual "+ Add" panel, which is why they never regenerated.
 const ORG_NODES_DEFAULT = [
   // Row 1 — CEO
   {id:'david',    name:'David Joslin',   title:'CEO & Founder',                          photo:null, level:'ceo',      x:406, y:20,  fixed:true},
@@ -4430,18 +4443,15 @@ const ORG_NODES_DEFAULT = [
   {id:'abby',     name:'Abby Conklin',   title:'Director of Production',                 photo:null, level:'director', x:106, y:200},
   {id:'sarah',    name:'Sarah Samy',     title:'HR / Director of Systems & Operations',  photo:null, level:'manager',  x:406, y:200},
   {id:'jacob',    name:'Jacob Joslin',   title:'Director of Finance',                    photo:null, level:'partner',  x:700, y:200},
-  // Row 3 Left — under Abby
-  {id:'yehia',    name:'Yehia Elafify',  title:'Sales & Marketing Specialist',           photo:null, level:'member',   x:20,  y:390},
-  {id:'sherine',  name:'Sherine Magdy',   title:'Social Media Specialist',                photo:null, level:'member',   x:160, y:390},
-  // Row 3 Right — under Jacob
-  {id:'emily',    name:'Emily Rovillo',  title:'Creative Manager',                        photo:null, level:'member',   x:670, y:390},
-  {id:'mostafa',  name:'Mostafa Jamal',  title:'Ads and SEO Specialist',                  photo:null, level:'member',   x:790, y:390},
+  // Row 3 — under Abby
+  {id:'sherine',  name:'Sherine Amin',   title:'Social Media Specialist',                photo:null, level:'member',   x:160, y:390},
+  // Row 3 — under Jacob
   {id:'assmaa',   name:'Assmaa Fouad',   title:'Webmaster & Copywriter',                  photo:null, level:'member',   x:730, y:560},
 ];
 const ORG_LINKS_DEFAULT = [
   ['david','abby'],   ['david','sarah'],   ['david','jacob'],
-  ['abby','yehia'],   ['abby','sherine'],
-  ['jacob','emily'],  ['jacob','mostafa'], ['jacob','assmaa']
+  ['abby','sherine'],
+  ['jacob','assmaa']
 ];
 
 // ── Live org chart data (loaded from / saved to localStorage) ──

@@ -2606,6 +2606,98 @@ still syntax-checked per this task's explicit instruction, since it's the
 exact file broken by the 2026-08-21 parallel-session hotfix. Function
 count unaffected — still 12 files under `api/`.
 
+**View Consolidation + Admin/User Parity batch — PR 4: org chart stopped
+from re-adding departed people (2026-08-24).** First of five PRs in this
+batch (suggested order PR4→PR2→PR1→PR3→PR5, one at a time, each merged
+before the next starts — `index.html`/`user.html`/`client.html` cascade-
+conflict badly when run in parallel, see the 2026-08-21 parallel-session
+hotfix entry above). `index.html` only.
+
+**Root cause, found by reading the code, not guessed:** `ORG_NODES_DEFAULT`
+(the canonical org-chart layout `orgLoad()` falls back to) still literally
+contained Emily Rovillo, Mostafa Jamal, and Yehia Elafify — plus Sherine's
+name had drifted to "Sherine Magdy" in that same array. `orgLoad()` resets
+`orgNodes` straight from `ORG_NODES_DEFAULT` in three cases: no
+`wl_org_nodes` in localStorage yet, a `wl_org_layout_ver` mismatch, or a
+JSON-parse exception — none of which know or care whether a node has since
+been tombstoned. Traced the exact mechanism that makes a regenerated
+departed-person node STICK rather than just flicker away on the next pull:
+`_opsDirty()` treats any row with no matching entry in its last-known-synced
+snapshot as dirty and pushes it in full; since the server (`api/ops-
+state.js`) filters `ops_org_nodes` on `deleted_at is null`, a tombstoned
+person's row is never in a fresh pull's `serverArr` — so `_applyServerArray`'s
+own "don't drop a dirty record just because the server doesn't have it yet"
+safeguard (correct and necessary for a genuinely new, not-yet-pushed node)
+re-adds the regenerated Emily/Mostafa/Yehia node right back into the merged
+local array on every subsequent pull, indefinitely, until deleted again —
+which just re-triggers the same regeneration path on the next fresh
+browser/cache-clear/layout-version bump. This is a real, load-bearing
+safeguard for legitimate new nodes, so it was NOT touched; the actual fix is
+upstream of it — stop `ORG_NODES_DEFAULT` from ever containing a departed
+person in the first place. Confirmed via grep that this file's other
+Emily/Yehia/Mostafa references (`_seedCoreTeam`/`seedStaticUsers`,
+`_cleanupPlaceholderSeedUsers`, `_unhideRestoredYehia`,
+`_tagSeededPlaceholderUsers`'s `ops_users`-side placeholder logic, and the
+admin-duplicate-id fix around line 11815) are either already-disabled
+load-time functions (per this file's own disabled-functions list above) or
+govern a different table (`ops_users`/`ops_admins`, not `ops_org_nodes`) —
+none of them write org-chart nodes, so none needed touching. `_syncUsersToOrgChart()`
+(the original 2026-07-13 auto-reconciliation this file already disabled)
+remains fully unreferenced, confirmed via grep — it is not what's causing
+this.
+
+**Fix:** removed Emily/Mostafa/Yehia from `ORG_NODES_DEFAULT` and their
+3 links from `ORG_LINKS_DEFAULT`; corrected Sherine's default name to
+"Sherine Amin". The 5 intentional placeholder roles (Carol Rucker/Aileen
+Casey/Neha/Brian Bynes/Jamil Ahmed) and 4 of the 10 real team members
+(Rana Ayman, Kyle Harriman, Michael Eruzione, Sarah Ibrahim) were already
+absent from this array before this fix — per the task's own framing, they
+"live only in the DB" (added via the manual "+ Add" panel), which is
+exactly why they never regenerated; only rows actually present in
+`ORG_NODES_DEFAULT` could regenerate, and now that's down to the 6
+people who should be there (David, Abby, Sarah Samy, Jacob, Sherine,
+Assmaa). Also bumped `ORG_LAYOUT_VERSION` (`v5_20260501` → `v6_20260824`)
+— this is the file's own documented, pre-existing mechanism for exactly
+this situation ("every device will reset to the new defaults exactly once
+on next load"), needed because a browser that already has Emily/Mostafa/
+Yehia baked into its `wl_org_nodes` localStorage under the OLD version
+would otherwise keep using that poisoned local copy forever (the "layout
+version matches" branch never re-diffs against `ORG_NODES_DEFAULT`).
+The one-time reset this bump triggers momentarily drops any locally-cached
+extra node not in the (now smaller) defaults array from that browser's
+`orgNodes`, but self-heals on the very next successful pull — a
+legitimately-existing server-side node (Rana, the placeholders, etc.) is
+never "dirty" against its last snapshot, so `_applyServerArray`'s merge
+takes the server's copy for it regardless of what the momentarily-reset
+local array has, restoring it with no data loss and no tombstone/delete
+ever generated for it.
+
+Flagged, not touched here (out of scope, no live DB access — rule #11):
+the live `ops_org_nodes` row for Sherine may still literally say
+"Sherine Magdy" in production today if it was never renamed through the
+UI — this fix stops the WRONG name from ever being regenerated again, but
+correcting an already-wrong live row is a one-time UI action (open her
+bubble, rename, save) for Sarah to do, not something this change can do
+without live data access. Likewise, if Emily/Mostafa/Yehia are currently
+sitting resurrected in production `ops_org_nodes` at the time this merges,
+they need one more manual delete through the org chart UI after this
+ships — after that, per this fix, they stay gone.
+
+Verified: `node --check`-equivalent syntax check (`new Function()` per
+extracted `<script>` block) on `index.html` — all 5 blocks parse clean. A
+new Playwright suite (13/13) against the real `index.html` UI (`initOrgChart()`
+runs automatically ~300ms after `DOMContentLoaded` since `#org-canvas` is
+unconditionally in the DOM, no login/tab-nav needed to exercise `orgLoad()`):
+a completely fresh browser (empty localStorage) loads the corrected 6-node
+default with no Emily/Mostafa/Yehia and Sherine correctly named; a browser
+pre-poisoned with the OLD version + all 3 departed people baked into
+`wl_org_nodes` gets reset by the version bump, purging them and fixing
+Sherine's name, with `wl_org_layout_ver` confirmed bumped in localStorage
+afterward; a browser already on the CURRENT version with legitimate extra
+people (a placeholder and a real team member not in `ORG_NODES_DEFAULT`)
+is left completely untouched — confirming the fix only fires the reset
+where it's supposed to, never wiping real DB-sourced org-chart data.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
