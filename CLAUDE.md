@@ -2998,6 +2998,70 @@ against unmodified `main` — out of scope for this PR.
 **This completes the View Consolidation + Admin/User Parity batch** (PR
 4 → PR 2 → PR 1 → PR 3 → PR 5, all five merged).
 
+**Employee My Work renamed/restructured into My Services + My Tasks
+(2026-08-24).** `user.html` only. The nav group still reads "My Work" as
+the umbrella label (still accurate — it groups both child sections), but
+the two child items are now "My Services" (was "My Work") and "My Tasks"
+(was "Daily tasks"), with matching page headers, `HELP_CONTENT.mywork`'s
+label, the `showSection()` titles map, and every other user-visible string
+that said "My Work"/"Daily tasks" (notification-dropdown footer link,
+per-user preferences panel copy, the toast on new-notification, etc.) —
+grepped for both strings afterward to confirm nothing user-facing was
+missed. The `as-proj-count` stat tile's label changed from "Tasks" to
+"Services" — with a real "My Tasks" section now existing, the old label
+was a direct terminology collision with a different feature; this is
+exactly the ambiguity the task's own "plain labels: Services = client
+services; Tasks = daily/weekly tasks" instruction targets.
+
+Folded the "Your Assigned Steps (from other services)" box — explicitly
+self-labeled "a separate, older grouping" — directly into the same
+unified services table (`myServiceItems`) recurring/bundle rows already
+use, rather than just relabeling the box in place. A step-only row (a
+sub-item assigned to this person on a service they don't otherwise own)
+gets `category:'Your Step'` and `notes:'Your step: "<text>"'` so it reads
+clearly as a partial-ownership row, and carries the service's real
+`subitems[]` array — meaning its sub-items badge (`_myWorkBadges()`,
+already shared by every service row) opens the exact same
+`openServiceSubitemsModal()` an owned service already uses to check off
+steps. No new interaction was built: the existing badge/modal already let
+anyone toggle any sub-item, so extending it to a step-only row is reusing
+established capability, not inventing one. Never affects
+`projCount`/stats (unchanged from before this restructure) — a step-only
+assignment still doesn't make someone own the whole service.
+
+**Flagged, not touched:** `client.html` has its own separate "My Work" tab
+(admin-facing, used by at least one restricted role with no other personal
+view) with an IDENTICAL "Project Tasks"/"Your Assigned Steps (from other
+services)" pairing, independently authored per the zero-shared-code rule —
+already flagged out of scope in the 2026-08-24 "retire legacy Project Tasks
+grouping" entry above, and still out of scope here since this task named
+"user.html only."
+
+Verified: `node --check`-equivalent syntax check (`new Function()` per
+extracted `<script>` block) on `user.html` — clean. Div-balance delta
+unchanged vs. `main` (both −1). Grepped clean for zero remaining
+user-visible "My Work"/"Daily tasks"/"older grouping"/"Your Assigned
+Steps" text (the nav-group umbrella label and historical code comments
+are the only survivors, both deliberately left as accurate/harmless). A
+new Playwright suite against the real `user.html` UI (12/12): nav items
+read "My Services"/"My Tasks"; the My Services page header, stat-tile
+label, and preferences-panel copy all updated; no "older grouping" or
+"Your Assigned Steps" text remains anywhere on the page; an owned service
+and a step-only assignment both render as rows in the same table, the
+step-only row shows the real step text and a "Your Step" tag; and the
+step-only row's real, visible sub-items badge opens the actual subitems
+modal showing the real step (not a stubbed check). Pre-existing suites
+re-run: `verify_mywork_redesign.js` had one assertion updated (the literal
+old "My work" header text, superseded by design) and passes 39/39 after;
+`verify_mywork_compact.js` (20/20), `verify_user_html_reports_nav_removed.js`
+(5/5), `verify_submit_for_review.js` (11/11), and
+`verify_user_html_per_request.js` (3/3) all re-run clean, unaffected.
+`verify_help_panel.js`'s one pre-existing failure and
+`verify_badges_and_labels.js`'s one pre-existing failure (both predating
+this task, from the earlier "retire legacy Project Tasks grouping" PR —
+confirmed via `git stash` comparison against unmodified `main`, identical
+result either way) are unrelated to this change.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
