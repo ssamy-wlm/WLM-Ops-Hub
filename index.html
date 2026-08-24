@@ -1148,7 +1148,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
 
       <div class="admin-nav-group-label">Insights</div>
-      <div class="admin-nav-item" onclick="switchAdminTab(this,'summaries')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg></span>Team analytics</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>Live feed</div>
 
       <div class="admin-nav-group-label">Resources</div>
@@ -1233,25 +1232,44 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
     <div class="admin-content">
 
-    <!-- Overview -->
+    <!-- Overview — landing view (2026-08-24 View Consolidation batch, PR 1):
+         Team Production Analytics replaces the old "Team Assessment" table
+         as the primary card here, with a compact Recent Activity strip
+         below it. The standalone "Team analytics"/Summaries tab+page this
+         content used to live on is retired — this IS that same content and
+         the same renderTeamProductionAnalytics() function, just relocated;
+         see CLAUDE.md for the full writeup, including the role-visibility
+         adjustment this required for Creative Manager. -->
     <div id="admin-overview" class="page-section active">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
         <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
       </div>
-      <!-- Team Assessment, then Recent Activity below it, each full width
-           (2026-08-20 stacked layout — replaces the earlier side-by-side
-           fixed/flexible split). Team Assessment's table gets the full
-           width so all 6 columns breathe; Recent Activity keeps its own
-           internal scroll (max-height on #ov-activity-list below) since it
-           can run to 30 rows — the page itself never grows unbounded to
-           fit it. -->
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Services Completed — Last 8 Weeks</div>
+            <div class="card-sub">Team-wide, bucketed by the week each service was last marked done. Tasks have no completion date stored in this schema yet, so this trend is services-only — never a guessed task number.</div>
+          </div>
+        </div>
+        <div class="card-body" id="tpa-weekly-trend" style="display:flex;align-items:flex-end;gap:10px;min-height:130px;padding-top:14px;"></div>
+      </div>
+
+      <!-- Per-Person Breakdown (Team Production Analytics), then a compact
+           Recent Activity strip below it, each full width (stacked layout,
+           unchanged from the earlier Team Assessment/Recent Activity pair)
+           — Recent Activity keeps its own internal scroll (max-height on
+           #ov-activity-list below) since it can run to 30 rows; the page
+           itself never grows unbounded to fit it. -->
       <div class="ov-top-grid">
         <div class="card">
           <div class="card-header">
             <div>
-              <div class="card-title">Team Assessment</div>
-              <div class="card-sub">Tasks and services assigned vs. done, per person — every employee &amp; admin against their assigned work</div>
+              <div class="card-title">Per-Person Breakdown</div>
+              <div class="card-sub">Tasks and services assigned vs. done, plus overdue &amp; blocked/stuck items across both — every employee &amp; admin against their assigned work</div>
             </div>
           </div>
           <div class="card-body" style="padding:0;">
@@ -1263,12 +1281,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Svcs</th>
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Overdue</th>
+                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Blocked/Stuck</th>
                   <th style="padding:10px 14px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Total %</th>
                 </tr>
               </thead>
-              <tbody id="ov-team-assessment"><tr><td colspan="6" style="padding:12px 14px;font-size:13px;color:var(--text-light);">Loading…</td></tr></tbody>
+              <tbody id="tpa-person-table"><tr><td colspan="8" style="padding:12px 14px;font-size:13px;color:var(--text-light);">Loading…</td></tr></tbody>
             </table>
-            <div id="ov-team-assessment-empty" style="display:none;text-align:center;padding:24px 14px;color:var(--text-light);font-size:13px;">No assigned work yet.</div>
+            <div id="tpa-person-empty" style="display:none;text-align:center;padding:24px 14px;color:var(--text-light);font-size:13px;">No assigned work yet.</div>
           </div>
         </div>
         <div class="card">
@@ -1758,65 +1778,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div id="live-feed-list" style="max-height:600px;overflow-y:auto;padding:12px 0;">
           <div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No activity recorded yet. Activity appears here as users interact with the platform.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══ TEAM PRODUCTION ANALYTICS (repurposed from the old manually-
-         generated Weekly/Monthly/Yearly "Progress Summaries" — 2026-08-21).
-         Read-only aggregation only, no writes, no generated/saved records —
-         reads ops_tasks (dbGet(DB_KEYS.tasks)) + active client services
-         (_activeServicesForAssessment()), same shared helpers Team
-         Assessment (Overview) and Task Assignments' "By Person" roster
-         already use, so the numbers here can never disagree with either.
-         Internal tab id/page-section id ('summaries'/admin-summaries) is
-         left unchanged on purpose — every role-visibility/restriction rule
-         elsewhere keys off that id, not the label. ══ -->
-    <div id="admin-summaries" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Team Production Analytics</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Per-person &amp; team totals — tasks/services assigned vs. done, overdue, blocked, and a weekly completion trend</div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="renderTeamProductionAnalytics()">↺ Refresh</button>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
-
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Services Completed — Last 8 Weeks</div>
-            <div class="card-sub">Team-wide, bucketed by the week each service was last marked done. Tasks have no completion date stored in this schema yet, so this trend is services-only — never a guessed task number.</div>
-          </div>
-        </div>
-        <div class="card-body" id="tpa-weekly-trend" style="display:flex;align-items:flex-end;gap:10px;min-height:130px;padding-top:14px;"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Per-Person Breakdown</div>
-            <div class="card-sub">Tasks and services assigned vs. done, plus overdue &amp; blocked/stuck items across both — every employee &amp; admin against their assigned work</div>
-          </div>
-        </div>
-        <div class="card-body" style="padding:0;">
-          <table style="width:100%;">
-            <thead>
-              <tr>
-                <th style="padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Person</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Tasks</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Svcs</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Overdue</th>
-                <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Blocked/Stuck</th>
-                <th style="padding:10px 14px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Total %</th>
-              </tr>
-            </thead>
-            <tbody id="tpa-person-table"><tr><td colspan="8" style="padding:12px 14px;font-size:13px;color:var(--text-light);">Loading…</td></tr></tbody>
-          </table>
-          <div id="tpa-person-empty" style="display:none;text-align:center;padding:24px 14px;color:var(--text-light);font-size:13px;">No assigned work yet.</div>
         </div>
       </div>
     </div>
@@ -5425,8 +5386,8 @@ function _dismissTip(id){
 // single-line caption with no Learn More.
 const HELP_CONTENT = {
   overview: { label: 'Overview', sel: '.admin-nav-item[onclick*="\'overview\'"]',
-    tip: "Your daily snapshot — what's due, what's overdue, and how clients are tracking.",
-    learnMore: "Start your day here. It surfaces services needing attention and overall client health so you know where to focus before diving into the Tracker." },
+    tip: "Your daily snapshot — team production analytics, plus recent activity.",
+    learnMore: "Start your day here. Team Production Analytics shows per-person & team totals — tasks/services assigned vs. done, overdue, blocked, and a weekly completion trend — with a compact Recent Activity strip below it, so you know where to focus before diving into the Tracker." },
   tracker: { label: 'Tracker', sel: '.admin-nav-item[onclick*="\'tracker\'"]',
     tip: "Every client, service, and bundle your team manages — this is the heart of the app.",
     learnMore: "Click a client to open its card. Use the four tabs: Overview (health + alerts), Bundles (services grouped by package), Services (the full editable list), and Brand & Notes. Filter or search to find clients fast; save a filter for one-click reuse. Add a client with +New Client; add work with +Add Service or +Add Bundle." },
@@ -5451,9 +5412,6 @@ const HELP_CONTENT = {
   payroll: { label: 'Payroll', sel: '.admin-nav-item[onclick*="\'payroll\'"]',
     tip: "Calculates hours and pay for your whole team.",
     learnMore: "Pulls logged hours and pay rates into a period total. Admin-level and Super Admin have full access; it's hidden specifically from Account, Production, and Creative Managers. (Production Manager still keeps the Time off ledger.)" },
-  summaries: { label: 'Team Production Analytics', sel: '.admin-nav-item[onclick*="\'summaries\'"]',
-    tip: "Per-person and team totals for tasks and services — assigned, done, overdue, blocked, and a weekly trend.",
-    learnMore: "Read-only — reads live from Task Assignments and the Tracker's client services, no separate report to generate or save." },
   livefeed: { label: 'Live feed', sel: '.admin-nav-item[onclick*="\'livefeed\'"]',
     tip: "A running log of team activity across the app.",
     learnMore: "See saves, assignments, and updates as they happen. Sensitive payroll details are hidden from anyone who shouldn't see them." },
@@ -5476,7 +5434,7 @@ const HELP_CONTENT = {
 const ADMIN_TOUR_STEPS = [
   HELP_CONTENT.overview, HELP_CONTENT.tracker, HELP_CONTENT.clientHealth, HELP_CONTENT.workload,
   HELP_CONTENT.myTeamsWork, HELP_CONTENT.users, HELP_CONTENT.timeoff, HELP_CONTENT.payroll,
-  HELP_CONTENT.summaries, HELP_CONTENT.livefeed, HELP_CONTENT.library, HELP_CONTENT.messages,
+  HELP_CONTENT.livefeed, HELP_CONTENT.library, HELP_CONTENT.messages,
   HELP_CONTENT.bizSettings,
   { label: 'Notifications', sel: '#admin-notif-btn', tip: "This bell lets you know when something needs you — a message, a time-off request, a new assignment.", learnMore: null },
 ];
@@ -5491,7 +5449,7 @@ const ADMIN_TOUR_STEPS = [
 // has no entry in the approved content doc and is deliberately left out of
 // this list rather than guessing copy for it — flagged back per the build
 // spec's own instruction for exactly this case.
-const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','users','archive','timeoff','payroll','summaries','livefeed','library','messages','bizSettings','adminControls'];
+const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','users','archive','timeoff','payroll','livefeed','library','messages','bizSettings','adminControls'];
 function _currentAdminHelpKey(){
   const active = document.querySelector('#adminApp .page-section.active');
   return active ? active.id.replace(/^admin-/,'') : '';
@@ -5784,11 +5742,8 @@ window.switchAdminTab = function(el, tab){
   __origSwitchAdmin2(el, tab);
   if(tab==='tracker'){ _checkServiceAlerts(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
-  if(tab==='summaries'){ renderTeamProductionAnalytics(); }
   if(tab==='livefeed'){ refreshLiveFeedFromCloud(); }
-  if(tab==='summaries'){ refreshSummaryLists(); }
   if(tab==='livefeed'){ refreshLiveFeed(); }
-  if(tab==='summaries'){ renderTeamProductionAnalytics(); refreshSummaryLists(); }
 };
 </script>
 
@@ -9276,74 +9231,14 @@ function refreshAdminOverview(){
   }
   const allFeed = dbGet(DB_KEYS.feed)||[];
 
-  // Team Assessment — per-person numbers table (revised 2026-08-20 from a
-  // card-list-with-sparkline into a plain table; the sparkline and its
-  // whole underlying "done events over the last 10 weeks" trend
-  // computation are removed outright, not just hidden — nothing else in
-  // this file reads taWeekKeys/taDoneWeeksByName, so keeping that
-  // machinery around unused would just be dead code). Read-only
-  // aggregation only, no writes.
-  //
-  // Five columns: Tasks assigned, Tasks done, Services assigned, Services
-  // done, Total % done. "Done" for BOTH tasks and services is the literal,
-  // already-established definition (status/workStatus==='done') — Sarah
-  // confirmed keeping this rather than reintroducing Client Health's
-  // _chIsDoneThisCycle heuristic (lastDone-is-set-and-not-overdue) for the
-  // services column specifically, since that heuristic is exactly what
-  // this same dashboard's % done was ALREADY changed away from on
-  // 2026-08-06 after it produced a misleading 97% for someone (Sherine)
-  // who had never actually marked anything done — reusing it here would
-  // silently reintroduce that bug into the new Total % column too, since
-  // it shares the same denominator/numerator idea.
-  //
-  // Tasks come from ops_tasks (dbGet(DB_KEYS.tasks), the same store
-  // Task Assignments/Daily Tasks read/write) filtered by assigneeId — no
-  // "active/inactive" concept exists on a task (only Not started/In
-  // progress/Done), so every task assigned to a person counts, unlike
-  // services below.
-  //
-  // Services: active clients' c.services[] + c.locations[].services[],
-  // excluding cancelled/archived (_chIsInactiveService — "same filter as
-  // Client Health" per this task's own instruction) — same roster
-  // (_timeOffRoster) and assignee-matching (_wlSvcAssignedTo) helpers
-  // Client Health/Workload already use, hand-reused here (zero-shared-code
-  // rule: no import, no shared module).
-  const taContainer = document.getElementById('ov-team-assessment');
-  const taEmptyEl = document.getElementById('ov-team-assessment-empty');
-  if(taContainer){
-    const taAllServices = _activeServicesForAssessment();
-    const taAllTasks = dbGet(DB_KEYS.tasks)||[];
-
-    const taRows = _timeOffRoster().map(person=>{
-      const sum = _personWorkSummary(person, taAllTasks, taAllServices);
-      return { id:person.id, name:person.name||'(unnamed)', ...sum };
-    })
-      // No totalAssigned>0 filter — a person with zero assigned work still
-      // shows (0%/"—"), per this dashboard's existing acceptance criterion,
-      // instead of being silently hidden from the roster. Alphabetical —
-      // this is now a plain numbers table, not an urgency-ranked list, so
-      // there's no "most behind" concept left to sort by.
-      .sort((a,b)=>a.name.localeCompare(b.name));
-
-    if(!taRows.length){
-      taContainer.innerHTML='';
-      if(taEmptyEl) taEmptyEl.style.display='block';
-    } else {
-      if(taEmptyEl) taEmptyEl.style.display='none';
-      taContainer.innerHTML = taRows.map(r=>{
-        const pctColor = _pctDoneColor(r.pctDone);
-        const pctLabel = r.pctDone==null ? '—' : r.pctDone+'%';
-        return `<tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
-          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
-          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
-          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesAssigned}</td>
-          <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesDone}</td>
-          <td style="padding:10px 14px;text-align:right;font-size:12.5px;font-weight:700;color:${pctColor};">${pctLabel}</td>
-        </tr>`;
-      }).join('');
-    }
-  }
+  // Team Assessment (the old per-person numbers table) is retired as of
+  // 2026-08-24 — Team Production Analytics supersedes it and now lives
+  // directly on this page (the tpa-team-stats/tpa-weekly-trend/
+  // tpa-person-table elements moved here from the old standalone "Team
+  // analytics" tab/page). renderTeamProductionAnalytics() is fully self-
+  // contained (reads its own DOM targets, guards on their absence) so
+  // calling it here is the whole integration — no computation duplicated.
+  if(typeof renderTeamProductionAnalytics==='function') renderTeamProductionAnalytics();
 
   // Recent Activity — service-work events only, done items surfaced first.
   //
@@ -10916,7 +10811,7 @@ window.openAddUserModal = function(){
 // new shell's thin title strip does.
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TAB_TITLES = {
-  overview:'Overview', users:'Users', summaries:'Team Production Analytics', livefeed:'Live feed',
+  overview:'Overview', users:'Users', livefeed:'Live feed',
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
   clientHealth:'Client Health', myTeamsWork:"My Team's Work",
@@ -11078,16 +10973,24 @@ function applyAdminRoleRestrictions(level, adminObj){
   const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
   if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner' || _mySalesFunnelLevel==='owner') ? 'block' : 'none';
 
-  // ── Creative Manager: Tracker + Messages, plus view-only Summaries/Live
-  //    Feed under Insights (permission project follow-up) — no Overview,
-  //    Users, Payroll, Business Setup. Tracker access is required so
-  //    she can open her own "My Work" view inside client.html — the standalone
-  //    Clients tab that used to also be shown here was merged into the
-  //    Tracker's own client view and removed (see CLAUDE.md). ──
+  // ── Creative Manager: Tracker + Messages, plus view-only Overview/Live
+  //    Feed under Insights (permission project follow-up) — no Users,
+  //    Payroll, Business Setup. 'overview' replaces the old 'summaries'
+  //    entry here as of the 2026-08-24 View Consolidation batch: Team
+  //    Production Analytics (what she was actually granted access to)
+  //    moved from its own standalone tab onto the Overview page, and the
+  //    old company-wide Team Assessment table that used to be Overview's
+  //    OTHER reason for being admin-only is retired along with it — so
+  //    granting her 'overview' now gives her the exact same access she had
+  //    before (Analytics + a Recent Activity strip), not anything new.
+  //    Tracker access is required so she can open her own "My Work" view
+  //    inside client.html — the standalone Clients tab that used to also be
+  //    shown here was merged into the Tracker's own client view and removed
+  //    (see CLAUDE.md). ──
   if(level === CREATIVE_MANAGER_ROLE){
-    // Show tabs: tracker, messages, summaries, livefeed, plus myTeamsWork
+    // Show tabs: overview, tracker, messages, livefeed, plus myTeamsWork
     // when this admin actually manages someone. Hide everything else.
-    const showOnly = ['tracker','messages','summaries','livefeed', ...(_adminManagesTeam ? ['myTeamsWork'] : [])];
+    const showOnly = ['overview','tracker','messages','livefeed', ...(_adminManagesTeam ? ['myTeamsWork'] : [])];
     document.querySelectorAll('.admin-nav-item').forEach(el=>{
       const m = el.getAttribute('onclick')?.match(/switchAdminTab\(this,'(\w+)'\)/);
       if(!m) return;
