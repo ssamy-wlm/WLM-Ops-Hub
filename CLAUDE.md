@@ -2698,6 +2698,94 @@ people (a placeholder and a real team member not in `ORG_NODES_DEFAULT`)
 is left completely untouched — confirming the fix only fires the reset
 where it's supposed to, never wiping real DB-sourced org-chart data.
 
+**View Consolidation + Admin/User Parity batch — PR 2: retired the legacy
+"Project Tasks" grouping from employee My Work (2026-08-24).** Second of
+five PRs in this batch (suggested order PR4→PR2→PR1→PR3→PR5, one at a
+time — see PR 4's entry above for why: these files cascade-conflict badly
+under parallel sessions, per the 2026-08-21 hotfix). `user.html` only.
+
+`loadMyAssignments()`'s `(c.projects||[]).forEach(p=>{...})` block used to
+build its own separate card grouping — "Project Tasks," labeled "A
+separate, older grouping — ad-hoc bundle/project tasks assigned to you, not
+recurring services" — with its own inline mark-done checkboxes
+(`userMarkTaskDone()`) and a progress slider + note field
+(`userUpdateProgress()`). This is a genuinely different, older data model
+(`c.projects[].tasks[]`/`.subprojects[]`) from the newer ops_tasks-based
+Task Assignments/Daily Tasks system, and — per this task's own framing —
+had no admin-side equivalent view at all; this exact grouping is what
+surfaced the Leese Flooring project to the owner as looking orphaned/
+inconsistent.
+
+Removed the grouping and its two now-dead write functions entirely (zero
+remaining call sites, confirmed via grep) rather than just hiding them —
+per rule #6's "remove the tool, not just its call site" convention. A
+genuine assignment is NOT orphaned by this: bundle/project rows now feed
+into the SAME unified table (`_myWorkServicesTable()`/`myServiceItems`)
+recurring services already use, one row per project a person is on or has
+open tasks/sub-items on, with a compact summary (open-task count or
+sub-item count, plus `% complete`) in the notes column and `category` set
+to the project's own `type` (or "Bundle"). Clicking the row deep-links
+straight into the Tracker at that exact project via `openTrackerTo()`'s
+existing `?openProject=` support (client.html's own `_openDeepLinkFromUrl()`
+already expands and highlights the right project block on load) — the same
+target the old grouping's "Open ↗" link used. `openMyWorkItemInTracker()`
+gained an optional second `projId` argument for this; the services-table
+row template passes it only when present, so real-service rows (no
+`projId`) are unaffected.
+
+This is also what makes admin and employee task views consistent, per this
+PR's acceptance criteria: `client.html`'s Bundles/Projects tab
+(`renderProjects()`) already lets anyone on a project
+(`canEdit=SESSION.isAdmin||onProject`) check off tasks and log progress
+themselves, with real permission parity between an admin and an assigned
+member (member-scope enforced server-side via `checkMemberClientWrite`,
+same as every other client write) — so retiring My Work's own duplicate
+editing UI doesn't remove any capability, it just means both roles now
+reach bundle/project work through the one shared Tracker view instead of
+each having their own copy of it. Verified this parity holds, not assumed:
+`renderTaskRow()`'s mark-done checkbox and `openProjectModal()`'s "Log"
+progress button are both available to a project member, unconditionally.
+
+Stats (`projCount`/`dueWeekCount`/`dueMonthCount`/`clientIds`) are computed
+identically to before — the removal only changed how a bundle/project
+assignment is *rendered*, not whether it's counted. The unrelated,
+still-existing "Other work on this client" opt-in box (surfaces a client's
+OTHER services to someone already assigned to at least one) used to share
+a variable (and, via the removed wrapper, an incidental "Project Tasks"
+label) with the retired grouping — untangled into its own
+`otherClientWorkHtml` variable, unlabeled, so it's no longer visually
+associated with a grouping that no longer exists. "Your Assigned Steps"
+(sub-items on services not otherwise assigned to this person) is a
+separate, already-independent feature and was not touched.
+
+**Not in scope for this PR, flagged instead:** `client.html` has its own,
+separate "My Work" page (`renderMyWork()`, its own `nav-my-work` tab inside
+the Tracker itself — kept, per its own comment, because at least one
+restricted admin role has no other way to reach a personal work view) with
+the identical "Project Tasks"-labeled grouping and the identical
+`userMarkTaskDone`-style pattern, independently authored per the zero-
+shared-code rule. This task's own scope explicitly named "(employee
+user.html)," and client.html's copy serves a different, admin-role
+audience with different risk considerations — left untouched here rather
+than silently folded in. Worth its own follow-up decision if the same
+"admin/employee consistency" goal should extend to it.
+
+Verified: `node --check`-equivalent syntax check (`new Function()` per
+extracted `<script>` block) on `user.html` — clean. Div-balance delta
+unchanged vs. `main` (both −1). Grepped clean for zero remaining
+`userMarkTaskDone`/`userUpdateProgress`/`taskCardsHtml` references anywhere
+in the file. A new Playwright suite against the real `user.html` UI
+(13/13): the old "Project Tasks" label and its subtext are both gone; a
+person whose ONLY assignment anywhere is a bundle/project task (no
+recurring services at all) is confirmed NOT to hit the "No work assigned
+yet" empty state — the exact "would this orphan a real assignment"
+question this task asked to check; the row shows the open-task count and
+`% complete`; the old inline slider/mark-done controls are gone from the
+rendered HTML; `as-proj-count` still reflects the bundle assignment;
+clicking the row opens the Tracker iframe with both `openClient=` and
+`openProject=` set to the exact ids; and a client with genuinely zero
+assignments still correctly shows the empty state (unaffected).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
