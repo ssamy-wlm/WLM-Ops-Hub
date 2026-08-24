@@ -1001,7 +1001,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
-          <button class="btn btn-sm" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
           <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
         </div>
 
@@ -1581,8 +1581,16 @@ function setDtActiveCategory(cat){ _dtActiveCategory = cat; loadDailyTasks(); }
 
 function setDtTab(tab){
   _dtTab = tab;
-  document.getElementById('dtTabMineBtn').className = 'btn btn-sm '+(tab==='mine'?'':'btn-outline');
-  document.getElementById('dtTabImportBtn').className = 'btn btn-sm '+(tab==='import'?'':'btn-outline');
+  // Base class is always 'btn btn-sm btn-outline' — only btn-toggle-active
+  // is added/removed for the active state (2026-08-24, matching the same
+  // fix already applied to the List/Calendar view toggle and category
+  // pills below/elsewhere in this file). The old pattern toggled the bare
+  // 'btn-outline' class itself, which changes the button's border width
+  // between states — the exact "resizes/looks inconsistent" bug this
+  // fixes, same root cause admin's own copy of this had (see
+  // index.html's setTaSubtab()).
+  document.getElementById('dtTabMineBtn').className = 'btn btn-sm btn-outline'+(tab==='mine'?' btn-toggle-active':'');
+  document.getElementById('dtTabImportBtn').className = 'btn btn-sm btn-outline'+(tab==='import'?' btn-toggle-active':'');
   document.getElementById('dtTabMine').style.display = tab==='mine' ? '' : 'none';
   document.getElementById('dtTabImport').style.display = tab==='import' ? '' : 'none';
   if(tab==='mine') renderDailyTasks();

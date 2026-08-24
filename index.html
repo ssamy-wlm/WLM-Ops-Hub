@@ -1450,7 +1450,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
-        <button class="btn btn-sm" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
+        <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
         <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
         <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
         <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
@@ -8297,10 +8297,17 @@ function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(
 // "assigned" so anything imported (or changed by someone else, picked up
 // by the normal live-sync poll) while parked on the parse tab shows fresh.
 function setTaSubtab(tab){
-  document.getElementById('taSubtabParseBtn').className = 'btn btn-sm '+(tab==='parse'?'':'btn-outline');
-  document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm '+(tab==='assigned'?'':'btn-outline');
-  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm '+(tab==='person'?'':'btn-outline');
-  document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm '+(tab==='attention'?'':'btn-outline');
+  // Base class is always 'btn btn-sm btn-outline' — only btn-toggle-active
+  // is added/removed for the active state (2026-08-24, matching the same
+  // fix already applied to the List/Day/Week/Month view toggle and quick
+  // filters below). The old pattern toggled the bare 'btn-outline' class
+  // itself, which changes the button's border width between states — the
+  // exact "resizes/looks inconsistent" bug this fixes; see the
+  // .btn-toggle-active comment on setTaView() for the fuller history.
+  document.getElementById('taSubtabParseBtn').className = 'btn btn-sm btn-outline'+(tab==='parse'?' btn-toggle-active':'');
+  document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline'+(tab==='assigned'?' btn-toggle-active':'');
+  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline'+(tab==='person'?' btn-toggle-active':'');
+  document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm btn-outline'+(tab==='attention'?' btn-toggle-active':'');
   document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
@@ -8328,7 +8335,7 @@ function openPersonDailyView(personId){
   // nav highlight back to that tab rather than leaving a confusing state
   // ("clicked By Person, now Assigned Tasks looks selected").
   document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline';
-  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm';
+  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline btn-toggle-active';
   const p = _timeOffRoster().find(x=>x.id===personId);
   const nameEl = document.getElementById('ta-person-banner-name');
   if(nameEl) nameEl.textContent = p ? p.name : '(unknown)';
