@@ -2927,6 +2927,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             </div>
           </div>
         </div>
+        <div style="margin-top:10px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text-mid);">
+            <input type="checkbox" id="editAdminForceChange" checked style="width:14px;height:14px;">
+            Require this admin to change this password on next login
+          </label>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -3352,26 +3358,21 @@ const users = [
 ];
 
 // ── LOGIN ──
-// admin credentials — update as needed
-const ADMIN_CREDENTIALS = [
-  {email:'ssamy@weblightmedia.com', password:'31279475'}
-];
-
+// This stub is intentionally minimal — the full async implementation is
+// defined later as window.doLogin (which overrides this) and handles cloud
+// admin lookup (including the primary admin, verified server-side against
+// the hashed ops_settings.primaryAdminPw — see api/ops-auth.js), dynamic
+// admin accounts, and stored user accounts. NO credential — hardcoded or
+// otherwise — may ever live here or in this stub: it exists only as a
+// synchronous placeholder in case window.doLogin somehow hasn't loaded yet,
+// and always falls through to the "invalid" error below. It never
+// authenticates anyone on its own.
 function doLogin(){
-  // This stub is intentionally minimal — the full async implementation is defined
-  // later as window.doLogin (which overrides this) and handles cloud admin lookup,
-  // dynamic admin accounts, and stored user accounts. DO NOT add catch-all fallbacks
-  // here or they will intercept logins before the cloud check runs.
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const pass  = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
   if(!email||!pass){errEl.style.display='block';return;}
-  // Only match the single hardcoded primary admin — everything else goes to window.doLogin
-  const _primaryPw = localStorage.getItem('wl_primary_admin_pw') || '31279475';
-  if(email==='ssamy@weblightmedia.com' && pass===_primaryPw){
-    errEl.style.display='none'; currentRole='admin'; showAdminApp(); return;
-  }
-  // Show error — the async window.doLogin override will handle all other cases
+  // Show error — the async window.doLogin override handles every real login
   errEl.innerHTML = 'Invalid email or password. <span style="font-size:11px;color:var(--text-light);">Need access? Contact your admin.</span>';
   errEl.style.display='block';
 }
@@ -11493,6 +11494,11 @@ window._addAdminImpl = function(){
     id:        'adm_' + Date.now(),
     name, email, title, initials,
     password:  pass,
+    // Same convention addUser() already applies to a brand-new employee
+    // account — a freshly created admin's temp password (visible in the
+    // welcome-email preview below) must be changed on first login, not
+    // left standing indefinitely.
+    mustChangePassword: true,
     level,
     assignedUsers: RESTRICTED_ADMIN_ROLES.includes(level)
       ? _getAssignedFromChips('newAdminChips')
@@ -11649,7 +11655,14 @@ function saveEditAdmin(){
   // Manager→member links — id-based, not level-gated (unlike assignedUsers
   // above): any admin can manage a team regardless of access level.
   admins[idx].managedUserIds = _getManagedUsersFromGrid('editAdminManagedUsersGrid');
-  if(pass) admins[idx].password = pass;
+  // mustChangePassword only ever changes here alongside an actual new
+  // password — mirrors the employee edit modal's editForceChange (see
+  // saveEditUser()) so an ordinary edit with no password typed can never
+  // silently force/clear this flag.
+  if(pass){
+    admins[idx].password = pass;
+    admins[idx].mustChangePassword = document.getElementById('editAdminForceChange')?.checked !== false;
+  }
 
   dbSet(DB_KEYS.admins, admins);
   cloudAutoSync(); // persist to cloud so changes survive live sync pulls
