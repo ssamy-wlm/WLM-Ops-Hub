@@ -2170,8 +2170,11 @@ function _maybeShowMyWorkTip(){
 // carry learnMore:null, which hides the toggle entirely (see _renderTourStep).
 const HELP_CONTENT = {
   mywork: { label: 'My Services', sel: '#nav-mywork',
-    tip: "Everything assigned to you — services and individual steps.",
-    learnMore: "Your daily to-do. Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list." },
+    tip: "Every client service assigned to you — services you own, plus any step you're assigned on someone else's.",
+    learnMore: "Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list. For your daily/weekly to-dos, see My Tasks instead." },
+  dailyTasks: { label: 'My Tasks', sel: '#nav-dailytasks',
+    tip: "Your daily and weekly tasks — assigned to you, or add your own.",
+    learnMore: "See what's assigned to you, or paste an email or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck, or delete it." },
   tracker: { label: 'Tracker', sel: '#nav-tracker',
     tip: "See every client your team manages (view only for you).",
     learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
@@ -2200,8 +2203,16 @@ const HELP_CONTENT = {
 // visibility check still matters for every OTHER step here, since none of
 // these nav items are removed from the DOM when a section isn't relevant,
 // only hidden.
+// HELP_CONTENT.reports (Progress Reports) was removed from here 2026-08-24
+// — its own nav item/section was already retired on 2026-08-21, but this
+// dead reference survived that cleanup. Since this array is a plain literal
+// (no lookup/guard), that left an `undefined` entry sitting right after
+// HELP_CONTENT.tracker — _renderTourStep() does `_tourSteps[_tourIndex].sel`
+// with no null-check, so any employee running the guided tour would have
+// hit a TypeError on step 3 and never seen the rest of it. Replaced with
+// HELP_CONTENT.dailyTasks (My Tasks), which had no tour coverage at all.
 const EMPLOYEE_TOUR_STEPS_BASE = [
-  HELP_CONTENT.mywork, HELP_CONTENT.tracker, HELP_CONTENT.reports, HELP_CONTENT.serviceCatalog,
+  HELP_CONTENT.mywork, HELP_CONTENT.dailyTasks, HELP_CONTENT.tracker, HELP_CONTENT.serviceCatalog,
   HELP_CONTENT.companyOverview, HELP_CONTENT.downtimeTasks, HELP_CONTENT.goals, HELP_CONTENT.credentials,
   HELP_CONTENT.messages, HELP_CONTENT.timeoff,
 ];
@@ -2227,7 +2238,7 @@ function _employeeTourSteps(){
 //   - 'library' (Weblight media library, external link — index.html's
 //     admin copy of this same link DOES have an entry; this employee-side
 //     copy doesn't)
-const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','tracker','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
+const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','dailyTasks','tracker','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
 function _currentEmployeeHelpKey(){
   const active = document.querySelector('#userApp .page-section.active');
   return active ? active.id.replace(/^sec-/,'') : '';
