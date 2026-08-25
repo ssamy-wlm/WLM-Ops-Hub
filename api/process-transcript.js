@@ -277,15 +277,34 @@ function resolveAttendeeIds(attendeesRaw, roster) {
 //   - No named owner, but groupOwner is true (an explicit "the group"/
 //     "the team"/"everyone" assignment — see the prompt): co-assigns to
 //     every resolved meeting attendee, one clone each. If the meeting had
-//     no parseable attendee list, a single clone with assigneeId:null
-//     carries the literal hint text "group — no attendee list, assign
-//     manually" as ownerRaw — reusing the same existing hint mechanism,
-//     so this needed no client-side change either.
+//     no parseable attendee list AND allowEveryone is true, a single clone
+//     is returned with assigneeId:EVERYONE_ASSIGNEE_ID (2026-08-25) — the
+//     staging UI pre-selects "👥 Everyone (whole team)" and clones it into
+//     one real task per active member at commit time, same as picking it
+//     manually. If allowEveryone is false, the pre-existing behavior is
+//     kept instead: a single clone with assigneeId:null carrying the
+//     literal hint text "group — no attendee list, assign manually" as
+//     ownerRaw.
 //   - Neither: unchanged pre-existing behavior (empty ownerRaw, assigneeId
 //     null) — the caller's own scope-filter below still self-assigns this
 //     to a member caller or leaves it null for an admin, exactly as before
 //     this task.
-function resolveTaskOwners(ownerNameRaw, groupOwner, roster, attendeeIds) {
+//
+// allowEveryone (2026-08-25): true only for a caller who'll actually see
+// the Everyone option and its commit-time clone logic — index.html's real
+// admin/super Task Assignments UI. Deliberately NOT the same thing as
+// scope.isAdmin: a manager-tier dual-role account (e.g. Sherine) is also
+// isAdmin:true in callerTaskScope (unrestricted read/write scope), but she
+// only ever uses user.html's Daily Tasks, which has no Everyone dropdown
+// and no clone-on-commit plumbing (by deliberate scope decision — a member/
+// manager-tier employee can't assign work to the whole team) — producing
+// EVERYONE_ASSIGNEE_ID for her would silently regress the self-assign
+// fallback her own linked-identity fix (2026-08-25) already established
+// for a name-less/no-attendee task. The caller passes
+// `scope.isAdmin && !session.employeeId` — true admin-only accounts, never
+// a linked employee identity, dual-role or not.
+const EVERYONE_ASSIGNEE_ID = '__ALL__';
+function resolveTaskOwners(ownerNameRaw, groupOwner, roster, attendeeIds, allowEveryone) {
   const rawNames = splitNames(ownerNameRaw);
   if (rawNames.length) {
     const resolved = [];
@@ -304,6 +323,9 @@ function resolveTaskOwners(ownerNameRaw, groupOwner, roster, attendeeIds) {
   if (groupOwner) {
     if (attendeeIds.length) {
       return attendeeIds.map(id => ({ assigneeId: id, assigneeIds: attendeeIds, ownerRaw: 'the group' }));
+    }
+    if (allowEveryone) {
+      return [{ assigneeId: EVERYONE_ASSIGNEE_ID, assigneeIds: [], ownerRaw: 'the whole team' }];
     }
     return [{ assigneeId: null, assigneeIds: [], ownerRaw: 'group — no attendee list, assign manually' }];
   }
@@ -620,6 +642,12 @@ async function handleTaskEmailMode(req, res) {
     // group" row with a resolved attendee list expands into one clone per
     // person — see resolveTaskOwners() — everything else about the task
     // (subject, client, due date, etc.) is identical across its clones.
+    // See resolveTaskOwners()'s own comment on allowEveryone for exactly
+    // why this is scope.isAdmin && !session.employeeId, not scope.isAdmin
+    // alone — excludes a manager-tier dual-role account (e.g. Sherine),
+    // who is isAdmin:true in callerTaskScope but only ever uses user.html,
+    // which has no Everyone dropdown or clone-on-commit plumbing.
+    const allowEveryone = scope.isAdmin && !session.employeeId;
     const tasks = rawTasks
       .filter(t => t && typeof t.subject === 'string' && t.subject.trim())
       .flatMap(t => {
@@ -628,7 +656,7 @@ async function handleTaskEmailMode(req, res) {
         // fallback — same precedence relationship ownerName/matchOwner()
         // already has.
         const matchedClient = matchClientByName(t.clientName, activeClients) || matchClient(t, activeClients);
-        const ownerVariants = resolveTaskOwners(t.ownerName, t.groupOwner === true, roster, attendeeIds);
+        const ownerVariants = resolveTaskOwners(t.ownerName, t.groupOwner === true, roster, attendeeIds, allowEveryone);
         return ownerVariants.map(ov => ({
           subject: t.subject.trim(),
           notes: typeof t.notes === 'string' ? t.notes : '',

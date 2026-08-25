@@ -8202,6 +8202,18 @@ const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
 // never drift out of sync with it.
 const TA_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 
+// Sentinel assigneeId for "the whole team" (2026-08-25) — never a real
+// roster id, so every id-based lookup (roster.find, _taAssignedByName,
+// etc.) simply finds nothing for it, same as any other unmatched id
+// would. Only ever expanded into real per-person clones at commit time
+// (commitStagedTasks()/saveTaskEdit()) — nothing else treats it as a real
+// assignee. Matches the same literal string api/process-transcript.js's
+// EVERYONE_ASSIGNEE_ID uses (hand-duplicated, not shared — CLAUDE.md rule
+// #3 — but the two must stay byte-identical for the parser's own
+// groupOwner-no-attendees mapping to land on an option this UI knows how
+// to render).
+const TA_EVERYONE_ID = '__ALL__';
+
 let _taView = 'list';
 let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned'
 let _taCalDate = new Date();
@@ -8270,7 +8282,7 @@ function loadTaskAssignments(){
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
   if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
-  if(temAssigneeSel) temAssigneeSel.innerHTML = '<option value="">Unassigned</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+  if(temAssigneeSel) temAssigneeSel.innerHTML = '<option value="">Unassigned</option>' + `<option value="${TA_EVERYONE_ID}">👥 Everyone (whole team)</option>` + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
 
   const clients = _taActiveClients();
   const clientFilterSel = document.getElementById('taFilterClient');
@@ -8896,6 +8908,34 @@ function saveTaskEdit(){
     lastAssignedAt: assigneeChanged ? nowIso : (existing.lastAssignedAt || existing.createdAt || nowIso),
   };
   if(!t.subject){ showToast('Subject is required','warn'); return; }
+  // Everyone (whole team) — same clone-at-commit-time approach as
+  // commitStagedTasks() (see _taBuildEveryoneClones()). Editing an
+  // EXISTING task into Everyone reuses its own id for the first clone
+  // (so the original row becomes one specific person's copy, never
+  // orphaned) and creates one brand-new task per remaining member; a
+  // brand-new task set to Everyone at creation just creates all of them.
+  if(t.assigneeId===TA_EVERYONE_ID){
+    const roster = _timeOffRoster();
+    if(roster.length){
+      const clones = _taBuildEveryoneClones(t, roster);
+      if(isNew){
+        clones.forEach(c=>tasks.push(c));
+      } else {
+        const [first, ...rest] = clones;
+        Object.assign(tasks.find(x=>x.id===id), first);
+        rest.forEach(c=>tasks.push(c));
+      }
+      _taSaveTasks(tasks);
+      cloudAutoSync();
+      closeModal('taskEditModal');
+      renderTaskAssignments();
+      showToast(`Assigned to ${clones.length} team member(s) ✓`);
+      return;
+    }
+    // No active roster to clone into (pathological — never really empty
+    // in this codebase) — fall through and save as a single task exactly
+    // as before, rather than silently doing nothing.
+  }
   if(isNew) tasks.push(t); else Object.assign(tasks.find(x=>x.id===id), t);
   _taSaveTasks(tasks);
   cloudAutoSync();
@@ -9083,6 +9123,7 @@ function _renderTaStaging(){
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
             <option value="">Unassigned</option>
+            <option value="${TA_EVERYONE_ID}" ${row.assigneeId===TA_EVERYONE_ID?'selected':''}>👥 Everyone (whole team)</option>
             ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
           </select>
           ${!row.assigneeId && row.ownerRaw ? `<span style="font-size:11px;color:var(--text-light);font-style:italic;">detected: ${escHtmlAdmin(row.ownerRaw)}.</span>` : ''}
@@ -9128,9 +9169,34 @@ function _renderTaStaging(){
 // rows this batch actually CREATED are ever candidates for the hard
 // delete), so only non-merge task ids are tracked per batch here.
 let _taRecentImportBatches = [];
+
+// Expands a single task carrying assigneeId===TA_EVERYONE_ID into one real
+// clone per active roster member — "co-assign" for the whole team, same
+// idea as the parser's own multi-name/group-attendee clone model (see
+// api/process-transcript.js's resolveTaskOwners), just applied at commit
+// time instead of parse time since this is a manually-picked option, not
+// something the model resolved. The FIRST clone reuses baseTask.id (so
+// editing an existing task into Everyone doesn't orphan its original row —
+// it just becomes one specific person's copy); every other clone gets a
+// fresh id via _taGenId(). assigneeIds carries the full roster id set on
+// every clone, purely informational, matching the same field the parser's
+// own clones already carry.
+function _taBuildEveryoneClones(baseTask, roster){
+  const nowIso = new Date().toISOString();
+  const ids = roster.map(p=>p.id);
+  return roster.map((p,i)=>({
+    ...baseTask,
+    id: (i===0 && baseTask.id) ? baseTask.id : _taGenId(),
+    assigneeId: p.id,
+    assigneeIds: ids,
+    lastAssignedAt: nowIso,
+  }));
+}
+
 function commitStagedTasks(){
   if(!_taStagedTasks.length) return;
   const tasks = _taTasks();
+  const roster = _timeOffRoster();
   let createdCount = 0, mergedCount = 0;
   const newBatchIds = {};
   _taStagedTasks.forEach(row=>{
@@ -9149,9 +9215,18 @@ function commitStagedTasks(){
       // dropping this one.
     }
     const { mergeIntoId, mergeIntoSubject, ownerRaw, ...task } = row;
+    const bid = task.importBatchId || '_none';
+    if(task.assigneeId===TA_EVERYONE_ID && roster.length){
+      const clones = _taBuildEveryoneClones(task, roster);
+      clones.forEach(c=>{
+        tasks.push(c);
+        createdCount++;
+        (newBatchIds[bid] = newBatchIds[bid]||[]).push(c.id);
+      });
+      return;
+    }
     tasks.push(task);
     createdCount++;
-    const bid = task.importBatchId || '_none';
     (newBatchIds[bid] = newBatchIds[bid]||[]).push(task.id);
   });
   _taSaveTasks(tasks);
