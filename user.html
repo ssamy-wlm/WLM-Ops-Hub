@@ -1891,6 +1891,16 @@ async function runDtEmailParse(){
 function _dtUpdateStaged(id, field, value){
   const row = _dtStagedTasks.find(x=>x.id===id);
   if(!row) return;
+  // Same "Subject is required" guard index.html's own copy applies — a
+  // staged row must never be blankable to a nameless task via the
+  // editable subject input. Re-renders to visually reset the input back
+  // to the last valid value, since it isn't otherwise re-synced to
+  // row.subject on every keystroke.
+  if(field==='subject' && !value.trim()){
+    showToast('Subject is required');
+    _renderDtStaging();
+    return;
+  }
   row[field] = value || null;
   if(field==='clientId'){
     const c = _dtActiveClients().find(x=>x.id===value);
@@ -1954,7 +1964,11 @@ function _renderDtStaging(){
       // _dtAssignedByName() is a plain id->name lookup despite its name
       // (built for the "Assigned by" detail-panel row), reused as-is here.
       return `<div class="dt-staging-new" style="${rowStyle}">
-        <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlUser(row.subject||'')} <span class="dt-new-tag">New</span></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlUser(row.subject||'')}" placeholder="Task subject" onchange="_dtUpdateStaged('${row.id}','subject',this.value)">
+          <span class="dt-new-tag">New</span>
+        </div>
+        <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlUser(row.notes||'')}" placeholder="Notes (optional)" onchange="_dtUpdateStaged('${row.id}','notes',this.value)">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
