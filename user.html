@@ -287,12 +287,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .blocker-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
 .blocker-title{font-size:14px;font-weight:700;color:var(--text-dark);flex:1;}
 .blocker-desc{font-size:13px;color:var(--text-mid);margin-bottom:10px;}
-.goal-item{background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:10px;}
-.goal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
-.goal-title{font-size:14px;font-weight:700;color:var(--text-dark);}
-.goal-bar-wrap{background:var(--bg2);border-radius:20px;height:8px;margin-bottom:6px;}
-.goal-bar{height:8px;border-radius:20px;background:linear-gradient(90deg,var(--text),var(--accent));transition:width .5s;}
-.goal-vals{display:flex;justify-content:space-between;font-size:11px;color:var(--text-light);}
 .brand-section{margin-bottom:20px;}
 .brand-cat-title{font-family:'Poppins',sans-serif;font-size:15px;color:var(--text-dark);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
 .brand-item{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-radius:10px;margin-bottom:6px;}
@@ -534,7 +528,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div class="nav-group-label">Resources</div>
       <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Weblight media library</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg></span>Downtime Tasks</div>
-      <div class="nav-item" onclick="showSection('goals',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/></svg></span>Goals</div>
       <div class="nav-group-label">Team &amp; HR</div>
       <div class="nav-item" onclick="showSection('companyOverview',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="5" rx="1"/><rect x="4" y="16" width="7" height="5" rx="1"/><rect x="13" y="16" width="7" height="5" rx="1"/><path d="M12 8v4M7 12h10M7 12v4M17 12v4"/></svg></span>Company Overview</div>
       <div class="nav-item" onclick="showSection('credentials',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5"/><line x1="21" y1="2" x2="12.8" y2="10.2"/><line x1="16" y1="7" x2="19" y2="10"/><line x1="13.5" y1="9.5" x2="16" y2="12"/></svg></span>Credentials</div>
@@ -751,20 +744,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Sharing Client Files Externally</div><div class="dr-desc">No client assets, files, or data may be shared outside the assigned bundle folder under any circumstances.</div></div>
             <div class="dr-item" style="border-left:3px solid var(--red);"><div class="dr-area" style="margin-bottom:4px;">Pricing or Contract Decisions</div><div class="dr-desc">You are not authorized to quote prices, negotiate terms, or modify any client agreement.</div></div>
           </div>
-        </div>
-      </div>
-
-      <!-- ── GOALS ── -->
-      <div id="sec-goals" class="page-section">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="btn btn-blue btn-sm" onclick="openGoalModal()">+ New Goal</button></div>
-        <div class="report-row" style="margin-bottom:20px;">
-          <div class="report-metric"><div class="rm-val" id="goalsActive">0</div><div class="rm-label">Active Goals</div></div>
-          <div class="report-metric"><div class="rm-val" id="goalsAchieved">0</div><div class="rm-label">Achieved</div></div>
-          <div class="report-metric"><div class="rm-val" id="goalsWeekly">0</div><div class="rm-label">Weekly</div></div>
-          <div class="report-metric"><div class="rm-val" id="goalsMonthly">0</div><div class="rm-label">Monthly</div></div>
-        </div>
-        <div id="goalsList">
-          <div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No goals set yet. Click <strong>+ New Goal</strong> to get started.</div>
         </div>
       </div>
 
@@ -1158,28 +1137,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 
 <!-- ══════════════ MODALS ══════════════ -->
 
-
-<!-- Goal Modal -->
-<div id="goalModal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <div><div class="modal-title">Set a New Goal</div><div class="modal-sub">Track your weekly or monthly targets</div></div>
-      <button class="modal-close" onclick="closeModal('goalModal')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group"><label class="form-label">Goal Title</label><input class="form-input" id="goalTitle" placeholder="e.g. Complete 5 client deliverables this week"></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Goal Type</label><select class="form-select" id="goalType"><option>Weekly</option><option>Monthly</option><option>Bundle-based</option></select></div>
-        <div class="form-group"><label class="form-label">Target Value</label><input class="form-input" type="number" id="goalTarget" placeholder="e.g. 5"></div>
-      </div>
-      <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="goalDue"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('goalModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="addGoal()">Create Goal</button>
-    </div>
-  </div>
-</div>
 
 <!-- Service Updates / Comments Modal (Monday feature pack #1) -->
 <div id="serviceUpdatesModal" class="modal-overlay">
@@ -2184,8 +2141,6 @@ const HELP_CONTENT = {
     tip: "The company org chart — who's who and who reports to whom.", learnMore: null },
   downtimeTasks: { label: 'Downtime Tasks', sel: '.nav-item[onclick*="\'downtimeTasks\'"]',
     tip: "Things to pick up when you have spare capacity.", learnMore: null },
-  goals: { label: 'Goals', sel: '.nav-item[onclick*="\'goals\'"]',
-    tip: "Your objectives and where you stand on them.", learnMore: null },
   credentials: { label: 'Credentials', sel: '.nav-item[onclick*="\'credentials\'"]',
     tip: "Securely stored logins you need for client work.", learnMore: null },
   messages: { label: 'Messages', sel: '#nav-messages',
@@ -2213,7 +2168,7 @@ const HELP_CONTENT = {
 // HELP_CONTENT.dailyTasks (My Tasks), which had no tour coverage at all.
 const EMPLOYEE_TOUR_STEPS_BASE = [
   HELP_CONTENT.mywork, HELP_CONTENT.dailyTasks, HELP_CONTENT.tracker, HELP_CONTENT.serviceCatalog,
-  HELP_CONTENT.companyOverview, HELP_CONTENT.downtimeTasks, HELP_CONTENT.goals, HELP_CONTENT.credentials,
+  HELP_CONTENT.companyOverview, HELP_CONTENT.downtimeTasks, HELP_CONTENT.credentials,
   HELP_CONTENT.messages, HELP_CONTENT.timeoff,
 ];
 const EMPLOYEE_TOUR_STEP_MODE_SWITCH = { label: 'Mode switcher', sel: '#modeSwitchBtn', tip: "Switch between your Employee view (your own work) and Manager view (managing clients).", learnMore: null };
@@ -2238,7 +2193,7 @@ function _employeeTourSteps(){
 //   - 'library' (Weblight media library, external link — index.html's
 //     admin copy of this same link DOES have an entry; this employee-side
 //     copy doesn't)
-const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','dailyTasks','tracker','serviceCatalog','downtimeTasks','goals','companyOverview','credentials','messages','timeoff'];
+const EMPLOYEE_HELP_SECTION_KEYS = ['mywork','dailyTasks','tracker','serviceCatalog','downtimeTasks','companyOverview','credentials','messages','timeoff'];
 function _currentEmployeeHelpKey(){
   const active = document.querySelector('#userApp .page-section.active');
   return active ? active.id.replace(/^sec-/,'') : '';
@@ -2417,7 +2372,6 @@ function logActivity(type,userName,description,detail=''){
 // ── USER STATE ──
 let currentUser = null;
 const today = new Date();
-let myGoals = [];
 
 // ── LOGIN ──
 // Verifies credentials server-side against Supabase via /api/ops-auth, which
@@ -2634,8 +2588,6 @@ function initApp(){
   updateUserMsgBadge();
   // Check announcement
   checkAnnouncements();
-  // Load goals
-  loadGoals();
   // Check for client assignments from wl_clients_db / wl_client_notifications
   updateAssignmentsBadge();
   // Pre-load My Work section so it's ready when user navigates to it
@@ -3947,14 +3899,13 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',goals:'Goals',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
 
   if(id==='operations'){ renderMyServiceSchedule(); renderRoadmap(); }
   if(id==='myreports') loadMyReports();
-  if(id==='goals') loadGoals();
   if(id==='tracker') loadTrackerFrame();
   if(id==='bizSetup') loadCoC();
   if(id==='mywork'||id==='myassignments'){
@@ -4005,62 +3956,6 @@ function openTrackerPage(pageName, el){
   showSection('tracker', el);
 }
 
-
-// ── GOALS ──
-function loadGoals(){
-  const name=currentUser?.name||'';
-  myGoals=(dbGet(DB_KEYS.goals)||[]).filter(g=>g.user===name);
-  const active=myGoals.filter(g=>g.status!=='achieved').length;
-  const achieved=myGoals.filter(g=>g.status==='achieved').length;
-  const weekly=myGoals.filter(g=>g.type==='Weekly').length;
-  const monthly=myGoals.filter(g=>g.type==='Monthly').length;
-  document.getElementById('goalsActive').textContent=active;
-  document.getElementById('goalsAchieved').textContent=achieved;
-  document.getElementById('goalsWeekly').textContent=weekly;
-  document.getElementById('goalsMonthly').textContent=monthly;
-  const list=document.getElementById('goalsList');
-  if(!myGoals.length){ list.innerHTML='<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No goals set yet. Click <strong>+ New Goal</strong> to get started.</div>'; return; }
-  list.innerHTML=myGoals.map(g=>`
-    <div class="goal-item">
-      <div class="goal-header">
-        <div class="goal-title">${g.title}</div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <span class="status-badge ${g.status==='achieved'?'badge-working':'badge-pending'}">${g.status==='achieved'?'✓ Achieved':'In Progress'}</span>
-          <button class="btn btn-sm btn-green" onclick="markGoalAchieved(${g.id})" style="padding:4px 10px;font-size:11px;" ${g.status==='achieved'?'disabled':''}>✓ Done</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteGoal(${g.id})" style="padding:4px 8px;font-size:11px;">✕</button>
-        </div>
-      </div>
-      <div class="goal-bar-wrap"><div class="goal-bar" style="width:${g.status==='achieved'?100:40}%;${g.status==='achieved'?'background:linear-gradient(90deg,var(--green),#5cd8a0)':''}"></div></div>
-      <div class="goal-vals"><span>${g.type} · Due: ${g.due||'TBD'}</span><span>${g.target?'Target: '+g.target:''}</span></div>
-    </div>`).join('');
-}
-function addGoal(){
-  const title=document.getElementById('goalTitle').value.trim();
-  if(!title){ showToast('Please enter a goal title'); return; }
-  const name=currentUser?.name||'User';
-  const goal={id:Date.now(),user:name,title,type:document.getElementById('goalType').value,target:document.getElementById('goalTarget').value,due:document.getElementById('goalDue').value,status:'active',createdAt:new Date().toISOString()};
-  const all=dbGet(DB_KEYS.goals)||[];
-  all.unshift(goal);
-  dbSet(DB_KEYS.goals,all);
-  logActivity('goal',name,'Added goal: '+title,goal.type);
-  ['goalTitle','goalTarget','goalDue'].forEach(id=>document.getElementById(id).value='');
-  closeModal('goalModal');
-  showToast('Goal created! 🎯');
-  loadGoals();
-  cloudPushData();
-}
-function markGoalAchieved(id){
-  const all=dbGet(DB_KEYS.goals)||[];
-  const g=all.find(x=>x.id===id);
-  if(g){ g.status='achieved'; dbSet(DB_KEYS.goals,all); logActivity('goal',currentUser?.name||'User','Achieved goal: '+g.title,''); showToast('Goal achieved! 🎉'); loadGoals(); cloudPushData(); }
-}
-function deleteGoal(id){
-  const all=(dbGet(DB_KEYS.goals)||[]).filter(x=>x.id!==id);
-  dbSet(DB_KEYS.goals,all);
-  showToast('Goal deleted');
-  loadGoals();
-  cloudPushData();
-}
 
 // ── PROFILE SAVE ──
 function saveProfile(){
@@ -4115,7 +4010,6 @@ async function changeUserPassword(){
 // ── MODALS ──
 function openModal(id){ document.getElementById(id).classList.add('open'); }
 function closeModal(id){ document.getElementById(id).classList.remove('open'); }
-function openGoalModal(){ openModal('goalModal'); }
 function openAppearanceModal(){ openModal('appearanceModal'); }
 
 // ── APPEARANCE ──

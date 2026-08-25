@@ -63,7 +63,7 @@ export default async function handler(req, res) {
 
   try {
     const [
-      usersQ, adminsQ, clientsQ, goalsQ, feedQ, messagesQ, roadmapQ,
+      usersQ, adminsQ, clientsQ, goalsQ, feedQ, recentClientFeedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
       orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
       tasksQ,
@@ -73,6 +73,15 @@ export default async function handler(req, res) {
       supabase.from('ops_clients').select('id, status, data'),
       supabase.from('ops_goals').select('id, data'),
       supabase.from('ops_feed').select('id, data').order('created_at', { ascending: false }).limit(300),
+      // Overview's "Recent Activity" needs client-service events specifically
+      // (type:'client') — the general feed query above is shared with Live
+      // Feed, which needs the OPPOSITE (user-activity types only), and its
+      // 300-row cap is by recency across ALL types. With enough login/nav
+      // volume, that cap can be entirely consumed by non-client events,
+      // leaving Recent Activity with nothing even when plenty of client
+      // events exist further back — a dedicated, type-scoped query is the
+      // only way to guarantee Recent Activity actually sees them.
+      supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').order('created_at', { ascending: false }).limit(50),
       supabase.from('ops_messages').select('id, data'),
       supabase.from('ops_roadmap_tasks').select('id, data'),
       supabase.from('ops_time_off_requests').select('id, data'),
@@ -103,7 +112,7 @@ export default async function handler(req, res) {
     // clearing a failed query's `.data` is enough; nothing else changes.
     const namedQueries = [
       ['users', usersQ], ['admins', adminsQ], ['clients', clientsQ], ['goals', goalsQ],
-      ['feed', feedQ], ['messages', messagesQ], ['roadmapTasks', roadmapQ],
+      ['feed', feedQ], ['recentClientFeed', recentClientFeedQ], ['messages', messagesQ], ['roadmapTasks', roadmapQ],
       ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['payroll', payrollQ], ['summaries', summariesQ],
       ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
       ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
@@ -125,6 +134,10 @@ export default async function handler(req, res) {
     const clients = (clientsQ.data || []).map(r => ({ id: r.id, status: r.status, ...r.data }));
     let goals = rows(goalsQ.data);
     let feed = rows(feedQ.data);
+    // Never a sensitive type by construction (SENSITIVE_FEED_TYPES only ever
+    // covers 'admin'/'timeoff', and this query is scoped to type:'client'
+    // at the SQL level) — no stripSensitiveFeed() call needed for any tier.
+    let recentClientFeed = rows(recentClientFeedQ.data);
     let messages = rows(messagesQ.data);
     let roadmapTasks = rows(roadmapQ.data);
     let timeOffRequests = rows(timeOffReqQ.data);
@@ -220,7 +233,7 @@ export default async function handler(req, res) {
       // switcher control can stay correctly shown/hidden across sessions.
       viewerEmployeeId: session.employeeId ?? null,
       viewerAdminId: session.adminId ?? null,
-      users, admins, clients, goals, feed, messages, roadmapTasks,
+      users, admins, clients, goals, feed, recentClientFeed, messages, roadmapTasks,
       timeOffRequests, timeOffLedger, payroll, summaries,
       deletedUserIds: [...deletedIds],
       announcement: settingsMap.announcement ?? null,
