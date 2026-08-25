@@ -3495,6 +3495,122 @@ pre-existing suites that exercise the tour end-to-end
 clean, confirming the rewritten `_renderTourStep` doesn't change the
 ordinary (non-version-mismatch, non-cramped-viewport) tour flow.
 
+**Fixed task parsing for a linked/dual-identity account (Sherine)
+(2026-08-25).** `api/process-transcript.js` + `api/ops-sync.js`
+(comment-only) + `user.html` (comment-only). Reported: Sherine — who now
+has BOTH an `ops_users` row AND a linked `ops_admins` row
+(`adm_1784122163153`, `level:'creative_manager'`, granted via index.html's
+"Grant Manager Role" — see that feature's own 2026-08-24-or-earlier
+comment block, "dual-mode account model, Step 3") — couldn't parse/add
+Daily Tasks: nothing persisted correctly to her own list. Root-caused by
+actually reading the login resolution (`api/ops-auth.js`'s dual-role
+branch: `session.id`/`session.employeeId` are always her `ops_users` row's
+id — her CANONICAL identity — regardless of her admin tier) rather than
+guessing, then tracing every place that identity gets used or re-derived.
+
+**Two real, distinct bugs found in `api/process-transcript.js`, both from
+the same root cause: she's the first real account this dual-role
+mechanism has ever been exercised against, and this feature predates
+(never accounted for) it.**
+
+1. `activeRoster()` added her `ops_users` row AND her linked `ops_admins`
+   row as TWO SEPARATE roster candidates for the same real person, under
+   two different ids. A full-name match (`matchOwner()`'s exact-match
+   step) happened to still resolve correctly by incidental array order
+   (`users` concatenated before `admins`) — fragile, not by design — but a
+   bare FIRST-NAME reference to her (an entirely ordinary thing to write
+   in one's own daily-task list, e.g. "Sherine — call the vendor") broke
+   outright: `matchOwner()`'s unambiguous-first-name rule requires exactly
+   one roster member sharing that first name, and now saw two ("Sherine"
+   matching both her rows), so it refused to resolve at all. Fixed with a
+   new `dedupeLinkedIdentities(users, admins)`: any `ops_admins` row whose
+   `linkedUserId` points at a user actually present in the roster is
+   folded into that SAME entry (its title/level kept as useful display
+   context, e.g. "Sherine Amin — Creative Manager") rather than added as a
+   second candidate — every consumer (`matchOwner`, `resolveAttendeeIds`,
+   the prompt's own roster list) needed no further change, since they
+   already just operate on whatever the roster array contains. Guards a
+   real edge case beyond Sherine's own (not reproducible with today's
+   data, still worth getting right): if the linked employee row were ever
+   inactive while the admin row stayed active, the admin only gets folded
+   away when its linked user row is actually present in the roster being
+   built — never silently disappears from it entirely.
+2. `callerTaskScope()`'s self-assign fallback ("no owner named — default
+   to the caller") only ever applied to `tier==='member'` callers.
+   Sherine's tier is `'manager'` (she has a real admin row now), so she
+   hit the `isAdmin` branch, which — before this fix — never self-assigned
+   anything, ever, leaving every genuinely name-less row (the ordinary
+   case for a personal daily-task dump, which usually doesn't bother
+   naming its own owner) permanently unassigned. Confirmed this wasn't
+   just a hypothetical: the existing comment on this function still said
+   "Sherine, who has no special admin/super tier of her own — she's a
+   plain member" — describing a REAL PAST STATE that Grant Manager Role
+   has since made false; the code was never updated for her account
+   actually changing tier. Fixed by computing `selfId =
+   session.employeeId || session.id` in `callerTaskScope()` (identical to
+   `session.id` for a plain member, since `session.id` is already their
+   employee id by construction) and using it in the `isAdmin` branch: a
+   caller who HAS a real employee identity — a plain member, or a
+   dual-role admin/manager like Sherine — self-assigns a name-less row to
+   that canonical id; a caller with NO employee identity (a true
+   admin-only account, or the primary admin) keeps the original
+   behavior — left unassigned for manual triage, since there's no
+   personal list to attribute it to. This also fixed a subtler,
+   independent correctness bug the same gap caused: the merge-detection
+   pass (`isSameTask`, which compares `assigneeId`) runs server-side,
+   BEFORE any client-side patching could help — so Sherine's own recurring
+   daily tasks could never be detected as "already exists, merge into it"
+   on a second parse (candidate `assigneeId:null` vs. the stored task's
+   real id), silently duplicating on every re-parse instead.
+
+**`api/ops-sync.js` and `user.html` needed NO functional change** —
+investigated both files named in the task (not skipped, actually traced):
+`session.id` in `api/ops-sync.js`'s task-write path (the "not your task"
+check, `creatableAssigneeIds`) is already her canonical employee id by
+construction (same `api/ops-auth.js` fact as above), and she's `isAdmin`
+there too (`tier!=='member'`) so she never even reaches the member-only
+branch that would matter — a comment was added explaining this
+(non-functional) so a future reader doesn't have to re-derive it.
+`user.html`'s `_dtMyTasks()` (`assigneeId===currentUser?.id`) and
+`runDtEmailParse()`'s own already-existing `et.assigneeId||currentUser?.
+id||null` staging fallback both already use her canonical id
+(`currentUser.id` comes from `api/ops-auth.js`'s response, the same
+canonical id) — the block comment above `_dtMyTasks()` was corrected
+(non-functional) since it incorrectly claimed `api/ops-state.js` scopes
+`tasks` to "this member's own tasks" unconditionally, when that scoping
+is actually member-tier-only; a manager/admin tier (including a dual-role
+account) gets every task and relies on this exact client-side filter to
+narrow it down — a materially different, now-accurate description of the
+real security boundary.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/process-transcript.js`, with a roster shaped exactly like Sherine's
+real dual-role account (an `ops_users` row + a linked `ops_admins` row)
+plus a plain single-identity member and a true admin-only account as
+regression controls (9/9) — confirms the roster carries her exactly once
+with her title folded in, a bare first-name self-reference resolves to
+her canonical id (never her admin id), a name-less row in her own parse
+self-assigns to her canonical id, re-parsing the same recurring task now
+correctly finds the existing one to merge into, and both regression
+controls are unaffected (a plain member still self-assigns as before; a
+true admin-only caller's name-less task still stays unassigned). (2) An
+explicit BEFORE/AFTER comparison, per this task's own acceptance
+criterion — re-ran the identical test file against the unmodified
+pre-fix code (`git stash`): 4 of the 9 checks genuinely FAILED (the exact
+ones this fix targets — roster duplication, first-name-ambiguity
+resolution failure, name-less self-assign failure, and merge-detection
+failure), confirming this reproduces her real reported bug rather than
+testing something already-working. Three pre-existing suites re-run
+clean and unaffected (`verify_owner_structured_markers.mjs` 13/13,
+`verify_process_transcript_phonetic.mjs` 23/23,
+`verify_parser_any_layout_assignee.mjs` 28/28), plus `api/ops-sync.js`'s
+own task-write suites (`test_ops_tasks.mjs` 26/26,
+`verify_ops_sync_date_rules.mjs`, `verify_task_delete_permission_scope.mjs`)
+— confirming the comment-only changes there caused no regression.
+`node --check` on all three touched server/HTML files; div-balance on
+`user.html` unchanged vs. `main` (−1); `ls api/*.js | wc -l` still 12.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

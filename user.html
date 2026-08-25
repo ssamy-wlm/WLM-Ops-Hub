@@ -1441,17 +1441,26 @@ async function cloudPushData(){
 }
 
 // ── Daily Tasks (employee) — port of the WebLight Media Email Tracker.
-// The server (api/ops-state.js) already scopes the `tasks` array to this
-// member's own tasks before it ever reaches the browser (assigneeId or
-// assignedById === session.id) — this file just displays what it's given,
-// same "server is the single source of truth" rule as everything else
-// here. Category/type/priority lists are hand-duplicated from
-// index.html's own copy (CLAUDE.md zero-shared-code rule) and must match
-// api/process-transcript.js's TASK_CATEGORIES exactly. No assignee
-// dropdown, no other people's tasks, no team roster — a member can only
-// ever touch status/notes/tags on a task already assigned to them (server-
-// enforced in api/ops-sync.js, not just hidden here), or create a new
-// self-origin one via the Add/Import tab. ──
+// The server (api/ops-state.js) scopes the `tasks` array to this caller's
+// own tasks (assigneeId or assignedById === session.id) for plain member
+// tier ONLY — an admin/manager tier, including a dual-role account like
+// Sherine (creative_manager, a real employee via a linked ops_admins row
+// — see api/ops-auth.js), gets EVERY task, same as index.html's own Task
+// Assignments admin view. _dtMyTasks() below is what actually narrows
+// that down to "mine" for this page — currentUser.id is always this
+// person's CANONICAL employee id regardless of admin tier (ops-auth.js
+// sets it from the ops_users row whenever one exists), so this filter
+// works identically for a plain member and a dual-role account, as long
+// as a task's own stored assigneeId is that same canonical id (see
+// api/process-transcript.js's activeRoster()/dedupeLinkedIdentities() —
+// investigated and fixed 2026-08-25 as part of the same task-parsing fix
+// this comment update belongs to). Category/type/priority lists are
+// hand-duplicated from index.html's own copy (CLAUDE.md zero-shared-code
+// rule) and must match api/process-transcript.js's TASK_CATEGORIES
+// exactly. No assignee dropdown, no other people's tasks, no team roster
+// — a member can only ever touch status/notes/tags on a task already
+// assigned to them (server-enforced in api/ops-sync.js, not just hidden
+// here), or create a new self-origin one via the Add/Import tab. ──
 const DT_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const DT_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
 // Ordered Not started -> In progress -> Blocked -> Done, matching the
