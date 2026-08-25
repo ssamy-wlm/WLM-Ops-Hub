@@ -3272,6 +3272,130 @@ and `verify_badges_and_labels.js`'s one pre-existing failure were both
 confirmed to fail identically against unmodified `main` — unrelated,
 out of scope for this PR.
 
+**Task parser: format-agnostic owner detection, multi-name co-assign,
+group/attendee assignment, never-blank ownership (2026-08-25).**
+`api/process-transcript.js` only. This task was given twice in the same
+session, the second time materially more detailed (it resolves the first
+draft's own open "Sarah" ambiguity question and adds attendee-list
+co-assignment, which the first draft didn't have) — treated the second,
+fuller version as authoritative, per this codebase's existing convention
+for exactly this situation (see the 2026-08-20 due-date-rules entry).
+
+1. **Format-agnostic `ownerName` detection.** The existing prompt already
+   covered prose ("X will…") and the team's own structured markers
+   ("[Name] Task:", "Name — task", a bulleted list under a line naming
+   someone) — none of that needed touching. Added explicit coverage for a
+   dedicated assignee FIELD, which none of those patterns actually cover:
+   markdown/table rows with an "Assignee"/"Owner"/"Name" column, and a
+   labeled "Assignee: Name" line. Two worked examples added to the prompt
+   (a 2-row `| Assignee | Task | Due |` table, and a "Task: … / Assignee:
+   David / Due: …" field block) per the task's own explicit ask for
+   table examples.
+2. **Multi-name rows co-assign.** "Michael, Sarah" (or "David, Sarah, and
+   Rana") in one cell/field now assigns ALL of them, not just the first —
+   the model is told to output every name together as one comma-separated
+   `ownerName` string (kept as a string, not changed to an array, so the
+   model's output shape stays uniform with every other multi-value field
+   it already produces). Server-side, `splitNames()` splits on comma/
+   semicolon/`&`/the standalone word "and" (word-boundary regex, so it
+   never fires inside "Andrea"/"Andrew"), each name resolved independently
+   against the roster.
+   **Design decision, flagged:** `ops_tasks` has no multi-assignee field —
+   the entire Task Assignments/Daily Tasks feature (reassign dropdown,
+   "your task" ownership checks, notifications, By Person view) is built
+   entirely around one `assigneeId` per task, and widening that model is a
+   much bigger change than a "process-transcript.js only" PR. "Co-assign"
+   here means the parser response returns ONE FULL TASK CLONE PER RESOLVED
+   PERSON (each carrying the complete co-assignee id set in a new
+   `assigneeIds` array, purely informational — nothing server-side reads
+   it back today) rather than one task object with several owners. This
+   needed zero client-side changes: the existing staging UI already
+   renders one row per array entry, so a 2-name row simply becomes 2
+   staged rows, each independently editable/discardable exactly like any
+   other staged task. `isSameTask()`'s existing dedupe/merge logic already
+   keys off `assigneeId`, so the two clones are correctly never merged
+   into each other, and each independently merges against an existing task
+   for ITS OWN assignee if one exists.
+3. **Primary admin added to the roster; "Sarah"/"Sarah Samy" is a fixed
+   alias to Sarah Ibrahim.** Sarah Samy (the primary admin) has no row in
+   `ops_users`/`ops_admins` at all (she's a login-time sentinel issued
+   directly by `api/ops-auth.js`'s `PRIMARY_ADMIN_EMAIL` branch, per
+   CLAUDE.md's own architecture notes) — `activeRoster()` now synthesizes
+   her onto the roster with the exact same `{id:'primary-admin', name:
+   'Sarah Samy', ...}` shape her real session carries, so a task
+   genuinely naming her can actually resolve. Separately, per the task's
+   own explicit decision, "Sarah" and "Sarah Samy" ALWAYS resolve to Sarah
+   Ibrahim, never to the now-roster-listed primary admin who'd otherwise be
+   an exact-name match for "Sarah Samy" — `resolveOwnerAlias()` checks this
+   fixed pair of spellings BEFORE the normal `matchOwner()` logic runs, so
+   it always wins. **Deliberately NOT the literal `sarah_ibrahim` id the
+   task text suggested**: with no live DB access (rule #11) there's no way
+   to confirm that's actually her real `ops_users` id, and every other
+   person on this roster (including this same alias's target) is already
+   resolved by a live NAME lookup, never a hardcoded id — hardcoding an
+   unverified id risks silently resolving to nobody (or, far worse, a
+   different real person) if it's ever wrong. `resolveOwnerAlias()` looks
+   up whoever the LIVE roster's "Sarah Ibrahim" entry actually is, by name,
+   at request time — self-correcting if her account is ever recreated
+   under a different id, exactly like every other match in this file.
+4. **"The group"/team-wide rows co-assign to that meeting's attendees.**
+   A new top-level `attendees` field (comma-separated string, same shape
+   as `ownerName`) extracted ONCE per parse from a meeting/email's own
+   roster line ("Attendees: …", "In attendance: …", "Present: …", a "To:"/
+   "Cc:" header, or a name list under the meeting title) — resolved
+   against the roster (alias-first) into `attendeeIds`. A new per-task
+   `groupOwner` boolean is true only for explicit whole-team language
+   ("the group will…", "everyone needs to…", "the team agreed to…"),
+   false whenever `ownerName` already names a specific person (a task
+   never has both — named individuals always take precedence if the model
+   ever produces both, an explicit tie-break rather than leaving that
+   undefined). A `groupOwner` task with a resolved attendee list expands
+   into one clone per attendee (same co-assign mechanism as #2, sharing
+   `assigneeIds`); with NO resolvable attendee list, it becomes a single
+   task with `assigneeId:null` and `ownerRaw:'group — no attendee list,
+   assign manually'` — the exact phrase the task asked for, and it reuses
+   the EXISTING "detected: {ownerRaw} — pick assignee" staging hint
+   (built 2026-08-21) verbatim, needing no client-side change at all.
+5. **Never silently unassign a named task.** This was already true for the
+   single-unmatched-name case (the 2026-08-21 `ownerRaw` hint), and now
+   extends for free to every new path: a multi-name row where NONE of the
+   names resolve collapses to ONE task (not one blank per name) with
+   `ownerRaw` carrying the full raw comma-joined list; a `groupOwner` task
+   with no attendee list gets the explicit "no attendee list" flag above
+   instead of silently landing with nothing. A genuinely name-less,
+   non-group row (`ownerName` empty AND `groupOwner` false) is unchanged —
+   still the pre-existing behavior (self-assigned for a member caller,
+   left null for an admin), since that's a separate, pre-existing
+   scope-filter mechanic this task didn't ask to change.
+
+No new `api/*.js` file — still exactly 12. Verified with a `node:test`
+`--experimental-test-module-mocks` run against the real, byte-identical
+`api/process-transcript.js`, with `@anthropic-ai/sdk` itself mocked to a
+scripted response (since a real transcript-parsing accuracy check needs
+an actual model call, not available here) plus `lib/supabaseAdmin.js`/
+`lib/opsSession.js`/`lib/errorLog.js` mocked (28/28): the live prompt
+text actually carries the new table/field examples, the multi-name
+co-assign instruction, the attendees/groupOwner schema fields, and Sarah
+Samy in the roster sent to the model; a single-name table-style row
+resolves to one task with the right assignee; a multi-name row expands
+into one task per resolved person, each carrying the full co-assignee set
+in `assigneeIds` and the raw joined names in `ownerRaw`; "Sarah" and
+"Sarah Samy" both resolve to Sarah Ibrahim, never the primary admin; a
+`groupOwner` task with a resolved attendee list co-assigns to exactly
+those attendees; a `groupOwner` task with no attendee list is never
+dropped and carries the exact "no attendee list" flag text; an unmatched
+single name and an unmatched multi-name row both collapse to one flagged
+task each rather than a blank or a duplicate; and a genuinely name-less,
+non-group task is left exactly as before (unchanged regression check).
+Two pre-existing suites re-run clean and unaffected
+(`verify_owner_structured_markers.mjs` 13/13, `verify_process_transcript_
+phonetic.mjs` 23/23); two older suites
+(`verify_ownerraw_server_response.mjs`, `test_process_transcript_
+taskEmail.mjs`) fail in this environment on a bare `@anthropic-ai/sdk`
+module-mock specifier that can't resolve when the test file itself lives
+outside the project tree — confirmed identical against unmodified `main`,
+a pre-existing test-infrastructure issue unrelated to this change, not
+fixed here.
 **Tour reachability + popover positioning fix — same PR #281, follow-up on
 its own re-issued Goals-retirement spec (2026-08-25).** The re-issued spec
 also re-described Goals retirement (nav items, help/tour entries, data
