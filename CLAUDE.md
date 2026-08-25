@@ -3756,6 +3756,50 @@ process-transcript.js suites re-run clean and unaffected:
 div-balance on `index.html` unchanged vs. `main` (−2); `ls api/*.js | wc
 -l` still 12 (no new file); `git diff --stat -- user.html` confirms zero
 changes.
+**Task parser: strip "— Title" suffix before owner matching (2026-08-25).**
+`api/process-transcript.js` only. Reported: real, in-roster people (Abby,
+David, etc.) were coming back detected-but-unassigned. Root cause: the
+model was echoing the roster's own display format —
+`activeRoster()`/the prompt's roster list shows each person as "Name —
+Title" for context — straight into `ownerName` instead of a bare name
+(e.g. `"Abby Conklin — Production Manager"`), and neither
+`resolveOwnerAlias()` nor `matchOwner()` has ever compared against
+anything but a bare roster name, so the title suffix broke both the exact
+match and the unambiguous-first-name fallback.
+
+Fixed with a new `stripTitleSuffix(name)`, applied once inside
+`matchOwnerWithAlias()` (the single choke point both `resolveAttendeeIds()`
+and `resolveTaskOwners()` already call per split name, so every caller
+gets the fix for free with no other change needed): strips a trailing
+`" — Title"` / `" - Title"` suffix — the dash must have a space on BOTH
+sides, so a real hyphenated name like "Mary-Jane" (no surrounding spaces
+around that hyphen) is left untouched — and a trailing parenthetical
+title (`"Sarah Samy (Owner)"`). This also repairs the Sarah alias: `"Sarah
+Samy — owner"` now strips to `"sarah samy"` before `resolveOwnerAlias()`
+runs, so it still resolves to Sarah Ibrahim rather than falling through
+unmatched (the alias check already ran before the title suffix fix
+existed, but only ever saw the un-stripped string, so it never fired on
+this exact input shape before now). `ownerRaw` (the raw string shown in
+the staging "detected: X" hint, and carried through for a multi-name
+row's comma-join) is left untouched — only the matching input is
+normalized, never what's displayed back.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `api/process-transcript.js` handler, with
+`@anthropic-ai/sdk` mocked to a scripted response (8/8): an em-dash
+title suffix and a plain-hyphen title suffix (both with surrounding
+spaces) each resolve to the real roster person; a parenthetical title is
+stripped the same way; `"Sarah Samy — owner"` resolves to Sarah Ibrahim,
+not the primary admin; a multi-name row where each name carries its own
+title suffix co-assigns both real people; a genuine hyphenated name with
+no surrounding spaces (`"Mary-Jane Watson"`) is left untouched, not
+truncated; and a bare name with no title suffix at all resolves exactly
+as before (regression check). Four pre-existing suites re-run clean and
+unaffected: `verify_parser_any_layout_assignee.mjs` (28/28),
+`verify_linked_identity_task_parsing.mjs` (9/9),
+`verify_process_transcript_phonetic.mjs` (23/23),
+`verify_owner_structured_markers.mjs` (13/13). `node --check` passed;
+`ls api/*.js | wc -l` still 12 (no new file).
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 

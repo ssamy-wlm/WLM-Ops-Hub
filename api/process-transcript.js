@@ -202,8 +202,30 @@ function resolveOwnerAlias(ownerName, roster) {
   if (!SARAH_ALIAS_NAMES.has(q)) return null;
   return roster.find(p => String(p.name || '').trim().toLowerCase() === 'sarah ibrahim') || null;
 }
+
+// The model sometimes echoes the roster's own display format ("Name —
+// Title", the exact shape activeRoster()'s title/level context uses in the
+// prompt) straight into ownerName instead of a bare name — a raw
+// "Abby Conklin — Production Manager" fails both resolveOwnerAlias() and
+// matchOwner() (neither ever compares against anything but a bare roster
+// name), so a real, in-roster person came back detected-but-unassigned.
+// Strips a trailing " — Title" / " - Title" suffix — the dash must have a
+// space on BOTH sides, so a real hyphenated name like "Mary-Jane" (no
+// surrounding spaces around that hyphen) is left untouched — and a
+// trailing parenthetical title ("Sarah Samy (Owner)"). Applied once, in
+// matchOwnerWithAlias() below, so every caller (resolveAttendeeIds,
+// resolveTaskOwners) gets the fix for free without touching either name
+// list separately.
+function stripTitleSuffix(name) {
+  return String(name || '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/\s+[—-]\s+.*$/, '')
+    .trim();
+}
+
 function matchOwnerWithAlias(ownerName, roster) {
-  return resolveOwnerAlias(ownerName, roster) || matchOwner(ownerName, roster);
+  const cleaned = stripTitleSuffix(ownerName);
+  return resolveOwnerAlias(cleaned, roster) || matchOwner(cleaned, roster);
 }
 
 // Splits a name/attendee field into individual names — "Michael, Sarah",
