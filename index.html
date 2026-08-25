@@ -9000,6 +9000,16 @@ async function runTaskEmailParse(){
 function _taUpdateStaged(id, field, value){
   const row = _taStagedTasks.find(x=>x.id===id);
   if(!row) return;
+  // Same "Subject is required" guard saveTaskEdit() already applies to a
+  // manually-created/edited task — a staged row must never be blankable
+  // to a nameless task via the new editable subject input. Re-renders to
+  // visually reset the input back to the last valid value, since the
+  // input itself isn't otherwise re-synced to row.subject on every keystroke.
+  if(field==='subject' && !value.trim()){
+    showToast('Subject is required');
+    _renderTaStaging();
+    return;
+  }
   row[field] = value || null;
   if(field==='clientId'){
     const c = _taActiveClients().find(x=>x.id===value);
@@ -9065,7 +9075,11 @@ function _renderTaStaging(){
         </div>`;
       }
       return `<div class="ta-staging-new" style="${rowStyle}">
-        <div style="font-weight:600;color:var(--text-dark);margin-bottom:8px;">${escHtmlAdmin(row.subject||'')} <span class="rm-new-tag">New</span></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlAdmin(row.subject||'')}" placeholder="Task subject" onchange="_taUpdateStaged('${row.id}','subject',this.value)">
+          <span class="rm-new-tag">New</span>
+        </div>
+        <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlAdmin(row.notes||'')}" placeholder="Notes (optional)" onchange="_taUpdateStaged('${row.id}','notes',this.value)">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
             <option value="">Unassigned</option>

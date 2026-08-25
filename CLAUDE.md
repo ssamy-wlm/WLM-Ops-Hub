@@ -3611,6 +3611,55 @@ own task-write suites (`test_ops_tasks.mjs` 26/26,
 `node --check` on all three touched server/HTML files; div-balance on
 `user.html` unchanged vs. `main` (−1); `ls api/*.js | wc -l` still 12.
 
+**Editable subject/notes in review-before-assign staging, both portals
+(2026-08-25).** `index.html` (`_renderTaStaging()`) + `user.html`
+(`_renderDtStaging()`) only — no server change. A staged (non-merge) task
+row's subject was static bold text; notes weren't shown in staging at
+all. Both are now real `<input type="text">` fields, wired to the exact
+same `_taUpdateStaged(row.id,'subject'|'notes',this.value)` /
+`_dtUpdateStaged(...)` handlers every other staging field (client, due
+date, priority, category) already uses — no new function, per the
+task's own explicit constraint. A merge-candidate row (`row.mergeIntoId`
+set) is untouched: still fully read-only with just a Discard button,
+same as before this change — editable fields there would never actually
+apply, since a merge only ever additively appends notes/tags/etc. onto
+the pre-existing target task, not this staged row's own data.
+
+Added one small guard neither portal had before, in the SAME two
+functions being touched anyway: `_taUpdateStaged()`/`_dtUpdateStaged()`
+now refuse to blank the subject to empty — the exact "Subject is
+required" toast `saveTaskEdit()`'s manual-entry modal already uses,
+re-render the row to visually reset the input back to its last valid
+value. Without this, the new editable input would have made it trivial
+to accidentally commit a nameless task, which nothing downstream (the
+commit function, `api/ops-sync.js`) actually validates against.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) both HTML files — clean; div-balance unchanged vs. `main` in both
+(`index.html` −2, `user.html` −1); `ls api/*.js | wc -l` still 12
+(no server file touched at all). A new Playwright suite (15/15) against
+both real UIs: the staged subject/notes render as real inputs carrying
+the parser's (deliberately mis-transcribed, "Vet Spa") output; editing
+either takes effect; blanking the subject is refused and the input
+visually reverts; committing pushes the EDITED values, not the original
+parsed ones, confirmed against the real `ops-sync` request body in both
+portals (employee-side committing needed a longer wait — `user.html`'s
+`commitDtStagedTasks()` pushes via the existing 2s-debounced
+`_scheduleCloudPush()`, unlike `index.html`'s immediate `cloudAutoSync()`
+call, an existing difference between the two files' sync timing,
+unrelated to this change). Three pre-existing Playwright suites needed a
+one-line selector update each (not a regression — they asserted the
+subject text via `innerText()`, which no longer includes an `<input>`'s
+value; switched to reading the input's `value` directly):
+`verify_dt_staging.js` (now 17/17), `verify_ta_19task_completeness.js`
+(now 12/12), `verify_ta_staging.js` (now 26/26, including the row-lookup
+helper that located a specific staged row by its subject text, similarly
+updated). Four more pre-existing suites needed no changes and re-run
+clean (`verify_ownerraw_staging_hint.js` 6/6,
+`verify_ta_staging_merge_commit.js` 9/9,
+`verify_task_undo_new_datelock_admin.js` 21/21,
+`verify_task_undo_new_user.js` 14/14).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
