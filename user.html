@@ -985,6 +985,16 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
 
         <div id="dtTabMine">
+          <!-- Status sub-tabs (2026-08-26) — mutually-exclusive grouping,
+               defaults to "Not Started" (see _dtStatusTab). Badge counts
+               kept live by _dtRenderStatusTabBar(), called on every
+               renderDailyTasks(). -->
+          <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtStatusTabNotStartedBtn" onclick="setDtStatusTab('notstarted')">Not Started <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountNotStarted">0</span></button>
+            <button class="btn btn-sm btn-outline" id="dtStatusTabInProgressBtn" onclick="setDtStatusTab('inprogress')">In Progress <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountInProgress">0</span></button>
+            <button class="btn btn-sm btn-outline" id="dtStatusTabDoneBtn" onclick="setDtStatusTab('done')">Done <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountDone">0</span></button>
+            <button class="btn btn-sm btn-outline" id="dtStatusTabAllBtn" onclick="setDtStatusTab('all')">All <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountAll">0</span></button>
+          </div>
           <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
           <div style="display:flex;gap:6px;margin-bottom:12px;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
@@ -1476,6 +1486,10 @@ let _dtTab = 'mine';
 let _dtStagedTasks = [];
 let _dtView = 'list';
 let _dtActiveCategory = null;
+// Status sub-tab (2026-08-26): 'notstarted' | 'inprogress' | 'done' | 'all'.
+// Defaults to 'notstarted' per this feature's own spec, matching
+// index.html's identical _taStatusTab (hand-duplicated, zero-shared-code).
+let _dtStatusTab = 'notstarted';
 let _dtCalDate = new Date();
 let _dtDetailTaskId = null;
 let _dtParseFileTexts = [];
@@ -1490,6 +1504,67 @@ function _dtToday(){ return new Date().toISOString().slice(0,10); }
 // same convention as index.html's _taActiveClients().
 function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active'); }catch(e){ return []; } }
 function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
+
+// Status sub-tabs (2026-08-26) — same grouping/sort/completedAt model as
+// index.html's identical copy (hand-duplicated per CLAUDE.md's zero-
+// shared-code rule; see that file's own comments for the full rationale).
+// A Blocked task groups under "In Progress" — its own 🚧 badge in
+// _renderDtListTable() already IS the required visual flag, no new UI
+// needed for that part.
+function _dtTasksForStatusTab(tasks, tab){
+  if(tab==='notstarted') return tasks.filter(t=>(t.status||'Not started')==='Not started');
+  if(tab==='inprogress') return tasks.filter(t=>t.status==='In progress'||t.status==='Blocked');
+  if(tab==='done') return tasks.filter(t=>t.status==='Done');
+  return tasks; // 'all'
+}
+function _dtSortActiveTasks(tasks){
+  return tasks.slice().sort((a,b)=>{
+    const ad = a.dueDate||'', bd = b.dueDate||'';
+    if(ad && bd && ad!==bd) return ad<bd?-1:1;
+    if(ad && !bd) return -1;
+    if(!ad && bd) return 1;
+    return (b.assignedDate||'').localeCompare(a.assignedDate||'');
+  });
+}
+function _dtSortDoneTasks(tasks){
+  return tasks.slice().sort((a,b)=>(b.completedAt||'').localeCompare(a.completedAt||''));
+}
+function _dtStatusTabCounts(tasks){
+  return {
+    notstarted: _dtTasksForStatusTab(tasks,'notstarted').length,
+    inprogress: _dtTasksForStatusTab(tasks,'inprogress').length,
+    done: _dtTasksForStatusTab(tasks,'done').length,
+    all: tasks.length,
+  };
+}
+function setDtStatusTab(tab){
+  _dtStatusTab = tab;
+  renderDailyTasks();
+}
+const DT_STATUS_TAB_BTN_IDS = {notstarted:'dtStatusTabNotStartedBtn', inprogress:'dtStatusTabInProgressBtn', done:'dtStatusTabDoneBtn', all:'dtStatusTabAllBtn'};
+const DT_STATUS_TAB_COUNT_IDS = {notstarted:'dtStatusCountNotStarted', inprogress:'dtStatusCountInProgress', done:'dtStatusCountDone', all:'dtStatusCountAll'};
+// counts are computed from the category-filtered set (the only OTHER
+// filter this page has) so a badge always answers "how many would show if
+// I switched to that tab," without double-counting the active one.
+function _dtRenderStatusTabBar(categoryFilteredTasks){
+  const counts = _dtStatusTabCounts(categoryFilteredTasks);
+  Object.entries(DT_STATUS_TAB_BTN_IDS).forEach(([tab,id])=>{
+    const el = document.getElementById(id);
+    if(el) el.className = 'btn btn-sm btn-outline'+(_dtStatusTab===tab?' btn-toggle-active':'');
+  });
+  Object.entries(DT_STATUS_TAB_COUNT_IDS).forEach(([tab,id])=>{
+    const el = document.getElementById(id);
+    if(el) el.textContent = counts[tab];
+  });
+}
+// completedAt: stamped the instant status becomes 'Done', cleared the
+// instant it moves off Done — see index.html's identical _taCompletedAt()
+// for the full rationale (sort key only, never a Done-membership flag).
+function _dtCompletedAt(prevStatus, newStatus, prevCompletedAt){
+  if(newStatus!=='Done') return '';
+  if(prevStatus==='Done' && prevCompletedAt) return prevCompletedAt;
+  return new Date().toISOString();
+}
 
 // "New" highlight (2026-08-20) — reuses the EXISTING wl_dt_seen_ids
 // mechanism renderDailyTasks() already maintains for the "N new assigned"
@@ -1598,8 +1673,14 @@ function renderDailyTasks(){
     navBadge.style.display = newCount>0 ? '' : 'none';
     navBadge.textContent = newCount;
   }
-  if(_dtView==='calendar') _renderDtCalendar(tasks);
-  else _renderDtListTable(tasks);
+  // Status sub-tab bar/badges computed from the category-filtered set
+  // (the only OTHER filter this page has) — "New assigned" above is
+  // deliberately unaffected by which status tab is active, same reasoning.
+  _dtRenderStatusTabBar(tasks);
+  const byStatus = _dtTasksForStatusTab(tasks, _dtStatusTab);
+  const sorted = _dtStatusTab==='done' ? _dtSortDoneTasks(byStatus) : _dtSortActiveTasks(byStatus);
+  if(_dtView==='calendar') _renderDtCalendar(sorted);
+  else _renderDtListTable(sorted);
 }
 
 function _renderDtListTable(tasks){
@@ -1738,6 +1819,7 @@ function saveDtTaskUpdate(id){
   const status = document.getElementById('dt-status-select').value;
   const blockReason = document.getElementById('dt-block-reason-input').value.trim();
   if(status==='Blocked' && !blockReason){ showToast('A reason is required when status is Blocked'); return; }
+  t.completedAt = _dtCompletedAt(t.status||'Not started', status, t.completedAt);
   t.status = status;
   // Cleared whenever status isn't Blocked, so a stale reason never
   // lingers on a task that's since moved on (matches index.html's copy).
@@ -1773,6 +1855,7 @@ function _dtChangeStatus(id, newStatus, selectEl){
   } else {
     blockReason = '';
   }
+  t.completedAt = _dtCompletedAt(prevStatus, newStatus, t.completedAt);
   t.status = newStatus;
   t.blockReason = blockReason;
   dbSet(DB_KEYS.tasks, tasks);
@@ -2018,12 +2101,20 @@ function commitDtStagedTasks(){
         if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
         existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
         if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
-        if(row.status==='Done') existing.status = 'Done';
+        if(row.status==='Done'){
+          existing.completedAt = _dtCompletedAt(existing.status||'Not started', 'Done', existing.completedAt);
+          existing.status = 'Done';
+        }
         mergedCount++;
         return;
       }
     }
     const { mergeIntoId, mergeIntoSubject, ...task } = row;
+    // A brand-new task — see index.html's identical comment on its own
+    // copy of this: treated as never having been Done before, so a task
+    // created directly with status:'Done' (e.g. the parser's alreadyDone
+    // mapping) still gets a real completedAt to sort by.
+    task.completedAt = _dtCompletedAt('Not started', task.status, null);
     tasks.push(task);
     createdCount++;
     const bid = task.importBatchId || '_none';

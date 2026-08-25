@@ -1503,6 +1503,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-weight:700;font-size:13px;color:var(--text-dark);">👤 Viewing <span id="ta-person-banner-name"></span>'s tasks</div>
           <button class="btn btn-sm btn-outline" onclick="closePersonDailyView()">← Back to team</button>
         </div>
+        <!-- Status sub-tabs (2026-08-26) — mutually-exclusive grouping,
+             defaults to "Not Started" (see _taStatusTab). Badge counts are
+             kept live by _taRenderStatusTabBar(), called on every
+             renderTaskAssignments(), so they reflect every OTHER active
+             filter (assignee/client/category/quick-filter/search) without
+             double-counting the currently-selected status tab itself. -->
+        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taStatusTabNotStartedBtn" onclick="setTaStatusTab('notstarted')">Not Started <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountNotStarted">0</span></button>
+          <button class="btn btn-sm btn-outline" id="taStatusTabInProgressBtn" onclick="setTaStatusTab('inprogress')">In Progress <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountInProgress">0</span></button>
+          <button class="btn btn-sm btn-outline" id="taStatusTabDoneBtn" onclick="setTaStatusTab('done')">Done <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountDone">0</span></button>
+          <button class="btn btn-sm btn-outline" id="taStatusTabAllBtn" onclick="setTaStatusTab('all')">All <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountAll">0</span></button>
+        </div>
+
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
           <div style="display:flex;gap:6px;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
@@ -8216,6 +8229,12 @@ const TA_EVERYONE_ID = '__ALL__';
 
 let _taView = 'list';
 let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned'
+// Status sub-tab (2026-08-26): 'notstarted' | 'inprogress' | 'done' | 'all'.
+// Defaults to 'notstarted' per this feature's own spec — a fresh session
+// (and a fresh page load) always lands there. Persists across the session
+// once changed, same convention as _taQuickFilter/_taActiveCategory/_taView
+// above (no explicit reset-on-tab-open).
+let _taStatusTab = 'notstarted';
 let _taCalDate = new Date();
 let _taDetailTaskId = null;
 let _taParseFileTexts = [];
@@ -8491,26 +8510,70 @@ function toggleTaQuickFilter(kind){
   renderTaskAssignments();
 }
 
+function setTaStatusTab(tab){
+  _taStatusTab = tab;
+  renderTaskAssignments();
+}
+
+const TA_STATUS_TAB_BTN_IDS = {notstarted:'taStatusTabNotStartedBtn', inprogress:'taStatusTabInProgressBtn', done:'taStatusTabDoneBtn', all:'taStatusTabAllBtn'};
+const TA_STATUS_TAB_COUNT_IDS = {notstarted:'taStatusCountNotStarted', inprogress:'taStatusCountInProgress', done:'taStatusCountDone', all:'taStatusCountAll'};
+// Re-derives active-state + live counts on every render (not just on
+// setTaStatusTab() itself) so a badge never goes stale when a DIFFERENT
+// filter changes — every other filter control here already calls
+// renderTaskAssignments() on its own onchange/oninput.
+function _taRenderStatusTabBar(){
+  const counts = _taStatusTabCounts();
+  Object.entries(TA_STATUS_TAB_BTN_IDS).forEach(([tab,id])=>{
+    const el = document.getElementById(id);
+    if(el) el.className = 'btn btn-sm btn-outline'+(_taStatusTab===tab?' btn-toggle-active':'');
+  });
+  Object.entries(TA_STATUS_TAB_COUNT_IDS).forEach(([tab,id])=>{
+    const el = document.getElementById(id);
+    if(el) el.textContent = counts[tab];
+  });
+}
+
 function _taIsOverdue(t){ return !!t.dueDate && t.dueDate < _taToday() && t.status!=='Done'; }
 function _taIsDueToday(t){ return t.dueDate === _taToday() && t.status!=='Done'; }
 
-// Due date is the PRIMARY sort key (undated tasks last, matching "nothing
-// to act on yet" rather than implying urgency); priority is only a
-// tie-breaker among tasks sharing the same due date (or no date), never
-// the primary key — per the parser-quality spec's explicit "due date, not
-// just priority" requirement.
-const TA_PRIORITY_RANK = {Urgent:0, High:1, Normal:2, Low:3};
-function _taSortByDue(tasks){
+// Status sub-tabs (2026-08-26) — "Not Started / In Progress / Done / All",
+// a mutually-exclusive grouping layered on top of every other filter below.
+// A Blocked task is grouped under "In Progress" (its own 🚧 badge, already
+// rendered by _renderTaListTable(), is the "visual flag" this feature's own
+// spec asks for — no new UI needed for that part). Status-driven only, per
+// the spec's explicit "no new field" for tab MEMBERSHIP — a task moves
+// itself the instant its status changes, nothing else to keep in sync.
+function _taTasksForStatusTab(tasks, tab){
+  if(tab==='notstarted') return tasks.filter(t=>(t.status||'Not started')==='Not started');
+  if(tab==='inprogress') return tasks.filter(t=>t.status==='In progress'||t.status==='Blocked');
+  if(tab==='done') return tasks.filter(t=>t.status==='Done');
+  return tasks; // 'all'
+}
+
+// Not Started / In Progress / All: due date soonest-first (undated last —
+// "nothing to act on yet" rather than implying urgency), then newest
+// assignedDate as the tie-break among tasks sharing a due date (or lacking
+// one) — this feature's own explicit sort spec, a different tie-break than
+// the priority-based one this replaced (single call site, see git history).
+function _taSortActiveTasks(tasks){
   return tasks.slice().sort((a,b)=>{
     const ad = a.dueDate||'', bd = b.dueDate||'';
     if(ad && bd && ad!==bd) return ad<bd?-1:1;
     if(ad && !bd) return -1;
     if(!ad && bd) return 1;
-    return (TA_PRIORITY_RANK[a.priority]??2) - (TA_PRIORITY_RANK[b.priority]??2);
+    return (b.assignedDate||'').localeCompare(a.assignedDate||'');
   });
 }
+// Done: most-recently-completed first, via completedAt (see _taCompletedAt()).
+function _taSortDoneTasks(tasks){
+  return tasks.slice().sort((a,b)=>(b.completedAt||'').localeCompare(a.completedAt||''));
+}
 
-function _taFilteredTasks(){
+// Every filter EXCEPT the status sub-tab itself — the base set status-tab
+// badge counts are computed against, so a badge always answers "how many
+// would show if I switched to that tab," never double-counting the
+// currently-active one.
+function _taTasksMatchingOtherFilters(){
   const search = (document.getElementById('taSearchInput')?.value||'').trim().toLowerCase();
   // _taPersonViewId (set by openPersonDailyView()) overrides the normal
   // assignee filter dropdown entirely — narrows every view (List/Day/
@@ -8518,7 +8581,7 @@ function _taFilteredTasks(){
   const assignee = _taPersonViewId || (document.getElementById('taFilterAssignee')?.value||'');
   const client = document.getElementById('taFilterClient')?.value||'';
   const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
-  const filtered = _taTasks().filter(t=>{
+  return _taTasks().filter(t=>{
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
     if(assignee && t.assigneeId!==assignee) return false;
     if(client && t.clientId!==client) return false;
@@ -8529,7 +8592,21 @@ function _taFilteredTasks(){
     if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
     return true;
   });
-  return _taSortByDue(filtered);
+}
+
+function _taStatusTabCounts(){
+  const base = _taTasksMatchingOtherFilters();
+  return {
+    notstarted: _taTasksForStatusTab(base,'notstarted').length,
+    inprogress: _taTasksForStatusTab(base,'inprogress').length,
+    done: _taTasksForStatusTab(base,'done').length,
+    all: base.length,
+  };
+}
+
+function _taFilteredTasks(){
+  const byStatus = _taTasksForStatusTab(_taTasksMatchingOtherFilters(), _taStatusTab);
+  return _taStatusTab==='done' ? _taSortDoneTasks(byStatus) : _taSortActiveTasks(byStatus);
 }
 
 function _taStatusColor(status){
@@ -8542,6 +8619,7 @@ function _taPersonName(id){
 }
 
 function renderTaskAssignments(){
+  _taRenderStatusTabBar();
   const tasks = _taFilteredTasks();
   if(_taView==='month') _renderTaCalendar(tasks);
   else if(_taView==='week') _renderTaWeek(tasks);
@@ -8617,6 +8695,22 @@ function _taReassign(id, newAssigneeId){
   renderTaskAssignments();
 }
 
+// completedAt (2026-08-26): stamped the instant status becomes 'Done',
+// cleared the instant it moves off Done again — same "stale value never
+// lingers" convention blockReason already uses. Deliberately NOT a
+// separate boolean/flag: the Done status TAB's membership stays purely
+// status-driven (this feature's own explicit "no new field" requirement,
+// scoped to tab membership) — completedAt exists only as a sort key, to
+// answer "most recently completed," which status alone can't express. A
+// resave that leaves status at Done keeps the existing timestamp (or
+// backfills it once, for a Done task from before this field existed)
+// rather than bumping it to "now" on every unrelated edit.
+function _taCompletedAt(prevStatus, newStatus, prevCompletedAt){
+  if(newStatus!=='Done') return '';
+  if(prevStatus==='Done' && prevCompletedAt) return prevCompletedAt;
+  return new Date().toISOString();
+}
+
 // Inline status-dropdown change from the list row — same write path as
 // every other edit here (dbSet + cloudAutoSync), no separate mechanism.
 // Blocked requires a reason exactly like the edit modal does; prompt()
@@ -8640,6 +8734,7 @@ function _taChangeStatus(id, newStatus, selectEl){
   } else {
     blockReason = '';
   }
+  t.completedAt = _taCompletedAt(prevStatus, newStatus, t.completedAt);
   t.status = newStatus;
   t.blockReason = blockReason;
   _taSaveTasks(tasks);
@@ -8884,6 +8979,10 @@ function saveTaskEdit(){
     category: document.getElementById('tem-category').value,
     priority: document.getElementById('tem-priority').value,
     status,
+    // See _taCompletedAt()'s own comment — stamped once on the transition
+    // into Done, cleared the instant status leaves Done, otherwise
+    // preserved across an unrelated resave.
+    completedAt: _taCompletedAt(existing.status||'Not started', status, existing.completedAt),
     // Cleared whenever status isn't Blocked, so a stale reason never
     // lingers on a task that's since moved on.
     blockReason: status==='Blocked' ? blockReason : '',
@@ -9206,7 +9305,10 @@ function commitStagedTasks(){
         if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
         existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
         if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
-        if(row.status==='Done') existing.status = 'Done';
+        if(row.status==='Done'){
+          existing.completedAt = _taCompletedAt(existing.status||'Not started', 'Done', existing.completedAt);
+          existing.status = 'Done';
+        }
         mergedCount++;
         return;
       }
@@ -9215,6 +9317,11 @@ function commitStagedTasks(){
       // dropping this one.
     }
     const { mergeIntoId, mergeIntoSubject, ownerRaw, ...task } = row;
+    // A brand-new task, per _taCompletedAt() — treated as never having
+    // been Done before, so a task created directly with status:'Done'
+    // (e.g. the parser's alreadyDone mapping) still gets a real
+    // completedAt to sort by; anything else harmlessly clears to ''.
+    task.completedAt = _taCompletedAt('Not started', task.status, null);
     const bid = task.importBatchId || '_none';
     if(task.assigneeId===TA_EVERYONE_ID && roster.length){
       const clones = _taBuildEveryoneClones(task, roster);
