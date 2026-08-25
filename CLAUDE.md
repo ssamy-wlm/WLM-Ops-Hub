@@ -3660,6 +3660,103 @@ clean (`verify_ownerraw_staging_hint.js` 6/6,
 `verify_task_undo_new_datelock_admin.js` 21/21,
 `verify_task_undo_new_user.js` 14/14).
 
+**"Everyone (whole team)" assignee option, admin-only (2026-08-25).**
+`api/process-transcript.js` + `index.html` (`user.html` deliberately
+untouched — see the scope decision below). A new `👥 Everyone (whole
+team)` option (sentinel value `__ALL__`, `TA_EVERYONE_ID`/
+`EVERYONE_ASSIGNEE_ID` — same literal string, hand-duplicated per rule #3)
+in the staging assignee dropdown and the task edit modal's assignee
+dropdown, both in the admin Task Assignments UI. Selecting it and
+committing/saving clones the task into one real task per active roster
+member (`_timeOffRoster()`) — for team-wide items like "review your tasks
+in the app" — rather than leaving `ops_tasks` with any actual `__ALL__`
+row (the sentinel never reaches the server; it's expanded into real
+per-person clones client-side before the sync push).
+
+**Scope decision, confirmed with Sarah before building (not guessed):**
+`user.html`'s Daily Tasks staging has no assignee dropdown at all today —
+a member's staged tasks always render a read-only "👤 name" badge
+(self-assign only), and there's no manual task-creation/edit modal on the
+employee side either. Members are also server-restricted to only ever
+create/assign tasks to themselves or a direct report (never the whole
+team) — adding a real Everyone-capable dropdown there would be a genuine
+widening of what a member can do, not just one more option. Confirmed:
+build Everyone admin-only in `index.html`; `user.html` stays exactly as
+it was.
+
+**Commit-time clone plumbing (`index.html`):** new
+`_taBuildEveryoneClones(baseTask, roster)` — returns one clone per active
+roster member, each carrying the full roster id set in `assigneeIds`
+(informational, same field the parser's own multi-name/group clones
+already carry) and a fresh `lastAssignedAt`. The FIRST clone reuses
+`baseTask.id` (so reassigning an EXISTING task to Everyone via the edit
+modal doesn't orphan its original row — it just becomes one specific
+person's copy); every other clone gets a fresh id via `_taGenId()`. Wired
+into both `commitStagedTasks()` (a staged Everyone row expands at commit
+time, each clone counted individually toward `createdCount` and the
+"Undo this import" batch tracking) and `saveTaskEdit()` (a brand-new task
+saved with Everyone selected creates all N clones; an EXISTING task
+reassigned to Everyone keeps its id on clone 0 and pushes N−1 new rows,
+then shows "Assigned to N team member(s) ✓" instead of the usual "Task
+saved ✓"). If the active roster is ever empty (pathological, never
+realistically true in this codebase), both call sites fall through to the
+pre-existing single-task save rather than silently doing nothing.
+
+**Parser mapping, also confirmed with Sarah:** the existing
+`groupOwner`+no-resolvable-attendees case (an explicit "the group/team/
+everyone" assignment with no parseable attendee list) previously returned
+a single unassigned task with the hint text "group — no attendee list,
+assign manually". Now maps to the Everyone option instead — pre-selected
+in staging, still freely changeable to an individual or discarded like
+any other staged field. Gated by a new `allowEveryone` parameter on
+`resolveTaskOwners()`, computed as `scope.isAdmin && !session.employeeId`
+— deliberately NOT the same thing as `scope.isAdmin` alone: a
+manager-tier dual-role account (Sherine, the only one that exists today)
+is ALSO `isAdmin:true` in `callerTaskScope` (unrestricted read/write
+scope), but she only ever uses `user.html`, which has no Everyone
+dropdown or clone-on-commit plumbing per the scope decision above —
+producing `__ALL__` for her would have silently regressed the self-assign
+fallback her own linked-identity fix (2026-08-25, same day) already
+established for a name-less/no-attendee task of her own. A plain member
+caller is unaffected either way (never `isAdmin` in scope, so never
+reaches the `allowEveryone` branch at all) — the pre-existing
+self-assign-or-unassigned-hint behavior is preserved for both plain
+members and Sherine.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `api/process-transcript.js` handler (8/8): a
+true admin-only caller's groupOwner-no-attendees task maps to `__ALL__`
+with `ownerRaw:'the whole team'`; a plain member's identical input never
+maps to `__ALL__` and still self-assigns exactly as before; a
+Sherine-shaped manager-tier dual-role caller also never maps to `__ALL__`
+and still self-assigns to her own canonical id (confirming the
+2026-08-25 linked-identity fix isn't regressed); groupOwner WITH a
+resolvable attendee list is completely unaffected (still per-attendee
+clones); and a named owner (not groupOwner at all) is unaffected. A new
+Playwright suite against the real `index.html` UI (19/19): the Everyone
+option exists in both the staging dropdown and the edit modal; a
+parser-mapped `__ALL__` task is pre-selected correctly in staging;
+committing it produces exactly 3 tasks (one per the 3-person mock
+roster), each with a distinct id, the right assignee, the full
+co-assignee set, and the same subject, all rendering as 3 separate rows
+in Assigned Tasks; picking an individual (not Everyone) still creates
+exactly one task, unaffected; and reassigning an EXISTING task to
+Everyone via the edit modal produces exactly 3 tasks with the ORIGINAL
+task's id reused for one of them (never orphaned), all 3 real roster
+members covered, and the subject preserved on every clone. One
+pre-existing suite (`verify_parser_any_layout_assignee.mjs`) needed its
+groupOwner-no-attendees assertions updated to match the new intended
+behavior (not a regression — that test's own session has no
+`employeeId`, i.e. it's exactly the true-admin-only case this task
+targets) — re-runs 28/28 after the update. Three more pre-existing
+process-transcript.js suites re-run clean and unaffected:
+`verify_linked_identity_task_parsing.mjs` (9/9),
+`verify_process_transcript_phonetic.mjs` (23/23),
+`verify_owner_structured_markers.mjs` (13/13). `node --check` passed;
+div-balance on `index.html` unchanged vs. `main` (−2); `ls api/*.js | wc
+-l` still 12 (no new file); `git diff --stat -- user.html` confirms zero
+changes.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
