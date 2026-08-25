@@ -3801,6 +3801,91 @@ unaffected: `verify_parser_any_layout_assignee.mjs` (28/28),
 `verify_owner_structured_markers.mjs` (13/13). `node --check` passed;
 `ls api/*.js | wc -l` still 12 (no new file).
 
+**Status tabs for tasks — Not Started / In Progress / Done / All
+(2026-08-26).** `index.html` (Task Assignments) + `user.html` (My Tasks).
+A new mutually-exclusive sub-tab bar above the existing view/filter
+controls in both portals — `_taStatusTab`/`_dtStatusTab`, default
+`'notstarted'`. A Blocked task groups under "In Progress," not its own
+tab — its existing 🚧 badge (`_renderTaListTable()`/`_renderDtListTable()`,
+already shipped) already IS the "visual flag" this feature's own spec
+asks for, so no new UI was needed for that part. Each tab shows a live
+count badge, computed from every OTHER active filter (assignee/client/
+category/quick-filter/search in `index.html`; category in `user.html`)
+but never the currently-selected status tab itself, so a badge always
+answers "how many would show if I switched to that tab."
+
+**Sort, per the spec's own explicit rules:** Not Started/In Progress/All
+— due date soonest-first (undated last), tie-broken by newest
+`assignedDate` — a genuinely different tie-break than the existing
+`_taSortByDue()`'s priority-based one, so that function (single call site,
+confirmed via grep) was replaced outright by `_taSortActiveTasks()` rather
+than kept alongside an unused duplicate. Done — most-recently-completed
+first, via a new `completedAt` field.
+
+**Tab MEMBERSHIP stays purely status-driven, per the spec's explicit "no
+new field" instruction** — `_taTasksForStatusTab()`/`_dtTasksForStatusTab()`
+key off `status` alone, so marking a task Done moves it automatically,
+nothing else to keep in sync. **Confirmed with Sarah before building:**
+that same instruction can't cover the SORT requirement too — Done's
+"most-recently-completed first" needs an actual completion timestamp, and
+`ops_tasks` had none (no `updated_at` even reaches the client — confirmed
+by reading `api/ops-state.js`'s `.select('id, data')`). Read "no new
+field" as scoped to tab membership only; added a lightweight `completedAt`
+(stamped client-side the instant status becomes Done via a new
+`_taCompletedAt()`/`_dtCompletedAt()` pair — hand-duplicated, matching the
+existing `blockReason` "clear the moment it's no longer relevant"
+convention: cleared the instant status leaves Done, preserved across an
+unrelated resave rather than bumped to "now" every time). Wired into
+every status-write site in both files: the inline row dropdown
+(`_taChangeStatus()`/`_dtChangeStatus()`), the edit modal/detail panel
+save (`saveTaskEdit()`/`saveDtTaskUpdate()`), and both branches of the
+staging-commit path (`commitStagedTasks()`/`commitDtStagedTasks()` — the
+merge-into-existing branch, and a brand-new task created directly with
+`status:'Done'` via the parser's `alreadyDone` mapping, both stamp a real
+`completedAt` rather than leaving it blank). No server change needed —
+`completedAt` is just another `ops_tasks` jsonb field, already outside
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` (confirmed by reading the list) since a
+member needs to write it whenever they complete their own task, same as
+`status`/`blockReason` already are.
+
+**Scope, confirmed rather than assumed:** both `_taFilteredTasks()`
+(admin) and `renderDailyTasks()` (employee) are the single funnels
+already feeding every other view in each file, so the status-tab filter
+applies for free to the admin's Day/Week/Month calendars and the "By
+Person" drill-in (`openPersonDailyView()` already routes through
+`_taFilteredTasks()`), and to the employee's Calendar view — consistent
+behavior across every view in both portals, not just List. Deliberately
+NOT applied to "Needs Attention" (`_taNeedsAttentionBuckets()`, reads
+`_taTasks()` directly, confirmed via grep) or the roster-level stats
+(`_personWorkSummary()`, reads `dbGet(DB_KEYS.tasks)` directly) — both are
+separate, already-established dashboards this task didn't ask to change.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>` block)
+both files — clean. Div-balance delta unchanged vs. `main` in both
+(`index.html` −2, `user.html` −1). `ls api/*.js | wc -l` still 12 (no
+server file touched at all). Two new Playwright suites against the real
+UIs: `index.html` (24/24 — default-lands-on-Not-Started, all four badge
+counts, tab membership for Not Started/In Progress(+Blocked with its
+flag)/Done/All, the due-date-then-assignedDate sort order, Done's
+most-recently-completed order, marking a task Done via the inline
+dropdown moves it out of Not Started and into Done immediately with
+badges updating live, the sync push carries a real `completedAt`, and
+moving a task back off Done clears it) and `user.html` (19/19, same
+coverage). Six pre-existing suites needed a tab-switch added at the point
+where they interact with a task whose status the test itself had just
+changed (not a regression — those tasks now live under a different tab
+than the one active by default, exactly as this feature intends):
+`verify_dt_blocked_status.js` (10/10), `verify_dt_delete_inline_status.js`
+(15/15), `verify_ta_delete_inline_status.js` (17/17), each re-run clean
+after the fix. Two more pre-existing failures
+(`verify_ta_person_view_blocked.js`'s stale `#ov-team-assessment`
+selector, `verify_task_assignments_ui.js`'s stale `#taViewCalBtn`
+reference) were confirmed to fail identically against unmodified `main`
+— both already-documented, unrelated pre-existing issues, out of scope
+here. Every other pre-existing Task Assignments/Daily Tasks suite
+(staging, merge, schedule tab, date-lock, undo-import, assigned-date) was
+re-run and passed unchanged.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
