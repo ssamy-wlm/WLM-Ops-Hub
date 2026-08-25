@@ -586,7 +586,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
         <div id="help-panel-body" class="help-panel-body"></div>
         <div class="help-panel-footer">
-          <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">↺ Replay tips &amp; tour</button>
+          <button class="btn btn-outline btn-sm" style="width:100%;" onclick="replayTourAndTips()">▶ Take the tour</button>
         </div>
       </div>
     </div>
@@ -2166,6 +2166,14 @@ const HELP_CONTENT = {
 // with no null-check, so any employee running the guided tour would have
 // hit a TypeError on step 3 and never seen the rest of it. Replaced with
 // HELP_CONTENT.dailyTasks (My Tasks), which had no tour coverage at all.
+// Bump this string whenever EMPLOYEE_TOUR_STEPS_BASE's content meaningfully
+// changes — same mechanism as index.html's ADMIN_TOUR_CONTENT_VERSION and
+// ORG_LAYOUT_VERSION — so a user who already dismissed an older version
+// sees the tour once more automatically on their next login/pull (see
+// _maybeStartTourFromPull()'s version check below). 2026-08-25: bumped for
+// the #280 batch (My Services/My Tasks/Task assignments tip updates) that
+// shipped after most existing users had already seen an older tour.
+const EMPLOYEE_TOUR_CONTENT_VERSION = 'v2_20260825';
 const EMPLOYEE_TOUR_STEPS_BASE = [
   HELP_CONTENT.mywork, HELP_CONTENT.dailyTasks, HELP_CONTENT.tracker, HELP_CONTENT.serviceCatalog,
   HELP_CONTENT.companyOverview, HELP_CONTENT.downtimeTasks, HELP_CONTENT.credentials,
@@ -2335,30 +2343,38 @@ function skipTour(){ document.getElementById('tour-overlay')?.remove(); _markTou
 function _finishTour(){ document.getElementById('tour-overlay')?.remove(); _markTourSeen(); }
 function _markTourSeen(){
   const flags = _getTourFlags();
-  flags.tourSeen = { ...(flags.tourSeen||{}), employee:true };
+  flags.tourSeen = { ...(flags.tourSeen||{}), employee:true, employeeVer:EMPLOYEE_TOUR_CONTENT_VERSION };
   _saveTourFlags(flags);
 }
 // Triggers once per user on first login — checked after every successful
 // state pull, but only actually acted on once per page load (the in-memory
 // guard below), so the background poll never re-evaluates or re-triggers
-// it mid-session.
+// it mid-session. Also re-triggers (once) whenever
+// EMPLOYEE_TOUR_CONTENT_VERSION has been bumped since this user last saw
+// the tour — someone who saw an OLDER version has `employeeVer` unset or
+// not matching, so a content update reaches existing users automatically
+// instead of only ever showing once, ever.
 let _tourCheckedThisLoad = false;
 function _maybeStartTourFromPull(){
   if(_tourCheckedThisLoad) return;
   _tourCheckedThisLoad = true;
   const flags = _getTourFlags();
-  if(flags.tourSeen && flags.tourSeen.employee) return;
+  if(flags.tourSeen && flags.tourSeen.employee && flags.tourSeen.employeeVer===EMPLOYEE_TOUR_CONTENT_VERSION) return;
   setTimeout(()=>{
     if(document.getElementById('userApp')?.classList.contains('visible')) startTour();
   }, 500);
 }
-// Settings → "Replay tips & tour" — resets this user's flags; the tour and
-// any dismissed tips simply reappear the next time the relevant screen is
-// visited (this button doesn't force-restart anything on THIS screen).
+// Settings → "Replay tips & tour" AND the Help panel's "▶ Take the tour"
+// button both call this — resets this user's flags, then immediately
+// re-runs the tour on demand (rather than only resetting flags and waiting
+// for the next login/pull to naturally re-trigger it, which was the actual
+// "no replay" gap: dismissing the tour meant no in-session way to see it
+// again without a full reload).
 function replayTourAndTips(){
   _saveTourFlags({ tourSeen:{}, dismissedTips:[] });
   _tourCheckedThisLoad = false;
-  if(typeof showToast==='function') showToast('✅ Tour and tips reset — you\'ll see them again as you use the app');
+  if(typeof closeHelpPanel==='function') closeHelpPanel();
+  startTour();
 }
 
 function logActivity(type,userName,description,detail=''){

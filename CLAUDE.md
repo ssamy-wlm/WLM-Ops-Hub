@@ -3396,6 +3396,104 @@ module-mock specifier that can't resolve when the test file itself lives
 outside the project tree — confirmed identical against unmodified `main`,
 a pre-existing test-infrastructure issue unrelated to this change, not
 fixed here.
+**Tour reachability + popover positioning fix — same PR #281, follow-up on
+its own re-issued Goals-retirement spec (2026-08-25).** The re-issued spec
+also re-described Goals retirement (nav items, help/tour entries, data
+preserved) — already fully covered by the entry directly above; no
+additional work was needed there, confirmed rather than re-done. Two
+genuinely new asks, both portals:
+
+**Tour reachability.** The only way to see the tour again used to be a
+fresh login/pull with no `tourSeen` flag set — the existing "↺ Replay tips
+& tour" button (Help panel footer, and a second copy in Business
+setup/employee Settings) only reset that flag and waited for the NEXT
+pull to naturally re-trigger `_maybeStartTourFromPull()`; clicking it had
+no visible effect in the same session. `replayTourAndTips()` (its own
+copy per file, zero-shared-code rule) now closes the Help panel and calls
+`startTour()` immediately after resetting the flag, in both files; the
+Help panel's own button is relabeled "▶ Take the tour" to match. Also
+added a content-version check — `ADMIN_TOUR_CONTENT_VERSION`/
+`EMPLOYEE_TOUR_CONTENT_VERSION`, the same mechanism `ORG_LAYOUT_VERSION`
+already established — stored as `tourSeen.adminVer`/`tourSeen.employeeVer`
+alongside the existing boolean, stamped by `_markTourSeen()` and checked
+by `_maybeStartTourFromPull()`: a user whose stored version doesn't match
+the current one sees the tour once more automatically on their next
+login/pull, same as someone who's never seen it at all. Bumped now (both
+files, `v2_20260825`) so the #280 batch's tip/tour-step content updates
+actually reach everyone who'd already dismissed an older tour, not just
+new users.
+
+**Tour popover positioning (`index.html` only — see below for why
+`user.html` didn't need this).** `_showTourStep`'s old positioning always
+anchored `popLeft` to `rect.left` and only clamped `popTop` to a fixed
+ceiling (`window.innerHeight-200`) with no idea how tall the popover
+actually was. For a left-sidebar target near the bottom of a long nav list
+(Library, Messages, Business Setup — `#admin-sidebar` has its own
+`overflow-y:auto`, fixed `height:100vh` column), that vertical clamp
+pushed the popover UP and directly OVER the nav item it was describing,
+and horizontally it never left the sidebar column at all. Root-caused via
+a real Playwright walk of every `ADMIN_TOUR_STEPS` entry at a deliberately
+short viewport (1400×720) before touching any code, confirmed rects
+actually overlapping.
+
+Fixed with a new `_tourPopoverPosition(el, rect, popEl)`: for any target
+inside `#admin-sidebar` (`el.closest('#admin-sidebar')`), the popover is
+always placed to the right (`rect.right + 14`, clamped to the viewport) —
+in the content area, never over the nav column, per the task's own
+explicit directive. For a non-sidebar target it picks below/above/right
+based on which direction actually has room (`roomBelow`/`roomAbove`
+computed against the popover's REAL measured size, not below/above at all
+if neither fits). `el.scrollIntoView({block:'nearest'})` runs before
+measuring — the sidebar's independent scroll container meant a target
+further down the list could have `offsetParent!==null` (so
+`_isVisibleForTour()` didn't skip it) while still being scrolled outside
+the visible viewport, which would have measured the wrong rect entirely.
+
+**A real bug was caught and fixed while building this, not shipped
+blind:** the first version used a fixed `POP_H_EST=260` guess for the
+above/below room checks and a plain `window.innerHeight-40` ceiling on the
+final clamp — clamping `top` alone without knowing the popover's REAL
+height meant the popover's own bottom edge (where the Next/Skip buttons
+live) could still render off-screen on a short viewport, making the tour
+un-advanceable — reproduced directly via Playwright (a real click on
+"Next" timed out because the button was genuinely outside the viewport,
+not a test-harness quirk). Fixed by mirroring `user.html`'s own, already-
+correct, unrelated implementation of this exact problem: append the
+popover hidden (`visibility:hidden`, no position yet), measure its real
+`offsetWidth`/`offsetHeight` once it's actually in the DOM, compute the
+position from that, then reveal it. `user.html`'s own tour
+(`_positionTourPopover()`) already used this measure-after-render
+technique — independently authored, zero-shared-code rule — and already
+flips above/below based on real available room with an arrow indicator;
+it doesn't have an explicit "always right for sidebar" case, but its
+above/below logic already guarantees no overlap with the target's own
+rect (unlike index.html's old fixed-ceiling clamp), confirmed by the same
+Playwright walk finding zero overlaps there — so it needed no change for
+this specific fix.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) both HTML files — clean; div-balance delta unchanged vs. `main` in
+both (`index.html` −2, `user.html` −1). A new Playwright suite (17/17)
+against both real UIs, at a 1400×720 viewport chosen specifically to
+reproduce the old bug: a stale-version `tourFlags` auto-starts the tour
+once on login in both portals (version-bump reshow); the stored version
+updates to the current one after dismissing (verified against a STATEFUL
+`/api/ops-sync`+`/api/ops-state` mock — `cloudPushAll()` pulls fresh right
+after a successful push, so a static mock would have made a genuinely-
+working save look broken, a test-mock pitfall caught and fixed before
+trusting the result); the Help panel button reads "Take the tour" and
+immediately shows the tour overlay with no reload, closing the Help panel
+first, in both portals; walking every real `ADMIN_TOUR_STEPS` entry
+(including at least 2 sidebar-target steps actually exercised) confirms
+zero overlap between the popover and the spotlighted element on any step;
+and Goals' nav items/functions/help copy are all still confirmed absent in
+both portals (the re-issued spec's own acceptance criterion). Re-ran three
+pre-existing suites that exercise the tour end-to-end
+(`verify_help_tips_new_features.js` 16/16,
+`verify_recent_activity_and_clickable_overview.js` 11/11,
+`verify_retire_goals.js` 17/17, all at their normal taller viewports) —
+clean, confirming the rewritten `_renderTourStep` doesn't change the
+ordinary (non-version-mismatch, non-cramped-viewport) tour flow.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
