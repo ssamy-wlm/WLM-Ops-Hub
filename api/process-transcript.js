@@ -118,6 +118,49 @@ function validDueDate(value) {
 // as a task owner. Synthesized with the exact same {id, name, ...} shape
 // ops-auth.js issues her session with (id:'primary-admin'), so a task
 // assigned to her resolves to the real identity her own login uses.
+// A dual-role account — an ops_admins row carrying linkedUserId, pointing
+// at the ops_users row for the SAME person (see index.html's "Grant
+// Manager Role", api/ops-auth.js's dual-role login branch) — is ONE real
+// person with ONE canonical id: their ops_users row's id, which is always
+// what api/ops-auth.js puts in session.id/session.employeeId for their
+// real login, regardless of their admin tier. Without folding the linked
+// admin row into its user row here, that same person appeared as TWO
+// separate roster candidates under two different ids — Sherine
+// (adm_1784122163153, linked to her ops_users row, creative_manager) is
+// the first real account built this way. That broke owner-matching two
+// ways: an exact-name match could in principle land on either id (only
+// "worked" for a full-name match by incidental array order, not by
+// design), and a first-name-only reference to her (a very ordinary thing
+// to write in one's own daily-task list) made matchOwner()'s
+// unambiguous-first-name rule refuse to resolve AT ALL, since it now saw
+// two roster entries sharing "Sherine". Folding to one entry (keyed by
+// the canonical ops_users id) fixes both — every consumer of this roster
+// (matchOwner, resolveAttendeeIds, the prompt's own roster list) needs no
+// further change, since they already just operate on whatever this
+// returns.
+function dedupeLinkedIdentities(users, admins) {
+  const adminByLinkedUserId = new Map();
+  admins.forEach(a => { if (a.linkedUserId) adminByLinkedUserId.set(a.linkedUserId, a); });
+  // Only marked "folded" for a user row that's ACTUALLY present in the
+  // (already active-only) users array below — if the linked employee row
+  // is inactive/missing while the admin row stays active (an edge case,
+  // not Sherine's case today, but a real one), this must fall back to
+  // showing that admin as its own normal roster entry, never disappear
+  // from the roster entirely.
+  const foldedAdminIds = new Set();
+  const rosterUsers = users.map(u => {
+    const linkedAdmin = adminByLinkedUserId.get(u.id);
+    if (!linkedAdmin) return u;
+    foldedAdminIds.add(linkedAdmin.id);
+    // The linked admin row's title/level is real, useful context for the
+    // model (e.g. "Creative Manager") — folded onto the SAME roster entry
+    // as an extra display field, never as a second entry.
+    return { ...u, title: u.title || linkedAdmin.title || linkedAdmin.level };
+  });
+  const unlinkedAdmins = admins.filter(a => !foldedAdminIds.has(a.id));
+  return [...rosterUsers, ...unlinkedAdmins];
+}
+
 async function activeRoster(supabase) {
   const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }] = await Promise.all([
     supabase.from('ops_users').select('id, data'),
@@ -128,7 +171,7 @@ async function activeRoster(supabase) {
   const users = (userRows || []).map(r => ({ id: r.id, kind: 'user', ...r.data })).filter(u => u.status === 'active' && u.name);
   const admins = (adminRows || []).map(r => ({ id: r.id, kind: 'admin', ...r.data })).filter(a => a.status === 'active' && a.name);
   const primaryAdmin = { id: 'primary-admin', kind: 'admin', name: 'Sarah Samy', level: 'owner', status: 'active' };
-  return [...users, ...admins, primaryAdmin];
+  return [...dedupeLinkedIdentities(users, admins), primaryAdmin];
 }
 
 // Deterministic, same "plain code, never ask the model to guess" convention
@@ -248,17 +291,29 @@ function resolveTaskOwners(ownerNameRaw, groupOwner, roster, attendeeIds) {
 // Who a non-admin caller is allowed to see/create tasks for: themselves,
 // plus anyone whose configured manager (users[].managerId — the same field
 // index.html's assignment-escalation notifications already read) is this
-// caller. This is what makes a manager-tier employee (e.g. Sherine, who has
-// no special admin/super tier of her own — she's a plain member whom other
-// members' managerId happens to point at) distinct from an individual
-// contributor (e.g. Rana, Michael) with no reports: the exact same formula
-// just yields {self} when nobody's managerId points at them. Admin/super
-// tier is unrestricted, same as everywhere else in this app.
+// caller. This is what makes a person other members' managerId points at
+// (e.g. Rana reporting to Sherine) distinct from an individual contributor
+// (e.g. Michael) with no reports: the exact same formula just yields
+// {self} when nobody's managerId points at them. Admin/super tier is
+// unrestricted, same as everywhere else in this app.
+//
+// selfId (2026-08-25): the canonical identity this caller falls back to
+// when nothing else is named — session.employeeId for anyone who has a
+// real employee identity (a plain member, OR a dual-role admin/manager
+// like Sherine, who's ALSO a real employee via a linked ops_admins row —
+// see api/ops-auth.js), otherwise this caller's own bare id (a true
+// admin-only account, or the primary admin sentinel, neither of which has
+// a personal "my own daily list" to fall back to). session.id is already
+// this same canonical id for a member caller (ops-auth.js always sets
+// session.id to the employee row's id when one exists), so selfId is
+// identical to session.id there — computed once, uniformly, rather than
+// duplicated per branch below.
 function callerTaskScope(session, roster) {
   const tier = tierOf(session);
-  if (tier !== 'member') return { isAdmin: true, allowedIds: null };
+  const selfId = session.employeeId || session.id;
+  if (tier !== 'member') return { isAdmin: true, allowedIds: null, selfId };
   const reportIds = roster.filter(p => p.managerId === session.id).map(p => p.id);
-  return { isAdmin: false, allowedIds: new Set([session.id, ...reportIds]) };
+  return { isAdmin: false, allowedIds: new Set([session.id, ...reportIds]), selfId };
 }
 
 function extractDomain(email) {
@@ -587,14 +642,29 @@ async function handleTaskEmailMode(req, res) {
         }));
       })
       .filter(t => {
-        if (scope.isAdmin) return true;
+        if (scope.isAdmin) {
+          // A caller with a real employee identity — a dual-role admin/
+          // manager like Sherine, who's also a real employee via a linked
+          // ops_admins row — self-assigns a genuinely name-less task to
+          // their OWN canonical id, same as a plain member does below: "no
+          // owner mentioned" in someone's OWN daily-task list unambiguously
+          // means them, regardless of their admin tier. A caller with NO
+          // employee identity (a true admin-only account, or the primary
+          // admin) keeps the original behavior — left unassigned for
+          // manual triage, since there's no personal list to attribute it
+          // to. This also fixes a subtler bug this same gap caused: the
+          // merge-matching pass below (isSameTask) compares assigneeId,
+          // so a dual-role caller's own recurring daily tasks previously
+          // never matched an existing stored task of theirs (assigneeId
+          // null vs their real id) and silently duplicated on every parse.
+          if (!t.assigneeId && session.employeeId) t.assigneeId = scope.selfId;
+          return true;
+        }
         if (t.assigneeId) return scope.allowedIds.has(t.assigneeId);
         // No owner identified at all — default it to the caller themselves
         // rather than dropping it, matching how api/ops-sync.js already
-        // treats an unassigned member-created task (forced to self); an
-        // admin's unmatched tasks are left null so they get manually
-        // assigned instead, same as before this change.
-        t.assigneeId = session.id;
+        // treats an unassigned member-created task (forced to self).
+        t.assigneeId = scope.selfId;
         return true;
       });
 

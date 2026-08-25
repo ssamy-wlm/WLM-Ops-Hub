@@ -1552,6 +1552,20 @@ export default async function handler(req, res) {
       const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
+      // Every session.id check below (here and in the "not your task"
+      // check further down) already uses this caller's CANONICAL employee
+      // id for a dual-role admin/manager account, not their separate
+      // ops_admins row id — api/ops-auth.js always sets session.id to the
+      // ops_users row's id for anyone who has a linked employee identity,
+      // regardless of admin tier (Sherine, creative_manager, is the first
+      // real account built this way). Investigated as part of fixing task
+      // parsing for her (2026-08-25): no change was needed here, since
+      // this was already correct by construction — the actual bug was in
+      // api/process-transcript.js's roster (the same person appeared
+      // twice, under two different ids) and self-assign fallback (skipped
+      // entirely for any non-'member' tier, including a dual-role
+      // manager's own genuinely name-less daily-task rows).
+      //
       // Computed once per request, fresh from the live directory — never
       // trusted from the client. null for an admin caller (unrestricted).
       let creatableAssigneeIds = null;
