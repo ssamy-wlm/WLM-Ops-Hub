@@ -1146,7 +1146,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
-      <div class="admin-nav-item" onclick="switchAdminTab(this,'goals')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>Goals</div>
 
       <div class="admin-nav-group-label">Insights</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'livefeed')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>Live feed</div>
@@ -1244,7 +1243,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-overview" class="page-section active">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
-        <button class="btn btn-outline btn-sm" onclick="refreshAdminOverview()">↺ Refresh</button>
+        <button class="btn btn-outline btn-sm" onclick="refreshAdminOverviewFromCloud()">↺ Refresh</button>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
@@ -1844,29 +1843,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card-header"><div class="card-title">Saved Weekly Payrolls</div></div>
         <div class="card-body" id="savedPayrollList"><div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div></div>
       </div>
-    </div>
-
-    <!-- ══ GOALS (admin view, 2026-08-24 View Consolidation batch, PR 3) —
-         read-only visibility into every employee's goals (ops_goals, the
-         same data user.html's own Goals page reads/writes), plus the same
-         mark-achieved/delete actions that page already has, extended to
-         any person's goal rather than just your own. No new API function —
-         goals were already a fully unrestricted read/write table server-
-         side (api/ops-sync.js's ADMIN_TABLES set doesn't include it), so an
-         admin acting on any goal here was already permitted; this only adds
-         the UI. Roster is _timeOffRoster() — the same active-user-or-admin
-         list every other team-wide admin dashboard (Workload, Team
-         Production Analytics) already uses, so "every team member" here
-         can never disagree with those. ══ -->
-    <div id="admin-goals" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-        <div>
-          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Goals</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every team member's goals — read-only visibility, plus the same mark-achieved/delete actions the employee's own Goals page has</div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="renderAdminGoals()">↺ Refresh</button>
-      </div>
-      <div id="admin-goals-list"></div>
     </div>
 
     <!-- ══ TIME OFF REQUESTS ══ -->
@@ -3478,7 +3454,6 @@ function switchAdminTab(el, tab){
   }
   if(tab==='myTeamsWork') renderMyTeamsWork();
   if(tab==='taskAssignments') loadTaskAssignments();
-  if(tab==='goals') renderAdminGoals();
 }
 
 function loadAdminTrackerFrame(){
@@ -5440,9 +5415,6 @@ const HELP_CONTENT = {
   payroll: { label: 'Payroll', sel: '.admin-nav-item[onclick*="\'payroll\'"]',
     tip: "Calculates hours and pay for your whole team.",
     learnMore: "Pulls logged hours and pay rates into a period total. Admin-level and Super Admin have full access; it's hidden specifically from Account, Production, and Creative Managers. (Production Manager still keeps the Time off ledger.)" },
-  goals: { label: 'Goals', sel: '.admin-nav-item[onclick*="\'goals\'"]',
-    tip: "See every team member's personal goals, in one place.",
-    learnMore: "Each person's goals from their own Goals page, grouped by name — including anyone with none set yet. Mark a goal achieved or delete it, the same actions they have on their own." },
   livefeed: { label: 'Live feed', sel: '.admin-nav-item[onclick*="\'livefeed\'"]',
     tip: "A running log of logins, navigation, admin actions, and time-off.",
     learnMore: "Shows who's signed in, where they've navigated, and any admin or time-off activity — not client/service work, which lives in the Tracker and Task Assignments instead." },
@@ -5465,7 +5437,7 @@ const HELP_CONTENT = {
 const ADMIN_TOUR_STEPS = [
   HELP_CONTENT.overview, HELP_CONTENT.tracker, HELP_CONTENT.clientHealth, HELP_CONTENT.workload,
   HELP_CONTENT.myTeamsWork, HELP_CONTENT.taskAssignments, HELP_CONTENT.users, HELP_CONTENT.timeoff, HELP_CONTENT.payroll,
-  HELP_CONTENT.goals, HELP_CONTENT.livefeed, HELP_CONTENT.library, HELP_CONTENT.messages,
+  HELP_CONTENT.livefeed, HELP_CONTENT.library, HELP_CONTENT.messages,
   HELP_CONTENT.bizSettings,
   { label: 'Notifications', sel: '#admin-notif-btn', tip: "This bell lets you know when something needs you — a message, a time-off request, a new assignment.", learnMore: null },
 ];
@@ -5480,7 +5452,7 @@ const ADMIN_TOUR_STEPS = [
 // has no entry in the approved content doc and is deliberately left out of
 // this list rather than guessing copy for it — flagged back per the build
 // spec's own instruction for exactly this case.
-const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','taskAssignments','users','archive','timeoff','payroll','goals','livefeed','library','messages','bizSettings','adminControls'];
+const ADMIN_HELP_SECTION_KEYS = ['overview','tracker','clientHealth','workload','myTeamsWork','taskAssignments','users','archive','timeoff','payroll','livefeed','library','messages','bizSettings','adminControls'];
 function _currentAdminHelpKey(){
   const active = document.querySelector('#adminApp .page-section.active');
   return active ? active.id.replace(/^admin-/,'') : '';
@@ -5915,6 +5887,7 @@ window.switchAdminTab = function(el, tab){
 
 const DB_KEYS = {
   feed:     'wl_live_feed',
+  recentClientFeed: 'wl_recent_client_feed',
   users:    'wl_users_db',
   coc:      'wl_coc_data',
   settings: 'wl_settings',
@@ -6805,6 +6778,21 @@ function _tpaWeekBuckets(weeks){
   return buckets;
 }
 
+// Overview's Team Production Analytics lives on #admin-overview, but
+// openPersonDailyView() only manipulates state WITHIN the already-active
+// #admin-taskAssignments page (sub-tab, banner, filter visibility) — it
+// never switches which top-level admin tab is active. Calling it directly
+// from an Overview row click would update internal state correctly but
+// show nothing, since #admin-overview would still be the visible
+// page-section. This wrapper switches to Task Assignments first, mirroring
+// the existing Creative-Manager auto-navigate-on-login precedent (find the
+// real nav DOM element, call switchAdminTab on it) rather than duplicating
+// switchAdminTab's own logic.
+function _ovOpenPersonDailyView(personId){
+  const navEl=document.querySelector('.admin-nav-item[onclick*="\'taskAssignments\'"]');
+  if(navEl && typeof switchAdminTab==='function') switchAdminTab(navEl,'taskAssignments');
+  openPersonDailyView(personId);
+}
 function renderTeamProductionAnalytics(){
   const statsEl=document.getElementById('tpa-team-stats');
   const trendEl=document.getElementById('tpa-weekly-trend');
@@ -6898,7 +6886,7 @@ function renderTeamProductionAnalytics(){
     tbody.innerHTML=rows.map(r=>{
       const pctColor=_pctDoneColor(r.pctDone);
       const pctLabel=r.pctDone==null?'—':r.pctDone+'%';
-      return `<tr style="border-bottom:1px solid var(--border);">
+      return `<tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="_ovOpenPersonDailyView('${r.id}')" title="View ${escHtmlAdmin(r.name)}'s tasks (By Person)">
         <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
         <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
         <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
@@ -6910,61 +6898,6 @@ function renderTeamProductionAnalytics(){
       </tr>`;
     }).join('');
   }
-}
-
-// ══════════════════════════════════════════════
-// GOALS (admin view) — read visibility into every employee's goals, plus
-// the same mark-achieved/delete actions the employee's own Goals page
-// (user.html) already has on their own goals, extended here to any
-// person's. Reuses the exact same ops_goals data/shape
-// ({id, user (name string), title, type, target, due, status,
-// createdAt}) — no new field, no new API function. Goals were already an
-// unrestricted read/write table server-side (not in api/ops-sync.js's
-// ADMIN_TABLES set), so this is purely a UI addition, not a permission
-// change.
-// ══════════════════════════════════════════════
-function renderAdminGoals(){
-  const list = document.getElementById('admin-goals-list');
-  if(!list) return;
-  const allGoals = dbGet(DB_KEYS.goals)||[];
-  const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-
-  list.innerHTML = roster.map(person=>{
-    const myGoals = allGoals.filter(g=>g.user===person.name);
-    const rows = myGoals.length ? myGoals.map(g=>`
-      <div class="goal-item">
-        <div class="goal-header">
-          <div class="goal-title">${escHtmlAdmin(g.title||'')}</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <span class="status-badge ${g.status==='achieved'?'badge-working':'badge-pending'}">${g.status==='achieved'?'✓ Achieved':'In Progress'}</span>
-            <button class="btn btn-sm btn-green" onclick="adminMarkGoalAchieved(${g.id})" style="padding:4px 10px;font-size:11px;" ${g.status==='achieved'?'disabled':''}>✓ Done</button>
-            <button class="btn btn-sm btn-danger" onclick="adminDeleteGoal(${g.id})" style="padding:4px 8px;font-size:11px;">✕</button>
-          </div>
-        </div>
-        <div class="goal-bar-wrap"><div class="goal-bar" style="width:${g.status==='achieved'?100:40}%;${g.status==='achieved'?'background:linear-gradient(90deg,var(--green),#5cd8a0)':''}"></div></div>
-        <div class="goal-vals"><span>${escHtmlAdmin(g.type||'')} · Due: ${escHtmlAdmin(g.due||'TBD')}</span><span>${g.target?'Target: '+escHtmlAdmin(g.target):''}</span></div>
-      </div>`).join('')
-      : `<div style="font-size:12px;color:var(--text-light);padding:8px 0;">No goals set yet.</div>`;
-    return `<div class="card" style="margin-bottom:16px;">
-      <div class="card-header"><div class="card-title">${escHtmlAdmin(person.name||'(unnamed)')}</div></div>
-      <div class="card-body">${rows}</div>
-    </div>`;
-  }).join('') || '<div style="text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No team members found.</div>';
-}
-function adminMarkGoalAchieved(id){
-  const all = dbGet(DB_KEYS.goals)||[];
-  const g = all.find(x=>x.id===id);
-  if(!g) return;
-  g.status='achieved';
-  dbSet(DB_KEYS.goals, all);
-  renderAdminGoals();
-  cloudAutoSync();
-}
-function adminDeleteGoal(id){
-  const all = (dbGet(DB_KEYS.goals)||[]).filter(x=>x.id!==id);
-  dbSet(DB_KEYS.goals, all);
-  renderAdminGoals();
-  cloudAutoSync();
 }
 
 // ══════════════════════════════════════════════
@@ -7573,6 +7506,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr), _getClientDB);
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
     _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
+    // Dedicated, type-scoped feed for Overview's Recent Activity — see
+    // api/ops-state.js's recentClientFeedQ comment for why the general
+    // feed above (shared with Live Feed, capped at 300 most-recent-of-any-
+    // type) can't reliably serve this. Never locally edited, so there's no
+    // dirty state to preserve — _applyServerArray's fast path always applies.
+    _applyServerArray('recentClientFeed', r.recentClientFeed, arr=>dbSet(DB_KEYS.recentClientFeed, arr), ()=>dbGet(DB_KEYS.recentClientFeed)||[]);
     _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[]);
     _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr), ()=>dbGet(DB_KEYS.roadmapTasks)||[]);
     _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
@@ -9295,6 +9234,19 @@ document.addEventListener('DOMContentLoaded', ()=>{
 // ═══════════════════════════════════════════════════════════
 // ADMIN OVERVIEW — dynamic stats + date
 // ═══════════════════════════════════════════════════════════
+// Pulls fresh data (including recentClientFeed) from the cloud before
+// re-rendering — same fix pattern as refreshLiveFeedFromCloud(): a long-open
+// tab's local cache can otherwise sit stale between the 30s live-sync polls.
+// cloudPullAll() already calls refreshAdminOverview() itself at the end of
+// a successful pull, so this must NOT call it a second time on success —
+// only on a failed pull, so the button never just does nothing.
+async function refreshAdminOverviewFromCloud(){
+  try{
+    await cloudPullAll(true);
+  }catch(e){
+    refreshAdminOverview();
+  }
+}
 function refreshAdminOverview(){
   const now = new Date();
   const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -9322,8 +9274,6 @@ function refreshAdminOverview(){
     const d = e.desc||'';
     return DONE_DESC_PREFIXES.some(p=>d.startsWith(p));
   }
-  const allFeed = dbGet(DB_KEYS.feed)||[];
-
   // Team Assessment (the old per-person numbers table) is retired as of
   // 2026-08-24 — Team Production Analytics supersedes it and now lives
   // directly on this page (the tpa-team-stats/tpa-weekly-trend/
@@ -9335,17 +9285,26 @@ function refreshAdminOverview(){
 
   // Recent Activity — service-work events only, done items surfaced first.
   //
+  // Reads DB_KEYS.recentClientFeed (2026-08-24), NOT the general feed above
+  // — that shared feed is capped at the 300 most-recent-of-ANY-type rows
+  // (login/nav/admin/timeoff included), which real login/nav volume can
+  // consume entirely, leaving zero type:'client' rows in it even when
+  // hundreds exist further back. recentClientFeed is its own dedicated,
+  // type-scoped query (api/ops-state.js) so Recent Activity always has
+  // real data to show regardless of how much other activity there's been.
+  //
   // type:'client' is the only feed type that's actually work on a client's
   // service — pushed by client.html's/user.html's pushNotif()/logActivity()
   // mirror (service done/assigned, task done/assigned, bundle/sub-project
-  // complete, progress updates). type:'report' is deliberately EXCLUDED,
-  // not kept as originally specified — traced every logActivity('report',
-  // ...) call site (index.html only) and they're all admin-generated
-  // (weekly/monthly/yearly summary generation, broadcast announcements),
-  // never anything about a specific client's service; including them would
-  // reintroduce the exact "admin account changes" noise this change is
-  // meant to cut. Also excludes automated due-date reminder alerts within
-  // type:'client' (pushed with fromUser:'System', i.e. e.user==='System')
+  // complete, progress updates); the server query is already scoped to
+  // exactly this type, so no type filter is needed here. type:'report' is
+  // deliberately EXCLUDED, not kept as originally specified — traced every
+  // logActivity('report', ...) call site (index.html only) and they're all
+  // admin-generated (weekly/monthly/yearly summary generation, broadcast
+  // announcements), never anything about a specific client's service;
+  // including them would reintroduce the exact "admin account changes"
+  // noise this change is meant to cut. Also excludes automated due-date
+  // reminder alerts (pushed with fromUser:'System', i.e. e.user==='System')
   // — those are the system nudging someone to do work, not a record of work
   // actually done.
   //
@@ -9358,8 +9317,8 @@ function refreshAdminOverview(){
   // be, from this data. Falls back to done-first / everything else in
   // original (already newest-first) order, per this task's own fallback
   // instruction for exactly this case.
-  const actEvents = allFeed
-    .filter(e=>e.type==='client' && e.user!=='System')
+  const actEvents = (dbGet(DB_KEYS.recentClientFeed)||[])
+    .filter(e=>e.user!=='System')
     .sort((a,b)=>(_isDoneActivity(b)?1:0)-(_isDoneActivity(a)?1:0)) // stable: preserves newest-first within each group
     .slice(0,30);
   const activityEl = document.getElementById('ov-activity-list');
@@ -10907,7 +10866,7 @@ const ADMIN_TAB_TITLES = {
   overview:'Overview', users:'Users', livefeed:'Live feed',
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
-  clientHealth:'Client Health', myTeamsWork:"My Team's Work", goals:'Goals',
+  clientHealth:'Client Health', myTeamsWork:"My Team's Work",
 };
 (function patchSwitchAdminTabForTitle(){
   const _origSwitch = window.switchAdminTab;

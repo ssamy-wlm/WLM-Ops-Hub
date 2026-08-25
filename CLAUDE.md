@@ -3127,6 +3127,151 @@ pre-2026-08-21-Progress-Reports-removal stale expectation already
 confirmed unrelated in an earlier entry above) — confirming no new
 regression from either the added entries or the tour-array fix.
 
+**Fix Recent Activity + clickable Overview + retire Goals (2026-08-25).**
+Three-part task, `api/ops-state.js` + `index.html` + `user.html`.
+
+**Part 1 — Recent Activity was empty despite 429 real client events.** Root
+cause: `api/ops-state.js`'s single `ops_feed` query fetches only the 300
+most-recent-by-`created_at` rows across EVERY event type, with no type
+filter at the SQL level — the same feed data Live Feed consumes (which
+needs login/nav/admin/timeoff, the opposite of what Recent Activity needs).
+Since `logActivity('nav', ...)` fires on every single page/section
+navigation in both portals, real usage volume can entirely consume that
+top-300 window with non-client noise, leaving zero `type:'client'` rows in
+it even though hundreds exist further back in the table's real history —
+exactly the reported symptom. Fixed with a genuinely dedicated,
+SQL-scoped query (`recentClientFeedQ`, `.eq('data->>type','client')`, capped
+at 50, newest-first — the first use of PostgREST's `column->>key` JSONB
+filter idiom anywhere in this codebase, since every other filter here runs
+in plain JS after fetching), wired into the existing `namedQueries`
+graceful-degradation array and a new `record.recentClientFeed` field —
+never needs `stripSensitiveFeed()`, since `SENSITIVE_FEED_TYPES` only ever
+covers `'admin'`/`'timeoff'`, never `'client'`. Client-side: new
+`DB_KEYS.recentClientFeed`, a matching `_applyServerArray()` pull-
+application line, and `refreshAdminOverview()`'s `actEvents` now reads
+`DB_KEYS.recentClientFeed` instead of the general feed (no client-side type
+filter needed any more — the server query already scopes it; the existing
+`user!=='System'`-and-done-first sort/filter is unchanged). Also added
+`refreshAdminOverviewFromCloud()` (byte-for-byte the same
+`cloudPullAll(true)`-with-fallback pattern `refreshLiveFeedFromCloud()`
+already established) and wired it to the Overview page's manual Refresh
+button, so a long-open tab's stale local cache is never what a manual
+refresh serves — the literal "pull fresh from the cloud before rendering"
+ask.
+
+**Part 2 — Team Production Analytics person rows are now clickable.**
+`openPersonDailyView(personId)` only manipulates state WITHIN the
+already-active `#admin-taskAssignments` page (sub-tab, banner, filter
+visibility) — it never switches which top-level admin tab is active, so
+calling it directly from an Overview row click would update internal
+state with nothing visible changing, since `#admin-overview` would stay
+the active page-section. Added a new `_ovOpenPersonDailyView(personId)`
+wrapper that finds the real Task Assignments nav DOM element and calls
+`switchAdminTab` on it first (mirroring the existing Creative-Manager
+auto-navigate-on-login precedent — find the nav element, call
+`switchAdminTab`, rather than duplicating its logic), then calls the
+existing `openPersonDailyView()` unchanged. Wired as the `onclick` on each
+person `<tr>` in `renderTeamProductionAnalytics()`. Metric cells were not
+made separately actionable — the task named the per-person click as the
+priority and made cell-level actionability optional; the whole row already
+being clickable covers the ask without adding a second, narrower click
+target that could shadow it.
+
+**Part 3 — retired the Goals feature (ops_tasks/Daily Tasks supersedes
+it), both portals, no data deleted.** Removed, `index.html`: the real admin
+Goals tab added in the 2026-08-24 View Consolidation batch's PR3 — nav
+item (`switchAdminTab(this,'goals')`), `#admin-goals` page-section,
+`renderAdminGoals()`/`adminMarkGoalAchieved()`/`adminDeleteGoal()`,
+`ADMIN_TAB_TITLES.goals`, its `switchAdminTab` render hook, its
+`HELP_CONTENT.goals` entry, its slot in `ADMIN_TOUR_STEPS`, its key in
+`ADMIN_HELP_SECTION_KEYS`. Removed, `user.html`: the real, original
+employee Goals page — nav item, `#sec-goals` page-section, the Goal Modal,
+`loadGoals()`/`addGoal()`/`markGoalAchieved()`/`deleteGoal()`/
+`openGoalModal()`, the now-unused `myGoals` state variable and its
+page-load call site, its `showSection()` titles-map entry and `id==='goals'`
+render hook, its `HELP_CONTENT.goals` entry, its slot in
+`EMPLOYEE_TOUR_STEPS_BASE`, its key in `EMPLOYEE_HELP_SECTION_KEYS`, and
+the now-dead `.goal-item`/`.goal-header`/`.goal-title`/`.goal-bar-wrap`/
+`.goal-bar`/`.goal-vals` CSS (confirmed via grep these had no other
+consumer in this file). Removing `HELP_CONTENT.goals` from both files'
+maps required also removing every reference TO it in each file's own
+tour-steps array in the same edit — leaving a dangling
+`HELP_CONTENT.goals` reference would have reintroduced the exact
+undefined-array-slot crash already found and fixed once for
+`HELP_CONTENT.reports` (2026-08-24): `_renderTourStep()` has no null-check
+and throws partway through the tour on the first undefined step.
+
+**Explicitly NOT removed, flagged per the task's own scope:**
+`index.html` has a SEPARATE, pre-existing, unrelated, non-functional dead
+mockup also called "Goals" (`showSection('goals')`, `#sec-goals`, hardcoded
+fake numbers, a "Create Goal" button that only closes its modal and shows
+a toast) — discovered and flagged out-of-scope back when the real admin
+Goals feature was first built (PR3, 2026-08-24: "left alone, not fixed,
+since this task was scoped to adding real visibility, not auditing every
+pre-existing dead screen in the file"). This task's own wording named "the
+admin Goals tab (index.html, the one from #277)" specifically, so the dead
+mockup is untouched again here — same reasoning, still out of scope.
+
+**Data preserved, not deleted, per the task's explicit instruction.** The
+server-side `ops_goals` table, `api/ops-state.js`'s `goalsQ`/`goals` field,
+and `api/ops-sync.js`'s unrestricted `applied.goals = upsertRows(...)`
+write path are all untouched — none of them render or surface anything on
+their own, they're pure data plumbing. Deliberately also left untouched in
+both `index.html` and `user.html`: the `DB_KEYS.goals` mapping, the
+`_applyServerArray('goals', r.goals, ...)` pull-application line, and the
+`goalsDirty`/`_opsDirty('goals', ...)` push-dirty-check line — with every
+UI read/write function that used to touch `DB_KEYS.goals` now gone, these
+three lines just keep a local mirror of `ops_goals` silently in sync with
+zero surfacing, exactly "stop surfacing the feature" without touching the
+data path at all. Confirmed via grep this is the ONLY remaining reference
+to `goals`/`Goals` in either file beyond the untouched dead mockup.
+
+Verified: `node --check` on `api/ops-state.js`; syntax-checked (`new
+Function()` per extracted `<script>` block) both HTML files — clean;
+div-balance delta unchanged vs. `main` in both (`index.html` −2, `user.html`
+−1); `ls api/*.js | wc -l` still 12. A `node:test`
+`--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-state.js` with an in-memory fake Supabase client (9/9) — confirms
+the general feed query and the new client-scoped query are genuinely two
+separate SQL calls, the client-scoped one actually carries
+`.eq('data->>type','client')` plus `order(created_at desc)`/`limit(50)`,
+and `record.recentClientFeed` reflects only that scoped query's rows,
+correctly mapped through `rows()`. A new Playwright suite against the real
+`index.html` UI (11/11) — Recent Activity renders real client-completion
+text and excludes nav noise even when the general feed is 100% nav events,
+`DB_KEYS.recentClientFeed` is genuinely populated from the pull (not
+coincidentally rendered from something else), the Refresh button issues a
+real `/api/ops-state` request, and clicking a Team Production Analytics
+person row switches the active tab to Task Assignments, opens the exact
+clicked person's By Person view (banner name matches), and highlights the
+right nav item. A second new Playwright suite (17/17) covering both
+portals for Goals retirement — nav items/page-sections/functions all gone,
+the separate dead mockup and the data-plumbing lines both confirmed still
+present, and the guided tour in both portals still runs to completion with
+zero JS errors (the regression check for the dead-HELP_CONTENT-reference
+crash class of bug).
+
+Four pre-existing Playwright suites needed their mock data updated to seed
+the new `recentClientFeed` field alongside the general `feed` they already
+seeded — not a regression, just this change's own new server contract:
+`verify_help_tips_new_features.js` (one assertion inverted — it explicitly
+checked for the now-retired Goals help copy), `verify_overview_stacked_
+layout.js`, `verify_pr1_overview_analytics_landing.js`, and
+`verify_recent_activity_service_feed.js` (this last one also needed its
+mocked `recentClientFeed` pre-filtered to `type:'client'` rows only, since
+that type filtering moved server-side and the client no longer re-filters
+by type; and its "empty state" check rewritten against a genuinely fresh
+session rather than a same-session populated-to-empty transition — that
+transition triggers `_applyServerArray`'s existing empty-guard, by design,
+the same protection every other synced array table already has, and one
+that's provably unreachable in real production since `ops_feed` is
+append-only and this query's rows can only grow). All four re-run clean
+after the fix (16/16, 11/13 matching main's own pre-existing baseline
+exactly, 16/16, 18/18). `verify_overview_revamp.js`'s pre-existing crash
+and `verify_badges_and_labels.js`'s one pre-existing failure were both
+confirmed to fail identically against unmodified `main` — unrelated,
+out of scope for this PR.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
