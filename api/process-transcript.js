@@ -49,6 +49,8 @@ Today's real date (the day this text is being parsed, NOT necessarily the date t
 
 First, determine the "assignedDate" for this text AS A WHOLE — the date the meeting, transcript, or email was itself dated, which can be well before today's real date above (e.g. an old meeting transcript pasted in days later). Look for a meeting/transcript header or title carrying a date (e.g. "Meeting — June 8", "Standup 8/18"), an email "Date:" header, or an explicit phrase like "as of 8/18" or "on 8/18". If a year isn't stated, assume whichever year makes the date most recent without landing AFTER today's real date, unless the text clearly implies otherwise. If you cannot find any such date anywhere in the text, use today's real date (${todayIso}) as the assignedDate instead — every parse must produce one, never leave it blank. Every task extracted from this text shares this SAME assignedDate.
 
+Also determine "attendees" for this text AS A WHOLE — the names of everyone who attended the meeting or is on the email thread, if the text has a roster/attendee line (e.g. "Attendees: Sarah, David, Michael", "In attendance: ...", "Present: ...", a "To:"/"Cc:" header listing multiple people, or a list of names right under the meeting title). Return every name you find as a single comma-separated string (e.g. "Sarah, David, Michael") — empty string if the text has no such list anywhere. This is used ONLY for tasks explicitly assigned to "the group"/"the team"/"everyone" below, never applied to a task that already names a specific person.
+
 For EACH distinct task or action item you find:
 - "subject": a concise one-line summary (under 12 words).
 - "notes": any additional relevant detail from the text (can be empty string).
@@ -63,13 +65,28 @@ For EACH distinct task or action item you find:
 - "emailReceivedDate": an ISO YYYY-MM-DD date from a "Date:" header or explicit date in the text, otherwise empty string.
 - "emailThreadId": a Message-ID header value if present, otherwise empty string.
 - "clientName": if this task is clearly about work for one specific client from this list: ${JSON.stringify(clientNames)}, output that client's name EXACTLY as it appears in the list. If the text has a near-miss, mis-heard, or misspelled version of a client's name (a typo, a phonetic spelling, a partial name — e.g. "surf pro" for "Servpro"), still match it to the single closest real name in this exact list — best phonetic/fuzzy match, don't require an exact spelling in the text itself. If the task is about WebLight Media's own internal work rather than a client's, and "WebLight Media (Internal)" appears in this list, use that. If genuinely no client from this list is identifiable for this task, leave this an empty string — never invent a name that isn't in the list.
-- "ownerName": the specific person this task belongs to. Look for an explicit assignment ("assigned to X", "X will handle this") AND per-person ownership language even without an explicit assignment verb — e.g. "X's priorities" or "X's tasks" (a list introduced this way belongs to X for every item under it), "X will …" / "X agreed to …" / "X is going to …" (a stated commitment BY X), "X shared they'll …" / "X mentioned she's going to …" (X's own intended action, even when reported by someone else). ALSO treat these STRUCTURED markers as AT LEAST as strong a signal as the prose patterns above — this is the exact format the team's own meeting-notes/Quick-Notes export uses ("Next steps: [Name] Task: …"): a task line prefixed with a person's name in brackets (e.g. "[Abby Conklin] Process payments for the Johnson account"); a "Name — task" or "Name: task" prefix (e.g. "Sherine — Follow up with the client" or "Michael: Update the sales deck"); or a bulleted/listed task appearing directly under a heading or line that names a person (e.g. a "Next steps" section where every following "[Name] ..." line belongs to that same named person). In every one of these structured-marker cases, that named person owns the task — this is never weaker evidence than the prose patterns, and should be treated as at least as decisive. In every case (prose or structured), use that person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. If the text has a near-miss, mis-heard, or misspelled version of a name on this list (e.g. "Shereen" or "Shireen" for "Sherine"), still match it to the single closest real name in this exact list — best phonetic/fuzzy match, don't require an exact spelling in the text itself. Only leave this an empty string if genuinely no name on the list is a reasonable match — a task carrying one of the structured markers above should almost never end up with an empty ownerName, since the marker itself already names the person. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name.
+- "ownerName": the specific person(s) this task belongs to. Look for an explicit assignment ("assigned to X", "X will handle this") AND per-person ownership language even without an explicit assignment verb — e.g. "X's priorities" or "X's tasks" (a list introduced this way belongs to X for every item under it), "X will …" / "X agreed to …" / "X is going to …" (a stated commitment BY X), "X shared they'll …" / "X mentioned she's going to …" (X's own intended action, even when reported by someone else). ALSO treat these STRUCTURED markers as AT LEAST as strong a signal as the prose patterns above — this is the exact format the team's own meeting-notes/Quick-Notes export uses ("Next steps: [Name] Task: …"): a task line prefixed with a person's name in brackets (e.g. "[Abby Conklin] Process payments for the Johnson account"); a "Name — task" or "Name: task" prefix (e.g. "Sherine — Follow up with the client" or "Michael: Update the sales deck"); or a bulleted/listed task appearing directly under a heading or line that names a person (e.g. a "Next steps" section where every following "[Name] ..." line belongs to that same named person). In every one of these structured-marker cases, that named person owns the task — this is never weaker evidence than the prose patterns, and should be treated as at least as decisive.
+  ALSO treat any layout where a row/entry has a dedicated assignee field as equally strong evidence, not just inline prefixes — this covers markdown/table rows with an "Assignee"/"Owner"/"Name" column, and a labeled "Assignee: Name" field on its own line. Two examples:
+  Example A (markdown table — the "Assignee" column value is that row's ownerName):
+  | Assignee | Task | Due |
+  |----------|------|-----|
+  | Michael | Update the sales deck | Friday |
+  | Sarah, Rana | Review the new client proposal | next week |
+  → row 1 has ownerName "Michael"; row 2 has ownerName "Sarah, Rana" (both own it — see the multi-name rule below).
+  Example B (labeled field on its own line):
+  Task: Renew SSL certificate
+  Assignee: David
+  Due: Friday
+  → ownerName "David".
+  If MULTIPLE names appear together for one task/row (e.g. "Michael, Sarah" in a table cell, or "David, Sarah, and Rana" in prose), output ALL of them together as one comma-separated string in ownerName (e.g. "Michael, Sarah") — every one of them owns this task, not just the first.
+  In every case (prose, structured marker, table/field, or multi-name), use each person's name EXACTLY as it appears (the part before " — ", their title is shown after it only to help you tell people with the same role apart) in this list: ${JSON.stringify(rosterDisplayList)}. If the text has a near-miss, mis-heard, or misspelled version of a name on this list (e.g. "Shereen" or "Shireen" for "Sherine"), still match it to the single closest real name in this exact list — best phonetic/fuzzy match, don't require an exact spelling in the text itself. Only leave this an empty string if genuinely no name on the list is a reasonable match — a task carrying one of the structured markers or a dedicated assignee field above should almost never end up with an empty ownerName, since the marker/field itself already names the person. Never invent or guess a name that isn't in this exact list, and never use a role/title in place of a name — if the text names a role but not a specific person ("someone from production"), leave this empty rather than picking a name. Leave this empty (rather than guessing) whenever "groupOwner" below is true for this task.
+- "groupOwner": true ONLY when the text explicitly assigns this task to the whole group/team collectively rather than a specific person — e.g. "the group will follow up on this", "everyone needs to submit their timesheets", "the team agreed to review the proposal", "assigned to the whole team". false otherwise, including whenever "ownerName" already names one or more specific people (a task never has both).
 - "alreadyDone": true if the text itself says this specific item is already finished/sent/completed (e.g. "already posted the update", "done", "sent yesterday"), false otherwise. Only true when the text says so explicitly for THIS item — never infer completion just because a task sounds simple or routine.
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"assignedDate":"YYYY-MM-DD","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","clientName":"","ownerName":"","alreadyDone":false}]}`;
+{"assignedDate":"YYYY-MM-DD","attendees":"","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","clientName":"","ownerName":"","groupOwner":false,"alreadyDone":false}]}`;
 }
 
 // A malformed or out-of-range date from the model must never reach storage
@@ -93,6 +110,14 @@ function validDueDate(value) {
 // Fetched fresh every request; never cached across requests, unlike the
 // per-request _directoryCache pattern in api/ops-sync.js (this is a single
 // short-lived serverless invocation, not a warm-instance-reused module).
+//
+// Also includes the primary admin (Sarah Samy) — she has no row in
+// ops_users/ops_admins at all (see api/ops-auth.js's PRIMARY_ADMIN_EMAIL
+// branch; CLAUDE.md documents this: "a separate primary-admin login... not
+// an ops_admins row at all"), so without this she could never be matched
+// as a task owner. Synthesized with the exact same {id, name, ...} shape
+// ops-auth.js issues her session with (id:'primary-admin'), so a task
+// assigned to her resolves to the real identity her own login uses.
 async function activeRoster(supabase) {
   const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }] = await Promise.all([
     supabase.from('ops_users').select('id, data'),
@@ -102,7 +127,8 @@ async function activeRoster(supabase) {
   if (firstErr) throw new Error(firstErr.message);
   const users = (userRows || []).map(r => ({ id: r.id, kind: 'user', ...r.data })).filter(u => u.status === 'active' && u.name);
   const admins = (adminRows || []).map(r => ({ id: r.id, kind: 'admin', ...r.data })).filter(a => a.status === 'active' && a.name);
-  return [...users, ...admins];
+  const primaryAdmin = { id: 'primary-admin', kind: 'admin', name: 'Sarah Samy', level: 'owner', status: 'active' };
+  return [...users, ...admins, primaryAdmin];
 }
 
 // Deterministic, same "plain code, never ask the model to guess" convention
@@ -117,6 +143,106 @@ function matchOwner(ownerName, roster) {
   if (exact) return exact;
   const byFirstName = roster.filter(p => String(p.name || '').trim().split(/\s+/)[0].toLowerCase() === q);
   return byFirstName.length === 1 ? byFirstName[0] : null;
+}
+
+// Fixed alias, by explicit decision: "Sarah" and "Sarah Samy" always mean
+// Sarah Ibrahim, never the primary admin (Sarah Samy herself), even though
+// she's now on the roster (see activeRoster() above) and would otherwise be
+// an exact-name match for "Sarah Samy". Resolved by a live NAME lookup
+// against the roster, not a hardcoded id — this file has no live DB access
+// to confirm Sarah Ibrahim's real ops_users id (CLAUDE.md rule #11), and
+// matching by name is already how every other person here is resolved.
+// Checked BEFORE matchOwner() so it always wins for these two spellings.
+const SARAH_ALIAS_NAMES = new Set(['sarah', 'sarah samy']);
+function resolveOwnerAlias(ownerName, roster) {
+  const q = String(ownerName || '').trim().toLowerCase();
+  if (!SARAH_ALIAS_NAMES.has(q)) return null;
+  return roster.find(p => String(p.name || '').trim().toLowerCase() === 'sarah ibrahim') || null;
+}
+function matchOwnerWithAlias(ownerName, roster) {
+  return resolveOwnerAlias(ownerName, roster) || matchOwner(ownerName, roster);
+}
+
+// Splits a name/attendee field into individual names — "Michael, Sarah",
+// "David, Sarah and Rana", "Michael & Sarah" all split correctly. `\band\b`
+// with word boundaries only matches the standalone word "and", never inside
+// a real name like "Andrea"/"Andrew" (no word-boundary between "and" and
+// the following "r"). Deterministic text splitting, not an LLM judgment
+// call — same conviction as matchOwner()/matchClient() below.
+function splitNames(raw) {
+  return String(raw || '')
+    .split(/,|;|&|\band\b/i)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+// Resolves the meeting-wide attendee list (once per parse, not per task —
+// see the "attendees" prompt instruction) against the live roster, for
+// "the group" tasks below to co-assign against. Deduped by id; a name that
+// doesn't match anyone is simply dropped from this list (an attendee who
+// isn't a real roster member can't be assigned a task anyway).
+function resolveAttendeeIds(attendeesRaw, roster) {
+  const ids = [];
+  const seen = new Set();
+  splitNames(attendeesRaw).forEach(name => {
+    const p = matchOwnerWithAlias(name, roster);
+    if (p && !seen.has(p.id)) { seen.add(p.id); ids.push(p.id); }
+  });
+  return ids;
+}
+
+// Resolves one task's owner(s) into 1+ {assigneeId, assigneeIds, ownerRaw}
+// pieces — a caller then clones the task once per piece. This is where
+// "co-assign" and "never silently unassign a named task" both actually
+// happen:
+//   - Named owner(s) present (ownerNameRaw non-empty, checked first —
+//     prefers named individuals over groupOwner if a task carries both,
+//     which the model shouldn't do but this makes the tie-break explicit
+//     rather than undefined): each name is matched against the roster
+//     (alias-first). Any names that DO resolve produce one clone per
+//     resolved person, each carrying the FULL set of co-assignee ids in
+//     `assigneeIds` (informational — ops_tasks itself has no multi-
+//     assignee field today, so "co-assign" here means one real task per
+//     named person, not one task with several owners). If NONE resolve,
+//     a single clone with assigneeId:null carries the raw name(s) in
+//     ownerRaw — the existing staging UI already renders "detected: X —
+//     pick assignee" whenever assigneeId is null and ownerRaw is non-
+//     empty (built for the single-name case, 2026-08-21), so a multi-name
+//     row that fails to resolve gets the identical treatment for free.
+//   - No named owner, but groupOwner is true (an explicit "the group"/
+//     "the team"/"everyone" assignment — see the prompt): co-assigns to
+//     every resolved meeting attendee, one clone each. If the meeting had
+//     no parseable attendee list, a single clone with assigneeId:null
+//     carries the literal hint text "group — no attendee list, assign
+//     manually" as ownerRaw — reusing the same existing hint mechanism,
+//     so this needed no client-side change either.
+//   - Neither: unchanged pre-existing behavior (empty ownerRaw, assigneeId
+//     null) — the caller's own scope-filter below still self-assigns this
+//     to a member caller or leaves it null for an admin, exactly as before
+//     this task.
+function resolveTaskOwners(ownerNameRaw, groupOwner, roster, attendeeIds) {
+  const rawNames = splitNames(ownerNameRaw);
+  if (rawNames.length) {
+    const resolved = [];
+    const seen = new Set();
+    rawNames.forEach(name => {
+      const p = matchOwnerWithAlias(name, roster);
+      if (p && !seen.has(p.id)) { seen.add(p.id); resolved.push(p); }
+    });
+    const ownerRaw = rawNames.join(', ');
+    if (resolved.length) {
+      const ids = resolved.map(p => p.id);
+      return resolved.map(p => ({ assigneeId: p.id, assigneeIds: ids, ownerRaw }));
+    }
+    return [{ assigneeId: null, assigneeIds: [], ownerRaw }];
+  }
+  if (groupOwner) {
+    if (attendeeIds.length) {
+      return attendeeIds.map(id => ({ assigneeId: id, assigneeIds: attendeeIds, ownerRaw: 'the group' }));
+    }
+    return [{ assigneeId: null, assigneeIds: [], ownerRaw: 'group — no attendee list, assign manually' }];
+  }
+  return [{ assigneeId: null, assigneeIds: [], ownerRaw: '' }];
 }
 
 // Who a non-admin caller is allowed to see/create tasks for: themselves,
@@ -400,6 +526,10 @@ async function handleTaskEmailMode(req, res) {
     // validDueDate already applies to dueDate itself. Every task from this
     // parse shares this one value, deliberately not asked for per-task.
     const assignedDate = validDueDate(parsed.assignedDate) || todayIso;
+    // Meeting-wide attendee list, resolved once per parse (not per task) —
+    // see resolveTaskOwners()'s own comment for exactly how/when this is
+    // used (only for tasks explicitly assigned to "the group").
+    const attendeeIds = resolveAttendeeIds(parsed.attendees, roster);
 
     // Owner-matching and the role-scoped filter below run over EVERY
     // extracted task before any of it is returned — a member/manager-tier
@@ -408,16 +538,21 @@ async function handleTaskEmailMode(req, res) {
     // UX: the client sent nothing about its own role in the request body
     // (mode/text only), so there is nothing here for a modified client to
     // spoof — the scope above came entirely from the signed session token.
+    //
+    // flatMap, not map: a co-assigned row ("Michael, Sarah") or a "the
+    // group" row with a resolved attendee list expands into one clone per
+    // person — see resolveTaskOwners() — everything else about the task
+    // (subject, client, due date, etc.) is identical across its clones.
     const tasks = rawTasks
       .filter(t => t && typeof t.subject === 'string' && t.subject.trim())
-      .map(t => {
+      .flatMap(t => {
         // clientName (model, from the live roster of client names) is the
         // primary signal, matchClient() (email/domain/text-mention) the
         // fallback — same precedence relationship ownerName/matchOwner()
         // already has.
         const matchedClient = matchClientByName(t.clientName, activeClients) || matchClient(t, activeClients);
-        const owner = matchOwner(t.ownerName, roster);
-        return {
+        const ownerVariants = resolveTaskOwners(t.ownerName, t.groupOwner === true, roster, attendeeIds);
+        return ownerVariants.map(ov => ({
           subject: t.subject.trim(),
           notes: typeof t.notes === 'string' ? t.notes : '',
           tags: Array.isArray(t.tags) ? t.tags.filter(x => typeof x === 'string') : [],
@@ -430,16 +565,26 @@ async function handleTaskEmailMode(req, res) {
           source: 'parsed-email',
           emailReceivedDate: typeof t.emailReceivedDate === 'string' ? t.emailReceivedDate : '',
           emailThreadId: typeof t.emailThreadId === 'string' ? t.emailThreadId : '',
-          assigneeId: owner ? owner.id : null,
-          // Debug/visibility field (2026-08-21) — the model's raw ownerName
-          // output, kept alongside the resolved assigneeId even when
-          // matchOwner() couldn't resolve it to anyone on the roster. Purely
-          // informational: nothing server-side reads this back, it only
-          // lets the staging UI show what the model actually said when it
-          // didn't produce a usable match.
-          ownerRaw: typeof t.ownerName === 'string' ? t.ownerName.trim() : '',
+          assigneeId: ov.assigneeId,
+          // Every co-assignee's id for this row/task, including this
+          // clone's own assigneeId (2026-08-25) — informational: ops_tasks
+          // itself has no multi-assignee field, so nothing server-side
+          // reads this back today. "Co-assign" here means one real task
+          // per named person (see resolveTaskOwners()), not one task with
+          // several owners; this array just keeps the full co-assignee set
+          // visible on each resulting clone for whatever the client wants
+          // to do with it.
+          assigneeIds: ov.assigneeIds,
+          // Debug/visibility field (2026-08-21, extended 2026-08-25 to
+          // cover multi-name and group-task cases) — kept alongside the
+          // resolved assigneeId even when nothing on the roster matched.
+          // Purely informational: nothing server-side reads this back, it
+          // only lets the staging UI show what was actually detected when
+          // assigneeId is null — "detected: {ownerRaw} — pick assignee",
+          // built 2026-08-21, needed no change to cover these new cases.
+          ownerRaw: ov.ownerRaw,
           alreadyDone: t.alreadyDone === true,
-        };
+        }));
       })
       .filter(t => {
         if (scope.isAdmin) return true;
