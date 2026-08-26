@@ -995,6 +995,24 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <button class="btn btn-sm btn-outline" id="dtStatusTabDoneBtn" onclick="setDtStatusTab('done')">Done <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountDone">0</span></button>
             <button class="btn btn-sm btn-outline" id="dtStatusTabAllBtn" onclick="setDtStatusTab('all')">All <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountAll">0</span></button>
           </div>
+          <!-- Duplicate detection + one-click merge (2026-08-26). Never runs
+               automatically — checkDtDuplicates() only ever fires from this
+               button's onclick. See _dtIsSameTask() for the exact matching
+               rule (ported from api/process-transcript.js's admin-side
+               isSameTask()/subjectSimilarity() — deterministic token-
+               overlap, not an LLM). -->
+          <div class="card" style="margin-bottom:14px;">
+            <div class="card-header" style="align-items:center;">
+              <div>
+                <div class="card-title">🔍 Duplicate tasks</div>
+                <div class="card-sub">Scans your own tasks for likely duplicates — nothing merges until you click Merge.</div>
+              </div>
+              <button class="btn btn-sm btn-outline" id="dtCheckDupBtn" onclick="checkDtDuplicates()">Check for duplicates</button>
+            </div>
+            <div class="card-body" id="dt-dup-status" style="display:none;font-size:12px;color:var(--text-mid);"></div>
+            <div class="card-body" id="dt-dup-review-wrap" style="display:none;"></div>
+          </div>
+          <div id="dt-dup-recent-merges"></div>
           <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
           <div style="display:flex;gap:6px;margin-bottom:12px;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
@@ -1388,6 +1406,14 @@ window.addEventListener('pagehide', _flushCloudPush);
 // api/ops-sync.js) — e.g. a member's client edits are restricted server-side
 // to tasks assigned to them, regardless of what this payload contains.
 //
+// Returns {ok, rejected} — this PR (B) needs a real confirmed-by-the-
+// server result for merge/undo/report (never an optimistic "saved" ahead
+// of the round-trip, same data-safety requirement as PR A's editable-
+// text feature, which introduced this exact return-value change first).
+// Duplicated here rather than waited-for because PR B's own actions need
+// it too and PR A hasn't merged yet — identical code, so it reconciles
+// cleanly (no real conflict) whichever PR lands first. Existing callers
+// that ignore the return value are unaffected.
 // Returns {ok, rejected} — added (2026-08-26) so a caller that needs a real
 // confirmed-by-the-server result (task text edits/merges — see
 // saveDtTaskUpdate()) can await this directly instead of the fire-and-
@@ -1501,7 +1527,253 @@ let _dtDetailTaskId = null;
 let _dtParseFileTexts = [];
 
 function _dtGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
-function _dtMyTasks(){ return (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.assigneeId===currentUser?.id); }
+// mergedIntoId (2026-08-26, duplicate-merge feature): a soft-merged-away
+// task is never deleted (no hard delete, no schema migration — see
+// mergeDtDuplicate()) but must be excluded from every view AND count, not
+// just the visible list — this is the one real read-path for this file's
+// task data, so filtering here covers the list, the "New assigned" badge,
+// and the detail-panel lookup all at once. Nothing writes through this
+// function (every write path reads dbGet(DB_KEYS.tasks) directly), so
+// adding a filter here can't accidentally drop a merged-away row from
+// storage.
+function _dtMyTasks(){ return (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.assigneeId===currentUser?.id && !t.mergedIntoId); }
+
+// ── Duplicate detection + one-click merge (2026-08-26) ──
+// Matching rule ported verbatim from api/process-transcript.js's admin-
+// side isSameTask()/subjectSimilarity() — the SAME rule the admin's own
+// parse-time dedup already uses: deterministic Jaccard token-overlap on
+// the subject (stopword-filtered) >=0.6, plus same client. Confirmed
+// rule-based, not an LLM. assigneeId is kept in the comparison for exact
+// parity even though it's always true within this scope (every task
+// _dtMyTasks() returns already belongs to this employee).
+const DT_STOPWORDS = new Set(['a','an','the','to','for','of','on','in','and','or','with','is','are','be','this','that']);
+function _dtSubjectTokens(subject){
+  return String(subject||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w && !DT_STOPWORDS.has(w));
+}
+function _dtSubjectSimilarity(a,b){
+  const ta=new Set(_dtSubjectTokens(a)), tb=new Set(_dtSubjectTokens(b));
+  if(!ta.size || !tb.size) return 0;
+  let overlap=0;
+  for(const w of ta) if(tb.has(w)) overlap++;
+  return overlap / new Set([...ta,...tb]).size;
+}
+const DT_SUBJECT_SIMILARITY_THRESHOLD = 0.6;
+function _dtIsSameTask(a,b){
+  if((a.clientId||null) !== (b.clientId||null)) return false;
+  if((a.assigneeId||null) !== (b.assigneeId||null)) return false;
+  return _dtSubjectSimilarity(a.subject, b.subject) >= DT_SUBJECT_SIMILARITY_THRESHOLD;
+}
+
+// Never runs on load/timer — only ever called from checkDtDuplicates()'s
+// own onclick. Scans every NOT-Done, not-already-merged-away task the
+// employee owns (their full set, regardless of which status tab/category
+// filter happens to be active right now — a duplicate can easily span two
+// different displayed filters, e.g. one Not Started and one In Progress).
+// A Done task is never a match candidate, same as admin's own rule
+// ("stopping a still-open item from doubling, not reopening finished
+// work"). Greedy pairing: each task can be primary (kept) or duplicate
+// (folds in) of at most one pair per scan.
+function _dtFindDuplicatePairs(){
+  const candidates = _dtMyTasks().filter(t=>t.status!=='Done')
+    .slice()
+    .sort((a,b)=>(a.assignedDate||a.createdAt||'').localeCompare(b.assignedDate||b.createdAt||''));
+  const claimed = new Set();
+  const pairs = [];
+  for(let i=0;i<candidates.length;i++){
+    const primary = candidates[i];
+    if(claimed.has(primary.id)) continue;
+    for(let j=i+1;j<candidates.length;j++){
+      const other = candidates[j];
+      if(claimed.has(other.id)) continue;
+      if(_dtIsSameTask(primary, other)){
+        pairs.push({ primaryId: primary.id, duplicateId: other.id });
+        claimed.add(primary.id); claimed.add(other.id);
+        break;
+      }
+    }
+  }
+  return pairs;
+}
+
+let _dtDupPairs = [];
+function checkDtDuplicates(){
+  _dtDupPairs = _dtFindDuplicatePairs();
+  _renderDtDuplicateReview();
+}
+
+function dismissDtDupPair(primaryId, duplicateId){
+  _dtDupPairs = _dtDupPairs.filter(p=>!(p.primaryId===primaryId && p.duplicateId===duplicateId));
+  _renderDtDuplicateReview();
+}
+
+function _renderDtDuplicateReview(){
+  const statusEl = document.getElementById('dt-dup-status');
+  const wrap = document.getElementById('dt-dup-review-wrap');
+  if(!statusEl || !wrap) return;
+  if(!_dtDupPairs.length){
+    statusEl.style.display = '';
+    statusEl.textContent = 'No likely duplicates found.';
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+  statusEl.style.display = 'none';
+  wrap.style.display = '';
+  const tasks = _dtMyTasks();
+  const byId = id => tasks.find(t=>t.id===id);
+  wrap.innerHTML = _dtDupPairs.map(p=>{
+    const primary = byId(p.primaryId), dup = byId(p.duplicateId);
+    if(!primary || !dup) return '';
+    const willFillDue = !primary.dueDate && dup.dueDate;
+    const willEscalateDone = primary.status!=='Done' && dup.status==='Done';
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:8px;">These two look like the same task:</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;color:var(--green,#2e9e6e);text-transform:uppercase;">Keep</div>
+          <div style="font-weight:600;">${escHtmlUser(primary.subject||'')}</div>
+          <div style="font-size:11px;color:var(--text-light);">${escHtmlUser(primary.clientName||'—')} · Due ${primary.dueDate||'—'} · ${primary.status||'Not started'}</div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;color:var(--red,#c94a4a);text-transform:uppercase;">Merges in</div>
+          <div style="font-weight:600;">${escHtmlUser(dup.subject||'')}</div>
+          <div style="font-size:11px;color:var(--text-light);">${escHtmlUser(dup.clientName||'—')} · Due ${dup.dueDate||'—'} · ${dup.status||'Not started'}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:10px;">
+        Notes will be combined${dup.tags&&dup.tags.length?', tags combined':''}${willFillDue?', due date filled in from the other task':''}${willEscalateDone?', status set to Done':''}.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="mergeDtDuplicate('${p.primaryId}','${p.duplicateId}')">✅ Merge</button>
+        <button class="btn btn-sm btn-outline" onclick="reportDtDuplicate('${p.primaryId}','${p.duplicateId}')">🚩 Report instead</button>
+        <button class="btn btn-sm btn-outline" onclick="dismissDtDupPair('${p.primaryId}','${p.duplicateId}')">Not a duplicate</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// One-click merge — non-destructive: the duplicate is never deleted, only
+// marked (mergedIntoId), same "combine into one record, preserve the
+// merged content, allow undo" requirement as the data-safety rules for
+// this feature. Additive-only onto the kept (primary) task — same narrow
+// rule the parser's own existing merge-into-an-existing-task path already
+// uses: notes appended, tags unioned, due date filled ONLY if missing,
+// status escalated to Done only if either side was Done. Confirmed by the
+// server before showing success, same as saveDtTaskUpdate() — both tasks
+// revert together on any rejection/failure, never a half-applied merge.
+let _dtRecentMerges = [];
+async function mergeDtDuplicate(primaryId, duplicateId){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const primary = tasks.find(t=>t.id===primaryId);
+  const dup = tasks.find(t=>t.id===duplicateId);
+  if(!primary || !dup) return;
+  const primarySnapshot = { notes: primary.notes, tags: (primary.tags||[]).slice(), dueDate: primary.dueDate, status: primary.status, completedAt: primary.completedAt };
+  const dupPrevMergedIntoId = dup.mergedIntoId;
+  if(dup.notes) primary.notes = primary.notes ? `${primary.notes}\n${dup.notes}` : dup.notes;
+  primary.tags = [...new Set([...(primary.tags||[]), ...(dup.tags||[])])];
+  if(!primary.dueDate && dup.dueDate) primary.dueDate = dup.dueDate;
+  if(dup.status==='Done' && primary.status!=='Done'){
+    primary.completedAt = _dtCompletedAt(primary.status||'Not started', 'Done', primary.completedAt);
+    primary.status = 'Done';
+  }
+  dup.mergedIntoId = primaryId;
+  dbSet(DB_KEYS.tasks, tasks);
+  const result = await cloudPushData();
+  const rejected = result.rejected.some(r=>r.table==='tasks' && (r.id===primaryId || r.id===duplicateId));
+  if(!result.ok || rejected){
+    Object.assign(primary, primarySnapshot);
+    dup.mergedIntoId = dupPrevMergedIntoId;
+    dbSet(DB_KEYS.tasks, tasks);
+    showToast('❌ Could not merge — try again');
+    return;
+  }
+  _dtRecentMerges.unshift({ duplicateId, primaryId, primarySnapshot });
+  _dtRecentMerges = _dtRecentMerges.slice(0,10);
+  _dtDupPairs = _dtDupPairs.filter(p=>p.duplicateId!==duplicateId);
+  _renderDtDuplicateReview();
+  _renderDtRecentMerges();
+  renderDailyTasks();
+  showToast('Merged ✓');
+}
+
+function _renderDtRecentMerges(){
+  const wrap = document.getElementById('dt-dup-recent-merges');
+  if(!wrap) return;
+  if(!_dtRecentMerges.length){ wrap.innerHTML=''; return; }
+  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent merges (this session)</div>` +
+    _dtRecentMerges.map(m=>{
+      const dup = (dbGet(DB_KEYS.tasks)||[]).find(t=>t.id===m.duplicateId);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
+        <span>Merged "${escHtmlUser(dup?.subject||'')}"</span>
+        <button class="btn btn-xs btn-outline" onclick="undoDtMerge('${m.duplicateId}')">↩ Undo this merge</button>
+      </div>`;
+    }).join('');
+}
+
+// Undo — session-only, same precedent as the existing "Undo this import"
+// feature (a small in-memory list of recent reversible actions, not a
+// permanently-available history). Reverses the primary's fields back to
+// their pre-merge snapshot and unhides the duplicate. Deliberately does
+// NOT try to surgically un-append text on the primary if it was edited
+// again since the merge — the exact same "out of scope, not attempted"
+// call already made for the parser's own parse-time merge undo.
+async function undoDtMerge(duplicateId){
+  const entry = _dtRecentMerges.find(m=>m.duplicateId===duplicateId);
+  if(!entry) return;
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const primary = tasks.find(t=>t.id===entry.primaryId);
+  const dup = tasks.find(t=>t.id===duplicateId);
+  if(!primary || !dup) return;
+  const primaryBeforeUndo = { notes: primary.notes, tags: (primary.tags||[]).slice(), dueDate: primary.dueDate, status: primary.status, completedAt: primary.completedAt };
+  const dupMergedIntoIdBeforeUndo = dup.mergedIntoId;
+  Object.assign(primary, entry.primarySnapshot);
+  dup.mergedIntoId = null;
+  dbSet(DB_KEYS.tasks, tasks);
+  const result = await cloudPushData();
+  const rejected = result.rejected.some(r=>r.table==='tasks' && (r.id===entry.primaryId || r.id===duplicateId));
+  if(!result.ok || rejected){
+    Object.assign(primary, primaryBeforeUndo);
+    dup.mergedIntoId = dupMergedIntoIdBeforeUndo;
+    dbSet(DB_KEYS.tasks, tasks);
+    showToast('❌ Could not undo — try again');
+    return;
+  }
+  _dtRecentMerges = _dtRecentMerges.filter(m=>m.duplicateId!==duplicateId);
+  _renderDtRecentMerges();
+  renderDailyTasks();
+  showToast('Merge undone ✓');
+}
+
+// Report-duplication fallback (fully new — nothing like it existed on
+// either side before this feature). Flags both tasks so an admin can see
+// them (index.html's Task Assignments list renders a badge for
+// duplicateReported — see _renderTaListTable()) rather than silently
+// doing nothing; the employee isn't required to be sure enough to merge
+// it themselves.
+async function reportDtDuplicate(primaryId, duplicateId){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const a = tasks.find(t=>t.id===primaryId);
+  const b = tasks.find(t=>t.id===duplicateId);
+  if(!a || !b) return;
+  const nowIso = new Date().toISOString();
+  const prevA = { duplicateReported: a.duplicateReported, duplicateReportedAt: a.duplicateReportedAt };
+  const prevB = { duplicateReported: b.duplicateReported, duplicateReportedAt: b.duplicateReportedAt };
+  a.duplicateReported = true; a.duplicateReportedAt = nowIso;
+  b.duplicateReported = true; b.duplicateReportedAt = nowIso;
+  dbSet(DB_KEYS.tasks, tasks);
+  const result = await cloudPushData();
+  const rejected = result.rejected.some(r=>r.table==='tasks' && (r.id===primaryId || r.id===duplicateId));
+  if(!result.ok || rejected){
+    Object.assign(a, prevA); Object.assign(b, prevB);
+    dbSet(DB_KEYS.tasks, tasks);
+    showToast('❌ Could not report — try again');
+    return;
+  }
+  _dtDupPairs = _dtDupPairs.filter(p=>!(p.primaryId===primaryId && p.duplicateId===duplicateId));
+  _renderDtDuplicateReview();
+  showToast('Reported to your admin ✓');
+}
+
 function _dtToday(){ return new Date().toISOString().slice(0,10); }
 // Same shared wl_clients_db this file already reads elsewhere (My
 // Assignments/My Work — see _ASSIGN_CL_KEY below) — no DB_KEYS.clients

@@ -3886,6 +3886,206 @@ here. Every other pre-existing Task Assignments/Daily Tasks suite
 (staging, merge, schedule tab, date-lock, undo-import, assigned-date) was
 re-run and passed unchanged.
 
+**Employee task editing, delete removal, and admin-grade duplicate
+detection/merge — "User (My Work) tasks" batch, split into two PRs
+(2026-08-26).** Sarah's request had four parts touching `ops_tasks`
+(confirmed the actual target — see the "My Work" ambiguity note below —
+not `client.html`'s separate admin-only My Work tab, not the unrelated
+Roadmap-task dedup): employees can edit a task's text but not delete it,
+and the employee side gets the same duplicate-detection quality the admin
+parser already has, with one-click merge instead of just "report." Data-
+safety rules were explicit and binding: no auto-merge on load (the exact
+load-time-diff pattern rule #2 already bans), merge must be additive/
+non-destructive/undoable, and writes must be server-confirmed before the
+UI shows success — no optimistic "saved."
+
+**"My Work" ambiguity, resolved by investigation before writing anything,
+confirmed with Sarah rather than guessed (rule #7):** three separate "task"
+systems exist in this codebase. `user.html`'s Daily Tasks (`ops_tasks` —
+literally named "My Work" until the 2026-08-24 rename to "My Services"/
+"My Tasks," see that entry above) was confirmed as the real target.
+`client.html` has its own separate, unrelated, admin-only-gated "My Work"
+tab (flagged out of scope in the 2026-08-24 entry above too). Admin's
+Roadmap tab has its own independent `_rmIsSimilar()` dedupe, also
+unrelated. Admin's real duplicate-detection engine — the thing this task
+asks to bring to the employee side — lives in `api/process-transcript.js`:
+`isSameTask()`/`subjectSimilarity()`/`subjectTokens()`/`STOPWORDS`,
+confirmed by reading it (not assumed) to be **deterministic rule-based JS,
+not an LLM call** — same client AND same assignee AND a stopword-filtered
+Jaccard token-overlap similarity ≥0.6 on the subject.
+
+**PR A — editable task text + delete removal (`api/ops-sync.js` +
+`user.html`).** `subject` removed from `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` —
+still scoped by the pre-existing ownership check right above that list
+(`cur.assigneeId !== session.id` → rejected), so a member can only ever
+edit the subject of a task already assigned to them. Confirmed with Sarah
+that "the task text" means subject + notes together (notes was already
+member-editable). `openDtDetailPanel()`'s subject changed from a static
+`<div>` to a real `<input>`; `saveDtTaskUpdate()` rewritten to an `async`
+function that `await`s `cloudPushData()` directly (bypassing the normal
+2s-debounced `_scheduleCloudPush()` fire-and-forget path) — shows
+"Saving…" on the save button, reverts both the in-memory task AND the
+visible input on a server rejection/network failure, and only closes the
+panel/toasts success once the round-trip actually confirms — satisfying
+the "server-confirmed before UI shows success" rule literally, not just
+optimistically. `cloudPushData()` changed to return `{ok, rejected}` at
+every exit point (previously implicit `undefined`) so a caller can await
+and branch on the real result — additive, no existing call site broken.
+Delete removed entirely, not just hidden: `_dtDeleteTask()`,
+`deleteDtTaskInline()`, `deleteDtTaskFromPanel()`, and both their UI call
+sites (inline row ✕ button + its `<td>`, the header's matching `<th>`)
+deleted outright, per rule #6's "remove the tool, not just its call site."
+No server-side delete permission needed removing — a member's
+`tombstones.taskIds` scope was already narrowed to self-created-only in
+an earlier session task (2026-08-21); this PR just removes the client-side
+button that reached it, closing the same UI-still-there-server-rejects gap
+already flagged (but not fixed) back then.
+
+Verified: a `node:test --experimental-test-module-mocks` run against the
+real `api/ops-sync.js` (14/14 — a member can now edit the subject of their
+own task, still can't touch anyone else's, `notes` unaffected, and no
+delete path exists for a member regardless of client input) and a
+Playwright run against the real `user.html` UI (16/16 — the subject input
+is real and editable, a save round-trips through a real `ops-sync` call
+before the panel closes, a rejected/failed save reverts the visible text,
+and no delete UI exists anywhere). Pre-existing `verify_dt_delete_inline_
+status.js` updated (its delete-specific assertions superseded by "no
+delete UI exists" checks; unrelated inline-status-dropdown coverage kept)
+— 9/9 after.
+
+**PR B — admin-grade duplicate detection + one-click merge + undo + report
+fallback (`api/ops-sync.js` + `user.html`).** Ports the admin's exact
+`isSameTask()`/`subjectSimilarity()` algorithm to the employee side
+(`_dtSubjectTokens()`/`_dtSubjectSimilarity()`/`_dtIsSameTask()`,
+hand-duplicated per rule #3, byte-equivalent logic — same 0.6 threshold,
+same stopword list, same clientId+assigneeId scoping) — this is a
+genuinely stronger detector than `user.html`'s prior weaker dedup, not a
+cosmetic change. Detection is 100% a click-triggered action
+(`checkDtDuplicates()`, wired to a new "Check for duplicates" button) —
+never runs on page load, never on a timer, exactly the rule #2/data-safety
+requirement: scanning itself fires zero sync calls, only reads already-
+loaded local tasks.
+
+**Merge is additive/non-destructive, never a hard delete — a new
+`mergedIntoId` field, no schema migration needed** (`ops_tasks` is
+`data jsonb`, so this is just another key). `mergeDtDuplicate(primaryId,
+duplicateId)`: notes combined (newline-joined, both preserved in full),
+tags unioned, `dueDate` filled on the primary only if it was empty (never
+overwrites an already-set value — reuses the exact same fill-only
+semantics `dueDate` already has for regular member edits), status
+escalated to Done only if either side already was (stamping `completedAt`
+via the existing `_dtCompletedAt()` helper from an earlier session task),
+and the duplicate gets `mergedIntoId` set — its row is never deleted from
+storage, confirmed both client- and server-side. The review UI
+(`_renderDtDuplicateReview()`) shows the exact before/after — which notes/
+tags/due-date will combine — before the Merge button is ever clickable,
+satisfying "show what will be merged before it happens" literally. Both
+the merge and the undo write via `await cloudPushData()` (the same
+server-confirmed-before-success pattern PR A established), never
+optimistic.
+
+**Undo, modeled directly on the existing "Undo Import" precedent**
+(confirmed with Sarah as the preferred approach over building something
+new): a session-only in-memory `_dtRecentMerges` list (cleared on reload,
+same as `_dtRecentImportBatches`) renders a "Merged X into Y — Undo this
+merge" strip; `undoDtMerge(duplicateId)` reverses the primary task back to
+its pre-merge snapshot and clears the duplicate's `mergedIntoId` — fully
+reversible, confirmed by direct before/after comparison in tests, not just
+that the button exists.
+
+**Report-duplication fallback kept, per the task's explicit ask** — two
+new fields, `duplicateReported`/`duplicateReportedAt`, set on both tasks
+via `reportDtDuplicate()` (also `await cloudPushData()`-confirmed); a
+small "🚩 Possible duplicate" badge added to `_renderTaListTable()`
+(admin's Task Assignments list) so a report is actually visible to an
+admin somewhere, not just silently stored. Neither `mergedIntoId`,
+`duplicateReported`, nor `duplicateReportedAt` needed adding to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` — a member legitimately needs to write
+all three on their own tasks for this feature to work, same as `notes`/
+`tags`/`status`/`blockReason`/`completedAt` already are.
+
+**Real, previously-unknown bug found and fixed while building this, not
+part of the original ask:** the parser's own pre-existing merge-into-
+existing-task feature (2026-08-19) has always tried to fill a missing
+`dueDate` on the existing task as part of its additive merge — but
+`api/ops-sync.js`'s member-write check compared `dueDate` with the same
+flat equality every other disallowed key uses, so a member's merge (via
+either the parser's auto-merge OR this new feature) filling a previously-
+empty `dueDate` was being silently rejected the whole time. Fixed with a
+`dueDate`-specific fill-only rule in the member-update branch: a member
+may set `dueDate` when it's currently empty, but still can never CHANGE
+an already-set value — mirrors the exact semantics `dueDateLocked`
+already establishes for the admin side, just enforced without needing the
+lock flag on the member path. `verify_ops_sync_date_rules.mjs`'s Test 4
+was re-seeded with a real existing `dueDate` (it had previously seeded an
+empty one, which the fix now correctly allows through) so it still
+exercises the "cannot CHANGE" half — 22/22 after.
+
+**Counts/stats exclusion for merged-away tasks, per Sarah's explicit
+follow-up ("confirm merged-away tasks are excluded from all counts, not
+just the visible list")** — every consumer of `ops_tasks` in both files
+was swept and fixed at its own single choke point, not patched ad hoc per
+view: `user.html`'s `_dtMyTasks()` gained a `&& !t.mergedIntoId` filter
+(confirmed safe — no write path reads back through this function, only
+display/count consumers do). `index.html`'s `_personWorkSummary()` (shared
+by Team Production Analytics, Overview's Team Assessment, and the By
+Person roster), `_taNeedsAttentionBuckets()`, `_taTasksMatchingOtherFilters()`
+(the single funnel behind List/Day/Week/Month/status-tab badge counts),
+and `renderTaPersonRoster()` (needed its own explicit filter since
+`_personAttentionDot()` doesn't filter internally) all gained the same
+exclusion. A merged-away task still exists as a real row — an admin
+opening it directly (e.g. via a stale link) would still see it — but it's
+invisible to every list, count, and stat surface in both portals.
+
+**Cross-PR dependency, documented rather than silently worked around:**
+PR B's branch (`claude/employee-task-duplicate-merge`) was created from
+plain `origin/main`, before PR A merged — but PR B's own merge/undo/report
+actions need PR A's `cloudPushData()` `{ok, rejected}` return-value change
+to work at all (confirmed via a real `PAGEERROR` when it was missing).
+Rather than block on PR A merging first, that one small, byte-identical
+change was duplicated onto PR B's branch too, with an inline comment
+explaining the duplication — expected to reconcile cleanly as a no-op
+diff whichever PR merges first.
+
+Verified: a `node:test --experimental-test-module-mocks` run against the
+real `api/ops-sync.js` (15/15 — dueDate fill-only-on-empty, merge's full
+additive write path including notes/tags/dueDate/status escalation and
+the duplicate's `mergedIntoId` — never deleted server-side — and the
+report-duplicate write path) and a Playwright run against the real
+`user.html` UI (24/24, run three times clean to rule out flakiness — zero
+scan/merge on page load, zero sync calls from scanning alone, the real
+near-duplicate pair detected and the genuinely unrelated task correctly
+NOT flagged, the before-merge preview text, the merge's full additive
+result confirmed both in the pushed request AND server-side storage, the
+merged task disappearing from the visible list, the recent-merges undo
+strip reversing both the primary's data and the duplicate's visibility,
+and the report fallback flagging both tasks without merging/hiding
+either). `node --check` on `api/ops-sync.js`; syntax-checked (`new
+Function()` per extracted `<script>` block) both HTML files — clean;
+div-balance delta unchanged vs. `main` in both (`index.html` −2,
+`user.html` −1); `ls api/*.js | wc -l` still 12 (no new server file).
+Swept every Task Assignments/Daily Tasks/Overview/Team-Production-
+Analytics Playwright suite that touches the functions changed for the
+counts-exclusion fix — all pass clean against this branch, no
+regressions found; two pre-existing failures (`verify_ta_person_view_
+blocked.js`'s stale `#ov-team-assessment` selector, `verify_overview_
+revamp.js`'s stale assertion, both already-documented above) reproduce
+identically against unmodified `main`, confirmed via direct comparison,
+out of scope here. One test-fixture bug (unrelated to this feature) found
+and fixed in the same sweep: `verify_dt_filter_buttons_fix.js` seeded
+`tourFlags.tourSeen.member` — a key the real code has never read (the
+actual field is `tourSeen.employee`/`employeeVer`, established by the
+2026-08-25 tour-reachability work) — so the guided tour would start
+during that test regardless of branch; it happened not to intercept any
+clicks on `main` by timing luck, but did on this branch. Fixed the test's
+seed data to the real field/value; re-runs clean (10/10) on both branches
+after the fix — not a product regression.
+
+**Review gate, per the task's own explicit instruction: neither PR A nor
+PR B may be merged until Sarah has explicitly approved both on their
+Vercel previews** — this touches task data (mutation + permissions), so
+it stays fully manual per rule #10 regardless of how clean verification
+comes back.
 **"User (My Work) tasks" batch, PR A — editable task text + delete
 removed for employees (2026-08-26).** First of two PRs on a request whose
 own wording ("My Work") turned out to be ambiguous — investigated before
