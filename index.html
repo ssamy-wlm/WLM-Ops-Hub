@@ -5074,7 +5074,12 @@ function _activeServicesForAssessment(){
 // field, deliberately NOT Client Health's lastDone-based heuristic — see
 // the fuller history in CLAUDE.md's Overview-revamp entry.
 function _personWorkSummary(person, allTasks, allServices){
-  const tasksForPerson = allTasks.filter(t=>t.assigneeId===person.id);
+  // !t.mergedIntoId (2026-08-26): a soft-merged-away duplicate must be
+  // excluded from every count that flows through here — Team Production
+  // Analytics, Overview's Team Assessment, and the By Person roster all
+  // share this one function specifically so they can never disagree; this
+  // is the single choke point for all three at once.
+  const tasksForPerson = allTasks.filter(t=>t.assigneeId===person.id && !t.mergedIntoId);
   const tasksAssigned = tasksForPerson.length;
   const tasksDone = tasksForPerson.filter(t=>t.status==='Done').length;
   const servicesForPerson = allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
@@ -8416,7 +8421,11 @@ function renderTaPersonRoster(){
     return;
   }
   if(emptyEl) emptyEl.style.display = 'none';
-  const allTasks = _taTasks();
+  // !t.mergedIntoId (2026-08-26) — feeds both _personWorkSummary() (which
+  // also filters internally, redundant-but-harmless here) and
+  // _personAttentionDot() (which does NOT filter internally), so this is
+  // the one place that needs the exclusion for the dot to be correct too.
+  const allTasks = _taTasks().filter(t=>!t.mergedIntoId);
   const allServices = _activeServicesForAssessment();
   const rows = roster.map(person=>{
     const sum = _personWorkSummary(person, allTasks, allServices);
@@ -8447,7 +8456,9 @@ function renderTaPersonRoster(){
 // filter and the Blocked badge already use), so this view can never
 // disagree with what the List view's own filters would show. ──
 function _taNeedsAttentionBuckets(){
-  const tasks = _taTasks();
+  // !t.mergedIntoId (2026-08-26) — a soft-merged-away duplicate must never
+  // surface as a stray Overdue/Blocked/Unassigned item here.
+  const tasks = _taTasks().filter(t=>!t.mergedIntoId);
   return {
     overdue: tasks.filter(t=>_taIsOverdue(t)),
     dueToday: tasks.filter(t=>_taIsDueToday(t)),
@@ -8582,6 +8593,10 @@ function _taTasksMatchingOtherFilters(){
   const client = document.getElementById('taFilterClient')?.value||'';
   const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
   return _taTasks().filter(t=>{
+    // Soft-merged-away duplicate (2026-08-26) — excluded from every view
+    // fed by this single funnel (List/Day/Week/Month/By-Person-drill-in)
+    // and from the status-tab badge counts, which read this same result.
+    if(t.mergedIntoId) return false;
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
     if(assignee && t.assigneeId!==assignee) return false;
     if(client && t.clientId!==client) return false;
@@ -8644,9 +8659,15 @@ function _renderTaListTable(tasks){
     const blocked = t.status==='Blocked';
     const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlAdmin(t.blockReason||'')}">🚧 Blocked</span>` : '';
+    // "Report instead" fallback (2026-08-26, employee duplicate-detection
+    // feature) — an employee who isn't sure enough to merge two tasks
+    // themselves flags them here instead. Purely a visibility badge; no
+    // admin action wired to it beyond opening the task, same weight as
+    // the other read-only badges on this row.
+    const dupReportedBadge = t.duplicateReported ? ' <span style="font-size:10px;background:rgba(217,130,43,.12);border:1px solid rgba(217,130,43,.3);border-radius:4px;padding:1px 5px;color:#d9822b;font-weight:700;" title="Reported as a possible duplicate by the assignee">🚩 Possible duplicate</span>' : '';
     return `<tr class="${isNew?'ta-row-new':''}${blocked?' ta-row-blocked':''}" style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
+        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_taFormatShortDate(t.assignedDate)}`:''}</div>
       </td>
       <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>

@@ -1633,11 +1633,26 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'not your task' });
             continue;
           }
-          const disallowedKey = TASK_KEYS_MEMBER_MAY_NOT_TOUCH.find(
-            key => JSON.stringify(cur[key]) !== JSON.stringify(inc[key])
-          );
+          // dueDate gets its own fill-only rule below, not the flat
+          // compare every other disallowed key uses — a member may FILL a
+          // previously-empty dueDate (needed for the duplicate-merge
+          // feature's "fill the due date only if missing" additive rule)
+          // but never CHANGE one that's already set. Found and fixed
+          // 2026-08-26 while building that feature: the parser's own
+          // existing parse-time merge-into-existing-task path has always
+          // filled a missing dueDate the same way, which means a member's
+          // merge was being silently rejected here before this fix,
+          // despite the UI already showing it as merged.
+          const disallowedKey = TASK_KEYS_MEMBER_MAY_NOT_TOUCH.find(key => {
+            if (key === 'dueDate') return false;
+            return JSON.stringify(cur[key]) !== JSON.stringify(inc[key]);
+          });
           if (disallowedKey) {
             rejected.push({ table: 'tasks', id: inc.id, reason: `members cannot edit tasks.${disallowedKey}` });
+            continue;
+          }
+          if (cur.dueDate && inc.dueDate !== cur.dueDate) {
+            rejected.push({ table: 'tasks', id: inc.id, reason: 'members cannot edit tasks.dueDate' });
             continue;
           }
           row = inc;
