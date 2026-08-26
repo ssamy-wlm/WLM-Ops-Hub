@@ -1406,17 +1406,10 @@ window.addEventListener('pagehide', _flushCloudPush);
 // api/ops-sync.js) — e.g. a member's client edits are restricted server-side
 // to tasks assigned to them, regardless of what this payload contains.
 //
-// Returns {ok, rejected} — this PR (B) needs a real confirmed-by-the-
-// server result for merge/undo/report (never an optimistic "saved" ahead
-// of the round-trip, same data-safety requirement as PR A's editable-
-// text feature, which introduced this exact return-value change first).
-// Duplicated here rather than waited-for because PR B's own actions need
-// it too and PR A hasn't merged yet — identical code, so it reconciles
-// cleanly (no real conflict) whichever PR lands first. Existing callers
-// that ignore the return value are unaffected.
 // Returns {ok, rejected} — added (2026-08-26) so a caller that needs a real
-// confirmed-by-the-server result (task text edits/merges — see
-// saveDtTaskUpdate()) can await this directly instead of the fire-and-
+// confirmed-by-the-server result (task text edits, and the duplicate-merge
+// feature's merge/undo/report actions — see saveDtTaskUpdate()/
+// mergeDtDuplicate()) can await this directly instead of the fire-and-
 // forget debounced _scheduleCloudPush() path every other write here still
 // uses. Existing callers that don't read the return value are unaffected.
 async function cloudPushData(){
