@@ -3886,72 +3886,105 @@ here. Every other pre-existing Task Assignments/Daily Tasks suite
 (staging, merge, schedule tab, date-lock, undo-import, assigned-date) was
 re-run and passed unchanged.
 
-**Employee task editing, delete removal, and admin-grade duplicate
-detection/merge — "User (My Work) tasks" batch, split into two PRs
-(2026-08-26).** Sarah's request had four parts touching `ops_tasks`
-(confirmed the actual target — see the "My Work" ambiguity note below —
-not `client.html`'s separate admin-only My Work tab, not the unrelated
-Roadmap-task dedup): employees can edit a task's text but not delete it,
-and the employee side gets the same duplicate-detection quality the admin
-parser already has, with one-click merge instead of just "report." Data-
-safety rules were explicit and binding: no auto-merge on load (the exact
-load-time-diff pattern rule #2 already bans), merge must be additive/
-non-destructive/undoable, and writes must be server-confirmed before the
-UI shows success — no optimistic "saved."
+**"User (My Work) tasks" batch, PR A — editable task text + delete
+removed for employees (2026-08-26).** First of two PRs on a request whose
+own wording ("My Work") turned out to be ambiguous — investigated before
+writing anything (three separate "task" systems exist in this codebase:
+`user.html`'s Daily Tasks/"My Tasks" — literally called "My Work" until
+its 2026-08-24 rename; `client.html`'s own, separate, `admin-only`-gated
+"My Work" tab for one restricted admin role; and admin-only Roadmap, with
+its own independent `_rmIsSimilar()` dedupe). Admin's real duplicate-
+detection engine — the thing PR B below ports to the employee side — lives
+in `api/process-transcript.js`: `isSameTask()`/`subjectSimilarity()`/
+`subjectTokens()`/`STOPWORDS`, confirmed by reading it (not assumed) to be
+**deterministic rule-based JS, not an LLM call** — same client AND same
+assignee AND a stopword-filtered Jaccard token-overlap similarity ≥0.6 on
+the subject. The cited delete-function line numbers matched `user.html`'s
+`_dtDeleteTask` family exactly, and its detail panel already lacked a
+subject-edit field matching the reported complaint — confirmed with Sarah
+before building rather than guessed. `user.html` + `api/ops-sync.js` only;
+no new file, still 12 under `api/`.
 
-**"My Work" ambiguity, resolved by investigation before writing anything,
-confirmed with Sarah rather than guessed (rule #7):** three separate "task"
-systems exist in this codebase. `user.html`'s Daily Tasks (`ops_tasks` —
-literally named "My Work" until the 2026-08-24 rename to "My Services"/
-"My Tasks," see that entry above) was confirmed as the real target.
-`client.html` has its own separate, unrelated, admin-only-gated "My Work"
-tab (flagged out of scope in the 2026-08-24 entry above too). Admin's
-Roadmap tab has its own independent `_rmIsSimilar()` dedupe, also
-unrelated. Admin's real duplicate-detection engine — the thing this task
-asks to bring to the employee side — lives in `api/process-transcript.js`:
-`isSameTask()`/`subjectSimilarity()`/`subjectTokens()`/`STOPWORDS`,
-confirmed by reading it (not assumed) to be **deterministic rule-based JS,
-not an LLM call** — same client AND same assignee AND a stopword-filtered
-Jaccard token-overlap similarity ≥0.6 on the subject.
+**Editable subject.** The detail panel's subject line was static text;
+now a real `<input>` (`#dt-subject-input`) alongside the existing Notes
+field, required non-empty exactly like every other subject-entry point in
+this app. Server-side, `'subject'` removed from
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` in `api/ops-sync.js` — the pre-existing
+ownership check (`cur.assigneeId !== session.id` → "not your task") right
+above that list already scopes this to only a task assigned to the caller;
+nothing else in the disallow-list changed. Confirmed with Sarah that "the
+task text" means subject + notes together (notes was already
+member-editable).
 
-**PR A — editable task text + delete removal (`api/ops-sync.js` +
-`user.html`).** `subject` removed from `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` —
-still scoped by the pre-existing ownership check right above that list
-(`cur.assigneeId !== session.id` → rejected), so a member can only ever
-edit the subject of a task already assigned to them. Confirmed with Sarah
-that "the task text" means subject + notes together (notes was already
-member-editable). `openDtDetailPanel()`'s subject changed from a static
-`<div>` to a real `<input>`; `saveDtTaskUpdate()` rewritten to an `async`
-function that `await`s `cloudPushData()` directly (bypassing the normal
-2s-debounced `_scheduleCloudPush()` fire-and-forget path) — shows
-"Saving…" on the save button, reverts both the in-memory task AND the
-visible input on a server rejection/network failure, and only closes the
-panel/toasts success once the round-trip actually confirms — satisfying
-the "server-confirmed before UI shows success" rule literally, not just
-optimistically. `cloudPushData()` changed to return `{ok, rejected}` at
-every exit point (previously implicit `undefined`) so a caller can await
-and branch on the real result — additive, no existing call site broken.
-Delete removed entirely, not just hidden: `_dtDeleteTask()`,
-`deleteDtTaskInline()`, `deleteDtTaskFromPanel()`, and both their UI call
-sites (inline row ✕ button + its `<td>`, the header's matching `<th>`)
-deleted outright, per rule #6's "remove the tool, not just its call site."
-No server-side delete permission needed removing — a member's
-`tombstones.taskIds` scope was already narrowed to self-created-only in
-an earlier session task (2026-08-21); this PR just removes the client-side
-button that reached it, closing the same UI-still-there-server-rejects gap
-already flagged (but not fixed) back then.
+**Data-safety requirement, confirmed by re-reading the actual write path
+before implementing:** edits must be confirmed by the server before the
+UI shows success — no optimistic "saved" ahead of the round-trip.
+`saveDtTaskUpdate()` used to fire the app-wide 2s-debounced
+`_scheduleCloudPush()` and immediately close the panel/toast success —
+exactly the violation this rule targets. `cloudPushData()` (the function
+that debounced call eventually invokes) already awaited its own fetch and
+handled `rejected` internally, but never returned anything for a caller
+to inspect — it now returns `{ok, rejected}`, a purely additive change
+every other existing caller (which all ignore the return value) is
+unaffected by. `saveDtTaskUpdate()` is now async: pushes immediately via
+`cloudPushData()` (not the debounced path), disables/relabels the Save
+button to "Saving…" for the duration, and only closes the panel + shows
+"Task updated ✓" once the response confirms this specific task id wasn't
+rejected. A rejection or network failure reverts BOTH the in-memory task
+object AND the visible form inputs back to their last-confirmed values —
+found and fixed while building this: an earlier draft only reverted the
+data, leaving the input fields still showing the rejected attempt even
+though the underlying record had rolled back. Scoped deliberately to just
+this action — the pre-existing debounced pattern everywhere else in this
+file (status-dropdown changes, staging commits, etc.) is untouched, since
+the data-safety rule was specific to "edits and merges" (this feature),
+not a mandate to rearchitect the app's whole sync model.
 
-Verified: a `node:test --experimental-test-module-mocks` run against the
-real `api/ops-sync.js` (14/14 — a member can now edit the subject of their
-own task, still can't touch anyone else's, `notes` unaffected, and no
-delete path exists for a member regardless of client input) and a
-Playwright run against the real `user.html` UI (16/16 — the subject input
-is real and editable, a save round-trips through a real `ops-sync` call
-before the panel closes, a rejected/failed save reverts the visible text,
-and no delete UI exists anywhere). Pre-existing `verify_dt_delete_inline_
-status.js` updated (its delete-specific assertions superseded by "no
-delete UI exists" checks; unrelated inline-status-dropdown coverage kept)
-— 9/9 after.
+**Delete removed for employees.** `_dtDeleteTask()`/`deleteDtTaskInline()`/
+`deleteDtTaskFromPanel()` and both UI call sites (the list row's ✕
+button, the detail panel's Delete button, plus the now-empty trailing
+table column and its `<th>`) are deleted outright, not hidden — per rule
+#6's "remove the tool, don't leave a standing capability with no UI path
+to it." **Confirmed with Sarah rather than assumed:** `api/ops-sync.js`'s
+`tombstones.taskIds` member permission (self-created-only,
+`assignedById===session.id` — already the narrowest form after the
+2026-08-21 scope-narrowing entry above) is deliberately left AS-IS, not
+tightened to admin-only, because "Undo this import"
+(`undoDtStagedImportBatch()`/`undoDtCommittedImportBatch()`, reversing a
+batch the employee themselves just committed via parsing, same session)
+depends on that exact server path and was explicitly kept working. With
+the general Delete UI gone, that already-narrow permission is never
+reachable except through Undo Import, so "employees can't delete tasks"
+as a general capability is fully delivered without breaking the one
+safety-net action kept.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (14/14) — a member can now edit subject (alone or
+combined with notes/status in one write) on their own task; still cannot
+touch a task assigned to someone else (unchanged "not your task"
+rejection); still cannot change `dueDate` on their own task (regression
+check that removing `subject` from the disallow-list didn't loosen
+anything else); the self-created-only tombstone delete path still works
+for Undo Import; a member still cannot delete a task merely assigned to
+them but created by someone else. (2) A new Playwright suite against the
+real `user.html` UI (16/16) — subject renders as a real input carrying
+the current value; no delete button anywhere (list row or detail panel);
+a blank-subject save is refused with no sync call; the Save button shows
+"Saving…" while a (deliberately delayed, in the test) mocked round-trip
+is in flight — proving the UI isn't declaring success ahead of the
+server; the panel only closes and toasts success once the round-trip
+resolves; the edit survives a reload; and a server-rejected save reverts
+both the stored task AND the visible form inputs, with the panel staying
+open rather than showing false success. One pre-existing suite
+(`verify_dt_delete_inline_status.js`) had its now-superseded delete
+sections replaced with positive "no delete UI exists" assertions (its
+unrelated inline-status-dropdown coverage was untouched) — re-runs 9/9.
+`verify_task_undo_new_user.js` (Undo Import, 14/14) and the full
+pre-existing `ops_tasks`/date-rules/delete-permission-scope Node suites
+re-run clean, confirming Undo Import and every other write path are
+unaffected. `node --check` passed; div-balance on `user.html` unchanged
+vs. `main` (−1); `ls api/*.js | wc -l` still 12. **Merged 2026-08-26.**
 
 **PR B — admin-grade duplicate detection + one-click merge + undo + report
 fallback (`api/ops-sync.js` + `user.html`).** Ports the admin's exact
@@ -4081,124 +4114,19 @@ clicks on `main` by timing luck, but did on this branch. Fixed the test's
 seed data to the real field/value; re-runs clean (10/10) on both branches
 after the fix — not a product regression.
 
-**Review gate, per the task's own explicit instruction: neither PR A nor
-PR B may be merged until Sarah has explicitly approved both on their
-Vercel previews** — this touches task data (mutation + permissions), so
-it stays fully manual per rule #10 regardless of how clean verification
-comes back.
-**"User (My Work) tasks" batch, PR A — editable task text + delete
-removed for employees (2026-08-26).** First of two PRs on a request whose
-own wording ("My Work") turned out to be ambiguous — investigated before
-writing anything (three separate "task" systems exist in this codebase:
-`user.html`'s Daily Tasks/"My Tasks" — literally called "My Work" until
-its 2026-08-24 rename; `client.html`'s own, separate, `admin-only`-gated
-"My Work" tab for one restricted admin role; and admin-only Roadmap). The
-cited delete-function line numbers matched `user.html`'s `_dtDeleteTask`
-family exactly, and its detail panel already lacked a subject-edit field
-matching the reported complaint — confirmed with Sarah before building
-rather than guessed. `user.html` + `api/ops-sync.js` only; no new file,
-still 12 under `api/`.
-
-**Editable subject.** The detail panel's subject line was static text;
-now a real `<input>` (`#dt-subject-input`) alongside the existing Notes
-field, required non-empty exactly like every other subject-entry point in
-this app. Server-side, `'subject'` removed from
-`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` in `api/ops-sync.js` — the pre-existing
-ownership check (`cur.assigneeId !== session.id` → "not your task") right
-above that list already scopes this to only a task assigned to the caller;
-nothing else in the disallow-list changed.
-
-**Data-safety requirement, confirmed by re-reading the actual write path
-before implementing:** edits must be confirmed by the server before the
-UI shows success — no optimistic "saved" ahead of the round-trip.
-`saveDtTaskUpdate()` used to fire the app-wide 2s-debounced
-`_scheduleCloudPush()` and immediately close the panel/toast success —
-exactly the violation this rule targets. `cloudPushData()` (the function
-that debounced call eventually invokes) already awaited its own fetch and
-handled `rejected` internally, but never returned anything for a caller
-to inspect — it now returns `{ok, rejected}`, a purely additive change
-every other existing caller (which all ignore the return value) is
-unaffected by. `saveDtTaskUpdate()` is now async: pushes immediately via
-`cloudPushData()` (not the debounced path), disables/relabels the Save
-button to "Saving…" for the duration, and only closes the panel + shows
-"Task updated ✓" once the response confirms this specific task id wasn't
-rejected. A rejection or network failure reverts BOTH the in-memory task
-object AND the visible form inputs back to their last-confirmed values —
-found and fixed while building this: an earlier draft only reverted the
-data, leaving the input fields still showing the rejected attempt even
-though the underlying record had rolled back. Scoped deliberately to just
-this action — the pre-existing debounced pattern everywhere else in this
-file (status-dropdown changes, staging commits, etc.) is untouched, since
-the data-safety rule was specific to "edits and merges" (this feature),
-not a mandate to rearchitect the app's whole sync model.
-
-**Delete removed for employees.** `_dtDeleteTask()`/`deleteDtTaskInline()`/
-`deleteDtTaskFromPanel()` and both UI call sites (the list row's ✕
-button, the detail panel's Delete button, plus the now-empty trailing
-table column and its `<th>`) are deleted outright, not hidden — per rule
-#6's "remove the tool, don't leave a standing capability with no UI path
-to it." **Confirmed with Sarah rather than assumed:** `api/ops-sync.js`'s
-`tombstones.taskIds` member permission (self-created-only,
-`assignedById===session.id` — already the narrowest form after the
-2026-08-21 scope-narrowing entry above) is deliberately left AS-IS, not
-tightened to admin-only, because "Undo this import"
-(`undoDtStagedImportBatch()`/`undoDtCommittedImportBatch()`, reversing a
-batch the employee themselves just committed via parsing, same session)
-depends on that exact server path and was explicitly kept working. With
-the general Delete UI gone, that already-narrow permission is never
-reachable except through Undo Import, so "employees can't delete tasks"
-as a general capability is fully delivered without breaking the one
-safety-net action kept.
-
-Verified two ways, no live DB access (rule #11): (1) a `node:test
---experimental-test-module-mocks` run against the real, byte-identical
-`api/ops-sync.js` (14/14) — a member can now edit subject (alone or
-combined with notes/status in one write) on their own task; still cannot
-touch a task assigned to someone else (unchanged "not your task"
-rejection); still cannot change `dueDate` on their own task (regression
-check that removing `subject` from the disallow-list didn't loosen
-anything else); the self-created-only tombstone delete path still works
-for Undo Import; a member still cannot delete a task merely assigned to
-them but created by someone else. (2) A new Playwright suite against the
-real `user.html` UI (16/16) — subject renders as a real input carrying
-the current value; no delete button anywhere (list row or detail panel);
-a blank-subject save is refused with no sync call; the Save button shows
-"Saving…" while a (deliberately delayed, in the test) mocked round-trip
-is in flight — proving the UI isn't declaring success ahead of the
-server; the panel only closes and toasts success once the round-trip
-resolves; the edit survives a reload; and a server-rejected save reverts
-both the stored task AND the visible form inputs, with the panel staying
-open rather than showing false success. One pre-existing suite
-(`verify_dt_delete_inline_status.js`) had its now-superseded delete
-sections replaced with positive "no delete UI exists" assertions (its
-unrelated inline-status-dropdown coverage was untouched) — re-runs 9/9.
-`verify_task_undo_new_user.js` (Undo Import, 14/14) and the full
-pre-existing `ops_tasks`/date-rules/delete-permission-scope Node suites
-re-run clean, confirming Undo Import and every other write path are
-unaffected. `node --check` passed; div-balance on `user.html` unchanged
-vs. `main` (−1); `ls api/*.js | wc -l` still 12.
-
-**PR B (duplicate detection + one-click merge + report fallback) is a
-separate, not-yet-built follow-up** — see the plan agreed with Sarah
-before this PR started: port the admin's real, already-confirmed-
-rule-based (not an LLM) `isSameTask()`/`subjectSimilarity()` dedup logic
-from `api/process-transcript.js` client-side into `user.html` as an
-explicit-click-only "Check for duplicates" scan (never on load) over the
-employee's own tasks; one-click merge via a new `mergedIntoId` soft-merge
-field (no hard delete, no schema migration) with undo; a
-"report duplication" fallback (fully new — nothing like it exists on
-either side today); and a fix to a genuine pre-existing bug found while
-planning this — a member's merge that fills a previously-empty `dueDate`
-is silently rejected server-side today, since `dueDate` is in
-`TASK_KEYS_MEMBER_MAY_NOT_TOUCH` with no fill-only exception. Merged-away
-tasks must be excluded from every count, not just the visible list — the
-specific choke points identified: `_taTasksMatchingOtherFilters()`,
-`_taNeedsAttentionBuckets()`, and `_personWorkSummary()` in `index.html`
-(the last one alone covers Team Production Analytics, Overview's Team
-Assessment, and the By Person roster, since all three already share it),
-plus the `allTasks` `_personAttentionDot()` reads from in the By Person
-roster; and `_dtMyTasks()` in `user.html` (confirmed, via a full grep, to
-be the only real stats consumer of `ops_tasks` in that file).
+**Review gate, per the task's own explicit instruction: neither PR held
+until Sarah's explicit approval on the Vercel preview** — this touches
+task data (mutation + permissions), so it stayed fully manual per rule
+#10 regardless of how clean verification came back. **PR A approved and
+merged 2026-08-26.** PR B's branch predated that merge, so once PR A
+landed on `main` it developed a real merge conflict exactly where
+expected (the duplicated `cloudPushData()` change, documented in PR B's
+own entry above) — resolved by merging `main` into PR B's branch,
+keeping the code identical (it already was) and consolidating the CLAUDE.md
+wording to describe what actually shipped rather than the "duplicated
+because PR A hasn't merged yet" framing, which no longer applied. PR B
+itself still holds for its own separate approval on its own preview
+before merge.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
