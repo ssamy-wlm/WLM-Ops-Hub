@@ -281,8 +281,14 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // `status` (already allowed) and `blockReason` together in the same
 // request; treating blockReason like status/notes/tags here is what makes
 // that possible without any other server change.
+// 'subject' removed 2026-08-26 (employee task-text-editing feature) — the
+// task title/name is now editable by the assigned employee, same as
+// notes/tags already were. Still scoped by the ownership check right above
+// this list (cur.assigneeId !== session.id -> "not your task") — a member
+// can only ever edit the subject of a task already assigned to them, never
+// anyone else's.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
-  'subject', 'clientId', 'clientName', 'assigneeId', 'assignedById',
+  'clientId', 'clientName', 'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate',
 ];

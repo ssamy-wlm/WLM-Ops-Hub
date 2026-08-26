@@ -1028,7 +1028,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
                       <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
-                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);"></th>
                     </tr>
                   </thead>
                   <tbody id="dtTableBody"></tbody>
@@ -1415,6 +1414,11 @@ window.addEventListener('pagehide', _flushCloudPush);
 // it too and PR A hasn't merged yet — identical code, so it reconciles
 // cleanly (no real conflict) whichever PR lands first. Existing callers
 // that ignore the return value are unaffected.
+// Returns {ok, rejected} — added (2026-08-26) so a caller that needs a real
+// confirmed-by-the-server result (task text edits/merges — see
+// saveDtTaskUpdate()) can await this directly instead of the fire-and-
+// forget debounced _scheduleCloudPush() path every other write here still
+// uses. Existing callers that don't read the return value are unaffected.
 async function cloudPushData(){
   const token = _opsToken();
   if(!token) return {ok:false, rejected:[]};
@@ -1985,9 +1989,6 @@ function _renderDtListTable(tasks){
           ${DT_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
         </select>
       </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
-        <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);" title="Delete task" onclick="deleteDtTaskInline('${t.id}')">✕</button>
-      </td>
     </tr>`;
   }).join('');
 }
@@ -2043,7 +2044,8 @@ function openDtDetailPanel(id){
   }catch(e){}
   const body = document.getElementById('dtDetailBody');
   body.innerHTML = `
-    <div style="font-weight:700;font-size:15px;margin-bottom:10px;">${escHtmlUser(t.subject||'')}</div>
+    <label class="form-label">Task</label>
+    <input class="form-input" id="dt-subject-input" style="font-weight:700;font-size:15px;margin-bottom:12px;">
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
       <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
@@ -2061,10 +2063,10 @@ function openDtDetailPanel(id){
     <label class="form-label" style="margin-top:10px;">Notes</label>
     <textarea class="form-input" id="dt-notes-input" rows="3"></textarea>
     <div style="display:flex;gap:8px;margin-top:12px;">
-      <button class="btn btn-primary btn-sm" style="flex:1;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
-      <button class="btn btn-outline btn-sm" style="color:var(--red,#c94a4a);border-color:var(--red,#c94a4a);" onclick="deleteDtTaskFromPanel('${t.id}')">🗑 Delete</button>
+      <button class="btn btn-primary btn-sm" id="dt-save-btn" style="flex:1;" onclick="saveDtTaskUpdate('${t.id}')">Save</button>
     </div>
   `;
+  document.getElementById('dt-subject-input').value = t.subject || '';
   document.getElementById('dt-status-select').value = t.status || 'Not started';
   document.getElementById('dt-block-reason-input').value = t.blockReason || '';
   _dtToggleBlockReasonField();
@@ -2081,18 +2083,33 @@ function closeDtDetailPanel(){
   _dtDetailTaskId = null;
 }
 
-// A member may only ever touch status/notes/tags on a task already
+// A member may only ever touch subject/status/notes/tags on a task already
 // assigned to them — server-enforced (api/ops-sync.js's
-// TASK_KEYS_MEMBER_MAY_NOT_TOUCH), this is just the matching client-side
-// form. Every other field is sent back UNCHANGED from the existing local
-// copy so the update never accidentally looks like it touched anything else.
-function saveDtTaskUpdate(id){
+// TASK_KEYS_MEMBER_MAY_NOT_TOUCH, which 'subject' was removed from
+// 2026-08-26 specifically so this panel's new subject field can save),
+// this is just the matching client-side form. Every other field is sent
+// back UNCHANGED from the existing local copy so the update never
+// accidentally looks like it touched anything else.
+//
+// Data-safety requirement (2026-08-26): this write must be confirmed by
+// the server before the UI shows success — never an optimistic "saved"
+// ahead of the round-trip. Every other write in this file still uses the
+// fire-and-forget 2s-debounced _scheduleCloudPush() (unchanged, out of
+// scope here); this specific action pushes immediately via cloudPushData()
+// and awaits its real result before closing the panel or toasting
+// success. The Save button disables/relabels for the duration so a
+// double-click can't fire two overlapping pushes.
+async function saveDtTaskUpdate(id){
   const tasks = dbGet(DB_KEYS.tasks)||[];
   const t = tasks.find(x=>x.id===id);
   if(!t) return;
+  const subject = document.getElementById('dt-subject-input').value.trim();
+  if(!subject){ showToast('Subject is required'); return; }
   const status = document.getElementById('dt-status-select').value;
   const blockReason = document.getElementById('dt-block-reason-input').value.trim();
   if(status==='Blocked' && !blockReason){ showToast('A reason is required when status is Blocked'); return; }
+  const prevSubject = t.subject, prevStatus = t.status, prevBlockReason = t.blockReason, prevNotes = t.notes, prevCompletedAt = t.completedAt;
+  t.subject = subject;
   t.completedAt = _dtCompletedAt(t.status||'Not started', status, t.completedAt);
   t.status = status;
   // Cleared whenever status isn't Blocked, so a stale reason never
@@ -2100,7 +2117,28 @@ function saveDtTaskUpdate(id){
   t.blockReason = status==='Blocked' ? blockReason : '';
   t.notes = document.getElementById('dt-notes-input').value;
   dbSet(DB_KEYS.tasks, tasks);
-  _scheduleCloudPush();
+  const saveBtn = document.getElementById('dt-save-btn');
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    // Not confirmed — revert the local optimistic change so the UI never
+    // shows a "saved" state the server didn't actually accept, and leave
+    // the panel open rather than silently losing the edit. The visible
+    // inputs are reset too — otherwise they'd still show the rejected
+    // attempt even though the underlying record was rolled back.
+    t.subject = prevSubject; t.status = prevStatus; t.blockReason = prevBlockReason; t.notes = prevNotes; t.completedAt = prevCompletedAt;
+    dbSet(DB_KEYS.tasks, tasks);
+    document.getElementById('dt-subject-input').value = prevSubject || '';
+    document.getElementById('dt-status-select').value = prevStatus || 'Not started';
+    document.getElementById('dt-block-reason-input').value = prevBlockReason || '';
+    _dtToggleBlockReasonField();
+    document.getElementById('dt-notes-input').value = prevNotes || '';
+    if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    if(!rejectedThis) showToast('❌ Could not save — try again');
+    return;
+  }
+  if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
   closeDtDetailPanel();
   renderDailyTasks();
   showToast('Task updated ✓');
@@ -2138,30 +2176,24 @@ function _dtChangeStatus(id, newStatus, selectEl){
   renderDailyTasks();
 }
 
-// Hard delete — reuses the exact same tombstones.taskIds mechanism the
-// import-undo feature already established for this portal (see
-// undoDtCommittedImportBatch() above / api/ops-sync.js). Server-side scope:
-// a member may delete a task they created (assignedById) OR one assigned
-// to them (assigneeId) — the same "your task" definition every other
-// member-write on this table already uses.
-function _dtDeleteTask(id){
-  if(!confirm('Delete this task? This cannot be undone.')) return false;
-  const tasks = (dbGet(DB_KEYS.tasks)||[]).filter(t=>t.id!==id);
-  dbSet(DB_KEYS.tasks, tasks);
-  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
-  if(!tomb.includes(id)) tomb.push(id);
-  dbSet(DB_KEYS.deletedTaskIds, tomb);
-  _scheduleCloudPush();
-  renderDailyTasks();
-  showToast('Task deleted');
-  return true;
-}
-function deleteDtTaskInline(id){
-  _dtDeleteTask(id);
-}
-function deleteDtTaskFromPanel(id){
-  if(_dtDeleteTask(id)) closeDtDetailPanel();
-}
+// The general-purpose delete UI is removed (2026-08-26) — _dtDeleteTask()/
+// deleteDtTaskInline()/deleteDtTaskFromPanel() and their two call sites
+// (the list row's ✕ button, the detail panel's Delete button) are gone
+// outright, not just hidden — per rule #6's "remove the tool, don't leave
+// a standing capability with no UI path to it" convention. Confirmed with
+// Sarah rather than assumed: api/ops-sync.js's tombstones.taskIds member
+// path (self-created-only, assignedById===session.id — see its own
+// comment there) is deliberately LEFT AS-IS, not narrowed to admin-only,
+// because "Undo this import" (undoDtStagedImportBatch()/
+// undoDtCommittedImportBatch(), the safety-net reversal of a batch the
+// employee themselves just committed via parsing) depends on that exact
+// same server path and was explicitly kept working. With the general
+// Delete UI gone, that already-narrow server permission (a member can
+// only ever delete a task THEY created, never one merely assigned to
+// them, never anyone else's) is never reachable except through Undo
+// Import — so removing the button here fully delivers "employees can't
+// delete tasks" as a general capability without breaking the one
+// safety-net action that was explicitly kept.
 
 function _onDtParseFilesChosen(event){
   const files = Array.from(event.target.files || []);
