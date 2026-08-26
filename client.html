@@ -2301,27 +2301,33 @@ function _isInactiveService(s){ return s.status==='cancelled'||s.status==='archi
 function _svcIsDoneThisCycle(s, t){ return !!(s.lastDone&&!(s.due&&s.due<t)); }
 // Shared "how many services are actually current" calc — reused by the
 // client-detail header's "X of Y done this cycle" headline, the Overview
-// tab's stat cards, and (2026-08-21) each client card's own progress line,
-// so all three always agree and there's exactly one place this math lives.
-// Same scope/definition as PR #124: top-level c.services only (not the
+// tab's stat cards, and each client card's own progress line, so all three
+// always agree and there's exactly one place this math lives. Same
+// scope/definition as PR #124: top-level c.services only (not the
 // franchise-inclusive _allClientServices used by due-alerts/My Work), "this
-// month" = due date's
-// YYYY-MM prefix matches today's. Read-only — never touches lastDone or any
-// stored data.
-// tab's stat cards, and the per-client progress line on each Tracker client
-// card (renderClientGrid()), so all three always agree and there's exactly
-// one place this math lives. Same scope/definition as PR #124: top-level
-// c.services only (not the franchise-inclusive _allClientServices used by
-// due-alerts/My Work), "this month" = due date's YYYY-MM prefix matches
-// today's. Read-only — never touches lastDone or any stored data.
+// month" = due date's YYYY-MM prefix matches today's. Read-only — never
+// touches lastDone or any stored data.
+//
+// "Done" here is the literal Status-dropdown value (workStatus==='done'),
+// NOT _svcIsDoneThisCycle's looser "has a lastDone and isn't overdue"
+// heuristic — that heuristic credits a service as done just because it was
+// completed a past cycle and its NEXT due date hasn't arrived yet, which
+// over-counted every headline/card that read activeDone/monthDone from
+// here (e.g. Roggi's Auto showing 7 of 7 "done this cycle" with only 2
+// services actually marked Done). _svcIsDoneThisCycle itself is left
+// completely unchanged below — it's still the sole input to _svcDueStatus's
+// green/amber/red colors, which must keep matching index.html's Client
+// Health colors exactly (see CLAUDE.md's zero-shared-code rule); folding
+// this workStatus check into it would desync those colors from the
+// Tracker's own status dots instead.
 function _svcCycleStats(c){
   const t=today();
   const thisMonth=t.slice(0,7);
-  const isDone=s=>_svcIsDoneThisCycle(s,t);
+  const isActuallyDone=s=>_svcStatus(s)==='done';
   const activeSvcs=(c.services||[]).filter(s=>!_isInactiveService(s));
   const dueThisMonthSvcs=activeSvcs.filter(s=>s.due&&s.due.startsWith(thisMonth));
-  const activeDone=activeSvcs.filter(isDone).length;
-  const monthDone=dueThisMonthSvcs.filter(isDone).length;
+  const activeDone=activeSvcs.filter(isActuallyDone).length;
+  const monthDone=dueThisMonthSvcs.filter(isActuallyDone).length;
   // Overdue count for the client-card progress summary (see renderClientGrid())
   // — same per-service overdue definition as the dot/pill (_svcDueStatus below).
   const activeOverdue=activeSvcs.filter(s=>_svcDueStatus(s)==='overdue').length;
