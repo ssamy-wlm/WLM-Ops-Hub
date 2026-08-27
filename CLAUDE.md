@@ -4128,6 +4128,37 @@ because PR A hasn't merged yet" framing, which no longer applied. PR B
 itself still holds for its own separate approval on its own preview
 before merge.
 
+**Add Registrar field to hosting service settings (2026-08-27) — landed
+from a separate, concurrently-run session (PR #294) shortly before this
+one merged, on the exact same service-level fields this entry's own PR
+also touched.** Same feature request, reached independently — the
+established "two Claude sessions given overlapping work" collision this
+codebase has hit before (see the 2026-08-21 hotfix entry above). Resolved
+here as part of merging `main` into this PR's branch, not as a separate
+follow-up: git's own 3-way merge did NOT flag most of the overlap as a
+conflict (the two additions landed at slightly different anchor points in
+the same functions/markup), so it silently produced a real duplicate
+`id="svc-registrar"` input, a duplicate populate block in
+`_updateSvcHostingVisibility()`, a duplicate collection line in
+`saveClientService()`, AND — the one that actually mattered functionally,
+found only by reading the merged output rather than trusting a clean `git
+merge` exit — a genuinely broken duplicate `<td>` in every service row's
+markup (two full table cells stacked for the same column, which would
+have thrown off every column alignment past it for every hosting-named
+service). Reconciled down to exactly one copy of each, kept in this
+entry's own Platform→Registrar→Hosting-Provider order (the other
+session's version put Registrar first, with no explicit ordering
+requirement in its own task). Functionally the two implementations were
+near-identical to begin with — same visibility gate, same guarded save,
+same "no curated options list, real registrars vary too much" reasoning
+for using free text instead of a dropdown — so nothing of substance was
+lost in the reconciliation, only the accidental duplication. This
+required a SECOND pass at the same merge: a first resolution attempt
+(this session's own) got overtaken by another push to the same branch
+before it could be pushed, and that other push's own merge resolution had
+NOT caught the `<td>` duplication — re-verified by actually reading the
+file after resetting to it, not assumed clean.
+
 **Client "Hosting Provider" split into Platform / Registrar / Hosting
 Provider — both a client-level AND a service-level field (2026-08-27).**
 `client.html` + `api/ops-sync.js`. The task's own wording ("the client
