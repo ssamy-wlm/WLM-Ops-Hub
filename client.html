@@ -1137,7 +1137,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <input class="form-input" id="svc-platforms-text" placeholder="Other platforms (comma-separated)…">
       </div>
       <div class="form-group" id="svc-hosting-group" style="display:none;">
-        <label class="form-label">Platform</label>
+        <label class="form-label">Registrar</label>
+        <input class="form-input" id="svc-registrar" placeholder="e.g. GoDaddy, Namecheap…">
+        <label class="form-label" style="margin-top:10px;display:block;">Platform</label>
         <select class="form-select" id="svc-siteplatform" onchange="_toggleHostingOtherField('svc-siteplatform','svc-siteplatform-other')"></select>
         <input class="form-input" id="svc-siteplatform-other" placeholder="Type platform…" style="display:none;margin-top:6px;">
         <label class="form-label" style="margin-top:10px;display:block;">Hosting Provider</label>
@@ -3085,6 +3087,12 @@ function _updateSvcHostingVisibility(serviceName, svc){
   if(!group) return;
   if(!_isHostingService(serviceName)){ group.style.display='none'; return; }
   group.style.display='';
+  // Registrar is free text (no small fixed option set like Platform/Hosting
+  // Provider's 2-item lists — real-world registrars are far more varied, and
+  // guessing a curated list here isn't warranted), so it's just populated
+  // directly rather than going through _renderHostingDropdown().
+  const registrarEl=_el('svc-registrar');
+  if(registrarEl) registrarEl.value = svc?(svc.registrar||''):'';
   _renderHostingDropdown('svc-siteplatform','svc-siteplatform-other', HOSTING_PLATFORM_OPTIONS, svc?svc.sitePlatform:'');
   _renderHostingDropdown('svc-hostingprovider','svc-hostingprovider-other', HOSTING_PROVIDER_OPTIONS, svc?svc.hostingProvider:'');
 }
@@ -3873,7 +3881,7 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.registrar?`<div style="font-size:9px;color:var(--text-light);">Registrar: ${escHtmlClient(svc.registrar)}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
@@ -5025,6 +5033,7 @@ function saveClientService(){
   // calls above/below. Each field is set independently and only when its
   // own input exists, so one missing element can never blank the other.
   if(_isHostingService(data.name)){
+    if(_el('svc-registrar')) data.registrar=(_el('svc-registrar').value||'').trim();
     if(_el('svc-siteplatform')) data.sitePlatform=_collectHostingDropdownValue('svc-siteplatform','svc-siteplatform-other');
     if(_el('svc-hostingprovider')) data.hostingProvider=_collectHostingDropdownValue('svc-hostingprovider','svc-hostingprovider-other');
   }
