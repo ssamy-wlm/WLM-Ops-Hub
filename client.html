@@ -778,6 +778,13 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <div class="form-group full"><label class="form-label">Recurring Services (comma-separated tags)</label><input class="form-input" id="cf-recurring-tags" placeholder="e.g. SEO, Social Media, Email Marketing"></div>
       </div>
 
+      <div class="section-divider">Website / Hosting</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Platform</label><input class="form-input" id="cf-siteplatform" placeholder="e.g. WordPress"></div>
+        <div class="form-group"><label class="form-label">Registrar</label><input class="form-input" id="cf-registrar" placeholder="e.g. GoDaddy"></div>
+        <div class="form-group"><label class="form-label">Hosting Provider</label><input class="form-input" id="cf-hostingprovider" placeholder="e.g. SiteGround"></div>
+      </div>
+
       <div class="section-divider">Owner / Contact <span style="font-size:10px;color:var(--orange);font-weight:600;">(Admin Only)</span></div>
       <div class="form-grid">
         <div class="form-group"><label class="form-label">Owner's Name</label><input class="form-input" id="cf-owner" placeholder="Full name"></div>
@@ -1140,6 +1147,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <label class="form-label">Platform</label>
         <select class="form-select" id="svc-siteplatform" onchange="_toggleHostingOtherField('svc-siteplatform','svc-siteplatform-other')"></select>
         <input class="form-input" id="svc-siteplatform-other" placeholder="Type platform…" style="display:none;margin-top:6px;">
+        <label class="form-label" style="margin-top:10px;display:block;">Registrar</label>
+        <input class="form-input" id="svc-registrar" placeholder="e.g. GoDaddy">
         <label class="form-label" style="margin-top:10px;display:block;">Hosting Provider</label>
         <select class="form-select" id="svc-hostingprovider" onchange="_toggleHostingOtherField('svc-hostingprovider','svc-hostingprovider-other')"></select>
         <input class="form-input" id="svc-hostingprovider-other" placeholder="Type hosting provider…" style="display:none;margin-top:6px;">
@@ -3086,6 +3095,10 @@ function _updateSvcHostingVisibility(serviceName, svc){
   if(!_isHostingService(serviceName)){ group.style.display='none'; return; }
   group.style.display='';
   _renderHostingDropdown('svc-siteplatform','svc-siteplatform-other', HOSTING_PLATFORM_OPTIONS, svc?svc.sitePlatform:'');
+  // Registrar has no curated options list (unlike Platform/Hosting Provider)
+  // — plain free text, same as the client-level Registrar field.
+  const registrarEl=_el('svc-registrar');
+  if(registrarEl) registrarEl.value=svc?(svc.registrar||''):'';
   _renderHostingDropdown('svc-hostingprovider','svc-hostingprovider-other', HOSTING_PROVIDER_OPTIONS, svc?svc.hostingProvider:'');
 }
 // Reads one dropdown+free-text pair back into the value to save: the
@@ -3569,6 +3582,9 @@ function renderClientDetail(clientId, tab){
           ${adminContact}
           ${c.industry?`<span style="font-size:10px;color:var(--text-light);">${escHtmlClient(c.industry)}</span>`:''}
           ${c.website?`<a href="${escHtmlClient(c.website)}" target="_blank" style="font-size:10px;color:var(--text);">${escHtmlClient(c.website)}</a>`:''}
+          ${c.sitePlatform?`<span style="font-size:10px;color:var(--text-light);">Platform: ${escHtmlClient(c.sitePlatform)}</span>`:''}
+          ${c.registrar?`<span style="font-size:10px;color:var(--text-light);">Registrar: ${escHtmlClient(c.registrar)}</span>`:''}
+          ${c.hostingProvider?`<span style="font-size:10px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(c.hostingProvider)}</span>`:''}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -3873,7 +3889,7 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.registrar?`<div style="font-size:9px;color:var(--text-light);">Registrar: ${escHtmlClient(svc.registrar)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
@@ -4347,6 +4363,9 @@ function editClient(id){
   _el('cf-start').value=c.start||'';
   _el('cf-end').value=c.end||'';
   _el('cf-website').value=c.website||'';
+  _el('cf-siteplatform').value=c.sitePlatform||'';
+  _el('cf-registrar').value=c.registrar||'';
+  _el('cf-hostingprovider').value=c.hostingProvider||'';
   _el('cf-referred').value=c.referredBy||'';
   _el('cf-initial-project').value=c.initialProject||'';
   _el('cf-recurring-tags').value=c.recurringTags||'';
@@ -4379,9 +4398,22 @@ function saveClient(){
   // clearing a date that was already set (there's no "remove end date"
   // control here; that'd need its own explicit action, not an empty save).
   const endVal=_el('cf-end').value;
+  // Platform/Registrar/Hosting Provider: same never-blank-overwrites-a-real-
+  // value rule as Contract End above, for the same reason data-loaded-via-
+  // the-connector needs it — these three can arrive already set (a hosting
+  // salvage import, a value entered directly against the DB) before anyone
+  // has ever opened this form for that client, so an empty field here means
+  // "not touched," never "clear the connector's value." No "remove" control
+  // exists for these either, matching Contract End's own tradeoff.
+  const platformVal=_el('cf-siteplatform').value.trim();
+  const registrarVal=_el('cf-registrar').value.trim();
+  const hostingVal=_el('cf-hostingprovider').value.trim();
   const data={
     name, code, status:_el('cf-status').value, start:_el('cf-start').value,
     ...(endVal?{end:endVal}:{}),
+    ...(platformVal?{sitePlatform:platformVal}:{}),
+    ...(registrarVal?{registrar:registrarVal}:{}),
+    ...(hostingVal?{hostingProvider:hostingVal}:{}),
     website:_el('cf-website').value, referredBy:_el('cf-referred').value,
     initialProject:_el('cf-initial-project').value, recurringTags:_el('cf-recurring-tags').value,
     ownerName:_el('cf-owner').value, ownerEmail:_el('cf-email').value, ownerPhone:_el('cf-phone').value,
@@ -5018,14 +5050,16 @@ function saveClientService(){
   // the field actually existing in the DOM — never blank-overwrite if it's
   // somehow absent (same defensive rule as Service Areas' save).
   if(_el('svc-platforms-text')) data.platforms=_collectSvcPlatformsCombined();
-  // Platform/Hosting Provider: only for a service whose name contains
-  // "Hosting" — never adds these keys to an unrelated service just because
-  // the (hidden) inputs happen to exist in the DOM. Existing platforms/
-  // notes are completely untouched by this — separate keys, separate save
-  // calls above/below. Each field is set independently and only when its
-  // own input exists, so one missing element can never blank the other.
+  // Platform/Registrar/Hosting Provider: only for a service whose name
+  // contains "Hosting" — never adds these keys to an unrelated service just
+  // because the (hidden) inputs happen to exist in the DOM. Existing
+  // platforms/notes are completely untouched by this — separate keys,
+  // separate save calls above/below. Each field is set independently and
+  // only when its own input exists, so one missing element can never blank
+  // the others.
   if(_isHostingService(data.name)){
     if(_el('svc-siteplatform')) data.sitePlatform=_collectHostingDropdownValue('svc-siteplatform','svc-siteplatform-other');
+    if(_el('svc-registrar')) data.registrar=_el('svc-registrar').value.trim();
     if(_el('svc-hostingprovider')) data.hostingProvider=_collectHostingDropdownValue('svc-hostingprovider','svc-hostingprovider-other');
   }
   if(entryId){

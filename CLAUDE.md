@@ -4128,6 +4128,124 @@ because PR A hasn't merged yet" framing, which no longer applied. PR B
 itself still holds for its own separate approval on its own preview
 before merge.
 
+**Client "Hosting Provider" split into Platform / Registrar / Hosting
+Provider — both a client-level AND a service-level field (2026-08-27).**
+`client.html` + `api/ops-sync.js`. The task's own wording ("the client
+'Hosting Provider' field") didn't match reality — investigated before
+writing anything (rule #7, never guess on ambiguous source data) and found
+NO client-level hosting field exists anywhere in this codebase; the only
+`sitePlatform`/`hostingProvider` fields that exist are on individual
+website-type SERVICES (`client.html`'s "Website Hosting: Platform +
+Hosting Provider" group, shown only for a service whose name contains
+"Hosting" — see the 2026-08-17 entry). Flagged back to Sarah rather than
+guessing which one was meant; she confirmed **both**: split the existing
+service-level pair into three, AND add a brand-new client-level group with
+the same three fields.
+
+**Client-level (new).** A "Website / Hosting" section on the Edit Client
+form (`cf-siteplatform`/`cf-registrar`/`cf-hostingprovider`, plain text
+inputs, ordered Platform/Registrar/Hosting Provider per the task's own
+spec) — reuses the existing `sitePlatform` key (previously service-only,
+now also meaningful at the client level) and `hostingProvider` key, plus a
+genuinely new `registrar` key; no key renamed or dropped, so any existing
+service-level data is completely unaffected. `editClient()` populates all
+three from the client record; display-only in the client detail header,
+right next to the existing Website link (`c.sitePlatform`/`c.registrar`/
+`c.hostingProvider`, same conditional-chip pattern `c.industry`/`c.website`
+already use).
+
+**The task's own explicit requirement — "must respect the existing
+field-preservation... so loading them via the connector isn't overwritten
+on the next client save"** needed real design work, not just wiring up
+inputs: `saveClient()`'s form ALWAYS collects `website`/`industry`/etc.
+into its outgoing `data` object even when blank (an intentional "blank
+clear wins" convention for those fields), which would have meant ANY
+save by an admin whose browser hadn't yet pulled a connector-set value
+would explicitly submit `hostingProvider:''` and blank it via
+`preserveMissingClientFields()`'s own presence-based semantics (a key
+PRESENT, even empty, always wins — only an ABSENT key falls back to
+`current`). Fixed by giving these three fields the exact same treatment
+`saveClient()` already gives Contract End (`...(endVal?{end:endVal}:{})`
+— only included in the outgoing payload when non-empty): an empty
+Platform/Registrar/Hosting Provider input is never sent at all, so it's
+genuinely ABSENT from the payload and `preserveMissingClientFields()`'s
+existing, unmodified merge preserves whatever's already stored. Same
+tradeoff Contract End's own comment already documents and this entry
+repeats for the same reason: there's no "clear this field" control here —
+an intentional blank-doesn't-mean-clear design for connector-loaded data,
+not an oversight.
+
+**Server-side:** `preserveMissingClientFields()`/`_mergeClientItemsById()`
+in `api/ops-sync.js` needed ZERO code changes — both are already fully
+generic (`{...current, ...incoming}` merges with no per-key allowlist),
+confirmed by reading them before assuming a new special case was needed.
+The one real server change: added `sitePlatform`/`registrar`/
+`hostingProvider` to `CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH` (matching
+`website`/`industry`'s existing admin-only protection) — defense-in-depth
+per rule #4, since the Edit Client modal is already UI-gated to
+`SESSION.isAdmin` only, but server-side enforcement must never rely on
+that alone. Deliberately did NOT restrict the SERVICE-level fields the
+same way: `checkMemberClientWrite()` has no field-level allowlist at the
+service granularity at all — a member already assigned to a service can
+freely edit any of its fields (confirmed by reading the function), which
+is exactly how `sitePlatform`/`hostingProvider` already worked before this
+change, so the new `registrar` key inherits identical access automatically
+with no code change needed there either.
+
+**Service-level (existing fields, extended).** Added a plain-text
+"Registrar" field to the existing hosting group, between the Platform and
+Hosting Provider dropdowns (same field order as the client-level group).
+Deliberately NOT given the same curated-dropdown+"Other" treatment
+Platform/Hosting Provider already have (`HOSTING_PLATFORM_OPTIONS`/
+`HOSTING_PROVIDER_OPTIONS`) — no established registrar options list exists
+anywhere in this codebase, and the task's own original spec called for
+"plain text fields," so a free-text input matches both the request and
+avoids inventing an option list nobody asked for. `_updateSvcHostingVisibility()`
+populates it from `svc.registrar`; `saveClientService()` collects it only
+inside the existing `if(_isHostingService(data.name))` block (same
+never-touch-an-unrelated-service guard the other two fields already have)
+and only when the input element exists, so a missing element can never
+blank the others. The service card's inline preview
+(`renderClientGrid()`'s per-service row) gained a "Registrar: X" line
+alongside its existing "Platform: X"/"Hosting Provider: X" lines.
+
+`index.html` was checked and confirmed to show no hosting-related client
+data anywhere (`grep` came back empty) — nothing to change there, matching
+the task's own conditional "if it shows hosting" scope.
+
+Verified: `node --check api/ops-sync.js`; `ls api/*.js | wc -l` still 12
+(no new file); syntax-check + div-balance on `client.html` (delta
+unchanged vs. `main`, 0). A `node:test --experimental-test-module-mocks`
+run against the real, byte-identical `api/ops-sync.js` (21/21) — an admin
+resave omitting all three client-level keys preserves them; an admin
+actually setting them via a fresh save writes them correctly; a genuine
+server-level deliberate clear (key present, empty) is still honored,
+independent of client.html's own choice never to send one; a member's
+stale-cache save omitting the three keys is not wrongly rejected and the
+values survive; a member explicitly trying to change any of the three
+client-level keys is rejected (all three tested individually); and a
+member already assigned to a hosting service can freely edit its new
+`registrar` field, unaffected. A new Playwright suite against the real
+`client.html` UI (23/23, run twice clean): editing an existing client
+pre-fills all three from connector-set values; the group is labeled
+"Website / Hosting" and correctly ordered Platform/Registrar/Hosting
+Provider; an unrelated save (editing only Website) leaves all three
+client-level values untouched in the pushed payload; editing a genuinely
+blank client from empty actually writes new values; the client detail
+header displays all three next to Website once set; and the
+SERVICE-level hosting group shows its own pre-filled Platform/Registrar/
+Hosting Provider (dropdown/text/dropdown) and correctly pushes an edited
+Registrar while leaving the untouched Platform/Hosting Provider dropdowns
+correct. Every pre-existing client-field-preservation suite re-run clean
+and unaffected (`verify_client_field_preservation.mjs` 17/17,
+`verify_client_edit_preserves_unknown_fields.js` 6/6,
+`verify_ops_sync_date_rules.mjs` 22/22, `verify_submit_for_review.js`
+11/11, `test_submit_for_review.mjs` 16/16) — confirming the generic merge
+functions genuinely needed no change. One pre-existing, unrelated failure
+(`verify_client_card_progress_no_reports_tab.js`'s 2 done/total-count
+assertions) was confirmed to fail identically against unmodified `main`
+— out of scope here.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

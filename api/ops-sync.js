@@ -264,6 +264,16 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
   // Task-assignment email-matching data (Task Assignments feature) — loaded
   // via a one-time admin salvage import, never a member-facing edit.
   'clientEmails',
+  // Client-level Platform/Registrar/Hosting Provider (2026-08-27) — same
+  // admin-only edit modal as website/industry above; added here for the
+  // same defense-in-depth reason, even though the client never sends these
+  // in a member payload today (the edit modal itself is admin-only in the
+  // UI). The SERVICE-level sitePlatform/registrar/hostingProvider fields
+  // are deliberately NOT restricted here — those already inherit ordinary
+  // per-service member write access (an assigned member can edit any field
+  // on their own service, same as sitePlatform/hostingProvider already
+  // could before this change), unchanged.
+  'sitePlatform', 'registrar', 'hostingProvider',
 ];
 
 // A member editing an EXISTING task assigned to them (Daily Tasks) may only
