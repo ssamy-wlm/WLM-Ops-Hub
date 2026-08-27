@@ -4245,6 +4245,87 @@ functions genuinely needed no change. One pre-existing, unrelated failure
 (`verify_client_card_progress_no_reports_tab.js`'s 2 done/total-count
 assertions) was confirmed to fail identically against unmodified `main`
 — out of scope here.
+**Parser: fixed truncated-JSON errors on large task batches (2026-08-27).**
+`api/process-transcript.js` only. Reported: `taskEmail` mode threw "Claude
+returned invalid JSON" on a large paste (~20+ tasks, e.g. several meeting
+transcripts pasted together) — root cause confirmed by reading the code
+rather than assumed: the parse call's `max_tokens: 4096` was low enough
+that a realistic batch's JSON response got cut off mid-`tasks`-array,
+which `JSON.parse` then reported as a generic syntax error with no
+indication anything had been truncated at all.
+
+Two-part fix. (1) Raised `max_tokens` to 16000 on this call — comfortably
+covers a realistic worst-case multi-meeting batch, so the truncation stops
+happening for the common case this was actually reported against. (2) A
+genuine backstop for whatever's still too large even at that ceiling,
+rather than just moving the failure threshold: a new `repairTruncatedTaskJson()`
+salvages every WELL-FORMED task object from the response's `tasks` array
+and discards only the dangling partial tail, so a batch that's still too
+big to fit doesn't lose everything — just whatever didn't finish. This is
+only ever attempted when the Anthropic SDK's own `message.stop_reason`
+confirms the response was actually cut off by the token limit
+(`=== 'max_tokens'`) — deliberately never inferred from the `JSON.parse`
+failure alone, since a genuinely malformed response for some unrelated
+reason is a different bug with different (and still useful) debugging
+signal; that case is untouched, still returns the original raw-JSON-dump
+error exactly as before. `buildTaskEmailSystemPrompt`'s own schema always
+emits `assignedDate`/`attendees` before `tasks` (see its closing example),
+so those two fields survive intact even when the array itself got
+truncated — the repair function recovers them via a small regex rather
+than needing a real JSON parser for the whole broken document. The scanner
+walks the array as raw text with proper string/escape-boundary tracking
+(not a naive brace-counting regex), so a `}`/`{`/`"` character sitting
+inside a task's own subject or notes text is never mistaken for real JSON
+structure — verified directly (see below) with a task whose content
+deliberately contains braces, an escaped quote, and a backslash.
+
+**When repair recovers at least one task, per rule #7 the loss is never
+silent:** the response includes a new, purely additive `truncated: true`
+field (ignored by today's client, available for a future "some tasks may
+be missing" UI note without needing this endpoint touched again) and the
+event is logged via the existing `logError()` path with the recovered
+count. **When repair recovers nothing at all** (cut off before even the
+first task object finished) — the exact scenario this task's acceptance
+criteria calls out — the response is the plain, actionable message asked
+for ("The list was too long to parse in one go — split it into two and
+try again"), never the raw JSON dump the original error path produced.
+
+No client changes needed or made, per this task's own "process-transcript.js
+only" scope — confirmed first by reading how both `index.html` and
+`user.html` already consume this endpoint's error responses
+(`if(!res.ok) throw new Error(data?.error || ...)`, generic and status-
+code-agnostic), so a new response shape/status on the failure path needed
+zero client-side accommodation.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `api/process-transcript.js`, mocking the
+Anthropic SDK to control both the raw response text and `stop_reason`
+directly (23/23): `max_tokens` confirmed raised to ≥16000; a clean/
+complete response still parses via the untouched normal path with no
+`truncated` flag (regression check); a truncated response with 2 complete
+tasks + a cut 3rd recovers exactly the 2, preserves `assignedDate` from
+the intact prefix, and flags `truncated:true`; a truncated response with
+zero complete tasks returns the exact specified message with no raw JSON
+leaked into it; a genuinely malformed-but-NOT-truncated response
+(`stop_reason:'end_turn'`) is confirmed to still hit the original
+500/raw-dump path unchanged, proving truncation is never guessed from the
+parse failure alone; the brace/quote/backslash-safety case recovers the
+one complete task with its embedded special characters round-tripping
+exactly; and a response that's complete but happens to report
+`stop_reason:'max_tokens'` anyway (e.g. finished right at the boundary)
+still parses via the plain path without ever invoking repair. Every
+pre-existing `process-transcript.js` Node suite re-run clean and
+unaffected: `verify_linked_identity_task_parsing.mjs` (9/9),
+`verify_owner_structured_markers.mjs` (13/13),
+`verify_process_transcript_phonetic.mjs` (23/23),
+`verify_everyone_parser_mapping.mjs` (8/8),
+`verify_parser_any_layout_assignee.mjs` (28/28). One older suite
+(`test_process_transcript_taskEmail.mjs`) still fails on the same
+pre-existing, unrelated `@anthropic-ai/sdk` module-mock-resolution issue
+already documented above (confirmed identical against unmodified `main`)
+— not touched, out of scope. `node --check` passed; `ls api/*.js | wc -l`
+still 12 (no new file, `process-transcript.js` was the only file
+touched).
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 

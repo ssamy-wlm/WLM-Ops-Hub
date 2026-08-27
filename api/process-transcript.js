@@ -540,6 +540,70 @@ function dedupeWithinBatch(tasks) {
   return kept;
 }
 
+// Salvages a well-formed prefix of the model's task JSON when the response
+// was cut off mid-array by hitting max_tokens — only ever attempted when
+// the SDK's own message.stop_reason confirms that's actually what happened
+// (never guessed from a JSON.parse failure alone, which could just as
+// easily mean a genuinely malformed response for some other reason).
+// buildTaskEmailSystemPrompt's own schema always emits "assignedDate" and
+// "attendees" before "tasks" (see the example at the end of that function),
+// so those two fields are intact even when the tasks array itself got
+// truncated — only the LAST element of that array is ever partial. Walks
+// the array as raw text, respecting string/escape boundaries so a brace or
+// bracket inside a task's own subject/notes text is never mistaken for
+// real JSON structure, and keeps every task object that's fully present —
+// discards only the dangling partial tail. Returns null if nothing usable
+// survives (e.g. cut off before even one complete task).
+function repairTruncatedTaskJson(text) {
+  const tasksKeyIdx = text.indexOf('"tasks"');
+  if (tasksKeyIdx === -1) return null;
+  const arrStart = text.indexOf('[', tasksKeyIdx);
+  if (arrStart === -1) return null;
+
+  const recoveredTasks = [];
+  const n = text.length;
+  let i = arrStart + 1;
+  while (i < n) {
+    while (i < n && /[\s,]/.test(text[i])) i++;
+    if (i >= n || text[i] === ']') break;
+    if (text[i] !== '{') break;
+    const objStart = i;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let objEnd = -1;
+    for (; i < n; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escape) escape = false;
+        else if (ch === '\\') escape = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { objEnd = i; break; }
+      }
+    }
+    if (objEnd === -1) break; // ran off the end mid-object — the truncated tail; stop here
+    try { recoveredTasks.push(JSON.parse(text.slice(objStart, objEnd + 1))); }
+    catch { break; } // shouldn't happen given the depth-tracking above, but bail safely rather than throw
+    i = objEnd + 1;
+  }
+
+  if (!recoveredTasks.length) return null;
+  const assignedDateMatch = text.match(/"assignedDate"\s*:\s*"([^"]*)"/);
+  const attendeesMatch = text.match(/"attendees"\s*:\s*"([^"]*)"/);
+  return {
+    assignedDate: assignedDateMatch ? assignedDateMatch[1] : '',
+    attendees: attendeesMatch ? attendeesMatch[1] : '',
+    tasks: recoveredTasks,
+    _repaired: true,
+  };
+}
+
 async function handleTaskEmailMode(req, res) {
   let session;
   try { session = await requireSession(req); }
@@ -599,7 +663,14 @@ async function handleTaskEmailMode(req, res) {
   try {
     const message = await client.messages.create({
       model: 'claude-opus-4-7',
-      max_tokens: 4096,
+      // Raised from 4096 (2026-08-27) — a large real-world batch (a
+      // multi-meeting paste, 20+ tasks) routinely exceeded the old ceiling
+      // and got cut off mid-array, which JSON.parse then reported as
+      // "invalid JSON" with no indication anything had been truncated.
+      // 16000 comfortably covers a realistic worst-case batch; the repair
+      // path right below this call is the backstop for whatever's left
+      // once a paste is large enough to still exceed even this.
+      max_tokens: 16000,
       system: buildTaskEmailSystemPrompt(roster.map(p => {
         const title = p.title || p.level;
         return title ? `${p.name} — ${title}` : p.name;
@@ -613,8 +684,28 @@ async function handleTaskEmailMode(req, res) {
       const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
-      await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
-      return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
+      // Only ever treated as a truncation — and only ever repaired — when
+      // the SDK itself confirms that's what happened (message.stop_reason
+      // === 'max_tokens'), never guessed from the parse failure alone; a
+      // genuinely malformed response for some other reason still falls
+      // through to the original raw-JSON-dump error below, which is real
+      // debugging signal for that case and shouldn't be replaced with a
+      // guess. A truncation that still leaves zero complete tasks (cut off
+      // before finishing even the first one) is not silently swallowed
+      // either — it gets the same clear, actionable message as an
+      // unrecoverable one, not a raw JSON dump.
+      const truncated = message.stop_reason === 'max_tokens';
+      const repaired = truncated ? repairTruncatedTaskJson(raw) : null;
+      if (repaired) {
+        parsed = repaired;
+        await logError({ endpoint: 'process-transcript:taskEmail', error: 'Response truncated by max_tokens; repaired ' + repaired.tasks.length + ' task(s) from the well-formed prefix', session, extra: { recoveredTaskCount: repaired.tasks.length, raw: raw.slice(0, 300) } });
+      } else if (truncated) {
+        await logError({ endpoint: 'process-transcript:taskEmail', error: 'Response truncated by max_tokens with nothing recoverable', session, extra: { raw: raw.slice(0, 300) } });
+        return res.status(422).json({ error: 'The list was too long to parse in one go — split it into two and try again.' });
+      } else {
+        await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
+        return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
+      }
     }
 
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
@@ -746,7 +837,11 @@ async function handleTaskEmailMode(req, res) {
       };
     });
 
-    return res.status(200).json({ tasks: finalTasks, raw_count: rawTasks.length });
+    // truncated is only ever present (and true) when the repair path above
+    // actually ran — additive field, ignored by any caller that doesn't
+    // look for it, so no client change is required for this to be useful
+    // later (e.g. a "some tasks may be missing" note in the UI).
+    return res.status(200).json({ tasks: finalTasks, raw_count: rawTasks.length, ...(parsed._repaired ? { truncated: true } : {}) });
   } catch (err) {
     console.error('Anthropic API error (taskEmail):', err);
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
