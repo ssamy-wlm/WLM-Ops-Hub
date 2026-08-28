@@ -3116,6 +3116,20 @@ function _collectMyWorkItems(){
       mySubTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||''}));
     });
   });
+  // Task Assignments / My Tasks (ops_tasks, 2026-08-28) — a completely
+  // separate data model from the tracker projects/services above, added
+  // here so those tasks bucket by due date alongside everything else
+  // instead of only ever showing on the My Tasks page. _dtMyTasks() already
+  // scopes to this user's own assigneeId and excludes a merged-away
+  // duplicate (see that function's own comment); "not Done" is this call
+  // site's own filter, same as the tracker items above already exclude
+  // t.done. dueDate maps straight onto this function's shared `due` field —
+  // an undated task falls into the existing "no due date -> Long Term"
+  // bucket below for free, exactly like an undated service/project already
+  // does (a real due-date estimate for these is Part 2, not this change).
+  _dtMyTasks().filter(t=>t.status!=='Done').forEach(t=>{
+    items.push({name:t.subject||'', client:t.clientName||'', due:t.dueDate||''});
+  });
   return items;
 }
 
@@ -3133,9 +3147,17 @@ function renderRoadmap(){
   const b60      = items.filter(i=>i.due && i.due>in30s && i.due<=in60s);
   const longTerm = items.filter(i=>!i.due || i.due>in60s);
 
+  // escHtmlUser on name/client (2026-08-28) — a task's subject is free
+  // text, editable by the assignee themselves (see the 2026-08-26
+  // editable-subject feature), unlike the tracker service/project names
+  // this row already rendered; escaping both here closes that gap for the
+  // new source and for the pre-existing ones in the same pass. i.client is
+  // joined with the due date rather than always concatenated, so a
+  // client-less task (a real, valid ops_tasks shape) doesn't render a bare
+  // leading " · ".
   const row = i=>`<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:6px;">
-    <span class="roadmap-dot"></span><span style="flex:1;color:var(--text-dark);">${i.name}</span>
-    <span style="font-size:10px;color:var(--text-light);white-space:nowrap;">${i.client}${i.due?' · '+i.due:''}</span>
+    <span class="roadmap-dot"></span><span style="flex:1;color:var(--text-dark);">${escHtmlUser(i.name)}</span>
+    <span style="font-size:10px;color:var(--text-light);white-space:nowrap;">${[i.client?escHtmlUser(i.client):'', i.due].filter(Boolean).join(' · ')}</span>
   </div>`;
   const renderList = list => list.length ? list.map(row).join('') : '<div style="font-size:11px;color:var(--text-light);padding:4px 0;">Nothing here.</div>';
 
