@@ -4327,6 +4327,41 @@ already documented above (confirmed identical against unmodified `main`)
 still 12 (no new file, `process-transcript.js` was the only file
 touched).
 
+**Sort client dropdown alphabetically in Task Assignments (2026-08-27).**
+`index.html` + `user.html`, display-only. Every client `<select>` in Task
+Assignments (`index.html`'s `taFilterClient` filter, the task edit modal's
+`tem-client`, and both files' staging-review row client select) is fed
+from one shared per-file helper — `_taActiveClients()` (`index.html`) /
+`_dtActiveClients()` (`user.html`, independently authored per the zero-
+shared-code rule, already documented as mirroring the same convention) —
+so sorting inside those two functions covers every dropdown in both files
+at once, with no new function needed. Sort is `localeCompare` with
+`sensitivity:'base'` (case-insensitive, e.g. "acme co" sorts correctly
+against "Bright Ideas LLC" rather than falling after every uppercase
+name). The hardcoded "No client"/"All clients" first `<option>` in each
+select is untouched — it's a separate literal outside the `.map()`, so it
+stays pinned first for free. Inactive clients were already excluded by
+both functions' own `status==='active'` filter before this change,
+unaffected.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>` block)
+both files — clean; div-balance delta unchanged vs. `main` in both
+(`index.html` −2, `user.html` −1); `ls api/*.js | wc -l` still 11 (no
+server file touched at all, this is client-only). Two new Playwright
+suites against the real UIs: `index.html` (10/10 — the filter dropdown,
+the New Task modal's client select, and a staging row rendered from a
+real parse all list "No client"/"All clients" first then the 4 active
+clients A→Z case-insensitive, with the inactive client excluded from
+all three) and `user.html` (5/5 — same coverage for its one client
+select, the staging row). Every pre-existing Task Assignments/Daily
+Tasks Playwright suite touching these dropdowns re-run clean:
+`verify_ta_staging.js` (26/26), `verify_ta_staging_merge_commit.js`
+(9/9), `verify_ta_19task_completeness.js` (12/12), `verify_dt_staging.js`
+(17/17), `verify_needs_attention_unassigned.js` (16/16). One pre-existing,
+unrelated failure (`verify_task_assignments_ui.js`'s stale `#taViewCalBtn`
+selector, already documented above) reproduces identically — out of scope
+here.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

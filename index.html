@@ -8251,7 +8251,11 @@ let _taParseFileTexts = [];
 let _taStagedTasks = [];
 
 function _taGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
-function _taActiveClients(){ return _getClientDB().filter(c=>c.status==='active'); }
+// Sorted A→Z (case-insensitive) — every client dropdown fed from this
+// (Task Assignments' client filter, the task edit modal, the staging
+// review rows) gets alphabetical order for free; "No client"/"All
+// clients" stay as their own hardcoded first <option>, untouched by this.
+function _taActiveClients(){ return _getClientDB().filter(c=>c.status==='active').sort((a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'})); }
 function _taTasks(){ return dbGet(DB_KEYS.tasks)||[]; }
 function _taSaveTasks(arr){ dbSet(DB_KEYS.tasks, arr); }
 function _taToday(){ return new Date().toISOString().slice(0,10); }
