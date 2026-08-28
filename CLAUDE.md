@@ -4411,6 +4411,82 @@ paths re-run clean and unaffected: `verify_dt_staging.js` (17/17),
 `verify_employee_duplicate_merge.js` (24/24), `verify_dt_status_tabs.js`
 (19/19), `verify_dt_filter_buttons_fix.js` (10/10).
 
+**Parser: fixed urgency tiers for due-date estimation, replacing the
+open-ended effort-scaled estimate (2026-08-28, PR 2 of 2 — PR 1 is
+"Include Task Assignments in My Roadmap," #300, which makes tasks bucket
+by due date in `user.html`'s Roadmap view alongside services/projects).**
+`api/process-transcript.js` only, pure prompt-content change.
+
+Given as "when a task has no explicit due date, have the model estimate
+an urgency/timeframe and set dueDate accordingly (this week → within 7d,
+near-term → 30d, etc.)." Investigated before writing anything (rule #7):
+`buildTaskEmailSystemPrompt()`'s `dueDate` bullet already had a fallback
+estimation clause (added 2026-08-25, "effort-based due-date estimation")
+that scaled a due date to task size — quick tasks land a few days out,
+substantial ones land weeks-or-more out, no fixed maximum — and both
+portals' staging review already exposes an editable `dueDate` input per
+task before commit (confirmed pre-existing, no gap there). So the literal
+ask was already mostly built; what didn't exist was the OPEN vs.
+QUANTIZED distinction the task's own wording implied ("this week → within
+7d, near-term → 30d") — the existing estimate was a continuous guess, not
+tied to any specific day-count window. Flagged this back rather than
+silently doing nothing or silently rebuilding from scratch; asked Sarah
+directly via three options (leave as-is / quantize into fixed tiers /
+something else). **She chose: quantize into fixed urgency tiers.**
+
+Replaced the effort-scaled clause with four fixed tiers, each given a
+concrete day-offset window chosen to land inside PR 1's own Roadmap bucket
+boundaries (`horizon(d)`: 7 / 30 / 60 days, then Long Term) rather than
+an arbitrary scheme — so an estimate this parser makes reliably lands in
+a specific, meaningful bucket instead of a coin-flip near a boundary:
+- **"This week"** — a quick, low-effort task (a short email, a phone call,
+  a single social media post, a one-line fix): 2-4 days after
+  `assignedDate` → lands in Roadmap's NEXT 7 DAYS.
+- **"Near-term"** — a standard task with real but contained effort
+  (drafting a document, a single design piece, one moderate deliverable):
+  2-3 weeks out → lands in NEXT 30 DAYS.
+- **"Medium-term"** — a bigger initiative needing multiple steps or
+  coordination (a small campaign, a multi-page build, a project with
+  several dependencies): 6-8 weeks out → lands in NEXT 60 DAYS.
+- **"Long-term"** — a large multi-phase or open-ended project (a full
+  website build, a multi-month campaign, ongoing research): beyond 60
+  days, no fixed maximum → lands in LONG TERM.
+
+Still resolved relative to `assignedDate`, never today's real date (same
+anchor every other due-date resolution rule in this prompt already uses —
+see the 2026-08-20 `assignedDate` entry). Still only ever returns an
+empty string when the subject itself is too vague to estimate anything
+from — the "always return a real date" instruction is unchanged, only HOW
+the date is chosen changed. `validDueDate()`'s round-trip guard against
+Date's silent rollover is untouched and unaffected — it validates
+whatever date comes back regardless of which clause produced it. No
+schema/logic change: this is a prompt-string edit only, nothing about
+`resolveTaskOwners()`, the roster, client-matching, or the Everyone/
+attendee mapping was touched.
+
+Verified: `node --check api/process-transcript.js`; `ls api/*.js | wc -l`
+still 11 (no new file — this PR touches only the one existing endpoint).
+Updated `verify_process_transcript_phonetic.mjs`'s prompt-content
+assertions to check for the new tier language (all four tier names, the
+"7/30/60" bucket-window reference, the quick/large-project examples) in
+place of the old effort-scaled wording — 25/25 passing. Four more
+pre-existing `process-transcript.js` regression suites re-run clean and
+unaffected, confirming the owner/client/attendee/Everyone matching logic
+this PR didn't touch still works exactly as before:
+`verify_linked_identity_task_parsing.mjs` (9/9),
+`verify_owner_structured_markers.mjs` (13/13),
+`verify_everyone_parser_mapping.mjs` (8/8),
+`verify_parser_any_layout_assignee.mjs` (28/28). No live-model call is
+possible in this environment (no API access) — the model's actual
+tier-selection judgment on a real transcript still needs a click-through
+verification on the Vercel preview before merge, same caveat as every
+other prompt-content change to this file this session.
+
+Low-risk per rule #10: touches no data-write/sync/auth/permission logic
+(`api/ops-sync.js`/`api/ops-state.js` untouched), pure prompt-content on
+an existing endpoint — eligible for direct merge once CI is green, same
+tier as the client-dropdown-sort PR immediately above.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
