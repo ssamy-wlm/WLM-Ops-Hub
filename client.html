@@ -477,6 +477,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <div class="admin-only" style="display:flex;gap:7px;margin-left:auto;" id="admin-only-btns">
             <button class="btn btn-outline btn-sm" onclick="openClientModal()">+ New Client</button>
             <button class="btn btn-outline btn-sm" id="quick-add-client-btn" style="display:none;" onclick="openQuickAddClientModal()" title="Create a client with all its services in one step">⚡ Quick Add Client</button>
+            <button class="btn btn-outline btn-sm" onclick="openHostingBatchDetectModal()" title="Scan every hosting client's website and suggest registrar/platform/hosting-provider values to review">🔍 Detect Hosting Details</button>
           </div>
         </div>
         <!-- Row 2: filters — members see only Service (a simplified, single-filter
@@ -1144,6 +1145,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <input class="form-input" id="svc-platforms-text" placeholder="Other platforms (comma-separated)…">
       </div>
       <div class="form-group" id="svc-hosting-group" style="display:none;">
+        <div id="svc-hosting-autodetect-wrap" style="display:none;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+          <button type="button" class="btn btn-outline btn-sm" id="svc-hosting-autodetect-btn" onclick="autoDetectHostingDetails()">🔍 Auto-detect from website</button>
+          <div id="svc-hosting-autodetect-results" style="margin-top:8px;"></div>
+        </div>
         <label class="form-label">Platform</label>
         <select class="form-select" id="svc-siteplatform" onchange="_toggleHostingOtherField('svc-siteplatform','svc-siteplatform-other')"></select>
         <input class="form-input" id="svc-siteplatform-other" placeholder="Type platform…" style="display:none;margin-top:6px;">
@@ -1206,6 +1211,36 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('serviceCatalogModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveServiceCatalog()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- HOSTING BATCH AUTO-DETECT MODAL (2026-08-27) — dry-run/review-then-approve
+     only, same pattern as every other bulk tool in this codebase: a scan step
+     that writes NOTHING, a review table with a checkbox per suggested field
+     (unchecked by default for anything already filled in), and an explicit
+     Apply step that only ever touches the fields actually checked. -->
+<div id="hostingBatchDetectModal" class="modal-overlay">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🔍 Detect Hosting Details</div>
+        <div class="modal-sub">Scans every active client's hosting service with a website on file — nothing is saved until you review and approve it below</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('hostingBatchDetectModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="hbd-intro" style="font-size:12px;color:var(--text-mid);margin-bottom:14px;">
+        Click <strong>Scan</strong> to look up the registrar, platform, and hosting provider for every active client's hosting service that has a website URL on file. Each lookup runs one at a time — this can take a little while for a lot of clients.
+      </div>
+      <button class="btn btn-primary btn-sm" id="hbd-scan-btn" onclick="runHostingBatchScan()">▶ Scan</button>
+      <div id="hbd-progress" style="font-size:11px;color:var(--text-light);margin-top:8px;display:none;"></div>
+      <div id="hbd-skipped" style="font-size:11px;color:var(--text-light);margin-top:10px;display:none;"></div>
+      <div id="hbd-results" style="margin-top:14px;overflow-x:auto;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('hostingBatchDetectModal')">Close</button>
+      <button class="btn btn-primary" id="hbd-apply-btn" style="display:none;" onclick="applyHostingBatchSelections()">Apply Selected</button>
     </div>
   </div>
 </div>
@@ -2402,6 +2437,7 @@ function populatePfTypeOptions(selected){
 // ═══════════════════════════════════════════════════════
 const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
+const OPS_HOSTING_LOOKUP_URL = '/api/hosting-lookup';
 // Portal-scoped key (was the single shared 'wl_ops_token' written by both
 // index.html and user.html's independent logins) — that one key meant the
 // most recently authenticated portal on this origin silently overwrote every
@@ -3103,6 +3139,20 @@ function _updateSvcHostingVisibility(serviceName, svc){
   const registrarEl=_el('svc-registrar');
   if(registrarEl) registrarEl.value=svc?(svc.registrar||''):'';
   _renderHostingDropdown('svc-hostingprovider','svc-hostingprovider-other', HOSTING_PROVIDER_OPTIONS, svc?svc.hostingProvider:'');
+  // Auto-detect (2026-08-27) is an admin-only tool — same gate the server
+  // endpoint itself enforces (tierOf(session)!=='member'), just hidden from
+  // a member here as a UX convenience, not the actual security boundary.
+  // Always reset to its collapsed, empty-results state on open — a stale
+  // suggestion from a PREVIOUS service's lookup must never appear to belong
+  // to this one.
+  const autoWrap=_el('svc-hosting-autodetect-wrap');
+  if(autoWrap){
+    autoWrap.style.display = SESSION.isAdmin ? '' : 'none';
+    const resultsEl=_el('svc-hosting-autodetect-results');
+    if(resultsEl) resultsEl.innerHTML='';
+    const btn=_el('svc-hosting-autodetect-btn');
+    if(btn){ btn.disabled=false; btn.textContent='🔍 Auto-detect from website'; }
+  }
 }
 // Reads one dropdown+free-text pair back into the value to save: the
 // select's own value normally, or the free-text content when "Other" is
@@ -3112,6 +3162,241 @@ function _collectHostingDropdownValue(selectId, textId){
   const sel=_el(selectId); if(!sel) return undefined;
   if(sel.value==='Other') return (_el(textId)?.value||'').trim();
   return sel.value;
+}
+
+// ── Hosting auto-detect (2026-08-27, David's Aug 26 meeting request) ──────
+// Calls the deterministic server-side lookup (api/hosting-lookup.js — RDAP
+// for registrar, HTML/header signature matching for platform/host, no LLM,
+// no client-secret in this file) for the CURRENT client's website and shows
+// the results as SUGGESTIONS ONLY. Nothing is written by this function —
+// clicking "Use" just fills the matching input; the admin still has to
+// click Save Service to actually commit it, exactly as if they'd typed it
+// themselves. A field the lookup couldn't confidently resolve shows its
+// explanatory note instead of a "Use" button — never a guessed value
+// offered as if it were real.
+async function autoDetectHostingDetails(){
+  const clientId=_el('svc-client-id').value;
+  const client=getClients().find(c=>c.id===clientId);
+  const resultsEl=_el('svc-hosting-autodetect-results');
+  const btn=_el('svc-hosting-autodetect-btn');
+  if(!client || !(client.website||'').trim()){
+    if(resultsEl) resultsEl.innerHTML=`<div style="font-size:11px;color:var(--red);">This client has no website URL set — add one on the Edit Client form first.</div>`;
+    return;
+  }
+  const token=_opsToken();
+  if(!token){ showToast('Not signed in — please refresh and log in again','warn'); return; }
+  if(btn){ btn.disabled=true; btn.textContent='Detecting…'; }
+  if(resultsEl) resultsEl.innerHTML=`<div style="font-size:11px;color:var(--text-light);">Looking up ${escHtmlClient(client.website)}…</div>`;
+  try{
+    const res=await fetch(OPS_HOSTING_LOOKUP_URL,{
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: JSON.stringify({url: client.website})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error||('HTTP '+res.status));
+    if(resultsEl) resultsEl.innerHTML=_renderHostingSuggestions(data);
+  }catch(e){
+    if(resultsEl) resultsEl.innerHTML=`<div style="font-size:11px;color:var(--red);">Lookup failed: ${escHtmlClient(e.message)}</div>`;
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='🔍 Auto-detect from website'; }
+  }
+}
+// One suggested field, rendered as a "Use" button that fills the matching
+// input on the live edit-service form (see _applyHostingSuggestion below) —
+// the batch review tool further down uses its own checkbox-based rows
+// instead, since bulk-selecting many rows is a different interaction than
+// filling one open form.
+function _renderHostingSuggestionRow(label, fieldKey, result){
+  if(!result || !result.confident || !result.value){
+    const note=result?.note||'Not detected';
+    return `<div style="font-size:10.5px;color:var(--text-light);padding:2px 0;">${escHtmlClient(label)}: <em>${escHtmlClient(note)}</em></div>`;
+  }
+  // escHtmlClient() alone doesn't neutralize a literal single quote, which
+  // would otherwise break out of this onclick's single-quoted JS string
+  // argument (e.g. a registrar name like "O'Brien Web Hosting") — the extra
+  // replace() is the JS-string escape, layered on top of the HTML escape.
+  const jsSafeValue=escHtmlClient(result.value).replace(/'/g,"\\'");
+  return `<div style="font-size:11px;color:var(--text-dark);padding:2px 0;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    ${escHtmlClient(label)}: <strong>${escHtmlClient(result.value)}</strong>
+    <button type="button" class="btn btn-xs btn-outline" onclick="_applyHostingSuggestion('${fieldKey}','${jsSafeValue}')">Use</button>
+  </div>`;
+}
+function _renderHostingSuggestions(data){
+  return `<div style="background:var(--bg);border-radius:8px;padding:8px 10px;">
+    ${_renderHostingSuggestionRow('Registrar','registrar',data.registrar)}
+    ${_renderHostingSuggestionRow('Platform','sitePlatform',data.platform)}
+    ${_renderHostingSuggestionRow('Hosting Provider','hostingProvider',data.hostingProvider)}
+  </div>`;
+}
+// Fills the matching input on the currently-open Edit Service form with a
+// suggested value — does NOT save. The admin still has to click Save
+// Service, same as typing it by hand.
+function _applyHostingSuggestion(fieldKey, value){
+  if(fieldKey==='registrar'){
+    const el=_el('svc-registrar'); if(el) el.value=value;
+    return;
+  }
+  const selectId = fieldKey==='sitePlatform' ? 'svc-siteplatform' : 'svc-hostingprovider';
+  const textId = fieldKey==='sitePlatform' ? 'svc-siteplatform-other' : 'svc-hostingprovider-other';
+  const sel=_el(selectId); if(!sel) return;
+  const options=[...sel.options].map(o=>o.value);
+  if(options.includes(value)){ sel.value=value; _toggleHostingOtherField(selectId,textId); }
+  else { sel.value='Other'; _toggleHostingOtherField(selectId,textId); const t=_el(textId); if(t) t.value=value; }
+}
+
+// ── Hosting batch auto-detect — scan every active client's hosting
+// service, review, approve, apply. User-triggered only (the Scan button),
+// never on page load; writes nothing until Apply Selected is explicitly
+// clicked, and only ever touches fields the admin actually checked. ──────
+let _hbdScanResults=[]; // [{clientId, clientName, serviceId, current:{registrar,sitePlatform,hostingProvider}, registrar, platform, hostingProvider, error?}]
+function openHostingBatchDetectModal(){
+  _hbdScanResults=[];
+  const progressEl=_el('hbd-progress'); progressEl.style.display='none'; progressEl.textContent='';
+  const skipEl=_el('hbd-skipped'); skipEl.style.display='none'; skipEl.innerHTML='';
+  _el('hbd-results').innerHTML='';
+  _el('hbd-apply-btn').style.display='none';
+  const scanBtn=_el('hbd-scan-btn');
+  if(scanBtn){ scanBtn.disabled=false; scanBtn.textContent='▶ Scan'; }
+  openModal('hostingBatchDetectModal');
+}
+// Active clients' top-level hosting services only — same scope note as
+// _svcCycleStats() elsewhere in this file (not franchise-location-
+// inclusive; a franchise location has no website field of its own to look
+// up against). A hosting service with no website URL on the CLIENT record
+// is skipped, reported, never silently dropped.
+function _hbdCollectHostingServices(){
+  const targets=[], skipped=[];
+  getClients().filter(c=>(c.status||'active')==='active').forEach(c=>{
+    const hostingSvcs=(c.services||[]).filter(s=>_isHostingService(s.name) && !_isInactiveService(s));
+    if(!hostingSvcs.length) return;
+    const website=(c.website||'').trim();
+    hostingSvcs.forEach(svc=>{
+      if(!website){ skipped.push({clientName:c.name, serviceName:svc.name}); return; }
+      targets.push({
+        clientId:c.id, clientName:c.name, serviceId:svc.id, url:website,
+        current:{registrar:svc.registrar||'', sitePlatform:svc.sitePlatform||'', hostingProvider:svc.hostingProvider||''},
+      });
+    });
+  });
+  return {targets, skipped};
+}
+async function runHostingBatchScan(){
+  const {targets, skipped}=_hbdCollectHostingServices();
+  const skipEl=_el('hbd-skipped');
+  if(skipped.length){
+    skipEl.style.display='';
+    skipEl.innerHTML=`⚠ Skipped ${skipped.length} hosting service(s) with no website URL on file: ${skipped.map(s=>escHtmlClient(s.clientName)).join(', ')}. Add a website on the Edit Client form first.`;
+  } else { skipEl.style.display='none'; skipEl.innerHTML=''; }
+
+  const resultsEl=_el('hbd-results');
+  if(!targets.length){
+    resultsEl.innerHTML=`<div style="font-size:12px;color:var(--text-light);">No active hosting services with a website URL to scan.</div>`;
+    return;
+  }
+  const token=_opsToken();
+  if(!token){ showToast('Not signed in — please refresh and log in again','warn'); return; }
+
+  const scanBtn=_el('hbd-scan-btn');
+  if(scanBtn){ scanBtn.disabled=true; scanBtn.textContent='Scanning…'; }
+  const progressEl=_el('hbd-progress'); progressEl.style.display='';
+  _el('hbd-apply-btn').style.display='none';
+
+  // Table shell built once; each result APPENDS its own row rather than
+  // re-rendering the whole tbody on every lookup — a full re-render would
+  // wipe out any checkbox the admin already toggled on an earlier row while
+  // later rows are still loading (this scan is sequential and can take a
+  // while for a lot of clients).
+  resultsEl.innerHTML=`<table class="service-table" style="width:100%;">
+    <thead><tr><th>Client</th><th>Registrar</th><th>Platform</th><th>Hosting Provider</th></tr></thead>
+    <tbody id="hbd-results-tbody"></tbody>
+  </table>`;
+  const tbody=_el('hbd-results-tbody');
+
+  _hbdScanResults=[];
+  for(let i=0;i<targets.length;i++){
+    const t=targets[i];
+    progressEl.textContent=`Looking up ${i+1} of ${targets.length}: ${t.clientName}…`;
+    let result;
+    try{
+      const res=await fetch(OPS_HOSTING_LOOKUP_URL,{
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+        body: JSON.stringify({url:t.url})
+      });
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error||('HTTP '+res.status));
+      result={...t, registrar:data.registrar, platform:data.platform, hostingProvider:data.hostingProvider};
+    }catch(e){
+      result={...t, error:e.message};
+    }
+    const idx=_hbdScanResults.length;
+    _hbdScanResults.push(result);
+    tbody.insertAdjacentHTML('beforeend', _hbdRenderBatchRow(result, idx));
+  }
+  progressEl.textContent=`Done — scanned ${targets.length} hosting service(s).`;
+  if(scanBtn){ scanBtn.disabled=false; scanBtn.textContent='↻ Re-scan'; }
+  _el('hbd-apply-btn').style.display = _hbdScanResults.some(r=>!r.error) ? '' : 'none';
+}
+// One review-table row: a checkbox per confidently-detected field (its own
+// id, so applyHostingBatchSelections() below can read it back individually
+// after the admin has freely toggled any of them), unchecked by default
+// when the field already has a manually-entered value — a detected
+// suggestion never silently overwrites something already on the record
+// unless the admin explicitly opts in. A field the lookup couldn't
+// confidently resolve shows its note, no checkbox at all — nothing to
+// apply for that field.
+function _hbdRenderBatchRow(r, idx){
+  if(r.error){
+    return `<tr><td style="padding:8px 10px;font-size:12px;font-weight:600;vertical-align:top;">${escHtmlClient(r.clientName)}</td><td colspan="3" style="padding:8px 10px;font-size:11px;color:var(--red);">Lookup failed: ${escHtmlClient(r.error)}</td></tr>`;
+  }
+  const cell=(fieldKey, result, current)=>{
+    if(!result || !result.confident || !result.value){
+      return `<div style="font-size:10px;color:var(--text-light);"><em>${escHtmlClient(result?.note||'Not detected')}</em></div>`;
+    }
+    const matchesCurrent = current && current.trim()===result.value.trim();
+    const checkboxId=`hbd-chk-${idx}-${fieldKey}`;
+    return `<label style="display:flex;align-items:flex-start;gap:5px;font-size:11px;cursor:${matchesCurrent?'default':'pointer'};">
+      <input type="checkbox" id="${checkboxId}" ${matchesCurrent?'disabled':(current?'':'checked')} style="margin-top:2px;">
+      <span>
+        <strong>${escHtmlClient(result.value)}</strong>
+        ${matchesCurrent?`<div style="color:var(--text-light);">(already matches)</div>`:current?`<div style="color:var(--text-light);">current: ${escHtmlClient(current)}</div>`:''}
+      </span>
+    </label>`;
+  };
+  return `<tr>
+    <td style="padding:8px 10px;font-size:12px;font-weight:600;vertical-align:top;">${escHtmlClient(r.clientName)}</td>
+    <td style="padding:8px 10px;vertical-align:top;">${cell('registrar', r.registrar, r.current.registrar)}</td>
+    <td style="padding:8px 10px;vertical-align:top;">${cell('sitePlatform', r.platform, r.current.sitePlatform)}</td>
+    <td style="padding:8px 10px;vertical-align:top;">${cell('hostingProvider', r.hostingProvider, r.current.hostingProvider)}</td>
+  </tr>`;
+}
+// Writes ONLY the checked, confident suggestions — one saveClients() call
+// covering every approved client, still per-record under the hood (the
+// existing dirty-check/_scheduleCloudPush mechanism only ever pushes rows
+// that actually changed, never a whole-table replace — same guarantee
+// saveClientService() already relies on elsewhere in this file). A
+// suggestion whose checkbox is unchecked, disabled (already matches), or
+// missing entirely is never touched.
+function applyHostingBatchSelections(){
+  const clients=getClients();
+  let appliedCount=0;
+  _hbdScanResults.forEach((r,idx)=>{
+    if(r.error) return;
+    const client=clients.find(c=>c.id===r.clientId); if(!client) return;
+    const svc=(client.services||[]).find(s=>s.id===r.serviceId); if(!svc) return;
+    ['registrar','sitePlatform','hostingProvider'].forEach(fieldKey=>{
+      const chk=_el(`hbd-chk-${idx}-${fieldKey}`);
+      if(!chk || !chk.checked || chk.disabled) return;
+      const result = fieldKey==='registrar'?r.registrar:fieldKey==='sitePlatform'?r.platform:r.hostingProvider;
+      if(!result || !result.confident || !result.value) return;
+      svc[fieldKey]=result.value;
+      appliedCount++;
+    });
+  });
+  if(!appliedCount){ showToast('Nothing selected to apply'); return; }
+  saveClients(clients);
+  filterClients(); // refresh the visible grid from the just-updated data
+  showToast(`Applied ${appliedCount} field(s) across hosting services ✓`);
+  closeModal('hostingBatchDetectModal');
 }
 
 // ═══════════════════════════════════════════════════════
