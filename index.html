@@ -1536,26 +1536,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
 
         <div id="taListWrap">
-          <div class="card">
-            <div class="card-body" style="padding:0;overflow-x:auto;">
-              <table style="width:100%;min-width:820px;">
-                <thead>
-                  <tr>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Assignee</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Reply</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Priority</th>
-                    <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);"></th>
-                  </tr>
-                </thead>
-                <tbody id="taTableBody"></tbody>
-              </table>
-              <div id="taListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No tasks match these filters.</div>
-            </div>
-          </div>
+          <!-- Card list (2026-08-28 redesign) — replaced the old <table> row
+               layout with individual cards (see .ta-task-card below); a
+               <tbody> can only ever legally contain <tr> children, so a
+               genuine card per task requires a plain container here instead
+               of a table body, even though the id (taTableBody) is kept
+               unchanged for every existing caller. -->
+          <div id="taTableBody" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <div id="taListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:12px;">No tasks match these filters.</div>
         </div>
 
         <div id="taDayWrap" style="display:none;">
@@ -5932,18 +5920,37 @@ window.switchAdminTab = function(el, tab){
 .rm-card-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .rm-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
 /* Task Assignments "New" highlight (2026-08-20) — same amber treatment as
-   .rm-card-new above, reused via .rm-new-tag directly for the pill; these
-   two are the row/div-shaped equivalents of .rm-card-new for a <tr> (no
-   border to speak of, just a background tint) and the staging list's plain
-   <div> rows. See _taIsNew()/_renderTaListTable()/_renderTaStaging(). */
-.ta-row-new td{background:rgba(245,158,11,.07)!important;}
+   .rm-card-new above, reused via .rm-new-tag directly for the pill. Was a
+   <tr> background tint before the 2026-08-28 card redesign; now a border+
+   background tint on the card div itself, same idea as .rm-card-new. See
+   _taIsNew()/_renderTaListTable()/_renderTaStaging(). */
+.ta-row-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .ta-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 /* "Blocked" task status (2026-08-20) — same red treatment as Workload's
    "Stuck" service status (SERVICE_STATUSES' stuck color/bg), mirrored
    here rather than a third separate visual language for "work has
    stopped." Combines harmlessly with .ta-row-new (a task can be both
    newly assigned AND blocked). */
-.ta-row-blocked td{background:rgba(224,85,85,.05)!important;}
+.ta-row-blocked{border-color:rgba(224,85,85,.35)!important;background:rgba(224,85,85,.05)!important;}
+/* Task card list (2026-08-28) — replaces the old <table> row layout in
+   both Task Assignments (index.html, here) and My Tasks (user.html, its
+   own hand-duplicated copy per the zero-shared-code rule). */
+.ta-task-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .15s,box-shadow .15s;}
+.ta-task-card:hover{border-color:var(--accent,#2E5DA6);box-shadow:0 2px 10px rgba(0,0,0,.06);}
+.ta-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.ta-card-title{font-weight:600;color:var(--text-dark);font-size:13.5px;}
+.ta-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.ta-pill-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ta-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
+.ta-due-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0;}
+.ta-due-badge.overdue{background:rgba(224,85,85,.12);color:var(--red,#c94a4a);}
+.ta-due-badge.soon{background:rgba(217,130,43,.14);color:#d9822b;}
+.ta-due-badge.later{background:none;color:var(--text-light);font-weight:500;padding:3px 2px;}
+.ta-avatar-mini{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#2E5DA6,#5B84C4);}
+.ta-assignee-pill{display:inline-flex;align-items:center;gap:6px;}
+.ta-assignee-pill select{border:none;background:none;font:inherit;font-size:11px;font-weight:600;color:var(--text-mid);padding:0;cursor:pointer;max-width:130px;}
+.ta-status-select{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);cursor:pointer;}
+.ta-client-text{font-size:11px;color:var(--text-light);}
 .rm-empty{font-size:12px;color:var(--text-light);text-align:center;padding:20px 12px;font-style:italic;}
 .rm-archive-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:8px;padding:10px 14px;background:var(--card);border:1px solid var(--border);border-radius:10px;}
 .rm-archive-header:hover{background:var(--bg2);}
@@ -8214,6 +8221,61 @@ function startLiveSync(level){
 // display. ──
 const TA_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+// Card redesign (2026-08-28) — a fixed, deterministic color per category
+// pill; purely cosmetic, invented for this PR (no prior color-coding
+// existed for TA_CATEGORIES anywhere in this file).
+const TA_CATEGORY_COLORS = {
+  'Production': {bg:'rgba(15,157,140,.12)', color:'#0f9d8c'},
+  'Updates': {bg:'rgba(46,93,166,.12)', color:'#2E5DA6'},
+  'Sales': {bg:'rgba(46,158,110,.12)', color:'var(--green,#2e9e6e)'},
+  'Admin': {bg:'rgba(124,58,237,.12)', color:'#7c3aed'},
+  'Other': {bg:'var(--bg2)', color:'var(--text-light)'},
+  'Invoices/Payments': {bg:'rgba(217,130,43,.14)', color:'#d9822b'},
+};
+function _taCategoryPillHtml(cat){
+  const c = TA_CATEGORY_COLORS[cat] || TA_CATEGORY_COLORS['Other'];
+  const label = TA_CATEGORY_LABELS[cat] || cat || 'Other';
+  return `<span class="ta-pill" style="background:${c.bg};color:${c.color};">${escHtmlAdmin(label)}</span>`;
+}
+// Initials + a deterministic avatar color (hashed off the person's id, so
+// the same person always gets the same color across renders/reloads —
+// purely decorative, not a stored field).
+const TA_AVATAR_PALETTE = [
+  'linear-gradient(135deg,#2E5DA6,#5B84C4)','linear-gradient(135deg,#e05555,#f08080)',
+  'linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)',
+  'linear-gradient(135deg,#9333ea,#c084fc)','linear-gradient(135deg,#0f9d8c,#5eead4)',
+];
+function _taInitials(name){
+  const parts = (name||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  return (parts[0][0] + (parts[1]?parts[1][0]:'')).toUpperCase();
+}
+function _taAvatarColor(id){
+  let h=0; const s=String(id||'');
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return TA_AVATAR_PALETTE[h % TA_AVATAR_PALETTE.length];
+}
+// Day-count against a 'YYYY-MM-DD' due date, parsed via local y/m/d
+// components rather than `new Date(dateStr)` directly — same UTC-parse
+// pitfall already fixed elsewhere in this codebase (see the time-off
+// day-count entry).
+function _taDaysUntil(iso){
+  const parse = s => { const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y,m-1,d); };
+  return Math.round((parse(iso) - parse(_taToday())) / 86400000);
+}
+// Due badge — red "Overdue" / amber "Due today" or "Due in Xd" (≤7 days,
+// same amber-if-≤7-days convention Overview's own due-date labeling
+// established) / plain gray "Due in Xd" further out / nothing at all for
+// an undated task.
+function _taDueBadgeHtml(t){
+  if(!t.dueDate) return '';
+  if(_taIsOverdue(t)) return `<span class="ta-due-badge overdue">⏱ Overdue</span>`;
+  if(_taIsDueToday(t)) return `<span class="ta-due-badge soon">⏱ Due today</span>`;
+  const days = _taDaysUntil(t.dueDate);
+  if(days>0 && days<=7) return `<span class="ta-due-badge soon">⏱ Due in ${days}d</span>`;
+  if(days>7) return `<span class="ta-due-badge later">Due in ${days}d</span>`;
+  return '';
+}
 const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
 // Ordered Not started -> In progress -> Blocked -> Done, matching the edit
 // modal's own <select> — shared here so the inline list-row dropdown can
@@ -8646,6 +8708,12 @@ function renderTaskAssignments(){
   else _renderTaListTable(tasks);
 }
 
+// Card redesign (2026-08-28) — replaces the old <table> row layout. Every
+// existing handler (openTaDetailPanel, _taReassign, _taChangeStatus,
+// deleteTaskInline) is reused unchanged; only the markup around them
+// changed. #taTableBody is now a plain container element (see the markup
+// comment at its declaration) so each task can render as a real card
+// instead of a table row (a tbody can only legally contain tr children).
 function _renderTaListTable(tasks){
   const body = document.getElementById('taTableBody');
   const empty = document.getElementById('taListEmpty');
@@ -8658,7 +8726,6 @@ function _renderTaListTable(tasks){
   if(empty) empty.style.display = 'none';
   const roster = _timeOffRoster();
   body.innerHTML = tasks.map(t=>{
-    const overdue = _taIsOverdue(t);
     const isNew = _taIsNew(t);
     const blocked = t.status==='Blocked';
     const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
@@ -8669,30 +8736,47 @@ function _renderTaListTable(tasks){
     // admin action wired to it beyond opening the task, same weight as
     // the other read-only badges on this row.
     const dupReportedBadge = t.duplicateReported ? ' <span style="font-size:10px;background:rgba(217,130,43,.12);border:1px solid rgba(217,130,43,.3);border-radius:4px;padding:1px 5px;color:#d9822b;font-weight:700;" title="Reported as a possible duplicate by the assignee">🚩 Possible duplicate</span>' : '';
-    return `<tr class="${isNew?'ta-row-new':''}${blocked?' ta-row-blocked':''}" style="cursor:pointer;" onclick="openTaDetailPanel('${t.id}')">
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${TA_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_taFormatShortDate(t.assignedDate)}`:''}</div>
-      </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.clientName||'—')}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;" onchange="_taReassign('${t.id}', this.value)">
-          <option value="">Unassigned</option>
-          ${roster.map(p=>`<option value="${p.id}" ${p.id===t.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
-        </select>
-      </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;color:${_taStatusColor(t.status)};font-weight:600;" onchange="_taChangeStatus('${t.id}', this.value, this)">
-          ${TA_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
-        </select>
-      </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.replyStatus||'—')}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlAdmin(t.priority||'Normal')}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
-        <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);" title="Delete task" onclick="deleteTaskInline('${t.id}')">✕</button>
-      </td>
-    </tr>`;
+    // Assignee pill — a task carrying more than one co-assignee (the
+    // Everyone/whole-team option, or a multi-name parsed row — see the
+    // assigneeIds entries above) shows the "Whole team" pill instead of a
+    // single person's avatar, since any one clone's own assigneeId would
+    // misrepresent it as being for just that person. A single-assignee or
+    // unassigned task keeps the same inline reassign <select> as before,
+    // now paired with a small initials avatar.
+    const wholeTeam = (t.assigneeIds||[]).length > 1;
+    let assigneeHtml;
+    if(wholeTeam){
+      assigneeHtml = `<span class="ta-pill" style="background:var(--bg2);color:var(--text-mid);">👥 Whole team</span>`;
+    } else {
+      const person = t.assigneeId ? roster.find(p=>p.id===t.assigneeId) : null;
+      const avatar = person ? `<span class="ta-avatar-mini" style="background:${_taAvatarColor(t.assigneeId)};">${_taInitials(person.name)}</span>` : '';
+      assigneeHtml = `<span class="ta-assignee-pill">${avatar}<select onchange="_taReassign('${t.id}', this.value)">
+        <option value="">Unassigned</option>
+        ${roster.map(p=>`<option value="${p.id}" ${p.id===t.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
+      </select></span>`;
+    }
+    return `<div class="ta-task-card${isNew?' ta-row-new':''}${blocked?' ta-row-blocked':''}" onclick="openTaDetailPanel('${t.id}')">
+      <div class="ta-card-top">
+        <div>
+          <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
+          ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_taFormatShortDate(t.assignedDate)}</div>`:''}
+        </div>
+        ${_taDueBadgeHtml(t)}
+      </div>
+      <div class="ta-card-foot">
+        <div class="ta-pill-row">
+          ${_taCategoryPillHtml(t.category)}
+          ${assigneeHtml}
+          ${t.clientName?`<span class="ta-client-text">${escHtmlAdmin(t.clientName)}</span>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation()">
+          <select class="ta-status-select" style="color:${_taStatusColor(t.status)};" onchange="_taChangeStatus('${t.id}', this.value, this)">
+            ${TA_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
+          </select>
+          <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);" title="Delete task" onclick="deleteTaskInline('${t.id}')">✕</button>
+        </div>
+      </div>
+    </div>`;
   }).join('');
 }
 

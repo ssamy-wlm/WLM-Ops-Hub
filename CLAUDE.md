@@ -4487,6 +4487,153 @@ Low-risk per rule #10: touches no data-write/sync/auth/permission logic
 an existing endpoint — eligible for direct merge once CI is green, same
 tier as the client-dropdown-sort PR immediately above.
 
+**Task card redesign — both portals, display-layer only (2026-08-28).**
+`index.html` (Task Assignments) + `user.html` (My Tasks). Replaced the old
+`<table>` row layout with the card style from the mockup: title, a due/
+overdue badge (red "Overdue" / amber "Due today" or "Due in Xd" ≤7 days /
+plain gray "Due in Xd" further out / no badge for an undated task — the
+same amber-if-≤7-days convention Overview's own due-date labeling already
+established), a color-coded category pill, an assignee avatar+name (or a
+"👥 Whole team" pill for a task carrying more than one co-assignee — see
+below), a client pill when present, and an inline status chip on the
+right. Every existing handler is reused completely unchanged —
+`openTaDetailPanel`/`openDtDetailPanel`, `_taReassign`, `_taChangeStatus`/
+`_dtChangeStatus`, `deleteTaskInline` — only the markup around them
+changed; no data, sync, or permission logic touched in either file.
+
+**Why `#taTableBody`/`#dtTableBody` had to become a plain `<div>`, not
+just restyled `<tr>`s:** a `<tbody>` can only legally contain `<tr>`
+children — the browser silently strips/relocates any other element type
+injected into one — so rendering a genuine rounded-corner card per task
+(not a disguised table row) required replacing the `<table>`/`<thead>`/
+`<tbody>` wrapper with a plain flex-column container. The container keeps
+the exact same id every existing caller already uses
+(`document.getElementById('taTableBody'/'dtTableBody')`), so
+`_renderTaListTable()`/`_renderDtListTable()` needed no signature change,
+only a different template per task (`.ta-task-card`/`.dt-task-card`
+divs instead of `<tr><td>` rows). `.ta-row-new`/`.ta-row-blocked` (and
+their `dt-` twins) — previously `<tr> td{background:...}` tints — now
+target the card div itself directly, same idea as the pre-existing
+`.rm-card-new` border+background pattern.
+
+**Assignee pill — the one place this needed a real design decision, not
+just a restyle.** `index.html` keeps the exact same inline reassign
+`<select onchange="_taReassign(...)">` from before, now paired with a
+small initials avatar computed from the currently-selected person
+(`_taInitials()`/`_taAvatarColor()`, a deterministic id-hashed color from
+a small fixed palette — purely decorative, not a stored field).
+`user.html` has no reassign `<select>` at all — never did; this file's
+own pre-existing comment already states "no assignee dropdown, no other
+people's tasks, no team roster," server-enforced, not just hidden — so
+its card shows a static avatar+name for the current user instead. Both
+portals show the "Whole team" pill instead of a per-person
+avatar/select whenever a task carries more than one id in `assigneeIds`
+(the Everyone/co-assign feature's own informational field) — showing any
+ONE clone's own `assigneeId` there would misrepresent it as being for
+just that person, since each Everyone-clone is otherwise a completely
+normal, independently-editable task.
+
+**Category pill colors and the due-badge thresholds are new, invented for
+this PR** — no color-coding existed for `TA_CATEGORIES`/`DT_CATEGORIES`
+anywhere in either file before this. Six fixed category colors
+(Production teal, Updates blue, Sales green, Admin purple, Other gray,
+Invoices/Payments amber), hand-duplicated per file (zero-shared-code
+rule) as `TA_CATEGORY_COLORS`/`DT_CATEGORY_COLORS`.
+
+**Regression found and fixed while building this, not part of the
+original ask:** the first draft of the card dropped the "Assigned Aug 18"
+subtitle line the old table row's title cell carried — the mockup itself
+has no room for it, so it was cut for a cleaner card. This broke a real,
+already-tested requirement: both `verify_ta_assigned_date.js` and
+`verify_dt_assigned_date.js` (2026-08-20, the `assignedDate` feature)
+assert this exact text renders in the list view. Restored as a small
+muted subtitle under the title (`Assigned ${_taFormatShortDate(...)}`),
+shown only when `assignedDate` is present — same convention the old row
+used, just inside the new card's title block instead of a table cell.
+
+**Test-selector migration, not a functional regression:** ~15
+pre-existing local Playwright suites (not tracked in git — this repo's
+established scratchpad-verification convention) referenced `#taTableBody
+tr`/`#dtTableBody tr` or a bare `tr:has-text(...)`/`page.locator('tr')`
+to locate a task row — these were updated to `.ta-task-card`/
+`.dt-task-card` (found via a `grep -rn` sweep across every scratchpad
+test file referencing either table-body id, then a second sweep for bare
+`'tr'`/`` `tr` `` locators the first pass missed, since Playwright still
+resolved those against unrelated stray `<span>`/table elements elsewhere
+on the page rather than failing outright). Every one of these suites was
+then actually re-run and passes clean — this is what "all existing
+filtering/status/edit behavior still works" is verified against, not
+just asserted.
+
+**Div-balance verification note:** the naive `<div`/`</div>` regex count
+this codebase's rule #9 check uses is comment-sensitive — one of this
+PR's own explanatory comments briefly wrote literal `<div>` inside plain
+text ("now a plain `<div>`"), which the naive count matched as a real
+unmatched open tag despite being inside a `//` comment, and removing an
+old CSS comment that happened to contain the same pattern shifted
+`index.html`'s naive delta from main's usual `-2` to `-3` with no real
+structural change. Reworded both comments to avoid literal `<div>`/
+`</div>` text, then verified TRUE structural balance with HTML comments
+and JS/CSS comments stripped first — `index.html` open=1381/close=1370
+(delta +11) and `user.html` open=717/close=717 (delta 0), both matching
+`main`'s own comment-stripped baseline exactly, confirming the change is
+genuinely balanced and the raw naive-count delta shift was a false
+signal from comment text, not a real defect.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) both files — clean; comment-stripped div-balance matches `main`
+exactly in both (details above); `ls api/*.js | wc -l` unaffected (no
+server file touched in either draft of this PR). Two new Playwright
+suites against the real UIs: `index.html` (26/26, run 3× clean) — no
+`<table>`/`<tr>` remain in the list view, all four due-badge tiers render
+correctly (including the undated "no badge" case), category pills render
+with genuinely different colors, a single-assignee card shows an avatar
+matched to the selected person, a multi-assignee (Everyone) task shows
+the "Whole team" pill with no avatar/select, a client pill only appears
+when a client is set, the Blocked badge/tint still renders, and inline
+status-change/reassign/click-to-detail all still fire the real
+`_taChangeStatus`/`_taReassign`/`openTaDetailPanel` handlers with a real
+`ops-sync` push confirmed in each case — and `user.html` (25/25, run 3×
+clean), same coverage minus the reassign select (confirmed absent by
+design) plus confirming the status change goes through this file's own
+2s-debounced `_scheduleCloudPush()` rather than an immediate push. Every
+pre-existing Task Assignments/Daily Tasks Playwright suite touching
+either table body was re-run after the selector migration and passes
+clean: `verify_everyone_assignee_option.js` (19/19),
+`verify_needs_attention_unassigned.js` (16/16),
+`verify_ta_19task_completeness.js` (12/12),
+`verify_ta_schedule_tab.js` (15/15), `verify_ta_status_tabs.js` (24/24),
+`verify_task_undo_new_datelock_admin.js` (21/21),
+`verify_ta_delete_inline_status.js` (17/17),
+`verify_ta_staging.js` (26/26), `verify_ta_staging_merge_commit.js`
+(9/9), `verify_ta_merge.js` (9/9), `verify_ta_buttons_calendar.js`
+(11/11), `verify_ownerraw_staging_hint.js` (6/6),
+`verify_dt_blocked_status.js` (10/10), `verify_dt_status_tabs.js`
+(19/19), `verify_employee_duplicate_merge.js` (24/24),
+`verify_task_undo_new_user.js` (14/14),
+`verify_dt_delete_inline_status.js` (9/9),
+`verify_employee_task_edit_delete_removal.js` (16/16),
+`verify_dt_filter_buttons_fix.js` (10/10), `verify_dt_staging.js`
+(17/17), `verify_ta_assigned_date.js` (6/6, the assignedDate-subtitle
+regression check). Three pre-existing failures were confirmed to
+reproduce identically against unmodified `main` (via `git stash`) and
+are unrelated, out of scope here: `verify_task_assignments_ui.js`'s
+stale `#taViewCalBtn` reference (predates the Day/Week/Month schedule
+tab, already documented above), `verify_ta_person_view_blocked.js`'s
+stale `#ov-team-assessment` selector (retired by the Overview redesign,
+already documented above), and `verify_dt_assigned_date.js`'s own
+click-target ambiguity (a bare `text=` locator resolving to 2 elements
+including a hidden, unrelated `<span>` — reproduces byte-for-byte on
+`main`, a pre-existing test-fixture issue not touched by this PR).
+
+Low-risk per rule #10 for the display-layer parts (no `api/*.js` file
+touched, no data/sync/permission logic changed) — but flagged for the
+user's own click-through on the Vercel preview before merge regardless,
+since this is a full visual redesign of the primary task-management
+surface in both portals and the category-pill colors/due-badge
+thresholds are new, un-reviewed design choices, not carried over from an
+existing spec.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

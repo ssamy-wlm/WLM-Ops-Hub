@@ -441,13 +441,35 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    this amber treatment until opened; same visual language as index.html's
    own Roadmap/Task-Assignments "New" tag, hand-duplicated here since this
    file shares no code with index.html (CLAUDE.md rule #3). */
-.dt-row-new td{background:rgba(245,158,11,.07)!important;}
+/* Was a <tr> background tint before the 2026-08-28 card redesign; now a
+   border+background tint on the card div itself (same idea as index.html's
+   own copy, hand-duplicated). */
+.dt-row-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .dt-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .dt-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
 /* "Blocked" task status (2026-08-20) — same red treatment as index.html's
    own copy (hand-duplicated, zero-shared-code) and Workload's "Stuck"
    service status. Combines harmlessly with .dt-row-new. */
-.dt-row-blocked td{background:rgba(224,85,85,.05)!important;}
+.dt-row-blocked{border-color:rgba(224,85,85,.35)!important;background:rgba(224,85,85,.05)!important;}
+/* Task card list (2026-08-28) — replaces the old <table> row layout;
+   hand-duplicated from index.html's own .ta-task-card etc. (zero-shared-
+   code rule), same visual language under a dt- prefix matching this
+   file's existing naming convention. */
+.dt-task-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .15s,box-shadow .15s;}
+.dt-task-card:hover{border-color:var(--accent,#2E5DA6);box-shadow:0 2px 10px rgba(0,0,0,.06);}
+.dt-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;}
+.dt-card-title{font-weight:600;color:var(--text-dark);font-size:13.5px;}
+.dt-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.dt-pill-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.dt-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
+.dt-due-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;flex-shrink:0;}
+.dt-due-badge.overdue{background:rgba(224,85,85,.12);color:var(--red,#c94a4a);}
+.dt-due-badge.soon{background:rgba(217,130,43,.14);color:#d9822b;}
+.dt-due-badge.later{background:none;color:var(--text-light);font-weight:500;padding:3px 2px;}
+.dt-avatar-mini{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#2E5DA6,#5B84C4);}
+.dt-assignee-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-mid);}
+.dt-status-select{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);cursor:pointer;}
+.dt-client-text{font-size:11px;color:var(--text-light);}
 </style>
 </head>
 <body>
@@ -1019,22 +1041,14 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
           </div>
           <div id="dtListWrap">
-            <div class="card">
-              <div class="card-body" style="padding:0;overflow-x:auto;">
-                <table style="width:100%;min-width:520px;">
-                  <thead>
-                    <tr>
-                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Task</th>
-                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Client</th>
-                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Due</th>
-                      <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="dtTableBody"></tbody>
-                </table>
-                <div id="dtListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">Nothing assigned to you yet.</div>
-              </div>
-            </div>
+            <!-- Card list (2026-08-28 redesign) — replaced the old <table>
+                 row layout with individual cards (see .dt-task-card); a
+                 <tbody> can only ever legally contain <tr> children, so a
+                 genuine card per task requires a plain container here
+                 instead, even though the id (dtTableBody) is kept
+                 unchanged for every existing caller. -->
+            <div id="dtTableBody" style="display:flex;flex-direction:column;gap:10px;"></div>
+            <div id="dtListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:12px;">Nothing assigned to you yet.</div>
           </div>
           <div id="dtCalWrap" style="display:none;">
             <div class="card">
@@ -1498,6 +1512,38 @@ async function cloudPushData(){
 // here), or create a new self-origin one via the Add/Import tab. ──
 const DT_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
 const DT_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
+// Card redesign (2026-08-28) — hand-duplicated from index.html's own
+// TA_CATEGORY_COLORS/_taCategoryPillHtml/_taInitials/_taAvatarColor/
+// _taDaysUntil/_taDueBadgeHtml (zero-shared-code rule); same fixed,
+// deterministic category-pill colors and due-badge thresholds.
+const DT_CATEGORY_COLORS = {
+  'Production': {bg:'rgba(15,157,140,.12)', color:'#0f9d8c'},
+  'Updates': {bg:'rgba(46,93,166,.12)', color:'#2E5DA6'},
+  'Sales': {bg:'rgba(46,158,110,.12)', color:'var(--green,#2e9e6e)'},
+  'Admin': {bg:'rgba(124,58,237,.12)', color:'#7c3aed'},
+  'Other': {bg:'var(--bg2)', color:'var(--text-light)'},
+  'Invoices/Payments': {bg:'rgba(217,130,43,.14)', color:'#d9822b'},
+};
+function _dtCategoryPillHtml(cat){
+  const c = DT_CATEGORY_COLORS[cat] || DT_CATEGORY_COLORS['Other'];
+  const label = DT_CATEGORY_LABELS[cat] || cat || 'Other';
+  return `<span class="dt-pill" style="background:${c.bg};color:${c.color};">${escHtmlUser(label)}</span>`;
+}
+const DT_AVATAR_PALETTE = [
+  'linear-gradient(135deg,#2E5DA6,#5B84C4)','linear-gradient(135deg,#e05555,#f08080)',
+  'linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)',
+  'linear-gradient(135deg,#9333ea,#c084fc)','linear-gradient(135deg,#0f9d8c,#5eead4)',
+];
+function _dtInitials(name){
+  const parts = (name||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  return (parts[0][0] + (parts[1]?parts[1][0]:'')).toUpperCase();
+}
+function _dtAvatarColor(id){
+  let h=0; const s=String(id||'');
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return DT_AVATAR_PALETTE[h % DT_AVATAR_PALETTE.length];
+}
 // Ordered Not started -> In progress -> Blocked -> Done, matching the
 // detail panel's own <select> — shared here so the inline list-row
 // dropdown can never drift out of sync with it.
@@ -1777,6 +1823,29 @@ function _dtToday(){ return new Date().toISOString().slice(0,10); }
 // untouched by this.
 function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active').sort((a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'})); }catch(e){ return []; } }
 function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
+// Hand-duplicated from index.html's own _taIsDueToday (zero-shared-code
+// rule) — this file had no equivalent before the 2026-08-28 card redesign.
+function _dtIsDueToday(t){ return t.dueDate === _dtToday() && t.status!=='Done'; }
+// Day-count against a 'YYYY-MM-DD' due date, parsed via local y/m/d
+// components rather than `new Date(dateStr)` directly — same UTC-parse
+// pitfall already fixed elsewhere in this codebase (see the time-off
+// day-count entry). Hand-duplicated from index.html's own _taDaysUntil.
+function _dtDaysUntil(iso){
+  const parse = s => { const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y,m-1,d); };
+  return Math.round((parse(iso) - parse(_dtToday())) / 86400000);
+}
+// Due badge — same red "Overdue" / amber "Due today" or "Due in Xd" (≤7
+// days) / plain gray "Due in Xd" further out / nothing for an undated
+// task as index.html's own _taDueBadgeHtml, hand-duplicated here.
+function _dtDueBadgeHtml(t){
+  if(!t.dueDate) return '';
+  if(_dtIsOverdue(t)) return `<span class="dt-due-badge overdue">⏱ Overdue</span>`;
+  if(_dtIsDueToday(t)) return `<span class="dt-due-badge soon">⏱ Due today</span>`;
+  const days = _dtDaysUntil(t.dueDate);
+  if(days>0 && days<=7) return `<span class="dt-due-badge soon">⏱ Due in ${days}d</span>`;
+  if(days>7) return `<span class="dt-due-badge later">Due in ${days}d</span>`;
+  return '';
+}
 
 // Status sub-tabs (2026-08-26) — same grouping/sort/completedAt model as
 // index.html's identical copy (hand-duplicated per CLAUDE.md's zero-
@@ -1956,6 +2025,12 @@ function renderDailyTasks(){
   else _renderDtListTable(sorted);
 }
 
+// Card redesign (2026-08-28) — replaces the old <table> row layout, same
+// approach as index.html's own copy (hand-duplicated, zero-shared-code
+// rule): every existing handler (openDtDetailPanel, _dtChangeStatus) is
+// reused unchanged; only the markup around them changed. #dtTableBody is
+// now a plain container element (see the markup comment at its
+// declaration).
 function _renderDtListTable(tasks){
   const body = document.getElementById('dtTableBody');
   const empty = document.getElementById('dtListEmpty');
@@ -1968,23 +2043,40 @@ function _renderDtListTable(tasks){
   if(empty) empty.style.display = 'none';
   const seen = _dtSeenIds();
   body.innerHTML = tasks.map(t=>{
-    const overdue = _dtIsOverdue(t);
     const isNew = _dtIsNew(t, seen);
     const blocked = t.status==='Blocked';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlUser(t.blockReason||'')}">🚧 Blocked</span>` : '';
-    return `<tr class="${isNew?'dt-row-new':''}${blocked?' dt-row-blocked':''}" style="cursor:pointer;" onclick="openDtDetailPanel('${t.id}')">
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);">
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${DT_CATEGORY_LABELS[t.category]||t.category||''}${t.assignedDate?` · Assigned ${_dtFormatShortDate(t.assignedDate)}`:''}</div>
-      </td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">${escHtmlUser(t.clientName||'—')}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:${overdue?'var(--red,#c94a4a)':'inherit'};">${t.dueDate||'—'}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid var(--border);" onclick="event.stopPropagation()">
-        <select class="form-input" style="font-size:12px;padding:5px 8px;color:${_dtStatusColor(t.status)};font-weight:600;" onchange="_dtChangeStatus('${t.id}', this.value, this)">
-          ${DT_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
-        </select>
-      </td>
-    </tr>`;
+    // Assignee pill — every task here is already this member's own (see
+    // this file's own "no assignee dropdown, no other people's tasks"
+    // comment above DT_CATEGORIES), so there's no reassign <select> to
+    // preserve; a task carrying more than one co-assignee (the Everyone/
+    // whole-team option — see assigneeIds above) shows "Whole team"
+    // instead, same as index.html's own copy.
+    const wholeTeam = (t.assigneeIds||[]).length > 1;
+    const assigneeHtml = wholeTeam
+      ? `<span class="dt-pill" style="background:var(--bg2);color:var(--text-mid);">👥 Whole team</span>`
+      : `<span class="dt-assignee-pill"><span class="dt-avatar-mini" style="background:${_dtAvatarColor(currentUser?.id)};">${_dtInitials(currentUser?.name)}</span>${escHtmlUser(currentUser?.name||'You')}</span>`;
+    return `<div class="dt-task-card${isNew?' dt-row-new':''}${blocked?' dt-row-blocked':''}" onclick="openDtDetailPanel('${t.id}')">
+      <div class="dt-card-top">
+        <div>
+          <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
+          ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_dtFormatShortDate(t.assignedDate)}</div>`:''}
+        </div>
+        ${_dtDueBadgeHtml(t)}
+      </div>
+      <div class="dt-card-foot">
+        <div class="dt-pill-row">
+          ${_dtCategoryPillHtml(t.category)}
+          ${assigneeHtml}
+          ${t.clientName?`<span class="dt-client-text">${escHtmlUser(t.clientName)}</span>`:''}
+        </div>
+        <div onclick="event.stopPropagation()">
+          <select class="dt-status-select" style="color:${_dtStatusColor(t.status)};" onchange="_dtChangeStatus('${t.id}', this.value, this)">
+            ${DT_STATUS_OPTIONS.map(s=>`<option value="${s}" ${s===(t.status||'Not started')?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>`;
   }).join('');
 }
 
