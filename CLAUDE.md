@@ -4362,6 +4362,55 @@ unrelated failure (`verify_task_assignments_ui.js`'s stale `#taViewCalBtn`
 selector, already documented above) reproduces identically — out of scope
 here.
 
+**Include Task Assignments in My Roadmap (2026-08-28, PR 1 of 2).**
+`user.html` only, display-only read, no writes. `_collectMyWorkItems()`
+(feeds "My Roadmap"'s NEXT 7/30/60 DAYS + LONG TERM buckets on the
+Operations page) previously only gathered the old tracker data model
+(`c.services[]`/`c.recurringServices[]`/`c.projects[]`) — a completely
+separate source from `ops_tasks` (Task Assignments/My Tasks), so an
+employee's real assigned tasks never showed up here at all, only on the
+My Tasks page. Added one more block reusing the exact same `_dtMyTasks()`
+helper My Tasks itself already relies on (already scopes to this user's
+own `assigneeId` and excludes a merged-away duplicate — see that
+function's own comment), filtered to `status!=='Done'` at this call site,
+same convention the pre-existing tracker items already use for their own
+`.done`/`onProject` filters. `task.dueDate` maps straight onto this
+function's shared `due` field, so a dated task buckets by real due date
+exactly like a service or project already does; an undated task falls
+into the pre-existing "no due date → Long Term" bucket for free — no new
+bucket logic needed, and no due-date estimation here (see PR 2 below for
+that).
+
+**Found and fixed in the same pass, not part of the original ask:** the
+roadmap's `row()` renderer interpolated `i.name`/`i.client` into
+`innerHTML` completely unescaped — harmless before this change (every
+prior source was an admin-set client/service/project name), but
+`ops_tasks.subject` is free text the assignee can edit themselves (see
+the 2026-08-26 editable-subject feature), so this PR's own new source
+turns that into a real, reachable XSS path the moment it's added. Fixed
+by wrapping both fields in the existing `escHtmlUser()` (already used
+everywhere else in this file) rather than shipping the new data source on
+top of an unescaped sink. Also switched the client/due concatenation from
+unconditional string-building to a filter+join, so a client-less task (a
+real, valid `ops_tasks` shape — plenty of tasks have no client) doesn't
+render a bare leading " · " with nothing before it; every existing item
+still always has a client, so this is a no-op for them.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; div-balance delta unchanged vs. `main` (−1); `ls api/*.js
+| wc -l` still 11 (no server file touched, this PR is `user.html` only).
+A new Playwright suite against the real UI (10/10, run three times
+clean): a near-term task lands in NEXT 7 DAYS, a 45-day-out task in NEXT
+60 DAYS, an undated task in LONG TERM; a Done task, a task assigned to
+someone else, and a merged-away task are all excluded entirely; a task
+subject containing `<script>` and a client name containing `&`/`"` both
+render HTML-escaped in the markup (not as live tags); a client-less
+task's row carries no stray leading separator. Every pre-existing Daily
+Tasks/duplicate-merge suite touching `_dtMyTasks()` or the same render
+paths re-run clean and unaffected: `verify_dt_staging.js` (17/17),
+`verify_employee_duplicate_merge.js` (24/24), `verify_dt_status_tabs.js`
+(19/19), `verify_dt_filter_buttons_fix.js` (10/10).
+
 **Parser: fixed urgency tiers for due-date estimation, replacing the
 open-ended effort-scaled estimate (2026-08-28, PR 2 of 2 — PR 1 is
 "Include Task Assignments in My Roadmap," #300, which makes tasks bucket
