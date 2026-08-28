@@ -1772,8 +1772,10 @@ function _dtToday(){ return new Date().toISOString().slice(0,10); }
 // Assignments/My Work — see _ASSIGN_CL_KEY below) — no DB_KEYS.clients
 // entry exists (tasks never needed a client LIST before, only the id/name
 // already resolved onto each task), so this reads the same key directly,
-// same convention as index.html's _taActiveClients().
-function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active'); }catch(e){ return []; } }
+// same convention as index.html's _taActiveClients(). Sorted A→Z (case-
+// insensitive) — "No client" stays its own hardcoded first <option>,
+// untouched by this.
+function _dtActiveClients(){ try{ return (JSON.parse(localStorage.getItem('wl_clients_db')||'[]')||[]).filter(c=>c.status==='active').sort((a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'})); }catch(e){ return []; } }
 function _dtIsOverdue(t){ return !!t.dueDate && t.dueDate < _dtToday() && t.status!=='Done'; }
 
 // Status sub-tabs (2026-08-26) — same grouping/sort/completedAt model as
