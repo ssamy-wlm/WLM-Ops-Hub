@@ -4634,6 +4634,64 @@ surface in both portals and the category-pill colors/due-badge
 thresholds are new, un-reviewed design choices, not carried over from an
 existing spec.
 
+**"Wire Task Assignments + all assignment events into email notifications"
+— no change needed, already fully built and verified working
+(2026-08-28).** Given as a build task on the stated premise that
+`ops_tasks` (Task Assignments/Daily Tasks) has no notification hook and
+assigning a task notifies/emails nobody. Investigated `api/ops-sync.js`
+before writing anything (rule #7) and found this premise doesn't match
+the live code: `fireOpsTaskAssignmentNotifications()` (added with the
+Task Assignments feature itself, 2026-08-19 — see that entry above)
+already fires on every `ops_tasks` write where `notifSettings.assignment`
+is on, the row has a real `assigneeId` other than the writer's own id,
+and `assigneeChanged(cur, row)` is true — compared current-vs-incoming
+inside the same write loop, never a load-time or scheduled scan, exactly
+the pattern this task asked for. It reuses the same
+`resolveNotifyRecipients()`/`insertNotifications()`/`maybeEmailNotification()`
+machinery every other assignment-type notification in this file already
+uses (service assignment, sub-item assignment, time-off, messages), which
+already sends the email itself via Resend.
+
+Rather than silently doing nothing or silently rebuilding something that
+already exists, built and ran a Node integration test against the real,
+byte-identical `api/ops-sync.js` `handler`, with an in-memory fake
+Supabase client (rule #9 pattern, no live DB access — rule #11) and
+`lib/resendClient.js`'s `sendResendEmail` mocked to CAPTURE the outgoing
+`to` address (the pre-existing `test_ops_sync_notices.mjs` harness this
+was built from only mocks it to a no-op, so it never actually proved an
+email gets sent to the right address — this test does). 27/27 checks
+passing, covering every part of the task's own acceptance criteria: (1) a
+brand-new `ops_tasks` row created WITH an assignee fires a real
+`taskAssignment` notification AND an actual email to that person's real
+address — never the primary admin's, confirming `recipientEmail` resolves
+correctly for a plain user; (2) reassigning an EXISTING task emails the
+NEW assignee and NOT the old one; (3) a resave that leaves the assignee
+unchanged fires nothing (the event-triggered, not load-time, guarantee);
+(4) `notificationSettings.assignment=false` suppresses both the
+notification and the email; (5) a recipient with no email on file is
+skipped for their OWN email cleanly (no crash, notification row still
+created for in-app visibility) while `resolveNotifyRecipients()`'s
+existing super/owner fallback (for someone with no configured manager)
+still reaches a real inbox, so the assignment is never silently dropped
+entirely; (6) the original, pre-existing SERVICE assignment path
+(`client.services[].assigneeId`, `fireAssignmentNotifications()`) also
+resolves the real assigned user's email, not the primary admin's, AND
+their manager gets escalated to and emailed too; (7) SERVICE sub-item
+assignment (`svc.subitems[].assigneeId`, `collectSubitemAssignmentEvents()`
+— sub-items live only on services in this app, confirmed by reading
+`client.html`'s `openServiceSubitemsModal()`, never on a project task)
+also emails the real assigned user.
+
+No `api/ops-sync.js` change was made — there was nothing to fix. This
+test file is not committed (this repo's established scratchpad-
+verification convention — see rule #9), but its 27/27 result is the
+actual verification this task's own item #2 asked for ("Verify service/
+sub-item assignment emails actually fire to the assigned user"). Per
+rule #10, this is a docs-only entry (recording a completed investigation,
+not a code change) — no preview/approval needed despite the original
+task's own instruction to that effect, since there is no diff to
+`api/ops-sync.js` to preview.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
