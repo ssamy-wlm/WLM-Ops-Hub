@@ -470,6 +470,22 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .dt-assignee-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-mid);}
 .dt-status-select{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);cursor:pointer;}
 .dt-client-text{font-size:11px;color:var(--text-light);}
+/* Daily Tasks header declutter (2026-09-01) — status/category pills use a
+   real rounded-pill shape (distinct from the generic .btn-sm's squarer
+   corners) so the header reads as filters, not a row of buttons. Text
+   color pulls from --text-dark (the app's own navy in light mode, white
+   in dark mode — never a hardcoded black) rather than a literal color, so
+   this stays consistent with every other dark UI element if the palette
+   ever changes. Selected state reuses the app's existing gold (--gold),
+   same color .btn-toggle-active already uses everywhere else. */
+.dt-status-pill{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid var(--border-hover);background:transparent;color:var(--text-dark);cursor:pointer;transition:all .15s;}
+.dt-status-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
+.dt-status-pill .dt-pill-count{font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:4px;color:var(--text-dark);}
+.dt-status-pill.active .dt-pill-count{background:rgba(255,255,255,.28);color:#fff;}
+.dt-cat-pill{padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid var(--border-hover);background:transparent;color:var(--text-dark);cursor:pointer;transition:all .15s;}
+.dt-cat-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
+.dt-dup-link{background:none;border:none;font-size:12px;font-weight:600;color:var(--text-dark);cursor:pointer;padding:4px 2px;text-decoration:underline;text-underline-offset:2px;}
+.dt-dup-link:hover{color:var(--gold-dark);}
 </style>
 </head>
 <body>
@@ -1001,45 +1017,55 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           <div id="dtNewAssignedBadge" style="display:none;font-size:12px;color:var(--text-mid);">🔔 <span id="dtNewAssignedCount">0</span> new assigned</div>
         </div>
 
-        <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
-          <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
-          <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
+        <!-- Header declutter (2026-09-01): sub-tabs and the List/Calendar
+             view toggle share one row (toggle at the top-right) instead of
+             the toggle sitting on its own row further down; status/category
+             filters render as compact pills instead of a bar of full-size
+             buttons; the duplicate-check card collapsed into a single link
+             (see below) that only expands a results panel once clicked.
+             Purely a markup/CSS restructure — every element keeps its
+             original id, so no JS behavior changed. -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
+            <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
+          </div>
+          <div style="display:flex;gap:6px;padding-bottom:6px;">
+            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
+            <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
+          </div>
         </div>
 
         <div id="dtTabMine">
           <!-- Status sub-tabs (2026-08-26) — mutually-exclusive grouping,
                defaults to "Not Started" (see _dtStatusTab). Badge counts
                kept live by _dtRenderStatusTabBar(), called on every
-               renderDailyTasks(). -->
+               renderDailyTasks(). Rendered as .dt-status-pill (see <style>
+               above) instead of generic buttons. -->
           <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtStatusTabNotStartedBtn" onclick="setDtStatusTab('notstarted')">Not Started <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountNotStarted">0</span></button>
-            <button class="btn btn-sm btn-outline" id="dtStatusTabInProgressBtn" onclick="setDtStatusTab('inprogress')">In Progress <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountInProgress">0</span></button>
-            <button class="btn btn-sm btn-outline" id="dtStatusTabDoneBtn" onclick="setDtStatusTab('done')">Done <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountDone">0</span></button>
-            <button class="btn btn-sm btn-outline" id="dtStatusTabAllBtn" onclick="setDtStatusTab('all')">All <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="dtStatusCountAll">0</span></button>
+            <button class="dt-status-pill active" id="dtStatusTabNotStartedBtn" onclick="setDtStatusTab('notstarted')">Not Started <span class="dt-pill-count" id="dtStatusCountNotStarted">0</span></button>
+            <button class="dt-status-pill" id="dtStatusTabInProgressBtn" onclick="setDtStatusTab('inprogress')">In Progress <span class="dt-pill-count" id="dtStatusCountInProgress">0</span></button>
+            <button class="dt-status-pill" id="dtStatusTabDoneBtn" onclick="setDtStatusTab('done')">Done <span class="dt-pill-count" id="dtStatusCountDone">0</span></button>
+            <button class="dt-status-pill" id="dtStatusTabAllBtn" onclick="setDtStatusTab('all')">All <span class="dt-pill-count" id="dtStatusCountAll">0</span></button>
           </div>
-          <!-- Duplicate detection + one-click merge (2026-08-26). Never runs
-               automatically — checkDtDuplicates() only ever fires from this
-               button's onclick. See _dtIsSameTask() for the exact matching
-               rule (ported from api/process-transcript.js's admin-side
-               isSameTask()/subjectSimilarity() — deterministic token-
-               overlap, not an LLM). -->
-          <div class="card" style="margin-bottom:14px;">
-            <div class="card-header" style="align-items:center;">
-              <div>
-                <div class="card-title">🔍 Duplicate tasks</div>
-                <div class="card-sub">Scans your own tasks for likely duplicates — nothing merges until you click Merge.</div>
-              </div>
-              <button class="btn btn-sm btn-outline" id="dtCheckDupBtn" onclick="checkDtDuplicates()">Check for duplicates</button>
-            </div>
-            <div class="card-body" id="dt-dup-status" style="display:none;font-size:12px;color:var(--text-mid);"></div>
-            <div class="card-body" id="dt-dup-review-wrap" style="display:none;"></div>
+          <!-- Category pills (left) + duplicate-check link (right), one row.
+               Category order is All, Production, Updates, Sales, Admin,
+               Invoices, Other — Other moved to the end; see loadDailyTasks(). -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+            <!-- Duplicate detection + one-click merge (2026-08-26). Never runs
+                 automatically — checkDtDuplicates() only ever fires from this
+                 link's onclick. See _dtIsSameTask() for the exact matching
+                 rule (ported from api/process-transcript.js's admin-side
+                 isSameTask()/subjectSimilarity() — deterministic token-
+                 overlap, not an LLM). Collapsed to a link (2026-09-01) — the
+                 results containers below only ever show once JS sets their
+                 display, same as before this restyle. -->
+            <button class="dt-dup-link" id="dtCheckDupBtn" onclick="checkDtDuplicates()">🔍 Check for duplicates</button>
           </div>
+          <div id="dt-dup-status" style="display:none;font-size:12px;color:var(--text-mid);margin-bottom:10px;"></div>
+          <div id="dt-dup-review-wrap" style="display:none;margin-bottom:14px;"></div>
           <div id="dt-dup-recent-merges"></div>
-          <div id="dtCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
-          <div style="display:flex;gap:6px;margin-bottom:12px;">
-            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
-            <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
-          </div>
           <div id="dtListWrap">
             <!-- Card list (2026-08-28 redesign) — replaced the old <table>
                  row layout with individual cards (see .dt-task-card); a
@@ -1892,7 +1918,7 @@ function _dtRenderStatusTabBar(categoryFilteredTasks){
   const counts = _dtStatusTabCounts(categoryFilteredTasks);
   Object.entries(DT_STATUS_TAB_BTN_IDS).forEach(([tab,id])=>{
     const el = document.getElementById(id);
-    if(el) el.className = 'btn btn-sm btn-outline'+(_dtStatusTab===tab?' btn-toggle-active':'');
+    if(el) el.className = 'dt-status-pill'+(_dtStatusTab===tab?' active':'');
   });
   Object.entries(DT_STATUS_TAB_COUNT_IDS).forEach(([tab,id])=>{
     const el = document.getElementById(id);
@@ -1943,17 +1969,23 @@ function _dtAgeLabel(days){
 
 // Only ever called from showSection's explicit 'dailyTasks' branch — never
 // on page load/timer (CLAUDE.md rule #2).
+// Display order for the header's category pills only (2026-09-01 declutter)
+// — Other moved to the end (All, Production, Updates, Sales, Admin,
+// Invoices, Other). DT_CATEGORIES itself is left in its original order,
+// since it's also used for the edit form's category <select> and this
+// task's scope was the pill row specifically, not that dropdown.
+const DT_CATEGORY_PILL_ORDER = ['Production','Updates','Sales','Admin','Invoices/Payments','Other'];
+
 function loadDailyTasks(){
   const pillsEl = document.getElementById('dtCategoryPills');
   if(pillsEl){
-    // Base class ("btn btn-sm btn-outline") never changes between active and
-    // inactive — only btn-toggle-active is added/removed (2026-08-20, same
-    // fix as index.html's #246 — btn-primary sets width:100%, which made
-    // the active pill balloon out to fill its row instead of just
-    // changing color).
-    pillsEl.innerHTML = ['All', ...DT_CATEGORIES].map(c=>{
+    // Base class ("dt-cat-pill") never changes between active and inactive
+    // — only "active" is added/removed (same fixed-size-toggle convention
+    // established for every other pill/button in this file — see
+    // .btn-toggle-active's own history — so the active pill never resizes).
+    pillsEl.innerHTML = ['All', ...DT_CATEGORY_PILL_ORDER].map(c=>{
       const active = (c==='All' && !_dtActiveCategory) || c===_dtActiveCategory;
-      return `<button class="btn btn-sm btn-outline${active?' btn-toggle-active':''}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
+      return `<button class="dt-cat-pill${active?' active':''}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
   renderDailyTasks();
