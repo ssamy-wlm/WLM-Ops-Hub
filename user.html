@@ -1100,11 +1100,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             </div>
             <div class="card-body">
               <textarea id="dtParseText" rows="4" placeholder="Paste a transcript or meeting note here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
-                <div class="card-sub">Paste a meeting transcript, or drop one or more files — extracted tasks land only in your own list</div>
-              </div>
-            </div>
-            <div class="card-body">
-              <textarea id="dtParseText" rows="4" placeholder="Paste a meeting transcript here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <input type="file" id="dtParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onDtParseFilesChosen(event)">
                 <button class="btn btn-sm btn-primary" id="dtParseBtn" onclick="runDtEmailParse()">Parse &amp; extract tasks</button>
@@ -1406,17 +1401,13 @@ async function cloudFetchUsers(){
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
     // Redacted {id,name,title,funnelLevel} shape for a member session (see
-    // api/ops-state.js) — added 2026-09-01 so _dtAssignedByName() can
-    // resolve a task's assignedById to a real admin's name (was previously
-    // only ever looking in DB_KEYS.users, so an admin-assigned task always
+    // api/ops-state.js) — added 2026-09-01 so _dtPersonName() can resolve
+    // a task's assignedById to a real admin's name (was previously only
+    // ever looking in DB_KEYS.users, so an admin-assigned task always
     // showed "Assigned by —"). Also, incidentally, the same key
     // _getContactList() has referenced since it was written but that was
     // never actually populated — DB_KEYS had no 'admins' entry at all
     // before this, a separate pre-existing bug not touched here.
-    // Admins list — api/ops-state.js already sends a member-safe subset
-    // ({id, name, title, funnelLevel}) to every tier, it just wasn't being
-    // applied to any local table before this (added 2026-09-01 to resolve
-    // a task's assignedById to an admin's real name — see _dtPersonName()).
     _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
@@ -2097,10 +2088,6 @@ function _renderDtListTable(tasks){
     const isNew = _dtIsNew(t, seen);
     const blocked = t.status==='Blocked';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlUser(t.blockReason||'')}">🚧 Blocked</span>` : '';
-    // Who assigned this (or "Added by you") — same subtitle line the
-    // Assigned-date text already used, joined with " · " rather than a
-    // second line, since a card here is already fairly dense.
-    const assignedBySub = [t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)}`:'', escHtmlUser(_dtAssignedByName(t.assignedById))].filter(Boolean).join(' · ');
     // Assignee pill — every task here is already this member's own (see
     // this file's own "no assignee dropdown, no other people's tasks"
     // comment above DT_CATEGORIES), so there's no reassign <select> to
@@ -2115,7 +2102,6 @@ function _renderDtListTable(tasks){
       <div class="dt-card-top">
         <div>
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
-          ${assignedBySub?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">${assignedBySub}</div>`:''}
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
         </div>
         ${_dtDueBadgeHtml(t)}
@@ -2166,31 +2152,14 @@ function _renderDtCalendar(tasks){
   grid.innerHTML = html;
 }
 
-// Resolves a task's assignedById to a display name — the self-added case
-// ("Added by you") is checked first regardless of whether id is even set,
-// since a self-created task's assignedById is always forced to the
-// creator's own id server-side (api/ops-sync.js), so this is the common
-// case for most of this file's own tasks. 'primary-admin' is a special-
-// cased sentinel — Sarah Samy has no ops_admins row at all (see
-// CLAUDE.md's PRIMARY_ADMIN_EMAIL architecture note), so she can never be
-// found by an id lookup the normal way. Falls through users then admins
-// (DB_KEYS.admins, added 2026-09-01 — previously never populated here, so
-// any admin-assigned task always showed "Assigned by —").
-function _dtAssignedByName(id){
-  if(id && id===currentUser?.id) return 'Added by you';
-  if(!id) return currentUser ? 'Added by you' : '—';
-  if(id==='primary-admin') return 'Sarah Samy';
-  const users = dbGet(DB_KEYS.users)||[];
-  const u = users.find(x=>x.id===id);
-  if(u) return u.name;
-  const admins = dbGet(DB_KEYS.admins)||[];
-  const a = admins.find(x=>x.id===id);
-  if(a) return a.name;
-  return '—';
-// Plain id -> display name. Checks the 'primary-admin' sentinel (Sarah
-// Samy — she has no real ops_admins row, see api/ops-auth.js/CLAUDE.md),
-// then real admins, then users, falling back to 'You' for the viewer's own
-// id (kept for the pre-existing staging-row reuse below) or '—'.
+// Plain id -> display name. Checks the 'primary-admin' sentinel first
+// (Sarah Samy — she has no real ops_admins row at all, see
+// api/ops-auth.js/CLAUDE.md's PRIMARY_ADMIN_EMAIL architecture note, so
+// she can never be found by an id lookup the normal way), then real
+// admins (DB_KEYS.admins, added 2026-09-01 — previously never populated
+// here, so an admin-assigned task always showed "Assigned by —"), then
+// users, falling back to 'You' for the viewer's own id (kept for the
+// pre-existing staging-row reuse below) or '—'.
 function _dtPersonName(id){
   if(!id) return '—';
   if(id==='primary-admin') return 'Sarah Samy';
@@ -2737,8 +2706,7 @@ const HELP_CONTENT = {
     learnMore: "Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list. For your daily/weekly to-dos, see My Tasks instead." },
   dailyTasks: { label: 'My Tasks', sel: '#nav-dailytasks',
     tip: "Your daily and weekly tasks — assigned to you, or add your own.",
-    learnMore: "See what's assigned to you, or paste a transcript or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck, or delete it." },
-    learnMore: "See what's assigned to you, or paste a meeting transcript into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck." },
+    learnMore: "See what's assigned to you, or paste a transcript or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck." },
   tracker: { label: 'Tracker', sel: '#nav-tracker',
     tip: "See every client your team manages (view only for you).",
     learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
