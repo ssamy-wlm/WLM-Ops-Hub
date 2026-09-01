@@ -4812,6 +4812,84 @@ Low-risk per rule #10: `user.html` only, display-layer restyle, no data/
 sync/permission logic touched — eligible for direct merge once CI is
 green.
 
+**Add personal My Roadmap to the admin Overview (2026-09-01).** `index.html`
+only, read-only — no writes. A new per-admin `#admin-my-roadmap-section`,
+placed near the top of Overview (right after the stat tiles, before "Open
+Work by Urgency") via a single new `renderMyRoadmapAdmin()`, called from
+`refreshAdminOverview()` the same guarded way `renderTeamProductionAnalytics()`
+already is. Mirrors `user.html`'s employee `renderRoadmap()`/
+`_collectMyWorkItems()` bucketing exactly (Next 7/30/60 days + Long Term,
+same day-offset math, same "overdue folds into the 7-day bucket with its
+own count badge" and "no due date or beyond 60 days → Long Term" rules) —
+hand-duplicated per the zero-shared-code rule, since `index.html` shares no
+JS with `user.html`.
+
+Per this task's own explicit scope, the admin version's data sources are
+narrower than the employee one's (which also walks `recurringServices`/
+`projects`/`subprojects`): just "services assigned to them" and "their
+`ops_tasks`", so it reuses two data sources this page already established
+for "a person's assigned work" rather than porting the employee version's
+full complexity — `_wlSvcAssignedTo()` (the same `assigneeId`/`assigneeIds`
+check Team Production Analytics' own `_personWorkSummary()` already uses)
+and `_taTasks()` (Task Assignments' own accessor), scoped to
+`_currentAdminId()`. One real gap found while wiring the service side:
+`_activeServicesForAssessment()` (the existing active/not-cancelled-or-
+archived service list) returns bare service objects with no client name
+attached — confirmed by reading its own body and how its one other caller,
+`renderWorkloadDashboard()`, has to separately reconstruct a `clientName`
+per row via `_svcBreakdownRow()`. Rather than modify that shared function
+(other callers rely on its current bare-object shape) or add a second new
+helper, `renderMyRoadmapAdmin()` walks `_getClientDB()` directly — the same
+active-client/not-cancelled-or-archived scan `_activeServicesForAssessment()`
+does internally — so it can attach `c.name` itself; every filter/exclusion
+still matches that shared function's own scoping exactly. Task-side,
+`!t.mergedIntoId` is applied (the same soft-merged-away-duplicate exclusion
+`_personWorkSummary()` already uses everywhere else on this page), so a
+duplicate task folded into another one via the 2026-08-26 merge feature
+never double-counts here either.
+
+CSS reused `index.html`'s own pre-existing `.roadmap-section`/
+`.roadmap-title`/`.roadmap-phase`/`.roadmap-phase-title`/`.roadmap-item`/
+`.roadmap-dot` rules — these already existed in this file for an unrelated
+static "30–60–90 Day Roadmap" onboarding mockup elsewhere on the page (a
+coincidence of shared naming, not a dependency) — plus two small additions
+hand-duplicated from `user.html`'s own copy to close the visual gap:
+`.roadmap-subtitle` and `.roadmap-phase.active-phase` (the amber-tinted
+overdue-bucket highlight). `user.html`'s CSS also defines a `.done-phase`
+rule, confirmed via grep to be dead/unused in that file's own actual
+render function — not ported here, since porting a rule neither version
+ever applies would just be dead weight.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s own
+baseline exactly (delta +11, both). `ls api/*.js | wc -l` unaffected —
+this PR touches no server file at all. A new Playwright suite (20/20, run
+3× clean) logging in as two different real admins (David, Abby) against
+the same seeded client/task data: each admin sees their own assigned
+service and task, correctly bucketed (an overdue service under NEXT 7
+DAYS with its own "N overdue" badge, a 45-day-out task under NEXT 60
+DAYS, an undated task under LONG TERM) and never the other admin's;
+a cancelled service assigned to David is excluded; a Done task and a
+merged-away duplicate task assigned to David are both excluded; the
+client name renders next to the service row; all four bucket headers are
+present; and the markup uses the exact same 4-column grid plus
+`roadmap-phase`/`roadmap-dot` classes the employee version uses, for
+genuine visual parity, not just a similarly-named clone. Three
+pre-existing Overview Playwright suites (`verify_overview_revamp.js`,
+`verify_overview_stacked_layout.js`, `verify_pr1_overview_analytics_
+landing.js`) were re-run and their failures confirmed to reproduce
+identically against unmodified `main` (`git stash`) — all reference the
+long-retired "Team Assessment" table (superseded by Team Production
+Analytics on 2026-08-24, see that entry above), unrelated to this change
+and already stale before this PR. One unrelated suite
+(`verify_recent_activity_and_clickable_overview.js`) re-run clean, 11/11,
+confirming the new section's insertion point doesn't disturb the
+Refresh/Team-Production-Analytics-row-click flow immediately below it.
+
+Low-risk per rule #10: `index.html` only, read-only display feature, no
+data-write/sync/auth/permission logic touched — eligible for direct merge
+once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
