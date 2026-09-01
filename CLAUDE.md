@@ -4890,6 +4890,210 @@ Low-risk per rule #10: `index.html` only, read-only display feature, no
 data-write/sync/auth/permission logic touched — eligible for direct merge
 once CI is green.
 
+**Employee "My Tasks" batch, PR C — item 4 needed no change (already true);
+item 5, employee client-edit on own task, built for real (2026-09-01).**
+`api/ops-sync.js` + `user.html`. Branched fresh from `main` (not stacked on
+PR A or PR B, this same batch's still-unmerged siblings).
+
+**Item 4 ("give David and Abby the same on-screen task editing Sarah
+has") — investigated before writing anything, per rule #7, and found the
+premise doesn't match the live code: task-editing permission was NEVER
+actually scoped to Sarah/`'primary-admin'` specifically, on either side.**
+Server-side, `api/ops-sync.js`'s entire `ops_tasks` write block gates on
+`isAdmin = tier !== 'member'` — true for BOTH `tierOf()` outcomes an admin
+can have (`'super'` for `level==='super'||'owner'`, `'manager'` for
+everything else), with no further per-tier restriction anywhere in the
+block; confirmed by reading the whole thing, not just the top of it.
+`api/ops-state.js`'s own task-scoping comment already states it plainly:
+"every admin tier sees every task, same super-sees-everyone convention as
+clients/users below" — filtered only on `tier!=='member'`. Client-side,
+`index.html`'s Edit button (`openTaskEditModal`), the "+ New Task" button,
+the inline reassign `<select>` (`_taReassign`), and the whole Task
+Assignments nav tab are all rendered/wired unconditionally for any admin —
+grepped every `RESTRICTED_ADMIN_ROLES`/`hideTabs`/`showOnly`/`.su-btn`
+role-gating mechanism in `applyAdminRoleRestrictions()` and confirmed none
+of them touch `taskAssignments` or any task-editing control. Since David
+(`level:'owner'`, tier `'super'`) and Abby (`level:'production_manager'`,
+tier `'manager'`) both already log in with `role:'admin'` (confirmed in
+`api/ops-auth.js`'s regular admin-row branch — the `'primary-admin'`
+sentinel is Sarah's own login shortcut, not a permission gate anything
+else checks against), both already have, and always had, identical
+on-screen task-editing capability to Sarah — full CRUD, unrestricted
+assignee, unrestricted client. No code change was needed or made for this
+item; documented here rather than silently skipped or silently rebuilt,
+matching this session's own established "verify before guessing" pattern
+(see the earlier "Wire Task Assignments into email notifications" entry
+above, which found the identical kind of already-built situation).
+
+**Item 5 (employee client-edit on own task) — genuinely built.** The
+parser sometimes misses or wrong-guesses a task's client, and the
+assignee often knows it better than anyone. Server-side, `clientId`/
+`clientName` were removed from `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` — the
+existing "not your task" ownership check (`cur.assigneeId!==session.id`)
+just above that list's use site is the real gate, unaffected by this
+change; this only widens which FIELDS are touchable on a task already
+theirs, same scope as `subject`/`notes`/`status` already have, never
+whose tasks a member can touch. Client-side, `user.html`'s detail panel's
+static "Client" row became a real `<select id="dt-client-select">`,
+populated from the same `_dtActiveClients()` helper the staging-review UI
+already uses (active clients only, alphabetically sorted — 2026-08-27's
+sort fix applies here for free), pre-filled to the task's current
+`clientId` on open. `saveDtTaskUpdate()` reads it alongside the existing
+subject/status/notes fields, resolves the matching client's name, and
+writes both `clientId`/`clientName` through the exact same
+server-confirmed-before-success round trip this function already
+established (2026-08-26) — a rejection reverts the select back to its
+prior value along with every other field, never leaving the UI showing an
+unconfirmed change.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (14/14) — a member can set the client on their own task
+(both `clientId` and the resolved `clientName` saved), can clear it back
+to "No client," still cannot touch a task not assigned to them even just
+to fix its client (the ownership check is unaffected), every OTHER
+disallowed field (`category` tested directly) is still protected, and a
+combined write (status + notes + client all in one request) applies all
+three together correctly. Every pre-existing `ops_tasks`-touching Node
+suite re-run clean and unaffected: `test_ops_tasks.mjs` (26/26),
+`verify_ops_sync_date_rules.mjs`, `verify_task_delete_permission_
+scope.mjs`, `test_ops_sync_notices.mjs` (10/10). (2) A new Playwright
+suite against the real `user.html` UI (12/12, run 3× clean) — the select
+lists "No client" first then only active clients (an inactive client
+confirmed excluded), pre-fills correctly for both an unset and an
+already-set task, a real `ops-sync` call carries the new `clientId` and
+resolved `clientName` on save, the list row reflects the newly-assigned
+client immediately, clearing back to "No client" sends `clientId:null`/
+`clientName:''`, and a server-rejected save reverts the select to its
+prior value with the panel staying open. Ten pre-existing Daily Tasks
+Playwright suites re-run clean and unaffected, confirming no regression to
+the detail panel's other fields or to card/staging/status-tab/delete
+behavior sharing the same markup: `verify_dt_blocked_status.js` (10/10),
+`verify_dt_card_redesign.js` (25/25), `verify_dt_delete_inline_status.js`
+(9/9), `verify_dt_filter_buttons_fix.js` (10/10), `verify_dt_header_
+declutter.js` (26/26), `verify_dt_staging.js` (17/17), `verify_dt_status_
+tabs.js` (19/19), `verify_employee_duplicate_merge.js` (24/24),
+`verify_employee_task_edit_delete_removal.js` (16/16), `verify_task_undo_
+new_user.js` (14/14). `node --check` passed on `api/ops-sync.js`;
+syntax-checked (`new Function()` per extracted `<script>` block)
+`user.html` — clean; comment-stripped div-balance delta unchanged vs.
+`main` (−1, no new divs — a `<select>` was swapped in for a static `<div>`
+value, not an extra wrapper); `ls api/*.js | wc -l` still 11 (no new
+server file).
+**Employee "My Tasks" batch, PR B — "Report task" button (item 3,
+2026-09-01).** `user.html` + `api/ops-sync.js`. New feature: a small
+warning-icon button letting an employee flag an admin-assigned task
+(`origin==='admin'`) they think isn't theirs — never on a self-added task,
+never a delete (members already can't delete an admin-assigned task at
+all). Per this batch's own explicit rule, this is a per-record,
+server-confirmed write, never load-time, never destructive — branched
+fresh from `main` (not stacked on PR A, item 1+2's still-unmerged branch),
+held for Sarah's approval on preview like every PR in this batch.
+
+**Server (`api/ops-sync.js`).** Three new `ops_tasks` fields —
+`reportedMisassigned`/`reportedMisassignedBy`/`reportedMisassignedByName`/
+`reportedMisassignedAt` — deliberately NOT added to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH`, since a member must be able to write
+them on their own task, same precedent as `status`/`notes`/`blockReason`/
+`completedAt`. The reporter identity is never trusted from the client:
+`reportedMisassignedBy`/`ByName`/`At` are always forced from the caller's
+own session at the moment of the actual transition
+(`row.reportedMisassigned && !cur.reportedMisassigned`), mirroring
+`reviewedBy`/`reviewedByName`'s existing convention on the "Submit for
+review" path. A resave that leaves the flag already set never re-fires or
+re-stamps — confirmed the original `reportedMisassignedAt` survives an
+unrelated later edit (e.g. a status change) intact. Found and fixed while
+building this: since the member-write branch always does `row = inc`
+(a full replace, not a merge, of the stored jsonb `data` column), a
+resave from a client whose local cache hadn't yet pulled back the
+server-set `reportedMisassignedBy/ByName/At` (a real, if narrow, race —
+the client itself never learns these values until the next pull) would
+silently blank them. Fixed with the same "never let an absent field blank
+a real value" fallback-to-`cur` pattern already established for
+`assignedById`/`clientEmails`/etc. elsewhere in this file, applied to
+these three fields specifically (not a general merge — every other member-
+editable field on this table is unaffected, unchanged).
+
+Recipients — a new `resolveReportRecipients(assignedById, admins)`, a
+fixed rule per the task's own wording, not the general manager-escalation
+`resolveNotifyRecipients()`: always the `'primary-admin'` sentinel (Sarah
+Samy — she has no `ops_admins` row, same reason `resolveReviewRecipients()`
+above already special-cases her) plus every admin with `level==='super'
+||level==='owner'` (today, David), PLUS the assigning admin
+(`assignedById`) ONLY when they exist in the admin directory and are NOT
+already super/owner (e.g. Abby, `production_manager`) — deduped by id, so
+an assigner who's already super/owner (David, or Sarah's own sentinel id)
+is never double-notified. A new `fireTaskReportedNotifications()` builds
+one `type:'taskReported'` row per resolved recipient via the same
+`insertNotifications()` every other notification type already uses
+(in-app + Resend email when configured) — reusing `personOf()` for the
+name/email lookup with the same primary-admin-sentinel special case
+`fireSubmittedForReviewNotifications()` already establishes, rather than
+inlining a second admins-array scan. The server-side origin guard
+(`cur.origin==='admin'`) is the REAL enforcement, not just a UI
+convenience — `reportedMisassigned` being member-writable at all means a
+client could otherwise set the flag on a self-added task; without this
+check that would still silently fire a report notification to Sarah/
+David for a task the employee added themselves.
+
+**Client (`user.html`).** A new `_dtReportButtonHtml(t)` (⚠️ button, or a
+static "🚩 Reported" indicator once the flag is set — a flag, not a
+re-clickable toggle) placed next to the due badge on the list-row card
+AND next to the "Due" row in the detail panel, visible only when
+`t.origin==='admin'`. `reportDtTaskMisassigned(id)` confirms via a plain
+`confirm()` dialog (not a rule #6 typed-phrase gate — this isn't
+destructive/high-blast-radius, it's an informational flag, same tier as
+the existing Blocked-reason `prompt()`), then follows the exact
+server-confirmed-before-success pattern `saveDtTaskUpdate()` already
+established (2026-08-26): pushes immediately via `cloudPushData()`,
+reverts the optimistic local flag on a rejection/failure rather than
+leaving the UI showing a report that didn't actually land, and only ever
+sends the boolean itself — never a reporter id/name, which are entirely
+server-derived.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (26/26) — an Abby-assigned task's report notifies
+exactly 3 (Sarah + David + Abby), a David-assigned or Sarah-assigned
+task's report notifies exactly 2 with no duplicate for the assigner
+themselves, a self-added task's report flag still persists (member-
+writable) but fires zero notifications (the server-side origin guard), a
+resave of an already-reported task never re-fires and its original
+`reportedMisassignedAt` survives untouched, a member reporting a task not
+assigned to them is still rejected with the pre-existing "not your task"
+reason, the task is never deleted in any case, and real emails are
+confirmed sent to all resolved recipients (with `RESEND_API_KEY` set in
+the test, matching this file's own established email-verification
+convention). Every pre-existing `ops_tasks`-touching suite re-run clean
+and unaffected: `test_ops_tasks.mjs` (26/26), `verify_ops_sync_date_
+rules.mjs`, `verify_task_delete_permission_scope.mjs`, `test_ops_sync_
+notices.mjs` (10/10). (2) A new Playwright suite against the real
+`user.html` UI (14/14, run 3× clean) — the report button appears only on
+an admin-assigned task, never on a self-added one; an already-reported
+task shows the static "Reported" indicator with no clickable button; both
+the list-row button and the detail-panel button correctly send a real
+`ops-sync` call carrying `reportedMisassigned:true` with no reporter
+identity fields; both trigger points update the OTHER surface too (report
+from the detail panel also flips the list row, and vice versa) — a
+stateful `/api/ops-state`+`/api/ops-sync` mock was needed here, not a
+static echo, since `cloudPushData()` always re-pulls state after a push
+and a static mock would have made this genuinely-working round trip look
+like it reverted; and a server-rejected report correctly reverts the
+optimistic UI change, leaving the button clickable again rather than
+stuck showing a false "Reported." Ten more pre-existing Daily Tasks
+Playwright suites re-run clean and unaffected, confirming no regression
+to the card layout, status tabs, staging, delete/inline-status, header
+declutter, or duplicate-merge features this branch shares markup with:
+`verify_dt_blocked_status.js` (10/10), `verify_dt_card_redesign.js`
+(25/25), `verify_dt_delete_inline_status.js` (9/9), `verify_dt_filter_
+buttons_fix.js` (10/10), `verify_dt_header_declutter.js` (26/26),
+`verify_dt_staging.js` (17/17), `verify_dt_status_tabs.js` (19/19),
+`verify_employee_duplicate_merge.js` (24/24), `verify_employee_task_edit_
+delete_removal.js` (16/16), `verify_task_undo_new_user.js` (14/14).
+`node --check` passed on `api/ops-sync.js`; syntax-checked (`new
+Function()` per extracted `<script>` block) `user.html` — clean;
+comment-stripped div-balance delta unchanged vs. `main` (−1); `ls
+api/*.js | wc -l` still 11 (no new server file).
 **My Tasks batch, PR A — assigned-by display + remove email UI (2026-09-01).**
 `user.html` only, display-only — no writes. First of a 5-PR batch (A-E,
 one feature each, all held for Sarah's explicit approval on preview per
@@ -5039,6 +5243,200 @@ fifth PR in this batch and this is instead a "no-op, already correct"
 finding, matching the same pattern already established elsewhere in this
 file (see the 2026-08-28 "Wire Task Assignments... — no change needed"
 entry above) for exactly this situation.
+**URGENT hotfix: `user.html` was fatally broken on `main` immediately
+after PR A's merge — the same class of parallel-session merge-conflict
+damage documented in the 2026-08-21 `client.html` hotfix entry above,
+now hitting this file (2026-09-01).** Discovered while starting PR D
+(the calendar fix, this same batch) — `user.html` wouldn't even load
+(`doLogin is not defined`, every function in the file undefined) the
+moment its dev server was hit for a before/after screenshot, blocking
+all further work until fixed. Root-caused by reading the actual merge
+history rather than guessing: PR A (`#310`,
+`claude/mytasks-assignedby-noemail`) and a near-duplicate, independently-
+built PR (`#309`, `claude/my-tasks-assignedby-noemail`) both implemented
+the *exact same* item 1+2 feature at the same time; `#309` merged to
+`main` first, and the merge of `#310` on top of it (commit `61fa65a`,
+"Merge branch 'main' into claude/mytasks-assignedby-noemail") resolved
+the resulting conflict by mechanically keeping fragments of BOTH sides in
+several spots without reconciling them into one coherent whole — the
+exact failure mode the 2026-08-21 entry already named and warned would
+recur under parallel sessions.
+
+Three separate corruptions, all from that one merge commit, all in
+`user.html`:
+1. **A missing closing brace, silently swallowing the rest of the file.**
+   `_dtAssignedByName()` (PR A's own "assigned by" resolver) and
+   `_dtPersonName()`/`_dtAssignedByDisplay()` (PR #309's independently-
+   built equivalent, same idea, different shape) both survived the merge,
+   but `_dtAssignedByName()`'s own closing `}` was dropped — the two other
+   functions ended up defined INSIDE its still-open body, with only
+   `_dtAssignedByDisplay()`'s `}` at the very end actually closing
+   anything. `new Function()` on the extracted script confirmed this
+   directly: before any fix, a `SyntaxError` inside the malformed
+   `HELP_CONTENT` object (item 3 below) masked this one entirely; fixing
+   that first error alone changed the reported failure to "Unexpected end
+   of input" at the literal last line of the file — proof the parser was
+   now running all the way to EOF still looking for that one missing `}`.
+   Fixed by keeping ONE implementation, not both: `_dtPersonName()`/
+   `_dtAssignedByDisplay()` were kept (used in two places — the detail
+   panel and the staging row — vs. `_dtAssignedByName()`'s one, itself
+   already a second, duplicate rendering of the same "assigned by" line
+   on the list-row card, per item 2 below), `_dtAssignedByName()` removed
+   entirely along with its own now-orphaned intro comment.
+2. **A duplicate "assigned by" line on every list-row card** — the exact
+   same visible-duplication failure mode as the 2026-08-21 hotfix's
+   `client.html` corruption, just here instead of there: the merge left
+   TWO near-identical subtitle `<div>`s under a task's title (one driven
+   by the now-removed `_dtAssignedByName()`/`assignedBySub`, one by
+   `_dtAssignedByDisplay()`), both rendering "Assigned <date> · <who>" on
+   the same card. Fixed by keeping only the `_dtAssignedByDisplay()`-driven
+   line (item 1 above's decision), removing the other.
+3. **Malformed `HELP_CONTENT.dailyTasks` — a genuine syntax error, not just
+   duplication.** Both PRs independently added a `learnMore` line to this
+   entry; the merge kept `dailyTasks: {...}` closed once (correctly) but
+   then appended a second, ORPHANED `learnMore: "...", }` immediately
+   after — a bare key-value pair with no enclosing object, followed by a
+   stray `}` that (per how V8 actually parses malformed input, confirmed
+   by reading the real error trail) prematurely closed the outer
+   `const HELP_CONTENT = {...}` declaration itself, turning every
+   remaining entry (`tracker`, `serviceCatalog`, `companyOverview`, etc.)
+   into dangling, invalid statement-level tokens — this was the file's
+   FIRST reported syntax error and what made the true underlying problem
+   (item 1 above) initially invisible. Fixed by removing the orphaned
+   duplicate line and its stray `}` entirely, keeping PR A's original
+   single `learnMore` value (the two versions' wording differed only
+   slightly — PR A's said "or delete it," which is now factually wrong
+   since general task-delete was already removed for employees on
+   2026-08-26 — PR A's own error, not the merge's; not corrected here as
+   it's a separate, tiny, pre-existing content-accuracy nit, flagged
+   rather than silently fixed inside an urgent syntax hotfix).
+4. **A duplicated, malformed "Add / import tasks" card** — the same
+   "keep both sides' fragments" pattern one more time: two overlapping
+   `<div class="card-body">` blocks, two `<textarea id="dtParseText">`
+   elements sharing one id (only the first is ever reachable via
+   `getElementById`, so the second was dead markup), with the div-nesting
+   itself scrambled between them. Fixed by keeping PR A's original clean
+   single card-body block (verified byte-identical against `a2b14e1`, PR
+   A's own pre-merge commit) and discarding the corrupted duplicate.
+
+**Verified this is a complete, not just plausible, fix — not assumed from
+the diff alone:** `new Function()` on the extracted `<script>` block now
+parses clean (previously a hard `SyntaxError`, confirmed reproducible on
+unmodified `main` via `git show origin/main:user.html` before any edit
+here); a real Playwright load of `user.html` now shows `typeof doLogin
+=== 'function'` with zero `pageerror` events (previously `ReferenceError:
+doLogin is not defined`, i.e. the ENTIRE script had failed to execute at
+all — every function in this ~4700-line file was undefined, not just the
+task-related ones this particular corruption happened to touch); grepped
+the whole file for duplicate `id="..."` attributes and duplicate
+top-level `function` declarations — zero of either remain. Comment-
+stripped div-balance now matches PR A's own pre-merge commit (`a2b14e1`)
+exactly — 712 open / 713 close, delta −1 — confirming the reconciled
+markup is structurally identical to the last known-good state, not just
+"no longer throws." Ten pre-existing Daily Tasks Playwright suites
+re-run clean and unaffected: `verify_dt_assignedby_noemail.js` (10/10,
+PR A's own regression suite — confirms the "assigned by"/no-email feature
+itself still works correctly after the reconciliation, not just that the
+file parses), `verify_dt_blocked_status.js` (10/10), `verify_dt_card_
+redesign.js` (25/25), `verify_dt_delete_inline_status.js` (9/9),
+`verify_dt_filter_buttons_fix.js` (10/10), `verify_dt_header_
+declutter.js` (26/26), `verify_dt_status_tabs.js` (19/19),
+`verify_employee_duplicate_merge.js` (24/24), `verify_employee_task_
+edit_delete_removal.js` (16/16), `verify_task_undo_new_user.js` (14/14).
+One pre-existing, already-documented flaky suite (`verify_dt_assigned_
+date.js`'s own click-target ambiguity — a bare `text=` locator resolving
+to 2 elements, one hidden — see the 2026-08-28 entry above) reproduced
+its identical known failure signature, confirmed unrelated. `index.html`
+and `client.html` confirmed untouched by the bad merge (`git diff --stat`
+between the pre- and post-merge commits shows zero changes to either).
+
+Branched directly from `main` (not part of the item 1-7 batch's own
+five-PR sequence) since this is a standing production outage, not a new
+feature — every real user of `user.html` has been unable to load the page
+at all since this merged. Flagged as urgent for fast review rather than
+held with the rest of the batch, per rule #10's "when in doubt, ask"
+default for anything this session cannot itself merge.
+
+**My Tasks batch, PR D — Calendar (month) view wrap-and-grow fix (item 6,
+2026-09-01).** `user.html` only. Branched from `main` with the urgent
+`user.html` syntax hotfix above cherry-picked on top (needed just to get
+the file loading again at all — the two PRs are expected to reconcile
+cleanly as a no-op diff whichever merges first, same precedent already
+established elsewhere in this file for exactly this situation).
+
+**Root cause, confirmed by reading the code, not guessed:**
+`_renderDtCalendar()` had two separate problems, both visible in a real
+before-screenshot (taken via Playwright before touching any code, at
+1400px and 900px): a hard `dayTasks.slice(0,3)` cap with a dead-end
+"+N more" label (no click target, nothing else in this file's Calendar
+view surfaces the hidden tasks anywhere else), and clipped task text
+(`overflow:hidden;text-overflow:ellipsis;white-space:nowrap` inside a
+fixed `min-height:60px` cell) — a day with more than 3 tasks silently
+hid the rest, and even a VISIBLE task's own subject could be cut off
+mid-word with no way to read the rest without opening it.
+
+**Fixed using the exact same wrap-and-grow technique already shipped for
+`client.html`'s Service Schedule calendar** (read that implementation
+first — `_calDayCell()`/`_calEventCard()`/`_renderWeekGrid()`/
+`_renderMonthGrid()` — before writing anything, per this task's own
+instruction): the `slice(0,3)`/"+N more" cap is removed outright — every
+task for a day renders, and the day's cell (and the whole grid row it
+sits in) just grows taller for a busy day, since `#dtCalGrid`'s own
+`display:grid;grid-template-columns:repeat(7,1fr)` already sizes each
+row to its tallest cell for free, no extra CSS needed for that part (same
+as `client.html`'s own grid, confirmed by reading its explanatory
+comment). Task text now wraps (`white-space:normal;overflow-wrap:anywhere`
+instead of the old `nowrap`/ellipsis combination) and every cell — header
+and day alike — got `min-width:0`, letting a column actually shrink
+instead of forcing the whole grid, and the page, wider than the viewport
+once text wraps. The old fixed `min-height:60px` was reduced to a much
+smaller `min-height:36px` — just enough to keep an empty day from looking
+collapsed — since a busy day no longer needs artificial headroom to fit
+into; it grows on its own now.
+
+**Deliberately NOT added: a "hide the calendar below ~700px, default to
+List instead" breakpoint**, unlike `client.html`'s own Service Schedule
+calendar. Confirmed by reading `user.html`'s CSS that this whole portal's
+shell has no responsive breakpoint anywhere — `.sidebar` is a hard fixed
+240px with no narrower layout at all, so a true phone-width viewport
+(~420px) can't even reach the nav item to open My Tasks in the first
+place; this is a pre-existing, whole-app characteristic, not something
+this one calendar fix should attempt to solve on its own. "Narrow width"
+verification here instead used 900px — a narrower desktop/tablet width,
+which is the narrowest this app's shell was ever designed to support —
+and the wrap-and-grow fix alone is sufficient to keep the calendar
+readable there with zero horizontal page overflow, confirmed directly
+rather than assumed.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance delta unchanged vs. the
+hotfix baseline (711/712, both −1 — the removed "+N more" div was itself
+balanced, so removing it doesn't shift the delta). A new Playwright suite
+(9/9, run 3× clean) against the real UI: all 5 tasks on one busy day
+render with zero cap and zero "+N more" text; a long subject renders in
+full (confirmed via the DOM text, not just presence — plus a real
+`getComputedStyle().whiteSpace==='normal'` check and a real
+`boundingBox()` height check proving the div is genuinely multi-line
+tall, not just text sitting in a box with hidden overflow); zero
+horizontal page overflow at both 1400px and 900px; and the busy day's
+cell height grows well past its 36px floor (>150px), confirming the
+grid-row-grows-together behavior actually fires, not just that the
+correct HTML exists. Ten pre-existing Daily Tasks Playwright suites
+re-run clean and unaffected, confirming no regression to any other My
+Tasks view/feature sharing this file: `verify_dt_assignedby_
+noemail.js` (10/10), `verify_dt_blocked_status.js` (10/10),
+`verify_dt_card_redesign.js` (25/25), `verify_dt_delete_inline_
+status.js` (9/9), `verify_dt_filter_buttons_fix.js` (10/10),
+`verify_dt_header_declutter.js` (26/26), `verify_dt_status_tabs.js`
+(19/19), `verify_employee_duplicate_merge.js` (24/24), `verify_
+employee_task_edit_delete_removal.js` (16/16), `verify_task_undo_
+new_user.js` (14/14).
+
+Held for Sarah's explicit approval on the Vercel preview per this
+batch's own instruction — not merged automatically despite being a
+display-only, non-data-touching CSS/markup fix, since the batch treats
+all five PRs as a set awaiting her review together. Before/after
+screenshots (1400px and 900px) sent alongside this PR.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
