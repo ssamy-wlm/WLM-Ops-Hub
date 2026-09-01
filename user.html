@@ -2137,16 +2137,25 @@ function _renderDtCalendar(tasks){
   const daysInMonth = new Date(y,m+1,0).getDate();
   const byDate = {};
   tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } });
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
-  for(let i=0;i<firstDow;i++) html += '<div></div>';
+  // Wrap-and-grow (2026-09-01) — same technique client.html's Service
+  // Schedule calendar already established: no per-day cap or "+N more"
+  // (every task renders — a busy day's cell, and the whole grid row it
+  // sits in, just grows taller instead of hiding anything past 3); task
+  // text wraps (white-space:normal;overflow-wrap:anywhere) instead of
+  // being clipped with an ellipsis; min-width:0 on every cell lets a
+  // narrow column actually shrink instead of forcing the whole grid — and
+  // the page — wider than the viewport. #dtCalGrid's own
+  // grid-template-columns:repeat(7,1fr) already sizes each row to its
+  // tallest cell with no extra CSS needed for that part.
+  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="min-width:0;font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
+  for(let i=0;i<firstDow;i++) html += '<div style="min-width:0;"></div>';
   for(let d=1; d<=daysInMonth; d++){
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _dtToday();
-    html += `<div style="min-height:60px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(45,107,182,.06);':''}">
+    html += `<div style="min-width:0;min-height:36px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(45,107,182,.06);':''}">
       <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
-      ${dayTasks.slice(0,3).map(t=>`<div onclick="openDtDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_dtIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(45,107,182,.08)'};color:${_dtIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlUser(t.subject||'')}</div>`).join('')}
-      ${dayTasks.length>3 ? `<div style="font-size:10px;color:var(--text-light);">+${dayTasks.length-3} more</div>` : ''}
+      ${dayTasks.map(t=>`<div onclick="openDtDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_dtIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(45,107,182,.08)'};color:${_dtIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};white-space:normal;overflow-wrap:anywhere;">${escHtmlUser(t.subject||'')}</div>`).join('')}
     </div>`;
   }
   grid.innerHTML = html;
