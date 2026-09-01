@@ -4980,6 +4980,209 @@ syntax-checked (`new Function()` per extracted `<script>` block)
 `main` (−1, no new divs — a `<select>` was swapped in for a static `<div>`
 value, not an extra wrapper); `ls api/*.js | wc -l` still 11 (no new
 server file).
+**Employee "My Tasks" batch, PR B — "Report task" button (item 3,
+2026-09-01).** `user.html` + `api/ops-sync.js`. New feature: a small
+warning-icon button letting an employee flag an admin-assigned task
+(`origin==='admin'`) they think isn't theirs — never on a self-added task,
+never a delete (members already can't delete an admin-assigned task at
+all). Per this batch's own explicit rule, this is a per-record,
+server-confirmed write, never load-time, never destructive — branched
+fresh from `main` (not stacked on PR A, item 1+2's still-unmerged branch),
+held for Sarah's approval on preview like every PR in this batch.
+
+**Server (`api/ops-sync.js`).** Three new `ops_tasks` fields —
+`reportedMisassigned`/`reportedMisassignedBy`/`reportedMisassignedByName`/
+`reportedMisassignedAt` — deliberately NOT added to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH`, since a member must be able to write
+them on their own task, same precedent as `status`/`notes`/`blockReason`/
+`completedAt`. The reporter identity is never trusted from the client:
+`reportedMisassignedBy`/`ByName`/`At` are always forced from the caller's
+own session at the moment of the actual transition
+(`row.reportedMisassigned && !cur.reportedMisassigned`), mirroring
+`reviewedBy`/`reviewedByName`'s existing convention on the "Submit for
+review" path. A resave that leaves the flag already set never re-fires or
+re-stamps — confirmed the original `reportedMisassignedAt` survives an
+unrelated later edit (e.g. a status change) intact. Found and fixed while
+building this: since the member-write branch always does `row = inc`
+(a full replace, not a merge, of the stored jsonb `data` column), a
+resave from a client whose local cache hadn't yet pulled back the
+server-set `reportedMisassignedBy/ByName/At` (a real, if narrow, race —
+the client itself never learns these values until the next pull) would
+silently blank them. Fixed with the same "never let an absent field blank
+a real value" fallback-to-`cur` pattern already established for
+`assignedById`/`clientEmails`/etc. elsewhere in this file, applied to
+these three fields specifically (not a general merge — every other member-
+editable field on this table is unaffected, unchanged).
+
+Recipients — a new `resolveReportRecipients(assignedById, admins)`, a
+fixed rule per the task's own wording, not the general manager-escalation
+`resolveNotifyRecipients()`: always the `'primary-admin'` sentinel (Sarah
+Samy — she has no `ops_admins` row, same reason `resolveReviewRecipients()`
+above already special-cases her) plus every admin with `level==='super'
+||level==='owner'` (today, David), PLUS the assigning admin
+(`assignedById`) ONLY when they exist in the admin directory and are NOT
+already super/owner (e.g. Abby, `production_manager`) — deduped by id, so
+an assigner who's already super/owner (David, or Sarah's own sentinel id)
+is never double-notified. A new `fireTaskReportedNotifications()` builds
+one `type:'taskReported'` row per resolved recipient via the same
+`insertNotifications()` every other notification type already uses
+(in-app + Resend email when configured) — reusing `personOf()` for the
+name/email lookup with the same primary-admin-sentinel special case
+`fireSubmittedForReviewNotifications()` already establishes, rather than
+inlining a second admins-array scan. The server-side origin guard
+(`cur.origin==='admin'`) is the REAL enforcement, not just a UI
+convenience — `reportedMisassigned` being member-writable at all means a
+client could otherwise set the flag on a self-added task; without this
+check that would still silently fire a report notification to Sarah/
+David for a task the employee added themselves.
+
+**Client (`user.html`).** A new `_dtReportButtonHtml(t)` (⚠️ button, or a
+static "🚩 Reported" indicator once the flag is set — a flag, not a
+re-clickable toggle) placed next to the due badge on the list-row card
+AND next to the "Due" row in the detail panel, visible only when
+`t.origin==='admin'`. `reportDtTaskMisassigned(id)` confirms via a plain
+`confirm()` dialog (not a rule #6 typed-phrase gate — this isn't
+destructive/high-blast-radius, it's an informational flag, same tier as
+the existing Blocked-reason `prompt()`), then follows the exact
+server-confirmed-before-success pattern `saveDtTaskUpdate()` already
+established (2026-08-26): pushes immediately via `cloudPushData()`,
+reverts the optimistic local flag on a rejection/failure rather than
+leaving the UI showing a report that didn't actually land, and only ever
+sends the boolean itself — never a reporter id/name, which are entirely
+server-derived.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (26/26) — an Abby-assigned task's report notifies
+exactly 3 (Sarah + David + Abby), a David-assigned or Sarah-assigned
+task's report notifies exactly 2 with no duplicate for the assigner
+themselves, a self-added task's report flag still persists (member-
+writable) but fires zero notifications (the server-side origin guard), a
+resave of an already-reported task never re-fires and its original
+`reportedMisassignedAt` survives untouched, a member reporting a task not
+assigned to them is still rejected with the pre-existing "not your task"
+reason, the task is never deleted in any case, and real emails are
+confirmed sent to all resolved recipients (with `RESEND_API_KEY` set in
+the test, matching this file's own established email-verification
+convention). Every pre-existing `ops_tasks`-touching suite re-run clean
+and unaffected: `test_ops_tasks.mjs` (26/26), `verify_ops_sync_date_
+rules.mjs`, `verify_task_delete_permission_scope.mjs`, `test_ops_sync_
+notices.mjs` (10/10). (2) A new Playwright suite against the real
+`user.html` UI (14/14, run 3× clean) — the report button appears only on
+an admin-assigned task, never on a self-added one; an already-reported
+task shows the static "Reported" indicator with no clickable button; both
+the list-row button and the detail-panel button correctly send a real
+`ops-sync` call carrying `reportedMisassigned:true` with no reporter
+identity fields; both trigger points update the OTHER surface too (report
+from the detail panel also flips the list row, and vice versa) — a
+stateful `/api/ops-state`+`/api/ops-sync` mock was needed here, not a
+static echo, since `cloudPushData()` always re-pulls state after a push
+and a static mock would have made this genuinely-working round trip look
+like it reverted; and a server-rejected report correctly reverts the
+optimistic UI change, leaving the button clickable again rather than
+stuck showing a false "Reported." Ten more pre-existing Daily Tasks
+Playwright suites re-run clean and unaffected, confirming no regression
+to the card layout, status tabs, staging, delete/inline-status, header
+declutter, or duplicate-merge features this branch shares markup with:
+`verify_dt_blocked_status.js` (10/10), `verify_dt_card_redesign.js`
+(25/25), `verify_dt_delete_inline_status.js` (9/9), `verify_dt_filter_
+buttons_fix.js` (10/10), `verify_dt_header_declutter.js` (26/26),
+`verify_dt_staging.js` (17/17), `verify_dt_status_tabs.js` (19/19),
+`verify_employee_duplicate_merge.js` (24/24), `verify_employee_task_edit_
+delete_removal.js` (16/16), `verify_task_undo_new_user.js` (14/14).
+`node --check` passed on `api/ops-sync.js`; syntax-checked (`new
+Function()` per extracted `<script>` block) `user.html` — clean;
+comment-stripped div-balance delta unchanged vs. `main` (−1); `ls
+api/*.js | wc -l` still 11 (no new server file).
+**My Tasks batch, PR A — assigned-by display + remove email UI (2026-09-01).**
+`user.html` only, display-only — no writes. First of a 5-PR batch (A-E,
+one feature each, all held for Sarah's explicit approval on preview per
+her own instruction — items B-E write data and/or change permissions).
+
+**Item 1 — who assigned each task.** `_dtAssignedByName(id)` already
+existed and was already wired into the detail panel's "Assigned by" row —
+the reported "Assigned by —" symptom was a real bug in that function, not
+a missing feature: it only ever looked in `dbGet(DB_KEYS.users)`, and
+`DB_KEYS` had no `admins` entry at all in this file, so any admin-assigned
+task (the common case) always fell through to `'—'`. Fixed by adding
+`admins: 'wl_admins_db'` to `DB_KEYS` and pulling `record.admins` into it
+in `cloudFetchUsers()` (same key name `index.html` already uses for the
+same purpose — confirmed safe to share, matching the existing precedent
+`users`/`tasks`/`feed` already set: each portal fully overwrites its own
+cache from its own tier-scoped `/api/ops-state` response on every pull, so
+two portals briefly sharing a key name on the same origin was already an
+accepted pattern here, unlike the session-TOKEN collision incident this
+file's own history documents — that was a different, higher-stakes kind
+of shared key). `_dtAssignedByName()` now checks self-added first
+("Added by you" — a self-created task's `assignedById` is always forced
+to the creator's own id server-side, so this covers the common case),
+then the `'primary-admin'` sentinel (Sarah Samy has no `ops_admins` row at
+all, per this file's own architecture notes, so she can never resolve via
+a normal id lookup), then `users`, then the newly-populated `admins`.
+Surfaced on both the list row (a new subtitle line, joined with the
+existing "Assigned {date}" text via " · ") and the detail panel (already
+had the row, just needed the fixed lookup).
+
+**Found and left alone, not part of this fix:** `_getContactList()` (the
+Messages feature's contact-list builder) has referenced
+`dbGet(DB_KEYS.admins)` since it was written, but — same root cause —
+that key never existed, so it's been silently returning zero admin
+contacts the whole time. Adding the `DB_KEYS.admins` entry incidentally
+fixes this too, as a side effect of fixing item 1, not something
+separately built or tested here; flagged in case Messages' own behavior
+visibly changes as a result.
+
+**Item 2 — remove email wording/fields.** Removed the "Email received"
+row from the detail panel (only ever shown for `source==='parsed-email'`
+tasks) — confirmed via grep this was the only place `emailReceivedDate`
+was displayed anywhere in this file; `emailThreadId` and `replyStatus`
+were never displayed here at all (write-only / admin-only respectively),
+so there was nothing further to remove for those. Reworded the visible
+copy in the Add/Import card (title emoji 📧→📝, subtitle, textarea
+placeholder) and the one Daily Tasks help-panel/tour sentence that said
+"paste an email or meeting note" — the latter is normally treated as
+verbatim, owner-approved copy never paraphrased in this file (see
+`HELP_CONTENT`'s own header comment), so this is a deliberate, narrowly-
+scoped exception made because this task explicitly asked for it, not a
+silent rewrite — only the one word changed, the rest of the approved
+sentence is untouched.
+
+**Deliberately NOT changed, flagged rather than assumed:** the file input
+still accepts `.eml`/`message/rfc822` and its real `FileReader`-based
+import pipeline (`_onDtParseFilesChosen`) is untouched — this is a
+genuinely working feature (an employee really can drop a real `.eml`
+export and have it parsed), not dead copy, and the task's own scope was
+"no email wording" (display), not "remove the ability to import an email
+file." Also left untouched: the stored `source:'parsed-email'` value
+itself (the task's own optional suggestion to relabel it, e.g. to
+`'parsed-transcript'`) — `index.html`'s Task Assignments card reads this
+exact same field for its own "✉️ email" badge, and this batch's stated
+scope is `user.html` only; renaming the value would need a matching
+`index.html` change to avoid silently breaking that badge, which is out
+of scope for this PR. Flagged for a follow-up decision rather than
+silently done or silently skipped.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s baseline
+exactly (both 0). A new Playwright suite (10/10, run 3× clean): the list
+row and detail panel both correctly resolve the `'primary-admin'`
+sentinel to "Sarah Samy", a real admin id to that admin's name, and a
+self-added task to "Added by you"; zero literal "email" text anywhere on
+the page; a legacy task carrying `source:'parsed-email'`/
+`emailReceivedDate`/`emailThreadId` shows none of it in its detail panel;
+and no `ops-sync` push ever carries a `tasks` change (confirming this is
+genuinely display-only — normal login/nav activity-feed logging still
+fires, unrelated to this change). Four pre-existing Daily Tasks suites
+re-run clean (`verify_dt_card_redesign.js` 25/25, `verify_dt_status_
+tabs.js` 19/19, `verify_dt_blocked_status.js` 10/10); one pre-existing,
+already-documented flaky suite (`verify_dt_assigned_date.js`'s own
+click-target ambiguity) reproduced its known identical failure signature,
+unrelated to this change.
+
+Held for Sarah's explicit approval on the Vercel preview before merge,
+per this batch's own instruction — not auto-merged despite being
+display-only, since the batch treats all five PRs as a set awaiting her
+review together.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
