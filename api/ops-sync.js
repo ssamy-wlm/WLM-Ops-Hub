@@ -989,19 +989,63 @@ export async function insertNotifications(supabase, rows, warnings) {
   // Email is dormant until RESEND_API_KEY is configured — attempt fires only
   // then, and any failure is logged, never surfaced to the caller or allowed
   // to affect the (already-succeeded) write this notification came from.
+  //
+  // Batched by recipient email (2026-09-02) — insertNotifications is called
+  // once per write request with every notification row THAT request
+  // produced (e.g. committing a 15-task import for one person fires 15
+  // separate 'taskAssignment' rows, all for the same recipient). The old
+  // loop below sent one email per row — 15 emails for one commit. Grouped
+  // here into at most one email per distinct recipientEmail per request,
+  // never touching the in-app rows already inserted above (those stay one
+  // row per item, exactly as before, so the notification bell still shows
+  // each individually). A recipient with no email is skipped, same as
+  // before. Respecting notification-settings toggles needs no extra check
+  // here — every caller of insertNotifications already gates on the
+  // relevant notifSettings.* flag before ever building these rows.
   if (process.env.RESEND_API_KEY) {
+    const byEmail = new Map();
     for (const row of payload) {
-      try { await maybeEmailNotification(row.data); }
-      catch (e) { console.warn('[notifications] email send failed (non-fatal):', e.message); }
+      const to = row.data.recipientEmail;
+      if (!to) continue;
+      if (!byEmail.has(to)) byEmail.set(to, []);
+      byEmail.get(to).push(row.data);
+    }
+    for (const [to, notifs] of byEmail) {
+      try { await maybeEmailNotification(to, notifs); }
+      catch (e) {
+        console.warn('[notifications] email send failed (non-fatal):', e.message);
+        // Recorded, not just console.warn'd (2026-09-02) — a failed Resend
+        // send used to be invisible anywhere in the app; this surfaces it
+        // in Business Setup's error viewer the same way every other
+        // endpoint failure already is. logError() itself never throws
+        // (see lib/errorLog.js), so this stays exactly as non-fatal as the
+        // console.warn it sits next to — never blocks or fails the sync.
+        await logError({ endpoint: 'notifications:email', error: e, extra: { recipient: to, itemCount: notifs.length } });
+      }
     }
   }
 }
 
-async function maybeEmailNotification(notif) {
-  const to = notif.recipientEmail;
-  if (!to) return;
-  const html = buildEmailHtml({ name: notif.recipientName || '', title: notif.title, body: notif.body, link: notif.link || '' });
-  await sendResendEmail({ to, subject: notif.title, html });
+async function maybeEmailNotification(to, notifs) {
+  if (!to || !notifs.length) return;
+  if (notifs.length === 1) {
+    const notif = notifs[0];
+    const html = buildEmailHtml({ name: notif.recipientName || '', title: notif.title, body: notif.body, link: notif.link || '' });
+    await sendResendEmail({ to, subject: notif.title, html });
+    return;
+  }
+  // Combined email for 2+ notifications landing for the same recipient in
+  // this one request — one line per item, each item's own title (and body,
+  // if it has one) so nothing is lost versus the old one-email-per-item
+  // shape, just coalesced into a single send. buildEmailHtml's body div
+  // has white-space:pre-wrap (see lib/resendClient.js) specifically so
+  // this newline-joined list actually renders as separate lines, not one
+  // run-on line.
+  const name = notifs[0].recipientName || '';
+  const subject = `You have ${notifs.length} new updates`;
+  const body = notifs.map(n => `• ${n.title}${n.body ? ' — ' + n.body : ''}`).join('\n');
+  const html = buildEmailHtml({ name, title: subject, body, link: '' });
+  await sendResendEmail({ to, subject, html });
 }
 
 async function upsertRows(supabase, table, rows, warnings, statusCol) {
