@@ -297,8 +297,15 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // this list (cur.assigneeId !== session.id -> "not your task") — a member
 // can only ever edit the subject of a task already assigned to them, never
 // anyone else's.
+// clientId/clientName removed (2026-09-01, My Tasks batch item 5) — the
+// parser sometimes misses or wrong-guesses the client, and the assignee
+// often knows it better than anyone; a member may now correct it on a
+// task already assigned to them, same scope as subject/notes/status. The
+// existing "not your task" ownership check just above this list's use
+// site is still the actual gate — this only widens which FIELDS are
+// touchable on a task already theirs, never whose tasks they can touch.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
-  'clientId', 'clientName', 'assigneeId', 'assignedById',
+  'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate',
 ];
@@ -883,6 +890,51 @@ async function fireSubmittedForReviewNotifications(supabase, events, warnings, n
           context: { clientId: ev.clientId, serviceId: ev.serviceId },
         });
       });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// "Report task" (My Tasks batch, item 3, 2026-09-01) — an employee flagging
+// an admin-assigned task they think isn't theirs. Recipients are a fixed
+// rule, not the usual manager-escalation resolveNotifyRecipients() logic:
+// always every super/owner-tier admin (today that's just David — plus the
+// primary-admin sentinel by her literal id, same reason
+// resolveReviewRecipients() above pushes her explicitly: Sarah has no
+// ops_admins row for an admins-array scan to ever find), PLUS the admin who
+// actually assigned the task, only when that assigner is NOT already
+// super/owner (e.g. Abby, production_manager) — an already-included
+// super/owner assigner is just deduped below, never double-notified.
+export function resolveReportRecipients(assignedById, admins) {
+  const out = [{ id: 'primary-admin', kind: 'admin' }];
+  admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  if (assignedById && assignedById !== 'primary-admin') {
+    const assigner = admins.find(a => a.id === assignedById);
+    if (assigner && assigner.level !== 'super' && assigner.level !== 'owner') out.push({ id: assignedById, kind: 'admin' });
+  }
+  const seen = new Set();
+  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
+async function fireTaskReportedNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    resolveReportRecipients(ev.assignedById, admins).forEach(r => {
+      // Same primary-admin-sentinel special-case resolveReviewRecipients'
+      // own caller already needs — see the comment there.
+      const isPrimary = r.id === 'primary-admin';
+      const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
+      rows.push({
+        type: 'taskReported', recipientId: r.id, recipientKind: r.kind,
+        recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+        recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+        title: `Task reported: ${ev.subject}`,
+        body: `${ev.reportedByName || 'Someone'} flagged "${ev.subject}" as possibly not theirs.`,
+        link: '',
+        context: { taskId: ev.taskId, clientId: ev.clientId || null },
+      });
+    });
   });
   await insertNotifications(supabase, rows, warnings);
 }
@@ -1568,6 +1620,7 @@ export default async function handler(req, res) {
       const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
+      const reportEvents = [];
       // Every session.id check below (here and in the "not your task"
       // check further down) already uses this caller's CANONICAL employee
       // id for a dual-role admin/manager account, not their separate
@@ -1671,7 +1724,37 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'members cannot edit tasks.dueDate' });
             continue;
           }
-          row = inc;
+          // "Report task" (2026-09-01) — who reported it is always taken
+          // from the caller's own session, never trusted from the client,
+          // matching reviewedBy/reviewedByName's convention elsewhere in
+          // this file. reportedMisassigned* falls back to cur when the
+          // incoming payload omits it (the same "never let an absent field
+          // blank a real value" convention assignedById/clientEmails/etc.
+          // already use elsewhere in this file) — a stale local copy
+          // resaving an unrelated field (e.g. status) right after a report
+          // action, before the next pull has echoed reportedMisassignedBy/
+          // At back down to this client, must not wipe them. Only fires on
+          // the actual transition into reportedMisassigned (never a resave
+          // that leaves it set), and only for a task actually assigned by
+          // an admin — the UI only shows the button there, but this is the
+          // real server-side guard: reportedMisassigned* is intentionally
+          // NOT in TASK_KEYS_MEMBER_MAY_NOT_TOUCH (a member must be able to
+          // write it on their own task), so without this a client could
+          // still set the flag on a self-added task.
+          row = {
+            ...inc,
+            reportedMisassigned: typeof inc.reportedMisassigned === 'boolean' ? inc.reportedMisassigned : (cur.reportedMisassigned || false),
+            reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
+            reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
+            reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+          };
+          if (row.reportedMisassigned && !cur.reportedMisassigned && cur.origin === 'admin') {
+            row = { ...row, reportedMisassignedBy: session.id, reportedMisassignedByName: session.name, reportedMisassignedAt: new Date().toISOString() };
+            reportEvents.push({
+              taskId: inc.id, subject: row.subject, assignedById: cur.assignedById || null,
+              clientId: row.clientId || null, reportedByName: session.name,
+            });
+          }
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         }
@@ -1685,6 +1768,7 @@ export default async function handler(req, res) {
       }
       applied.tasks = n;
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
+      await fireTaskReportedNotifications(supabase, reportEvents, warnings);
     }
 
     // ── Task hard delete — genuine hard SQL DELETE. ops_tasks has no
