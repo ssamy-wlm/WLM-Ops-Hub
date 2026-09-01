@@ -5184,6 +5184,65 @@ per this batch's own instruction — not auto-merged despite being
 display-only, since the batch treats all five PRs as a set awaiting her
 review together.
 
+**My Tasks batch, PR E — item 7 (route "Submitted for review" to the
+submitter's manager too) needed no change; already fully built
+(2026-09-01).** Given as: "Today Assmaa's 'Submitted for review' email
+goes to Sarah only; it should ALSO go to Abby, her manager... Generalize:
+when anyone submits work for review, also notify their manager (via
+`managerId`/`managedUserIds`), in addition to current recipients. Don't
+hard-code Assmaa/Abby." Investigated `api/ops-sync.js` before writing
+anything (rule #7) and found this premise doesn't match the live code:
+`resolveReviewRecipients(assigneeId, users, admins)` (introduced in the
+original "My Work: 'Submit for review' on Done" feature, predating this
+session's own documented history — first appearance in this repo's git
+log, not something built or touched during any prior task recorded in
+this file) already resolves the submitting employee's `managerId`
+generically — looking it up first against `ops_admins`, then
+`ops_users`, so a manager can be either kind of account — and pushes them
+as an ADDITIONAL recipient alongside the `'primary-admin'` sentinel
+(Sarah), always included. `fireSubmittedForReviewNotifications()` (the
+function that actually fires on a client-service `reviewSubmittedAt`
+transition, wired into the `clients` write path in two places — an
+admin's own edit and a member's edit, both funnel through the identical
+call) already sends via the same `insertNotifications()`/Resend path
+every other notification type in this file uses, so both in-app and
+email delivery are already covered, not just the in-app half.
+Server-side, this is scoped by `managerId` alone, generically, never a
+hardcoded name — `managedUserIds` (mentioned in the task's own wording,
+present on `ops_admins` rows like Abby's) is the redundant REVERSE
+pointer of the same relationship and isn't separately read anywhere in
+this resolution path, which is fine: `user.managerId === admin.id` is
+already the single source of truth this function walks, so there's
+nothing for `managedUserIds` to additionally contribute here.
+
+Rather than silently doing nothing or silently rebuilding something
+already correct, verified directly against the task's own exact example
+data shape with a `node:test --experimental-test-module-mocks` run
+against the real, byte-identical `api/ops-sync.js` handler (no live DB
+access, rule #11): seeded `ops_users.assmaa` with
+`managerId:'adm_abby_conklin'` and an `ops_admins` row for Abby at that
+exact id (also carrying `managedUserIds:['assmaa']`, matching the task's
+own claimed live data, though as noted above this field is never actually
+read by the resolution logic itself), then drove a real client-service
+edit setting `reviewSubmittedAt` through the actual `handler` — 9/9
+checks passing: exactly 2 notification rows result (`primary-admin` +
+Abby's real admin id), Abby's row carries her correct real name/email
+(not a placeholder), a real outbound email is sent specifically to her
+address (not just Sarah's), and the "no manager resolved" honesty-notice
+does NOT fire (since one legitimately was). A regression control (a
+different assignee with no `managerId` at all) confirms the pre-existing,
+correct fallback behavior is unaffected: exactly 1 recipient (Sarah
+only), with the honest "no manager resolved — Super Admin notified only"
+notice still firing exactly as designed for that case.
+
+No `api/ops-sync.js` change was made — there was nothing to fix. Per rule
+#10, this is a docs-only entry (recording a completed investigation, not
+a code change) — flagged plainly rather than silently treated as "PR E
+done" with nothing to show for it, since the task explicitly asked for a
+fifth PR in this batch and this is instead a "no-op, already correct"
+finding, matching the same pattern already established elsewhere in this
+file (see the 2026-08-28 "Wire Task Assignments... — no change needed"
+entry above) for exactly this situation.
 **URGENT hotfix: `user.html` was fatally broken on `main` immediately
 after PR A's merge — the same class of parallel-session merge-conflict
 damage documented in the 2026-08-21 `client.html` hotfix entry above,
@@ -5347,6 +5406,87 @@ status, filter buttons, header declutter, duplicate merge, task
 edit/delete removal, undo-import) — confirming this fix didn't just stop
 the crash but left every dependent feature genuinely working. Branched
 directly from `main`, same urgency posture as the hotfix above.
+
+**My Tasks batch, PR D — Calendar (month) view wrap-and-grow fix (item 6,
+2026-09-01).** `user.html` only. Branched from `main` with the urgent
+`user.html` syntax hotfix above cherry-picked on top (needed just to get
+the file loading again at all — the two PRs are expected to reconcile
+cleanly as a no-op diff whichever merges first, same precedent already
+established elsewhere in this file for exactly this situation).
+
+**Root cause, confirmed by reading the code, not guessed:**
+`_renderDtCalendar()` had two separate problems, both visible in a real
+before-screenshot (taken via Playwright before touching any code, at
+1400px and 900px): a hard `dayTasks.slice(0,3)` cap with a dead-end
+"+N more" label (no click target, nothing else in this file's Calendar
+view surfaces the hidden tasks anywhere else), and clipped task text
+(`overflow:hidden;text-overflow:ellipsis;white-space:nowrap` inside a
+fixed `min-height:60px` cell) — a day with more than 3 tasks silently
+hid the rest, and even a VISIBLE task's own subject could be cut off
+mid-word with no way to read the rest without opening it.
+
+**Fixed using the exact same wrap-and-grow technique already shipped for
+`client.html`'s Service Schedule calendar** (read that implementation
+first — `_calDayCell()`/`_calEventCard()`/`_renderWeekGrid()`/
+`_renderMonthGrid()` — before writing anything, per this task's own
+instruction): the `slice(0,3)`/"+N more" cap is removed outright — every
+task for a day renders, and the day's cell (and the whole grid row it
+sits in) just grows taller for a busy day, since `#dtCalGrid`'s own
+`display:grid;grid-template-columns:repeat(7,1fr)` already sizes each
+row to its tallest cell for free, no extra CSS needed for that part (same
+as `client.html`'s own grid, confirmed by reading its explanatory
+comment). Task text now wraps (`white-space:normal;overflow-wrap:anywhere`
+instead of the old `nowrap`/ellipsis combination) and every cell — header
+and day alike — got `min-width:0`, letting a column actually shrink
+instead of forcing the whole grid, and the page, wider than the viewport
+once text wraps. The old fixed `min-height:60px` was reduced to a much
+smaller `min-height:36px` — just enough to keep an empty day from looking
+collapsed — since a busy day no longer needs artificial headroom to fit
+into; it grows on its own now.
+
+**Deliberately NOT added: a "hide the calendar below ~700px, default to
+List instead" breakpoint**, unlike `client.html`'s own Service Schedule
+calendar. Confirmed by reading `user.html`'s CSS that this whole portal's
+shell has no responsive breakpoint anywhere — `.sidebar` is a hard fixed
+240px with no narrower layout at all, so a true phone-width viewport
+(~420px) can't even reach the nav item to open My Tasks in the first
+place; this is a pre-existing, whole-app characteristic, not something
+this one calendar fix should attempt to solve on its own. "Narrow width"
+verification here instead used 900px — a narrower desktop/tablet width,
+which is the narrowest this app's shell was ever designed to support —
+and the wrap-and-grow fix alone is sufficient to keep the calendar
+readable there with zero horizontal page overflow, confirmed directly
+rather than assumed.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance delta unchanged vs. the
+hotfix baseline (711/712, both −1 — the removed "+N more" div was itself
+balanced, so removing it doesn't shift the delta). A new Playwright suite
+(9/9, run 3× clean) against the real UI: all 5 tasks on one busy day
+render with zero cap and zero "+N more" text; a long subject renders in
+full (confirmed via the DOM text, not just presence — plus a real
+`getComputedStyle().whiteSpace==='normal'` check and a real
+`boundingBox()` height check proving the div is genuinely multi-line
+tall, not just text sitting in a box with hidden overflow); zero
+horizontal page overflow at both 1400px and 900px; and the busy day's
+cell height grows well past its 36px floor (>150px), confirming the
+grid-row-grows-together behavior actually fires, not just that the
+correct HTML exists. Ten pre-existing Daily Tasks Playwright suites
+re-run clean and unaffected, confirming no regression to any other My
+Tasks view/feature sharing this file: `verify_dt_assignedby_
+noemail.js` (10/10), `verify_dt_blocked_status.js` (10/10),
+`verify_dt_card_redesign.js` (25/25), `verify_dt_delete_inline_
+status.js` (9/9), `verify_dt_filter_buttons_fix.js` (10/10),
+`verify_dt_header_declutter.js` (26/26), `verify_dt_status_tabs.js`
+(19/19), `verify_employee_duplicate_merge.js` (24/24), `verify_
+employee_task_edit_delete_removal.js` (16/16), `verify_task_undo_
+new_user.js` (14/14).
+
+Held for Sarah's explicit approval on the Vercel preview per this
+batch's own instruction — not merged automatically despite being a
+display-only, non-data-touching CSS/markup fix, since the batch treats
+all five PRs as a set awaiting her review together. Before/after
+screenshots (1400px and 900px) sent alongside this PR.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
