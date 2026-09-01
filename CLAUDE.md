@@ -4634,6 +4634,33 @@ surface in both portals and the category-pill colors/due-badge
 thresholds are new, un-reviewed design choices, not carried over from an
 existing spec.
 
+**Reply-to on Resend notification emails (2026-08-28).** `lib/resendClient.js`
+only. `sendResendEmail()`'s request body to the Resend API never carried a
+`reply_to` field at all before this — confirmed by reading the live code
+first (the task's own note that a prior `replyTo: []` was silently empty
+didn't match what's actually in this file; the real gap was simpler, the
+field was just missing outright). A recipient replying to any notification
+email (assignment, time-off, message, etc. — every caller of this shared
+function) had no path back to a real inbox. Added a `replyTo` constant
+(`RESEND_REPLY_TO` env var, falling back to `ssamy@weblightmedia.com`) and
+`reply_to: replyTo` in the request body — `reply_to` with an underscore is
+Resend's actual API field name, not the camelCase `replyTo` a naive port
+would guess. Pure additive change to one shared lib file, not a serverless
+function itself (`api/*.js` count unaffected, still 11) — every existing
+caller (the on-demand assignment-email endpoint, the task-edit notification
+flusher, and everything routed through `insertNotifications()`) picks this
+up automatically with no call-site change needed.
+
+Verified with a `node:test` run against the real, byte-identical
+`sendResendEmail()` (5/5), `fetch` mocked to capture the outgoing request
+body rather than hitting the live Resend API (no live access, rule #11):
+the payload carries `reply_to` (not `replyTo`) defaulting to
+`ssamy@weblightmedia.com`, an explicit `RESEND_REPLY_TO` override is
+honored, and every other field (`to`/`subject`/`html`/`from`) is unaffected.
+`node --check lib/resendClient.js` passed. Low-risk per rule #10 — a single
+additive field on an outbound email payload, no data-write/sync/auth/
+permission logic touched — eligible for direct merge once CI is green.
+
 **"Wire Task Assignments + all assignment events into email notifications"
 — no change needed, already fully built and verified working
 (2026-08-28).** Given as a build task on the stated premise that
