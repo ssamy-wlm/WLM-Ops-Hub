@@ -1096,12 +1096,17 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           <div class="card">
             <div class="card-header">
               <div>
-                <div class="card-title">📧 Add / import tasks</div>
-                <div class="card-sub">Paste a transcript/email, or drop one or more .eml files — extracted tasks land only in your own list</div>
+                <div class="card-title">📝 Add / import tasks</div>
+                <div class="card-sub">Paste a meeting transcript or note, or drop one or more files — extracted tasks land only in your own list</div>
               </div>
             </div>
             <div class="card-body">
-              <textarea id="dtParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+              <textarea id="dtParseText" rows="4" placeholder="Paste a transcript or meeting note here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+                <div class="card-sub">Paste a meeting transcript, or drop one or more files — extracted tasks land only in your own list</div>
+              </div>
+            </div>
+            <div class="card-body">
+              <textarea id="dtParseText" rows="4" placeholder="Paste a meeting transcript here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <input type="file" id="dtParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onDtParseFilesChosen(event)">
                 <button class="btn btn-sm btn-primary" id="dtParseBtn" onclick="runDtEmailParse()">Parse &amp; extract tasks</button>
@@ -1292,6 +1297,7 @@ const DB_KEYS = {
   weeklySummaries: 'wl_weekly_summaries',
   monthlySummaries: 'wl_monthly_summaries',
   users:    'wl_users_db',
+  admins:   'wl_admins_db',
   coc:      'wl_coc_data',
   settings: 'wl_settings',
   goals:    'wl_goals_db',
@@ -1401,6 +1407,19 @@ async function cloudFetchUsers(){
     const r = data?.record || {};
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
+    // Redacted {id,name,title,funnelLevel} shape for a member session (see
+    // api/ops-state.js) — added 2026-09-01 so _dtAssignedByName() can
+    // resolve a task's assignedById to a real admin's name (was previously
+    // only ever looking in DB_KEYS.users, so an admin-assigned task always
+    // showed "Assigned by —"). Also, incidentally, the same key
+    // _getContactList() has referenced since it was written but that was
+    // never actually populated — DB_KEYS had no 'admins' entry at all
+    // before this, a separate pre-existing bug not touched here.
+    // Admins list — api/ops-state.js already sends a member-safe subset
+    // ({id, name, title, funnelLevel}) to every tier, it just wasn't being
+    // applied to any local table before this (added 2026-09-01 to resolve
+    // a task's assignedById to an admin's real name — see _dtPersonName()).
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
     _applyServerValue(v=>dbSet(DB_KEYS.coc, v), r.coc);
@@ -2093,6 +2112,10 @@ function _renderDtListTable(tasks){
     const isNew = _dtIsNew(t, seen);
     const blocked = t.status==='Blocked';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlUser(t.blockReason||'')}">🚧 Blocked</span>` : '';
+    // Who assigned this (or "Added by you") — same subtitle line the
+    // Assigned-date text already used, joined with " · " rather than a
+    // second line, since a card here is already fairly dense.
+    const assignedBySub = [t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)}`:'', escHtmlUser(_dtAssignedByName(t.assignedById))].filter(Boolean).join(' · ');
     // Assignee pill — every task here is already this member's own (see
     // this file's own "no assignee dropdown, no other people's tasks"
     // comment above DT_CATEGORIES), so there's no reassign <select> to
@@ -2107,7 +2130,8 @@ function _renderDtListTable(tasks){
       <div class="dt-card-top">
         <div>
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
-          ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_dtFormatShortDate(t.assignedDate)}</div>`:''}
+          ${assignedBySub?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">${assignedBySub}</div>`:''}
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
         </div>
         <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}</div>
       </div>
@@ -2157,11 +2181,50 @@ function _renderDtCalendar(tasks){
   grid.innerHTML = html;
 }
 
+// Resolves a task's assignedById to a display name — the self-added case
+// ("Added by you") is checked first regardless of whether id is even set,
+// since a self-created task's assignedById is always forced to the
+// creator's own id server-side (api/ops-sync.js), so this is the common
+// case for most of this file's own tasks. 'primary-admin' is a special-
+// cased sentinel — Sarah Samy has no ops_admins row at all (see
+// CLAUDE.md's PRIMARY_ADMIN_EMAIL architecture note), so she can never be
+// found by an id lookup the normal way. Falls through users then admins
+// (DB_KEYS.admins, added 2026-09-01 — previously never populated here, so
+// any admin-assigned task always showed "Assigned by —").
 function _dtAssignedByName(id){
-  if(!id) return '—';
+  if(id && id===currentUser?.id) return 'Added by you';
+  if(!id) return currentUser ? 'Added by you' : '—';
+  if(id==='primary-admin') return 'Sarah Samy';
   const users = dbGet(DB_KEYS.users)||[];
-  const p = users.find(u=>u.id===id);
-  return p ? p.name : (id===currentUser?.id ? 'You' : '—');
+  const u = users.find(x=>x.id===id);
+  if(u) return u.name;
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===id);
+  if(a) return a.name;
+  return '—';
+// Plain id -> display name. Checks the 'primary-admin' sentinel (Sarah
+// Samy — she has no real ops_admins row, see api/ops-auth.js/CLAUDE.md),
+// then real admins, then users, falling back to 'You' for the viewer's own
+// id (kept for the pre-existing staging-row reuse below) or '—'.
+function _dtPersonName(id){
+  if(!id) return '—';
+  if(id==='primary-admin') return 'Sarah Samy';
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===id);
+  if(a) return a.name||'—';
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===id);
+  if(u) return u.name||'—';
+  return id===currentUser?.id ? 'You' : '—';
+}
+// "Assigned by" display for a task (2026-09-01) — a task the viewer added
+// themselves (assignedById === its own assigneeId — every task shown here
+// is already the viewer's own, so this is equivalent to "I created this")
+// reads as "Added by you" rather than resolving to their own name; every
+// other task resolves assignedById via _dtPersonName() above.
+function _dtAssignedByDisplay(t){
+  if(t.assignedById && t.assignedById===t.assigneeId) return 'Added by you';
+  return _dtPersonName(t.assignedById);
 }
 
 function openDtDetailPanel(id){
@@ -2182,11 +2245,10 @@ function openDtDetailPanel(id){
     <input class="form-input" id="dt-subject-input" style="font-weight:700;font-size:15px;margin-bottom:12px;">
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
       <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
-      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
+      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByDisplay(t))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}${_dtReportButtonHtml(t)}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_dtFormatShortDate(t.assignedDate)} · ${_dtAgeLabel(_dtDaysSinceAssigned(t))}` : '—'}</div>
-      ${t.source==='parsed-email' ? `<div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>` : ''}
     </div>
     <label class="form-label">Status</label>
     <select class="form-input" id="dt-status-select" onchange="_dtToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
@@ -2426,7 +2488,12 @@ async function runDtEmailParse(){
         assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
         category: et.category, priority: et.priority,
         status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
-        source: 'parsed-email', origin: 'self',
+        // 'parsed-transcript', not 'parsed-email' (2026-09-01) — nobody
+        // gets tasks from email, they come from pasted meeting transcripts
+        // (or a dropped .eml file's text content, extracted the same way);
+        // the stored value is just a provenance tag, never displayed to
+        // the employee (see the removed "Email received" detail-panel row).
+        source: 'parsed-transcript', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         assignedDate: et.assignedDate||_dtToday(),
         mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
@@ -2517,8 +2584,8 @@ function _renderDtStaging(){
       }
       // No assignee picker — a member can't assign to anyone else (same
       // role split as everywhere in this file); shown read-only instead.
-      // _dtAssignedByName() is a plain id->name lookup despite its name
-      // (built for the "Assigned by" detail-panel row), reused as-is here.
+      // _dtPersonName() is a plain id->name lookup (falls back to 'You' for
+      // the viewer's own id), reused as-is here.
       return `<div class="dt-staging-new" style="${rowStyle}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlUser(row.subject||'')}" placeholder="Task subject" onchange="_dtUpdateStaged('${row.id}','subject',this.value)">
@@ -2526,7 +2593,7 @@ function _renderDtStaging(){
         </div>
         <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlUser(row.notes||'')}" placeholder="Notes (optional)" onchange="_dtUpdateStaged('${row.id}','notes',this.value)">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
+          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtPersonName(row.assigneeId))}</span>
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
             <option value="">No client</option>
             ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
@@ -2718,7 +2785,8 @@ const HELP_CONTENT = {
     learnMore: "Mark work done as you finish it (this updates the tracker for everyone). Star a client to keep it at the top of your list. For your daily/weekly to-dos, see My Tasks instead." },
   dailyTasks: { label: 'My Tasks', sel: '#nav-dailytasks',
     tip: "Your daily and weekly tasks — assigned to you, or add your own.",
-    learnMore: "See what's assigned to you, or paste an email or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck, or delete it." },
+    learnMore: "See what's assigned to you, or paste a transcript or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck, or delete it." },
+    learnMore: "See what's assigned to you, or paste a meeting transcript into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck." },
   tracker: { label: 'Tracker', sel: '#nav-tracker',
     tip: "See every client your team manages (view only for you).",
     learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
