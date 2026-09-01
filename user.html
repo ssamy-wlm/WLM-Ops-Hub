@@ -2166,7 +2166,7 @@ function openDtDetailPanel(id){
     <label class="form-label">Task</label>
     <input class="form-input" id="dt-subject-input" style="font-weight:700;font-size:15px;margin-bottom:12px;">
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
-      <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
+      <div style="color:var(--text-light);">Client</div><div><select class="form-input" id="dt-client-select" style="font-size:13px;padding:4px 8px;"></select></div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
@@ -2186,6 +2186,14 @@ function openDtDetailPanel(id){
     </div>
   `;
   document.getElementById('dt-subject-input').value = t.subject || '';
+  // Client (2026-09-01) — the parser sometimes misses/wrong-guesses the
+  // client, and the assignee often knows it best; editable here the same
+  // as subject already is (server-scoped to a task already theirs — see
+  // api/ops-sync.js's TASK_KEYS_MEMBER_MAY_NOT_TOUCH, which clientId/
+  // clientName were removed from for this same reason).
+  const clientSel = document.getElementById('dt-client-select');
+  clientSel.innerHTML = '<option value="">No client</option>' + _dtActiveClients().map(c=>`<option value="${c.id}">${escHtmlUser(c.name)}</option>`).join('');
+  clientSel.value = t.clientId || '';
   document.getElementById('dt-status-select').value = t.status || 'Not started';
   document.getElementById('dt-block-reason-input').value = t.blockReason || '';
   _dtToggleBlockReasonField();
@@ -2227,7 +2235,9 @@ async function saveDtTaskUpdate(id){
   const status = document.getElementById('dt-status-select').value;
   const blockReason = document.getElementById('dt-block-reason-input').value.trim();
   if(status==='Blocked' && !blockReason){ showToast('A reason is required when status is Blocked'); return; }
-  const prevSubject = t.subject, prevStatus = t.status, prevBlockReason = t.blockReason, prevNotes = t.notes, prevCompletedAt = t.completedAt;
+  const clientId = document.getElementById('dt-client-select').value || null;
+  const client = clientId ? _dtActiveClients().find(c=>c.id===clientId) : null;
+  const prevSubject = t.subject, prevStatus = t.status, prevBlockReason = t.blockReason, prevNotes = t.notes, prevCompletedAt = t.completedAt, prevClientId = t.clientId, prevClientName = t.clientName;
   t.subject = subject;
   t.completedAt = _dtCompletedAt(t.status||'Not started', status, t.completedAt);
   t.status = status;
@@ -2235,6 +2245,8 @@ async function saveDtTaskUpdate(id){
   // lingers on a task that's since moved on (matches index.html's copy).
   t.blockReason = status==='Blocked' ? blockReason : '';
   t.notes = document.getElementById('dt-notes-input').value;
+  t.clientId = clientId;
+  t.clientName = client ? client.name : '';
   dbSet(DB_KEYS.tasks, tasks);
   const saveBtn = document.getElementById('dt-save-btn');
   if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
@@ -2246,13 +2258,14 @@ async function saveDtTaskUpdate(id){
     // the panel open rather than silently losing the edit. The visible
     // inputs are reset too — otherwise they'd still show the rejected
     // attempt even though the underlying record was rolled back.
-    t.subject = prevSubject; t.status = prevStatus; t.blockReason = prevBlockReason; t.notes = prevNotes; t.completedAt = prevCompletedAt;
+    t.subject = prevSubject; t.status = prevStatus; t.blockReason = prevBlockReason; t.notes = prevNotes; t.completedAt = prevCompletedAt; t.clientId = prevClientId; t.clientName = prevClientName;
     dbSet(DB_KEYS.tasks, tasks);
     document.getElementById('dt-subject-input').value = prevSubject || '';
     document.getElementById('dt-status-select').value = prevStatus || 'Not started';
     document.getElementById('dt-block-reason-input').value = prevBlockReason || '';
     _dtToggleBlockReasonField();
     document.getElementById('dt-notes-input').value = prevNotes || '';
+    document.getElementById('dt-client-select').value = prevClientId || '';
     if(saveBtn){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
     if(!rejectedThis) showToast('❌ Could not save — try again');
     return;
