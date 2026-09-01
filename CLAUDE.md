@@ -4980,6 +4980,120 @@ per this batch's own instruction — not auto-merged despite being
 display-only, since the batch treats all five PRs as a set awaiting her
 review together.
 
+**URGENT hotfix: `user.html` was fatally broken on `main` immediately
+after PR A's merge — the same class of parallel-session merge-conflict
+damage documented in the 2026-08-21 `client.html` hotfix entry above,
+now hitting this file (2026-09-01).** Discovered while starting PR D
+(the calendar fix, this same batch) — `user.html` wouldn't even load
+(`doLogin is not defined`, every function in the file undefined) the
+moment its dev server was hit for a before/after screenshot, blocking
+all further work until fixed. Root-caused by reading the actual merge
+history rather than guessing: PR A (`#310`,
+`claude/mytasks-assignedby-noemail`) and a near-duplicate, independently-
+built PR (`#309`, `claude/my-tasks-assignedby-noemail`) both implemented
+the *exact same* item 1+2 feature at the same time; `#309` merged to
+`main` first, and the merge of `#310` on top of it (commit `61fa65a`,
+"Merge branch 'main' into claude/mytasks-assignedby-noemail") resolved
+the resulting conflict by mechanically keeping fragments of BOTH sides in
+several spots without reconciling them into one coherent whole — the
+exact failure mode the 2026-08-21 entry already named and warned would
+recur under parallel sessions.
+
+Three separate corruptions, all from that one merge commit, all in
+`user.html`:
+1. **A missing closing brace, silently swallowing the rest of the file.**
+   `_dtAssignedByName()` (PR A's own "assigned by" resolver) and
+   `_dtPersonName()`/`_dtAssignedByDisplay()` (PR #309's independently-
+   built equivalent, same idea, different shape) both survived the merge,
+   but `_dtAssignedByName()`'s own closing `}` was dropped — the two other
+   functions ended up defined INSIDE its still-open body, with only
+   `_dtAssignedByDisplay()`'s `}` at the very end actually closing
+   anything. `new Function()` on the extracted script confirmed this
+   directly: before any fix, a `SyntaxError` inside the malformed
+   `HELP_CONTENT` object (item 3 below) masked this one entirely; fixing
+   that first error alone changed the reported failure to "Unexpected end
+   of input" at the literal last line of the file — proof the parser was
+   now running all the way to EOF still looking for that one missing `}`.
+   Fixed by keeping ONE implementation, not both: `_dtPersonName()`/
+   `_dtAssignedByDisplay()` were kept (used in two places — the detail
+   panel and the staging row — vs. `_dtAssignedByName()`'s one, itself
+   already a second, duplicate rendering of the same "assigned by" line
+   on the list-row card, per item 2 below), `_dtAssignedByName()` removed
+   entirely along with its own now-orphaned intro comment.
+2. **A duplicate "assigned by" line on every list-row card** — the exact
+   same visible-duplication failure mode as the 2026-08-21 hotfix's
+   `client.html` corruption, just here instead of there: the merge left
+   TWO near-identical subtitle `<div>`s under a task's title (one driven
+   by the now-removed `_dtAssignedByName()`/`assignedBySub`, one by
+   `_dtAssignedByDisplay()`), both rendering "Assigned <date> · <who>" on
+   the same card. Fixed by keeping only the `_dtAssignedByDisplay()`-driven
+   line (item 1 above's decision), removing the other.
+3. **Malformed `HELP_CONTENT.dailyTasks` — a genuine syntax error, not just
+   duplication.** Both PRs independently added a `learnMore` line to this
+   entry; the merge kept `dailyTasks: {...}` closed once (correctly) but
+   then appended a second, ORPHANED `learnMore: "...", }` immediately
+   after — a bare key-value pair with no enclosing object, followed by a
+   stray `}` that (per how V8 actually parses malformed input, confirmed
+   by reading the real error trail) prematurely closed the outer
+   `const HELP_CONTENT = {...}` declaration itself, turning every
+   remaining entry (`tracker`, `serviceCatalog`, `companyOverview`, etc.)
+   into dangling, invalid statement-level tokens — this was the file's
+   FIRST reported syntax error and what made the true underlying problem
+   (item 1 above) initially invisible. Fixed by removing the orphaned
+   duplicate line and its stray `}` entirely, keeping PR A's original
+   single `learnMore` value (the two versions' wording differed only
+   slightly — PR A's said "or delete it," which is now factually wrong
+   since general task-delete was already removed for employees on
+   2026-08-26 — PR A's own error, not the merge's; not corrected here as
+   it's a separate, tiny, pre-existing content-accuracy nit, flagged
+   rather than silently fixed inside an urgent syntax hotfix).
+4. **A duplicated, malformed "Add / import tasks" card** — the same
+   "keep both sides' fragments" pattern one more time: two overlapping
+   `<div class="card-body">` blocks, two `<textarea id="dtParseText">`
+   elements sharing one id (only the first is ever reachable via
+   `getElementById`, so the second was dead markup), with the div-nesting
+   itself scrambled between them. Fixed by keeping PR A's original clean
+   single card-body block (verified byte-identical against `a2b14e1`, PR
+   A's own pre-merge commit) and discarding the corrupted duplicate.
+
+**Verified this is a complete, not just plausible, fix — not assumed from
+the diff alone:** `new Function()` on the extracted `<script>` block now
+parses clean (previously a hard `SyntaxError`, confirmed reproducible on
+unmodified `main` via `git show origin/main:user.html` before any edit
+here); a real Playwright load of `user.html` now shows `typeof doLogin
+=== 'function'` with zero `pageerror` events (previously `ReferenceError:
+doLogin is not defined`, i.e. the ENTIRE script had failed to execute at
+all — every function in this ~4700-line file was undefined, not just the
+task-related ones this particular corruption happened to touch); grepped
+the whole file for duplicate `id="..."` attributes and duplicate
+top-level `function` declarations — zero of either remain. Comment-
+stripped div-balance now matches PR A's own pre-merge commit (`a2b14e1`)
+exactly — 712 open / 713 close, delta −1 — confirming the reconciled
+markup is structurally identical to the last known-good state, not just
+"no longer throws." Ten pre-existing Daily Tasks Playwright suites
+re-run clean and unaffected: `verify_dt_assignedby_noemail.js` (10/10,
+PR A's own regression suite — confirms the "assigned by"/no-email feature
+itself still works correctly after the reconciliation, not just that the
+file parses), `verify_dt_blocked_status.js` (10/10), `verify_dt_card_
+redesign.js` (25/25), `verify_dt_delete_inline_status.js` (9/9),
+`verify_dt_filter_buttons_fix.js` (10/10), `verify_dt_header_
+declutter.js` (26/26), `verify_dt_status_tabs.js` (19/19),
+`verify_employee_duplicate_merge.js` (24/24), `verify_employee_task_
+edit_delete_removal.js` (16/16), `verify_task_undo_new_user.js` (14/14).
+One pre-existing, already-documented flaky suite (`verify_dt_assigned_
+date.js`'s own click-target ambiguity — a bare `text=` locator resolving
+to 2 elements, one hidden — see the 2026-08-28 entry above) reproduced
+its identical known failure signature, confirmed unrelated. `index.html`
+and `client.html` confirmed untouched by the bad merge (`git diff --stat`
+between the pre- and post-merge commits shows zero changes to either).
+
+Branched directly from `main` (not part of the item 1-7 batch's own
+five-PR sequence) since this is a standing production outage, not a new
+feature — every real user of `user.html` has been unable to load the page
+at all since this merged. Flagged as urgent for fast review rather than
+held with the rest of the batch, per rule #10's "when in doubt, ask"
+default for anything this session cannot itself merge.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
