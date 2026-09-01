@@ -297,8 +297,15 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // this list (cur.assigneeId !== session.id -> "not your task") — a member
 // can only ever edit the subject of a task already assigned to them, never
 // anyone else's.
+// clientId/clientName removed (2026-09-01, My Tasks batch item 5) — the
+// parser sometimes misses or wrong-guesses the client, and the assignee
+// often knows it better than anyone; a member may now correct it on a
+// task already assigned to them, same scope as subject/notes/status. The
+// existing "not your task" ownership check just above this list's use
+// site is still the actual gate — this only widens which FIELDS are
+// touchable on a task already theirs, never whose tasks they can touch.
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
-  'clientId', 'clientName', 'assigneeId', 'assignedById',
+  'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate',
 ];

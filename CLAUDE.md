@@ -4890,6 +4890,96 @@ Low-risk per rule #10: `index.html` only, read-only display feature, no
 data-write/sync/auth/permission logic touched — eligible for direct merge
 once CI is green.
 
+**Employee "My Tasks" batch, PR C — item 4 needed no change (already true);
+item 5, employee client-edit on own task, built for real (2026-09-01).**
+`api/ops-sync.js` + `user.html`. Branched fresh from `main` (not stacked on
+PR A or PR B, this same batch's still-unmerged siblings).
+
+**Item 4 ("give David and Abby the same on-screen task editing Sarah
+has") — investigated before writing anything, per rule #7, and found the
+premise doesn't match the live code: task-editing permission was NEVER
+actually scoped to Sarah/`'primary-admin'` specifically, on either side.**
+Server-side, `api/ops-sync.js`'s entire `ops_tasks` write block gates on
+`isAdmin = tier !== 'member'` — true for BOTH `tierOf()` outcomes an admin
+can have (`'super'` for `level==='super'||'owner'`, `'manager'` for
+everything else), with no further per-tier restriction anywhere in the
+block; confirmed by reading the whole thing, not just the top of it.
+`api/ops-state.js`'s own task-scoping comment already states it plainly:
+"every admin tier sees every task, same super-sees-everyone convention as
+clients/users below" — filtered only on `tier!=='member'`. Client-side,
+`index.html`'s Edit button (`openTaskEditModal`), the "+ New Task" button,
+the inline reassign `<select>` (`_taReassign`), and the whole Task
+Assignments nav tab are all rendered/wired unconditionally for any admin —
+grepped every `RESTRICTED_ADMIN_ROLES`/`hideTabs`/`showOnly`/`.su-btn`
+role-gating mechanism in `applyAdminRoleRestrictions()` and confirmed none
+of them touch `taskAssignments` or any task-editing control. Since David
+(`level:'owner'`, tier `'super'`) and Abby (`level:'production_manager'`,
+tier `'manager'`) both already log in with `role:'admin'` (confirmed in
+`api/ops-auth.js`'s regular admin-row branch — the `'primary-admin'`
+sentinel is Sarah's own login shortcut, not a permission gate anything
+else checks against), both already have, and always had, identical
+on-screen task-editing capability to Sarah — full CRUD, unrestricted
+assignee, unrestricted client. No code change was needed or made for this
+item; documented here rather than silently skipped or silently rebuilt,
+matching this session's own established "verify before guessing" pattern
+(see the earlier "Wire Task Assignments into email notifications" entry
+above, which found the identical kind of already-built situation).
+
+**Item 5 (employee client-edit on own task) — genuinely built.** The
+parser sometimes misses or wrong-guesses a task's client, and the
+assignee often knows it better than anyone. Server-side, `clientId`/
+`clientName` were removed from `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` — the
+existing "not your task" ownership check (`cur.assigneeId!==session.id`)
+just above that list's use site is the real gate, unaffected by this
+change; this only widens which FIELDS are touchable on a task already
+theirs, same scope as `subject`/`notes`/`status` already have, never
+whose tasks a member can touch. Client-side, `user.html`'s detail panel's
+static "Client" row became a real `<select id="dt-client-select">`,
+populated from the same `_dtActiveClients()` helper the staging-review UI
+already uses (active clients only, alphabetically sorted — 2026-08-27's
+sort fix applies here for free), pre-filled to the task's current
+`clientId` on open. `saveDtTaskUpdate()` reads it alongside the existing
+subject/status/notes fields, resolves the matching client's name, and
+writes both `clientId`/`clientName` through the exact same
+server-confirmed-before-success round trip this function already
+established (2026-08-26) — a rejection reverts the select back to its
+prior value along with every other field, never leaving the UI showing an
+unconfirmed change.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` (14/14) — a member can set the client on their own task
+(both `clientId` and the resolved `clientName` saved), can clear it back
+to "No client," still cannot touch a task not assigned to them even just
+to fix its client (the ownership check is unaffected), every OTHER
+disallowed field (`category` tested directly) is still protected, and a
+combined write (status + notes + client all in one request) applies all
+three together correctly. Every pre-existing `ops_tasks`-touching Node
+suite re-run clean and unaffected: `test_ops_tasks.mjs` (26/26),
+`verify_ops_sync_date_rules.mjs`, `verify_task_delete_permission_
+scope.mjs`, `test_ops_sync_notices.mjs` (10/10). (2) A new Playwright
+suite against the real `user.html` UI (12/12, run 3× clean) — the select
+lists "No client" first then only active clients (an inactive client
+confirmed excluded), pre-fills correctly for both an unset and an
+already-set task, a real `ops-sync` call carries the new `clientId` and
+resolved `clientName` on save, the list row reflects the newly-assigned
+client immediately, clearing back to "No client" sends `clientId:null`/
+`clientName:''`, and a server-rejected save reverts the select to its
+prior value with the panel staying open. Ten pre-existing Daily Tasks
+Playwright suites re-run clean and unaffected, confirming no regression to
+the detail panel's other fields or to card/staging/status-tab/delete
+behavior sharing the same markup: `verify_dt_blocked_status.js` (10/10),
+`verify_dt_card_redesign.js` (25/25), `verify_dt_delete_inline_status.js`
+(9/9), `verify_dt_filter_buttons_fix.js` (10/10), `verify_dt_header_
+declutter.js` (26/26), `verify_dt_staging.js` (17/17), `verify_dt_status_
+tabs.js` (19/19), `verify_employee_duplicate_merge.js` (24/24),
+`verify_employee_task_edit_delete_removal.js` (16/16), `verify_task_undo_
+new_user.js` (14/14). `node --check` passed on `api/ops-sync.js`;
+syntax-checked (`new Function()` per extracted `<script>` block)
+`user.html` — clean; comment-stripped div-balance delta unchanged vs.
+`main` (−1, no new divs — a `<select>` was swapped in for a static `<div>`
+value, not an extra wrapper); `ls api/*.js | wc -l` still 11 (no new
+server file).
 **Employee "My Tasks" batch, PR B — "Report task" button (item 3,
 2026-09-01).** `user.html` + `api/ops-sync.js`. New feature: a small
 warning-icon button letting an employee flag an admin-assigned task
