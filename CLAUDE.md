@@ -4719,6 +4719,99 @@ not a code change) — no preview/approval needed despite the original
 task's own instruction to that effect, since there is no diff to
 `api/ops-sync.js` to preview.
 
+**Declutter employee Daily Tasks header (2026-09-01).** `user.html` only,
+display-layer restyle — every element kept its original id, so no JS
+logic changed. Four changes, one combined header restructure:
+
+1. **List/Calendar view toggle moved** from its own row further down to
+   the top-right of the "My assigned tasks / Add-import" sub-tab row
+   (same row, `justify-content:space-between`) — one less row in the
+   header, and the toggle now reads as "controls this whole page," not
+   scoped under the status/category filters.
+2. **Status tabs restyled as pills.** New `.dt-status-pill`/`.active`
+   classes (fully rounded, `border-radius:20px`) replace the generic
+   `btn btn-sm btn-outline`/`btn-toggle-active` combo these shared with
+   every other toggle in the file — the "toggle-style graphic" the task
+   asked to remove was that generic button look; the count badge
+   (`.dt-pill-count`) is now nested cleanly inside the pill either style.
+   Selected state is unchanged in substance (still the app's existing
+   `--gold`, same color `.btn-toggle-active` always used) — the CSS class
+   changed, not the color.
+3. **Category pills restyled + reordered.** New `.dt-cat-pill`/`.active`
+   classes, visually smaller than the status pills (`font-size:11px` vs
+   `12px`, tighter padding) per the task's "small pills, not the large
+   bar." Reordered to All → Production → Updates → Sales → Admin →
+   Invoices → Other via a new local `DT_CATEGORY_PILL_ORDER` array used
+   only by the pill renderer — `DT_CATEGORIES` itself (the underlying
+   category list, also used by the edit form's `<select>`) was
+   deliberately left in its original order, since the task's own scope
+   was the header pill row specifically, not that dropdown, and reordering
+   the shared constant would have silently reordered the select too.
+4. **Duplicate-check panel collapsed to a link.** The old
+   `.card`/`.card-header` wrapper (title "🔍 Duplicate tasks", subtitle,
+   and the "Check for duplicates" button inside a bordered card) is gone
+   — replaced with a single `.dt-dup-link` button sharing a row with the
+   category pills (`justify-content:space-between`, pills left / link
+   right, matching the request's mockup). `checkDtDuplicates()`,
+   `_renderDtDuplicateReview()`, and the `dt-dup-status`/
+   `dt-dup-review-wrap`/`dt-dup-recent-merges` containers underneath are
+   completely untouched — they already only ever populate/reveal
+   themselves via JS on click, never on load, so removing the wrapper
+   card around them needed no JS change at all.
+
+**Color-consistency follow-up, added mid-task and folded into the same
+change:** pull primary/dark-UI text from the app's own existing
+`var(--text-dark)` (the sidebar/header navy already used for every dark
+heading and label throughout this file, `#1A3A6E` in light mode,
+automatically flipping to white in the dark theme) rather than a literal
+color — applied to both new pill classes' unselected-state text and the
+duplicate-check link, so nothing in this header ever hardcodes a navy or
+black literal. Selected pills stay the app's existing `--gold`; the
+category-pill visual distinctions the request's mockup showed are just
+the existing selected/unselected treatment (no new per-category color
+scheme was requested or built here, distinct from the Task Assignments
+card redesign's own invented per-category colors from 2026-08-28).
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s own
+baseline exactly (both 0 net after stripping HTML/JS/CSS comments —
+raw/uncommented delta also matched cleanly here, no comment-text false
+positive this time). A new Playwright suite against the real UI (26/26,
+run 3× clean): the view toggle sits on the same row as the sub-tabs and
+is the rightmost element on that row; all four status pills use the new
+class with zero leftover generic button classes, are visibly pill-shaped,
+and exactly one starts active; the selected pill's background resolves
+to the live `--gold` custom property (not a hardcoded color) and an
+unselected pill's text resolves to the live `--text-dark` value and is
+confirmed NOT pure black; category pills render in the exact requested
+order and are visually smaller than the status pills; the old "Duplicate
+tasks" card title/subtitle text is gone, the trigger is a bare link (not
+a bordered button), results stay hidden until clicked, and clicking it
+both reveals the panel AND actually surfaces a real detected duplicate
+pair (not just a UI toggle). Every existing behavior still confirmed
+working through the new markup: category filtering, status-tab
+switching, the List/Calendar toggle, and the My-assigned/Add-import
+sub-tab switch. Nine pre-existing Daily Tasks Playwright suites re-run:
+seven passed unmodified (`verify_dt_blocked_status.js` 10/10,
+`verify_dt_card_redesign.js` 25/25, `verify_dt_delete_inline_status.js`
+9/9, `verify_dt_staging.js` 17/17, `verify_employee_duplicate_merge.js`
+24/24, `verify_task_undo_new_user.js` 14/14, `verify_pr5_subtab_toggle_
+parity.js` 20/20 — that last one specifically covers the sub-tab buttons
+this restyle repositioned but didn't reclass, confirming the move was
+purely positional); two needed a one-line selector update each (not a
+regression — they asserted the OLD `btn-toggle-active` class name on
+elements this task deliberately reclassed): `verify_dt_status_tabs.js`
+(now 19/19) and `verify_dt_filter_buttons_fix.js` (now 10/10, including
+its own pre-existing "no pill anywhere uses btn-primary" resize-bug
+regression check, still passing). One pre-existing, unrelated failure
+(`verify_task_assignments_ui.js`'s stale `#taViewCalBtn` reference on
+`index.html`, already documented above) reproduces identically — out of
+scope here, this PR touches `user.html` only.
+
+Low-risk per rule #10: `user.html` only, display-layer restyle, no data/
+sync/permission logic touched — eligible for direct merge once CI is
+green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
