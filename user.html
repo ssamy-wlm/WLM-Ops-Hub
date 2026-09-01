@@ -2223,8 +2223,6 @@ function openDtDetailPanel(id){
     <input class="form-input" id="dt-subject-input" style="font-weight:700;font-size:15px;margin-bottom:12px;">
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
       <div style="color:var(--text-light);">Client</div><div><select class="form-input" id="dt-client-select" style="font-size:13px;padding:4px 8px;"></select></div>
-      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
-      <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByDisplay(t))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}${_dtReportButtonHtml(t)}</div>

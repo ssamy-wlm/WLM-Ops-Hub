@@ -5357,6 +5357,56 @@ at all since this merged. Flagged as urgent for fast review rather than
 held with the rest of the batch, per rule #10's "when in doubt, ask"
 default for anything this session cannot itself merge.
 
+**URGENT hotfix #2: My Tasks detail panel crashed for every task,
+`user.html` (2026-09-01), same day, discovered right after PR #312 (the
+client-edit permission PR) was merged.** Investigated after noticing
+PR #312's own merge commit (`24281be`, "Merge branch 'main' into
+claude/mytasks-editing-permissions") resolved a real conflict between
+that PR's own new client `<select>` and PR A's already-merged
+`_dtAssignedByDisplay()` rename — the resolution kept BOTH sides'
+Client/Assigned-by rows instead of picking one coherent pair: a stray
+duplicate row still called `_dtAssignedByName()`, a function that no
+longer exists anywhere in the file (PR A's own merge into `main`, and
+this session's own earlier hotfix, already reconciled it away in favor of
+`_dtPersonName()`/`_dtAssignedByDisplay()`). Confirmed live, not just from
+reading the diff: a real Playwright click into any task's detail panel on
+unmodified `main` threw `_dtAssignedByName is not defined` and the panel
+never rendered at all (`innerHTML` template-literal evaluation throws
+mid-string, so the WHOLE panel body came back empty, not just the broken
+row) — meaning every employee's "open a task to see details" action,
+including the brand-new client-edit feature PR #312 itself just shipped,
+was completely broken the moment that merge landed. `new Function()`
+syntax-checking alone had already passed clean (this is a runtime
+`ReferenceError`, not a parse error, so it's invisible to that check
+alone — exactly why this session's own verification standard always
+pairs a syntax check with a real Playwright load).
+
+Fixed by keeping the one coherent pair PR #312 actually intended: the
+real `<select id="dt-client-select">` (this batch's item 5) for Client,
+`_dtAssignedByDisplay(t)` (PR A's surviving function) for Assigned by —
+removing both the `_dtAssignedByName()`-calling row and the stray
+duplicate static Client row. Every OTHER spot this exact class of
+duplication hit in the earlier same-day hotfix (the card list's
+assigned-by subtitle, `HELP_CONTENT.dailyTasks`, the Add/Import card's
+textarea, the `cloudFetchUsers()` comment) was checked fresh against this
+new merge and confirmed already clean — this second collision was
+narrowly scoped to just the detail-panel rows PR #312 itself touched.
+
+Verified: `new Function()` syntax-check clean; comment-stripped
+div-balance internally consistent (delta −1, matching every other
+measurement in this file's history); a real Playwright load against a
+live server (not just a syntax check) confirms the detail panel now
+opens with zero `pageerror` events, the client select renders with real
+options, and "Assigned by" resolves a real name. Twelve Playwright suites
+re-run clean against the fixed file (169/169 checks total) — the new
+client-edit suite (12/12), the report-task-button suite (14/14), the
+assigned-by/no-email suite (10/10), and nine more pre-existing Daily
+Tasks suites (card redesign, status tabs, blocked status, delete/inline
+status, filter buttons, header declutter, duplicate merge, task
+edit/delete removal, undo-import) — confirming this fix didn't just stop
+the crash but left every dependent feature genuinely working. Branched
+directly from `main`, same urgency posture as the hotfix above.
+
 **My Tasks batch, PR D — Calendar (month) view wrap-and-grow fix (item 6,
 2026-09-01).** `user.html` only. Branched from `main` with the urgent
 `user.html` syntax hotfix above cherry-picked on top (needed just to get
