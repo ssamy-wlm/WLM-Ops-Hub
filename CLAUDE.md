@@ -4890,6 +4890,96 @@ Low-risk per rule #10: `index.html` only, read-only display feature, no
 data-write/sync/auth/permission logic touched — eligible for direct merge
 once CI is green.
 
+**My Tasks batch, PR A — assigned-by display + remove email UI (2026-09-01).**
+`user.html` only, display-only — no writes. First of a 5-PR batch (A-E,
+one feature each, all held for Sarah's explicit approval on preview per
+her own instruction — items B-E write data and/or change permissions).
+
+**Item 1 — who assigned each task.** `_dtAssignedByName(id)` already
+existed and was already wired into the detail panel's "Assigned by" row —
+the reported "Assigned by —" symptom was a real bug in that function, not
+a missing feature: it only ever looked in `dbGet(DB_KEYS.users)`, and
+`DB_KEYS` had no `admins` entry at all in this file, so any admin-assigned
+task (the common case) always fell through to `'—'`. Fixed by adding
+`admins: 'wl_admins_db'` to `DB_KEYS` and pulling `record.admins` into it
+in `cloudFetchUsers()` (same key name `index.html` already uses for the
+same purpose — confirmed safe to share, matching the existing precedent
+`users`/`tasks`/`feed` already set: each portal fully overwrites its own
+cache from its own tier-scoped `/api/ops-state` response on every pull, so
+two portals briefly sharing a key name on the same origin was already an
+accepted pattern here, unlike the session-TOKEN collision incident this
+file's own history documents — that was a different, higher-stakes kind
+of shared key). `_dtAssignedByName()` now checks self-added first
+("Added by you" — a self-created task's `assignedById` is always forced
+to the creator's own id server-side, so this covers the common case),
+then the `'primary-admin'` sentinel (Sarah Samy has no `ops_admins` row at
+all, per this file's own architecture notes, so she can never resolve via
+a normal id lookup), then `users`, then the newly-populated `admins`.
+Surfaced on both the list row (a new subtitle line, joined with the
+existing "Assigned {date}" text via " · ") and the detail panel (already
+had the row, just needed the fixed lookup).
+
+**Found and left alone, not part of this fix:** `_getContactList()` (the
+Messages feature's contact-list builder) has referenced
+`dbGet(DB_KEYS.admins)` since it was written, but — same root cause —
+that key never existed, so it's been silently returning zero admin
+contacts the whole time. Adding the `DB_KEYS.admins` entry incidentally
+fixes this too, as a side effect of fixing item 1, not something
+separately built or tested here; flagged in case Messages' own behavior
+visibly changes as a result.
+
+**Item 2 — remove email wording/fields.** Removed the "Email received"
+row from the detail panel (only ever shown for `source==='parsed-email'`
+tasks) — confirmed via grep this was the only place `emailReceivedDate`
+was displayed anywhere in this file; `emailThreadId` and `replyStatus`
+were never displayed here at all (write-only / admin-only respectively),
+so there was nothing further to remove for those. Reworded the visible
+copy in the Add/Import card (title emoji 📧→📝, subtitle, textarea
+placeholder) and the one Daily Tasks help-panel/tour sentence that said
+"paste an email or meeting note" — the latter is normally treated as
+verbatim, owner-approved copy never paraphrased in this file (see
+`HELP_CONTENT`'s own header comment), so this is a deliberate, narrowly-
+scoped exception made because this task explicitly asked for it, not a
+silent rewrite — only the one word changed, the rest of the approved
+sentence is untouched.
+
+**Deliberately NOT changed, flagged rather than assumed:** the file input
+still accepts `.eml`/`message/rfc822` and its real `FileReader`-based
+import pipeline (`_onDtParseFilesChosen`) is untouched — this is a
+genuinely working feature (an employee really can drop a real `.eml`
+export and have it parsed), not dead copy, and the task's own scope was
+"no email wording" (display), not "remove the ability to import an email
+file." Also left untouched: the stored `source:'parsed-email'` value
+itself (the task's own optional suggestion to relabel it, e.g. to
+`'parsed-transcript'`) — `index.html`'s Task Assignments card reads this
+exact same field for its own "✉️ email" badge, and this batch's stated
+scope is `user.html` only; renaming the value would need a matching
+`index.html` change to avoid silently breaking that badge, which is out
+of scope for this PR. Flagged for a follow-up decision rather than
+silently done or silently skipped.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s baseline
+exactly (both 0). A new Playwright suite (10/10, run 3× clean): the list
+row and detail panel both correctly resolve the `'primary-admin'`
+sentinel to "Sarah Samy", a real admin id to that admin's name, and a
+self-added task to "Added by you"; zero literal "email" text anywhere on
+the page; a legacy task carrying `source:'parsed-email'`/
+`emailReceivedDate`/`emailThreadId` shows none of it in its detail panel;
+and no `ops-sync` push ever carries a `tasks` change (confirming this is
+genuinely display-only — normal login/nav activity-feed logging still
+fires, unrelated to this change). Four pre-existing Daily Tasks suites
+re-run clean (`verify_dt_card_redesign.js` 25/25, `verify_dt_status_
+tabs.js` 19/19, `verify_dt_blocked_status.js` 10/10); one pre-existing,
+already-documented flaky suite (`verify_dt_assigned_date.js`'s own
+click-target ambiguity) reproduced its known identical failure signature,
+unrelated to this change.
+
+Held for Sarah's explicit approval on the Vercel preview before merge,
+per this batch's own instruction — not auto-merged despite being
+display-only, since the batch treats all five PRs as a set awaiting her
+review together.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
