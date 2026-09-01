@@ -466,6 +466,8 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .dt-due-badge.overdue{background:rgba(224,85,85,.12);color:var(--red,#c94a4a);}
 .dt-due-badge.soon{background:rgba(217,130,43,.14);color:#d9822b;}
 .dt-due-badge.later{background:none;color:var(--text-light);font-weight:500;padding:3px 2px;}
+.dt-report-btn{background:none;border:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;margin-left:6px;border-radius:4px;flex-shrink:0;}
+.dt-report-btn:hover{background:rgba(217,130,43,.14);}
 .dt-avatar-mini{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#2E5DA6,#5B84C4);}
 .dt-assignee-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-mid);}
 .dt-status-select{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);cursor:pointer;}
@@ -1863,6 +1865,19 @@ function _dtDaysUntil(iso){
 // Due badge — same red "Overdue" / amber "Due today" or "Due in Xd" (≤7
 // days) / plain gray "Due in Xd" further out / nothing for an undated
 // task as index.html's own _taDueBadgeHtml, hand-duplicated here.
+// "Report task" (2026-09-01) — a small warning-icon button next to the due
+// badge, only ever on a task an admin assigned (t.origin==='admin') — never
+// on a self-added one, matching this file's own established permission
+// split (a member's write scope is already narrower on a self-added task's
+// sibling fields elsewhere in this codebase). Once reported, replaced with
+// a small static indicator rather than staying clickable — this is a flag,
+// not a toggle, and the server itself only ever fires the notification on
+// the one transition, never a resend.
+function _dtReportButtonHtml(t){
+  if(t.origin!=='admin') return '';
+  if(t.reportedMisassigned) return `<span title="You flagged this as possibly not yours" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">🚩 Reported</span>`;
+  return `<button type="button" class="dt-report-btn" title="Flag this task as possibly not yours" aria-label="Report task as possibly not yours" onclick="event.stopPropagation();reportDtTaskMisassigned('${t.id}')">⚠️</button>`;
+}
 function _dtDueBadgeHtml(t){
   if(!t.dueDate) return '';
   if(_dtIsOverdue(t)) return `<span class="dt-due-badge overdue">⏱ Overdue</span>`;
@@ -2094,7 +2109,7 @@ function _renderDtListTable(tasks){
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_dtFormatShortDate(t.assignedDate)}</div>`:''}
         </div>
-        ${_dtDueBadgeHtml(t)}
+        <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}</div>
       </div>
       <div class="dt-card-foot">
         <div class="dt-pill-row">
@@ -2169,7 +2184,7 @@ function openDtDetailPanel(id){
       <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
-      <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
+      <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}${_dtReportButtonHtml(t)}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_dtFormatShortDate(t.assignedDate)} · ${_dtAgeLabel(_dtDaysSinceAssigned(t))}` : '—'}</div>
       ${t.source==='parsed-email' ? `<div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>` : ''}
     </div>
@@ -2261,6 +2276,39 @@ async function saveDtTaskUpdate(id){
   closeDtDetailPanel();
   renderDailyTasks();
   showToast('Task updated ✓');
+}
+
+// "Report task" (2026-09-01) — flags an admin-assigned task the employee
+// thinks isn't theirs. Never deletes anything (members can't delete admin-
+// assigned tasks at all — see the delete-removal comment above); the task
+// stays exactly where it is, just marked. Same "server-confirmed before
+// showing success" data-safety rule saveDtTaskUpdate() above already
+// established for this file's other writing actions: pushes immediately
+// via cloudPushData() and only shows success once the server has actually
+// accepted it, reverting the local flag on a rejection/failure rather than
+// leaving the UI showing a report that didn't really land. reportedMisassigned*
+// (who/when) is entirely server-derived from the caller's own session — see
+// api/ops-sync.js — this only ever sends the boolean flag itself.
+async function reportDtTaskMisassigned(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.origin!=='admin' || t.reportedMisassigned) return;
+  if(!confirm('Flag this task as possibly not yours? This notifies the admin team.')) return;
+  t.reportedMisassigned = true;
+  dbSet(DB_KEYS.tasks, tasks);
+  renderDailyTasks();
+  if(_dtDetailTaskId===id) openDtDetailPanel(id);
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    t.reportedMisassigned = false;
+    dbSet(DB_KEYS.tasks, tasks);
+    renderDailyTasks();
+    if(_dtDetailTaskId===id) openDtDetailPanel(id);
+    if(!rejectedThis) showToast('❌ Could not report — try again');
+    return;
+  }
+  showToast('Reported ✓ — the admin team has been notified');
 }
 
 // Inline status-dropdown change from the list row — same write path
