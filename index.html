@@ -1251,11 +1251,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="card" style="margin-bottom:20px;">
         <div class="card-header">
           <div>
-            <div class="card-title">Services Completed — Last 8 Weeks</div>
-            <div class="card-sub">Team-wide, bucketed by the week each service was last marked done. Tasks have no completion date stored in this schema yet, so this trend is services-only — never a guessed task number.</div>
+            <div class="card-title">Open Work by Urgency</div>
+            <div class="card-sub">Team-wide, services + tasks combined — hover a slice or row for the count</div>
           </div>
         </div>
-        <div class="card-body" id="tpa-weekly-trend" style="display:flex;align-items:flex-end;gap:10px;min-height:130px;padding-top:14px;"></div>
+        <div class="card-body" style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
+          <div style="position:relative;width:180px;height:180px;flex-shrink:0;" id="ov-urgency-donut-wrap"></div>
+          <div style="flex:1;min-width:220px;">
+            <div id="ov-urgency-list"></div>
+            <div id="ov-urgency-context" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Per-Person Breakdown (Team Production Analytics), then a compact
@@ -6856,17 +6862,129 @@ setInterval(()=>{
 // Date.now()-style "N days ago" math — a week boundary should always be a
 // real Monday–Sunday range, not a rolling 7-day window, so the label under
 // each bar reads as a real calendar week.
-function _tpaWeekBuckets(weeks){
+// End-of-this-week (Sunday) and end-of-this-month boundaries for the
+// urgency donut's due-window buckets — same Monday-anchored week the rest
+// of this app uses (matches the Service Schedule's own week-start
+// convention in client.html; hand-duplicated per the zero-shared-code
+// rule, not imported).
+function _ovWeekMonthBoundaries(){
   const now=new Date();
   const dow=(now.getDay()+6)%7; // Mon=0 .. Sun=6
-  const thisMonday=new Date(now); thisMonday.setDate(now.getDate()-dow);
-  const buckets=[];
-  for(let i=weeks-1;i>=0;i--){
-    const monday=new Date(thisMonday); monday.setDate(thisMonday.getDate()-i*7);
-    const sunday=new Date(monday); sunday.setDate(monday.getDate()+6);
-    buckets.push({ start:monday.toISOString().slice(0,10), end:sunday.toISOString().slice(0,10), count:0 });
+  const monday=new Date(now); monday.setDate(now.getDate()-dow);
+  const sunday=new Date(monday); sunday.setDate(monday.getDate()+6);
+  const endOfMonth=new Date(now.getFullYear(), now.getMonth()+1, 0);
+  return { endOfWeek: sunday.toISOString().slice(0,10), endOfMonth: endOfMonth.toISOString().slice(0,10) };
+}
+// Classifies a single NOT-overdue, NOT-done item's due date into one of the
+// donut's three non-overdue buckets. Only ever called after the caller has
+// already excluded overdue/done items via the SAME predicates the Overdue/
+// Done stat tiles use (_taIsOverdue/_chSvcDueStatus for overdue,
+// status==='Done'/workStatus==='done' for done) — so this function only
+// ever decides WHEN, never WHETHER, an item is pending. No due date at all
+// falls into 'upcoming' — the same "not urgent" treatment _chSvcDueStatus
+// already gives a dateless/per-request/one-time service, the closest
+// existing precedent, rather than inventing a new rule.
+function _ovDueWindowBucket(dueDate, endOfWeek, endOfMonth){
+  if(!dueDate) return 'upcoming';
+  if(dueDate<=endOfWeek) return 'dueThisWeek';
+  if(dueDate<=endOfMonth) return 'dueThisMonth';
+  return 'upcoming';
+}
+
+// The 4 donut slices, in mockup order. Colors per the task's own spec.
+const OV_URGENCY_BUCKETS=[
+  {key:'overdue', label:'Overdue', color:'#d03b3b'},
+  {key:'dueThisWeek', label:'Due this week', color:'#ec835a'},
+  {key:'dueThisMonth', label:'Due this month', color:'#fab219'},
+  {key:'upcoming', label:'Upcoming', color:'#0ca30c'},
+];
+
+// Replaces the old "Services Completed — Last 8 Weeks" bar chart. Pure
+// render from already-computed totals (passed in by
+// renderTeamProductionAnalytics(), which itself only reads data — this
+// function writes nothing, no sync, no cloud call). SVG donut built by
+// stacking one <circle> per slice with stroke-dasharray/dashoffset, rotated
+// -90deg so slices start at 12 o'clock and proceed clockwise, matching the
+// mockup.
+function _renderOverviewUrgencyDonut(totals){
+  const wrap=document.getElementById('ov-urgency-donut-wrap');
+  const listEl=document.getElementById('ov-urgency-list');
+  const ctxEl=document.getElementById('ov-urgency-context');
+  if(!wrap||!listEl||!ctxEl) return;
+
+  const total=OV_URGENCY_BUCKETS.reduce((s,b)=>s+(totals[b.key]||0),0);
+  const size=180, stroke=22, r=(size-stroke)/2, c=2*Math.PI*r;
+  let offset=0;
+  const segs=OV_URGENCY_BUCKETS.map(b=>{
+    const val=totals[b.key]||0;
+    const pct=total?val/total:0;
+    const arc=pct*c;
+    const seg={...b, val, pct, arc, offset};
+    offset+=arc;
+    return seg;
+  });
+
+  const circles=segs.map(s=>{
+    const dash=`${s.arc} ${c-s.arc}`;
+    return `<circle class="ov-urgency-seg" data-key="${s.key}" cx="${size/2}" cy="${size/2}" r="${r}"
+      fill="none" stroke="${s.color}" stroke-width="${stroke}"
+      stroke-dasharray="${dash}" stroke-dashoffset="${-s.offset}"
+      style="transition:stroke-width .15s;cursor:pointer;"
+      onmouseenter="_ovUrgencyHover('${s.key}','${escHtmlAdmin(s.label)}',${s.val})"
+      onmouseleave="_ovUrgencyUnhover()"><title>${s.val} · ${escHtmlAdmin(s.label)}</title></circle>`;
+  }).join('');
+
+  wrap.innerHTML=`
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="transform:rotate(-90deg);">
+      ${total?circles:`<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}"></circle>`}
+    </svg>
+    <div id="ov-urgency-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none;">
+      <div id="ov-urgency-center-val" style="font-size:28px;font-weight:800;color:var(--text-dark);">${total}</div>
+      <div id="ov-urgency-center-label" style="font-size:11px;color:var(--text-light);font-weight:600;">open items</div>
+    </div>`;
+  // Stashed so _ovUrgencyUnhover() can restore the exact default text on
+  // mouseleave without re-deriving it from rendered DOM (fragile — arc
+  // lengths are floats, not reliably round-trippable back to the integer
+  // count).
+  wrap._ovDefaultVal=total;
+  wrap._ovDefaultLabel='open items';
+
+  listEl.innerHTML=segs.map(s=>`
+    <div class="ov-urgency-row" data-key="${s.key}" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;"
+      onmouseenter="_ovUrgencyHover('${s.key}','${escHtmlAdmin(s.label)}',${s.val})" onmouseleave="_ovUrgencyUnhover()">
+      <span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+      <span style="flex:1;font-size:12.5px;color:var(--text-dark);">${escHtmlAdmin(s.label)}</span>
+      <span style="font-size:12.5px;font-weight:700;color:var(--text-dark);">${s.val}</span>
+      <span style="font-size:11px;color:var(--text-light);width:34px;text-align:right;">${total?Math.round(s.pct*100):0}%</span>
+    </div>`).join('');
+
+  ctxEl.innerHTML=`
+    <div style="font-size:12px;color:var(--text-light);"><span style="font-weight:700;color:var(--text-dark);">${totals.tasksDone+totals.servicesDone}</span> done</div>
+    <div style="font-size:12px;color:var(--text-light);"><span style="font-weight:700;color:${totals.blocked?'var(--orange)':'var(--text-dark)'};">${totals.blocked}</span> blocked/stuck</div>`;
+}
+
+function _ovUrgencyHover(key,label,val){
+  const centerVal=document.getElementById('ov-urgency-center-val');
+  const centerLabel=document.getElementById('ov-urgency-center-label');
+  if(centerVal) centerVal.textContent=val;
+  if(centerLabel) centerLabel.textContent=label;
+  document.querySelectorAll('.ov-urgency-seg').forEach(el=>{
+    el.setAttribute('stroke-width', el.getAttribute('data-key')===key ? 26 : 22);
+  });
+  document.querySelectorAll('.ov-urgency-row').forEach(el=>{
+    el.style.background = el.getAttribute('data-key')===key ? 'var(--bg-light,#f5f5f5)' : '';
+  });
+}
+function _ovUrgencyUnhover(){
+  const wrap=document.getElementById('ov-urgency-donut-wrap');
+  const centerVal=document.getElementById('ov-urgency-center-val');
+  const centerLabel=document.getElementById('ov-urgency-center-label');
+  document.querySelectorAll('.ov-urgency-seg').forEach(el=>el.setAttribute('stroke-width', 22));
+  document.querySelectorAll('.ov-urgency-row').forEach(el=>{ el.style.background=''; });
+  if(wrap && centerVal && centerLabel){
+    centerVal.textContent=wrap._ovDefaultVal;
+    centerLabel.textContent=wrap._ovDefaultLabel;
   }
-  return buckets;
 }
 
 // Overview's Team Production Analytics lives on #admin-overview, but
@@ -6886,13 +7004,13 @@ function _ovOpenPersonDailyView(personId){
 }
 function renderTeamProductionAnalytics(){
   const statsEl=document.getElementById('tpa-team-stats');
-  const trendEl=document.getElementById('tpa-weekly-trend');
   const tbody=document.getElementById('tpa-person-table');
   const emptyEl=document.getElementById('tpa-person-empty');
   if(!statsEl||!tbody) return;
 
   const allServices=_activeServicesForAssessment();
   const allTasks=dbGet(DB_KEYS.tasks)||[];
+  const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
 
   const rows=_timeOffRoster().map(person=>{
     const sum=_personWorkSummary(person, allTasks, allServices);
@@ -6913,7 +7031,27 @@ function renderTeamProductionAnalytics(){
     const servicesStuck=servicesForPerson.filter(s=>_svcStatus(s)==='stuck').length;
     const overdue=tasksOverdue+servicesOverdue;
     const blocked=tasksBlocked+servicesStuck;
-    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked };
+    // Urgency-donut due-window buckets (2026-08-28) — every task/service
+    // already counted as overdue OR done above is excluded here first, so
+    // an item is classified into exactly one of the 4 donut buckets, never
+    // double-counted against "overdue" and never silently dropped. Reuses
+    // the exact same per-person, roster-scoped item sets (sum.tasksForPerson/
+    // servicesForPerson) the Overdue/Blocked/Done totals above already sum
+    // from — this is what guarantees the donut's Overdue slice can never
+    // disagree with the Overdue stat tile (both are sums over the identical
+    // rows), not just a coincidentally-matching separate calculation.
+    let dueThisWeek=0, dueThisMonth=0, upcoming=0;
+    sum.tasksForPerson.forEach(t=>{
+      if(t.status==='Done'||t.status==='Blocked'||_taIsOverdue(t)) return;
+      const bucket=_ovDueWindowBucket(t.dueDate, endOfWeek, endOfMonth);
+      if(bucket==='dueThisWeek') dueThisWeek++; else if(bucket==='dueThisMonth') dueThisMonth++; else upcoming++;
+    });
+    servicesForPerson.forEach(s=>{
+      if(_svcStatus(s)==='done'||_svcStatus(s)==='stuck'||_chSvcDueStatus(s)==='overdue') return;
+      const bucket=_ovDueWindowBucket(s.due, endOfWeek, endOfMonth);
+      if(bucket==='dueThisWeek') dueThisWeek++; else if(bucket==='dueThisMonth') dueThisMonth++; else upcoming++;
+    });
+    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked, dueThisWeek, dueThisMonth, upcoming };
   }).sort((a,b)=>a.name.localeCompare(b.name));
 
   // Team totals — plain sums over the same per-person rows the table below
@@ -6922,8 +7060,9 @@ function renderTeamProductionAnalytics(){
     acc.tasksAssigned+=r.tasksAssigned; acc.tasksDone+=r.tasksDone;
     acc.servicesAssigned+=r.servicesAssigned; acc.servicesDone+=r.servicesDone;
     acc.overdue+=r.overdue; acc.blocked+=r.blocked;
+    acc.dueThisWeek+=r.dueThisWeek; acc.dueThisMonth+=r.dueThisMonth; acc.upcoming+=r.upcoming;
     return acc;
-  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0});
+  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueThisWeek:0,dueThisMonth:0,upcoming:0});
   const totalAssigned=totals.tasksAssigned+totals.servicesAssigned;
   const totalDone=totals.tasksDone+totals.servicesDone;
   const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
@@ -6942,29 +7081,7 @@ function renderTeamProductionAnalytics(){
     statCard('Team % Done', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct)),
   ].join('');
 
-  // Weekly trend — SERVICES ONLY. ops_tasks has no completion-date field
-  // (only assignedDate/dueDate), so a task "done per week" trend can't be
-  // built from real data without guessing — per CLAUDE.md rule #7, this
-  // stays services-only and says so in the card's own subtitle, rather
-  // than fabricating a task number.
-  if(trendEl){
-    const buckets=_tpaWeekBuckets(8);
-    allServices.forEach(s=>{
-      if(!s.lastDone) return;
-      const b=buckets.find(b=>s.lastDone>=b.start && s.lastDone<=b.end);
-      if(b) b.count++;
-    });
-    const max=Math.max(1, ...buckets.map(b=>b.count));
-    trendEl.innerHTML=buckets.map(b=>{
-      const barH=b.count ? Math.round(b.count/max*90)+10 : 4;
-      const label=new Date(b.start+'T00:00:00').toLocaleDateString('en-US',{month:'numeric',day:'numeric'});
-      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;" title="Week of ${b.start} – ${b.end}: ${b.count} done">
-        <div style="font-size:11px;font-weight:700;color:var(--text-dark);">${b.count}</div>
-        <div style="width:100%;max-width:28px;background:var(--accent);border-radius:4px 4px 0 0;height:${barH}px;"></div>
-        <div style="font-size:9px;color:var(--text-light);">${label}</div>
-      </div>`;
-    }).join('');
-  }
+  if(typeof _renderOverviewUrgencyDonut==='function') _renderOverviewUrgencyDonut(totals);
 
   // Per-person table — no totalAssigned>0 filter, same acceptance criterion
   // Team Assessment already established: a person with zero assigned work
@@ -9647,9 +9764,12 @@ function refreshAdminOverview(){
   }
   // Team Assessment (the old per-person numbers table) is retired as of
   // 2026-08-24 — Team Production Analytics supersedes it and now lives
-  // directly on this page (the tpa-team-stats/tpa-weekly-trend/
-  // tpa-person-table elements moved here from the old standalone "Team
-  // analytics" tab/page). renderTeamProductionAnalytics() is fully self-
+  // directly on this page (the tpa-team-stats/ov-urgency-donut-wrap/
+  // tpa-person-table elements moved/added here from the old standalone
+  // "Team analytics" tab/page; the "Services Completed — Last 8 Weeks" bar
+  // chart that used to live at tpa-weekly-trend was replaced outright by
+  // the urgency donut on 2026-08-28 — see renderTeamProductionAnalytics()'s
+  // own comments for why). renderTeamProductionAnalytics() is fully self-
   // contained (reads its own DOM targets, guards on their absence) so
   // calling it here is the whole integration — no computation duplicated.
   if(typeof renderTeamProductionAnalytics==='function') renderTeamProductionAnalytics();
