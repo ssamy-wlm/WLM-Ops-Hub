@@ -119,6 +119,13 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 /* ── CARDS ── */
 .card{background:var(--card);border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);transition:box-shadow .2s;}
 .card:hover{box-shadow:var(--shadow-md);}
+/* Overview stat cards (Tasks Assigned/Done, Services Assigned/Done, Overdue,
+   Blocked/Stuck, Team % Done) are clickable drill-downs — cursor + a visible
+   hover state (border color + lift), layered on top of the plain .card
+   shadow-only hover above so they read as real controls, not dead numbers. */
+.ov-stat-card{cursor:pointer;transition:box-shadow .2s,border-color .2s,transform .1s;}
+.ov-stat-card:hover{border-color:var(--accent,#4a7fd6);transform:translateY(-1px);}
+.ov-stat-card:active{transform:translateY(0);}
 .card-header{padding:18px 22px 0;display:flex;align-items:center;justify-content:space-between;}
 .card-title{font-family:'Poppins',sans-serif;font-size:16px;color:var(--text-dark);}
 .card-sub{font-size:12px;color:var(--text-light);margin-top:2px;}
@@ -2794,6 +2801,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-outline" id="tem-delete-btn" style="margin-left:auto;color:var(--red,#c94a4a);border-color:var(--red,#c94a4a);" onclick="deleteTaskFromModal()">🗑 Delete</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Overview stat-card drill-down modal — clicking any of the 7 Team
+     Production Analytics stat cards opens this, populated from
+     _ovDrillData (see openOvStatDrill() above renderTeamProductionAnalytics()).
+     Each row is itself clickable and jumps to that item's real home view. -->
+<div id="ovDrillModal" class="modal-overlay">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div><div class="modal-title" id="ovDrillModalTitle">Items</div></div>
+      <button class="modal-close" onclick="closeModal('ovDrillModal')">✕</button>
+    </div>
+    <div class="modal-body" id="ovDrillModalBody" style="max-height:60vh;overflow-y:auto;"></div>
   </div>
 </div>
 
@@ -6891,6 +6912,90 @@ function _ovDueWindowBucket(dueDate, endOfWeek, endOfMonth){
   return 'upcoming';
 }
 
+// Overview stat-card drill-down (2026-09-01) — every one of the 7 stat
+// cards (Tasks Assigned/Done, Services Assigned/Done, Overdue, Blocked/
+// Stuck, Team % Done) is clickable and shows the actual items behind its
+// number. Consistency is the hard requirement here: the drill-down rows
+// are captured DURING the exact same per-person filter passes that
+// renderTeamProductionAnalytics() already runs to produce each tile's own
+// count (see that function below) — never a separate/independent query —
+// so a drill-down list can never disagree with the number on the card
+// it's opened from, the same guarantee the urgency donut's Overdue slice
+// already relies on. Populated fresh on every renderTeamProductionAnalytics()
+// call; read-only, nothing here writes any data.
+let _ovDrillData = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[] };
+const OV_DRILL_TITLES = {
+  tasksAssigned:'Tasks Assigned', tasksDone:'Tasks Done',
+  servicesAssigned:'Services Assigned', servicesDone:'Services Done',
+  overdue:'Overdue', blocked:'Blocked / Stuck',
+};
+// Service objects (client.services[]/location.services[]) carry no back-
+// reference to their owning client — this builds an id->{clientId,clientName}
+// lookup, read-only, so drill-down rows can show "which client" and jump
+// there via the same openAdminTrackerToClient() every other click-through
+// in this file already uses. Kept as a SEPARATE pass from
+// _activeServicesForAssessment() (never re-implementing its own filtering)
+// so the actual service SET used for totals is untouched — this only adds
+// display/navigation info for services already selected elsewhere.
+function _ovServiceClientInfo(){
+  const map = new Map();
+  _getClientDB().filter(c=>(c.status||'active')==='active').forEach(c=>{
+    (c.services||[]).forEach(s=>{ if(s.id) map.set(s.id, {clientId:c.id, clientName:c.name}); });
+    (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(s=>{ if(s.id) map.set(s.id, {clientId:c.id, clientName:`${c.name} — ${loc.name}`}); }));
+  });
+  return map;
+}
+function _ovTaskRow(t, personName){
+  return { type:'task', id:t.id, title:t.subject||'(untitled)', client:t.clientName||'—', assignee:personName||'—', due:t.dueDate||'—', statusLabel:t.status||'Not started', statusColor:_taStatusColor(t.status) };
+}
+function _ovServiceRow(s, personName, clientInfo){
+  const meta=_svcStatusMeta(_svcStatus(s));
+  const info = clientInfo.get(s.id)||{};
+  return { type:'service', id:s.id, clientId:info.clientId||null, title:s.name||'(unnamed)', client:info.clientName||'—', assignee:personName||'—', due:s.due||'—', statusLabel:meta.label, statusColor:meta.color };
+}
+// Card click entry point. Team % Done isn't a flat item list (it's a
+// percentage), so it drills into the existing Per-Person breakdown table
+// already on this page instead of opening the item panel — everything
+// else opens the modal populated from _ovDrillData.
+function openOvStatDrill(key){
+  if(key==='teamPct'){
+    const tbl = document.getElementById('tpa-person-table');
+    if(tbl && tbl.closest('table')) tbl.closest('table').scrollIntoView({behavior:'smooth', block:'center'});
+    if(tbl) { tbl.style.outline='2px solid var(--accent,#4a7fd6)'; tbl.style.outlineOffset='2px'; setTimeout(()=>{ tbl.style.outline=''; tbl.style.outlineOffset=''; }, 1500); }
+    return;
+  }
+  const items = _ovDrillData[key]||[];
+  document.getElementById('ovDrillModalTitle').textContent = `${OV_DRILL_TITLES[key]||''} (${items.length})`;
+  const body = document.getElementById('ovDrillModalBody');
+  if(!items.length){
+    body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-light);font-size:13px;">Nothing here right now.</div>`;
+  } else {
+    body.innerHTML = items.map(it=>`
+      <div class="ov-drill-row" style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openOvDrillItem('${it.type}','${it.id}',${it.clientId?`'${it.clientId}'`:'null'})">
+        <span style="font-size:14px;flex-shrink:0;">${it.type==='task'?'✅':'🧩'}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlAdmin(it.title)}</div>
+          <div style="font-size:11.5px;color:var(--text-light);">${escHtmlAdmin(it.client)} · ${escHtmlAdmin(it.assignee)} · Due ${escHtmlAdmin(it.due)}</div>
+        </div>
+        <span style="font-size:11px;font-weight:700;color:${it.statusColor};flex-shrink:0;">${escHtmlAdmin(it.statusLabel)}</span>
+      </div>`).join('');
+  }
+  openModal('ovDrillModal');
+}
+// Jump from a drill-down row to the item's real home view — reusing the
+// exact same navigation this app already uses elsewhere for the same job
+// (task detail: the global Task Assignments slide-in overlay, which works
+// from any tab; service: openAdminTrackerToClient(), the same deep-link
+// every notification/Workload/My-Team's-Work click-through already uses).
+function openOvDrillItem(type, id, clientId){
+  closeModal('ovDrillModal');
+  if(type==='task'){
+    if(typeof openTaDetailPanel==='function') openTaDetailPanel(id);
+  } else if(type==='service'){
+    if(clientId && typeof openAdminTrackerToClient==='function') openAdminTrackerToClient(clientId, id);
+  }
+}
+
 // The 4 donut slices, in mockup order. Colors per the task's own spec.
 const OV_URGENCY_BUCKETS=[
   {key:'overdue', label:'Overdue', color:'#d03b3b'},
@@ -7011,6 +7116,12 @@ function renderTeamProductionAnalytics(){
   const allServices=_activeServicesForAssessment();
   const allTasks=dbGet(DB_KEYS.tasks)||[];
   const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
+  const svcClientInfo=_ovServiceClientInfo();
+  // Drill-down item lists for the 7 stat cards (2026-09-01) — populated
+  // DURING the same per-person filter passes below that produce each
+  // tile's count, never from a separate query, so a card's drill-down can
+  // never show a different count than the number on the card itself.
+  const drill = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[] };
 
   const rows=_timeOffRoster().map(person=>{
     const sum=_personWorkSummary(person, allTasks, allServices);
@@ -7025,12 +7136,25 @@ function renderTeamProductionAnalytics(){
     // No new "overdue"/"done" definition invented here — every count reuses
     // whatever that item's own established status logic already says.
     const servicesForPerson=allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
-    const tasksOverdue=sum.tasksForPerson.filter(_taIsOverdue).length;
-    const tasksBlocked=sum.tasksForPerson.filter(t=>t.status==='Blocked').length;
-    const servicesOverdue=servicesForPerson.filter(s=>_chSvcDueStatus(s)==='overdue').length;
-    const servicesStuck=servicesForPerson.filter(s=>_svcStatus(s)==='stuck').length;
+    const tasksDoneItems=sum.tasksForPerson.filter(t=>t.status==='Done');
+    const servicesDoneItems=servicesForPerson.filter(s=>s.workStatus==='done');
+    const tasksOverdueItems=sum.tasksForPerson.filter(_taIsOverdue);
+    const tasksBlockedItems=sum.tasksForPerson.filter(t=>t.status==='Blocked');
+    const servicesOverdueItems=servicesForPerson.filter(s=>_chSvcDueStatus(s)==='overdue');
+    const servicesStuckItems=servicesForPerson.filter(s=>_svcStatus(s)==='stuck');
+    const tasksOverdue=tasksOverdueItems.length, tasksBlocked=tasksBlockedItems.length;
+    const servicesOverdue=servicesOverdueItems.length, servicesStuck=servicesStuckItems.length;
     const overdue=tasksOverdue+servicesOverdue;
     const blocked=tasksBlocked+servicesStuck;
+
+    sum.tasksForPerson.forEach(t=>drill.tasksAssigned.push(_ovTaskRow(t, person.name)));
+    tasksDoneItems.forEach(t=>drill.tasksDone.push(_ovTaskRow(t, person.name)));
+    servicesForPerson.forEach(s=>drill.servicesAssigned.push(_ovServiceRow(s, person.name, svcClientInfo)));
+    servicesDoneItems.forEach(s=>drill.servicesDone.push(_ovServiceRow(s, person.name, svcClientInfo)));
+    tasksOverdueItems.forEach(t=>drill.overdue.push(_ovTaskRow(t, person.name)));
+    servicesOverdueItems.forEach(s=>drill.overdue.push(_ovServiceRow(s, person.name, svcClientInfo)));
+    tasksBlockedItems.forEach(t=>drill.blocked.push(_ovTaskRow(t, person.name)));
+    servicesStuckItems.forEach(s=>drill.blocked.push(_ovServiceRow(s, person.name, svcClientInfo)));
     // Urgency-donut due-window buckets (2026-08-28) — every task/service
     // already counted as overdue OR done above is excluded here first, so
     // an item is classified into exactly one of the 4 donut buckets, never
@@ -7067,19 +7191,24 @@ function renderTeamProductionAnalytics(){
   const totalDone=totals.tasksDone+totals.servicesDone;
   const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
 
-  const statCard=(label,val,color)=>`<div class="card" style="padding:12px 14px;margin:0;text-align:center;">
+  // Every card is clickable — see openOvStatDrill()/openOvStatDrillKey
+  // above. .ov-stat-card supplies cursor:pointer + a visible hover state;
+  // drillKey maps the card to _ovDrillData (or 'teamPct', the one card
+  // that drills into the Per-Person table below instead of an item list).
+  const statCard=(label,val,color,drillKey)=>`<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" onclick="openOvStatDrill('${drillKey}')" title="View the items behind this number">
     <div style="font-size:20px;font-weight:800;color:${color||'var(--text-dark)'};">${val}</div>
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
   </div>`;
   statsEl.innerHTML=[
-    statCard('Tasks Assigned', totals.tasksAssigned),
-    statCard('Tasks Done', totals.tasksDone),
-    statCard('Services Assigned', totals.servicesAssigned),
-    statCard('Services Done', totals.servicesDone),
-    statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null),
-    statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null),
-    statCard('Team % Done', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct)),
+    statCard('Tasks Assigned', totals.tasksAssigned, null, 'tasksAssigned'),
+    statCard('Tasks Done', totals.tasksDone, null, 'tasksDone'),
+    statCard('Services Assigned', totals.servicesAssigned, null, 'servicesAssigned'),
+    statCard('Services Done', totals.servicesDone, null, 'servicesDone'),
+    statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null, 'overdue'),
+    statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
+    statCard('Team % Done', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct), 'teamPct'),
   ].join('');
+  _ovDrillData = drill;
 
   if(typeof _renderOverviewUrgencyDonut==='function') _renderOverviewUrgencyDonut(totals);
 
