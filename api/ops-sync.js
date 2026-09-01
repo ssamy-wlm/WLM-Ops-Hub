@@ -397,7 +397,7 @@ let _notifSettingsCache; // per-request cache, avoids re-querying ops_settings p
 export async function getNotificationSettings(supabase) {
   if (_notifSettingsCache) return _notifSettingsCache;
   const { data } = await supabase.from('ops_settings').select('data').eq('key', 'notificationSettings').maybeSingle();
-  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true, submittedForReview: true, ...(data?.data || {}) };
+  _notifSettingsCache = { assignment: true, timeOff: true, message: true, serviceUpdate: true, done: true, overdue: true, submittedForReview: true, taskReported: true, ...(data?.data || {}) };
   return _notifSettingsCache;
 }
 
@@ -753,6 +753,51 @@ async function fireOpsTaskAssignmentNotifications(supabase, events, warnings) {
         recipientName: person?.name || '', recipientEmail: person?.email || '',
         title: `New task assigned: ${ev.subject}`,
         body: `${ev.clientName || 'No client'}${ev.dueDate ? ' — due ' + ev.dueDate : ''}`,
+        link: '',
+        context: { taskId: ev.taskId, clientId: ev.clientId || null },
+      });
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// "Report task" recipients (2026-09-02) — an employee flagging a task an
+// admin assigned that they think isn't theirs. Always every super-tier
+// admin: the primary-admin sentinel (Sarah — same reason
+// resolveReviewRecipients above adds her by literal id rather than an
+// admins-array scan, since she has no ops_admins row to be found by one)
+// PLUS any real ops_admins row with level 'super'/'owner' (today just
+// David, but this is a property — "super tier" — not a hardcoded name, so
+// it stays correct if that ever changes). PLUS the task's own assigning
+// admin, but ONLY when that assigner is a non-super admin (e.g. Abby) —
+// never re-added if the assigner already is one of the super-tier admins
+// above (deduped below regardless). Never guesses who "the assigner" is:
+// always the task's real, stored assignedById.
+export function resolveTaskReportRecipients(assignedById, admins) {
+  const out = [{ id: 'primary-admin', kind: 'admin' }];
+  admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  if (assignedById && assignedById !== 'primary-admin') {
+    const assigner = admins.find(a => a.id === assignedById);
+    if (assigner && assigner.level !== 'super' && assigner.level !== 'owner') out.push({ id: assigner.id, kind: 'admin' });
+  }
+  const seen = new Set();
+  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
+async function fireTaskReportedNotifications(supabase, events, warnings) {
+  if (!events.length) return;
+  const { admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    resolveTaskReportRecipients(ev.assignedById, admins).forEach(r => {
+      const isPrimary = r.id === 'primary-admin';
+      const person = isPrimary ? null : personOf(r.id, r.kind, { users: [], admins });
+      rows.push({
+        type: 'taskReported', recipientId: r.id, recipientKind: r.kind,
+        recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+        recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+        title: `Task reported: ${ev.subject}`,
+        body: `${ev.reportedByName || 'Someone'} flagged "${ev.subject}"${ev.clientName ? ' (' + ev.clientName + ')' : ''} as possibly not theirs.`,
         link: '',
         context: { taskId: ev.taskId, clientId: ev.clientId || null },
       });
@@ -1568,6 +1613,7 @@ export default async function handler(req, res) {
       const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
+      const taskReportEvents = [];
       // Every session.id check below (here and in the "not your task"
       // check further down) already uses this caller's CANONICAL employee
       // id for a dual-role admin/manager account, not their separate
@@ -1674,6 +1720,21 @@ export default async function handler(req, res) {
           row = inc;
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
+          // "Report task" (2026-09-02) — fires only on the transition into
+          // reported, never on every resave of an already-reported task,
+          // exactly the "diff current-vs-incoming inside this one request"
+          // pattern CLAUDE.md's rule #2 requires. 'reported'/'reportedAt'/
+          // 'reportedBy'/'reportedByName' are new keys, deliberately never
+          // added to TASK_KEYS_MEMBER_MAY_NOT_TOUCH above — this is exactly
+          // the field a member needs to write on their own task for this
+          // feature to work, same allowance notes/tags/status already have.
+          if (notifSettings.taskReported && inc.reported && !cur.reported) {
+            taskReportEvents.push({
+              taskId: inc.id, subject: row.subject, clientId: row.clientId || null,
+              clientName: row.clientName || '', assignedById: cur.assignedById || null,
+              reportedByName: session.name || '',
+            });
+          }
         }
         n++;
         if (notifSettings.assignment && row.assigneeId && row.assigneeId !== session.id && assigneeChanged(cur, row)) {
@@ -1685,6 +1746,7 @@ export default async function handler(req, res) {
       }
       applied.tasks = n;
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
+      await fireTaskReportedNotifications(supabase, taskReportEvents, warnings);
     }
 
     // ── Task hard delete — genuine hard SQL DELETE. ops_tasks has no

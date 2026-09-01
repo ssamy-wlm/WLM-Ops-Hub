@@ -466,6 +466,11 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .dt-due-badge.overdue{background:rgba(224,85,85,.12);color:var(--red,#c94a4a);}
 .dt-due-badge.soon{background:rgba(217,130,43,.14);color:#d9822b;}
 .dt-due-badge.later{background:none;color:var(--text-light);font-weight:500;padding:3px 2px;}
+/* Report-task button (2026-09-02) — small warning-icon control next to the
+   due badge, admin-assigned tasks only (see _dtReportButtonHtml()). */
+.dt-report-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--border);background:var(--card);color:var(--text-light);font-size:12px;cursor:pointer;flex-shrink:0;padding:0;transition:border-color .15s,color .15s;}
+.dt-report-btn:hover{border-color:#d9822b;color:#d9822b;}
+.dt-report-flag{display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;color:#d9822b;flex-shrink:0;white-space:nowrap;}
 .dt-avatar-mini{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff;flex-shrink:0;background:linear-gradient(135deg,#2E5DA6,#5B84C4);}
 .dt-assignee-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text-mid);}
 .dt-status-select{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--border);background:var(--card);cursor:pointer;}
@@ -1873,6 +1878,47 @@ function _dtDueBadgeHtml(t){
   return '';
 }
 
+// "Report task" button (2026-09-02) — placed next to the due badge. Only
+// on a task an admin actually assigned (origin==='admin') — never on a
+// task the employee added themselves, since there's nothing to dispute
+// about your own self-added item. Already-reported renders a small flag
+// instead of the button, so it can't be reported twice.
+function _dtReportButtonHtml(t){
+  if(t.origin!=='admin') return '';
+  if(t.reported) return `<span class="dt-report-flag" title="You reported this task${t.reportedAt?' on '+_dtFormatShortDate(t.reportedAt.slice(0,10)):''}">⚠️ Reported</span>`;
+  return `<button type="button" class="dt-report-btn" title="Not your task? Let your admins know" onclick="event.stopPropagation();reportDtTask('${t.id}')">⚠️</button>`;
+}
+// Server-confirmed before the UI shows success — same data-safety pattern
+// reportDtDuplicate() above and saveDtTaskUpdate() already established
+// (never optimistic: the local flag is set, pushed, and reverted if the
+// server didn't actually accept it). Notifies Sarah Samy + David (every
+// super-tier admin) always, plus the assigning admin too when they're a
+// non-super admin (e.g. Abby) — resolved server-side from the task's real
+// assignedById, see resolveTaskReportRecipients() in api/ops-sync.js.
+async function reportDtTask(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.reported) return;
+  if(!confirm(`Report "${t.subject}" to your admins as possibly not your task?`)) return;
+  const prev = { reported: t.reported, reportedAt: t.reportedAt, reportedBy: t.reportedBy, reportedByName: t.reportedByName };
+  t.reported = true;
+  t.reportedAt = new Date().toISOString();
+  t.reportedBy = currentUser?.id || null;
+  t.reportedByName = currentUser?.name || '';
+  dbSet(DB_KEYS.tasks, tasks);
+  const result = await cloudPushData();
+  const rejected = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejected){
+    Object.assign(t, prev);
+    dbSet(DB_KEYS.tasks, tasks);
+    renderDailyTasks();
+    showToast('❌ Could not report — try again');
+    return;
+  }
+  renderDailyTasks();
+  showToast('Reported to your admins ✓');
+}
+
 // Status sub-tabs (2026-08-26) — same grouping/sort/completedAt model as
 // index.html's identical copy (hand-duplicated per CLAUDE.md's zero-
 // shared-code rule; see that file's own comments for the full rationale).
@@ -2094,7 +2140,10 @@ function _renderDtListTable(tasks){
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_dtFormatShortDate(t.assignedDate)}</div>`:''}
         </div>
-        ${_dtDueBadgeHtml(t)}
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          ${_dtDueBadgeHtml(t)}
+          ${_dtReportButtonHtml(t)}
+        </div>
       </div>
       <div class="dt-card-foot">
         <div class="dt-pill-row">
