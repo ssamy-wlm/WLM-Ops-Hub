@@ -1100,6 +1100,11 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             </div>
             <div class="card-body">
               <textarea id="dtParseText" rows="4" placeholder="Paste a transcript or meeting note here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+                <div class="card-sub">Paste a meeting transcript, or drop one or more files — extracted tasks land only in your own list</div>
+              </div>
+            </div>
+            <div class="card-body">
+              <textarea id="dtParseText" rows="4" placeholder="Paste a meeting transcript here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <input type="file" id="dtParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onDtParseFilesChosen(event)">
                 <button class="btn btn-sm btn-primary" id="dtParseBtn" onclick="runDtEmailParse()">Parse &amp; extract tasks</button>
@@ -1408,6 +1413,10 @@ async function cloudFetchUsers(){
     // _getContactList() has referenced since it was written but that was
     // never actually populated — DB_KEYS had no 'admins' entry at all
     // before this, a separate pre-existing bug not touched here.
+    // Admins list — api/ops-state.js already sends a member-safe subset
+    // ({id, name, title, funnelLevel}) to every tier, it just wasn't being
+    // applied to any local table before this (added 2026-09-01 to resolve
+    // a task's assignedById to an admin's real name — see _dtPersonName()).
     _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
@@ -2107,6 +2116,7 @@ function _renderDtListTable(tasks){
         <div>
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           ${assignedBySub?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">${assignedBySub}</div>`:''}
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
         </div>
         ${_dtDueBadgeHtml(t)}
       </div>
@@ -2177,6 +2187,29 @@ function _dtAssignedByName(id){
   const a = admins.find(x=>x.id===id);
   if(a) return a.name;
   return '—';
+// Plain id -> display name. Checks the 'primary-admin' sentinel (Sarah
+// Samy — she has no real ops_admins row, see api/ops-auth.js/CLAUDE.md),
+// then real admins, then users, falling back to 'You' for the viewer's own
+// id (kept for the pre-existing staging-row reuse below) or '—'.
+function _dtPersonName(id){
+  if(!id) return '—';
+  if(id==='primary-admin') return 'Sarah Samy';
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===id);
+  if(a) return a.name||'—';
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===id);
+  if(u) return u.name||'—';
+  return id===currentUser?.id ? 'You' : '—';
+}
+// "Assigned by" display for a task (2026-09-01) — a task the viewer added
+// themselves (assignedById === its own assigneeId — every task shown here
+// is already the viewer's own, so this is equivalent to "I created this")
+// reads as "Added by you" rather than resolving to their own name; every
+// other task resolves assignedById via _dtPersonName() above.
+function _dtAssignedByDisplay(t){
+  if(t.assignedById && t.assignedById===t.assigneeId) return 'Added by you';
+  return _dtPersonName(t.assignedById);
 }
 
 function openDtDetailPanel(id){
@@ -2197,7 +2230,7 @@ function openDtDetailPanel(id){
     <input class="form-input" id="dt-subject-input" style="font-weight:700;font-size:15px;margin-bottom:12px;">
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px;">
       <div style="color:var(--text-light);">Client</div><div>${escHtmlUser(t.clientName||'—')}</div>
-      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByName(t.assignedById))}</div>
+      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlUser(_dtAssignedByDisplay(t))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_dtFormatShortDate(t.assignedDate)} · ${_dtAgeLabel(_dtDaysSinceAssigned(t))}` : '—'}</div>
@@ -2407,7 +2440,12 @@ async function runDtEmailParse(){
         assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
         category: et.category, priority: et.priority,
         status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
-        source: 'parsed-email', origin: 'self',
+        // 'parsed-transcript', not 'parsed-email' (2026-09-01) — nobody
+        // gets tasks from email, they come from pasted meeting transcripts
+        // (or a dropped .eml file's text content, extracted the same way);
+        // the stored value is just a provenance tag, never displayed to
+        // the employee (see the removed "Email received" detail-panel row).
+        source: 'parsed-transcript', origin: 'self',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         assignedDate: et.assignedDate||_dtToday(),
         mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
@@ -2498,8 +2536,8 @@ function _renderDtStaging(){
       }
       // No assignee picker — a member can't assign to anyone else (same
       // role split as everywhere in this file); shown read-only instead.
-      // _dtAssignedByName() is a plain id->name lookup despite its name
-      // (built for the "Assigned by" detail-panel row), reused as-is here.
+      // _dtPersonName() is a plain id->name lookup (falls back to 'You' for
+      // the viewer's own id), reused as-is here.
       return `<div class="dt-staging-new" style="${rowStyle}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlUser(row.subject||'')}" placeholder="Task subject" onchange="_dtUpdateStaged('${row.id}','subject',this.value)">
@@ -2507,7 +2545,7 @@ function _renderDtStaging(){
         </div>
         <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlUser(row.notes||'')}" placeholder="Notes (optional)" onchange="_dtUpdateStaged('${row.id}','notes',this.value)">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtAssignedByName(row.assigneeId))}</span>
+          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtPersonName(row.assigneeId))}</span>
           <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
             <option value="">No client</option>
             ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
@@ -2700,6 +2738,7 @@ const HELP_CONTENT = {
   dailyTasks: { label: 'My Tasks', sel: '#nav-dailytasks',
     tip: "Your daily and weekly tasks — assigned to you, or add your own.",
     learnMore: "See what's assigned to you, or paste a transcript or meeting note into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck, or delete it." },
+    learnMore: "See what's assigned to you, or paste a meeting transcript into Add/Import to turn it into a task — reviewed before anything's added, never automatic. Mark a task Blocked with a reason if it's stuck." },
   tracker: { label: 'Tracker', sel: '#nav-tracker',
     tip: "See every client your team manages (view only for you).",
     learnMore: "You can browse all clients for context, but you edit only what's assigned to you." },
