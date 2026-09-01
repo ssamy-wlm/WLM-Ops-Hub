@@ -71,6 +71,18 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    background/color/border-color change here — nothing that affects layout. */
 .btn-toggle-active{background:var(--btn);color:#fff;border-color:var(--btn);}
 .btn-toggle-active:hover{background:var(--btn-hover);border-color:var(--btn-hover);color:#fff;}
+/* Task Assignments status/category pills (2026-09-02) — mirrors user.html's
+   employee Daily Tasks header cleanup (#306) verbatim: rounded pills, gold
+   (--gold) when selected, --text-dark for unselected text (never a
+   hardcoded black), a base class that never changes between active/
+   inactive so nothing resizes on toggle — same reasoning .btn-toggle-active
+   above documents, just without that class's non-gold "toggle" look. */
+.ta-status-pill{padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid var(--border-hover);background:transparent;color:var(--text-dark);cursor:pointer;transition:all .15s;}
+.ta-status-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
+.ta-status-pill .ta-pill-count{font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:4px;color:var(--text-dark);}
+.ta-status-pill.active .ta-pill-count{background:rgba(255,255,255,.28);color:#fff;}
+.ta-cat-pill{padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid var(--border-hover);background:transparent;color:var(--text-dark);cursor:pointer;transition:all .15s;}
+.ta-cat-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
 .btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
@@ -1467,19 +1479,24 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
     <!-- ══ TASK ASSIGNMENTS (port of the WebLight Media Email Tracker) ══ -->
     <div id="admin-taskAssignments" class="page-section">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse emails/transcripts into tasks, or add one manually, and assign to anyone on the team</div>
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="openTaskEditModal(null)">+ New Task</button>
+      <div style="margin-bottom:16px;">
+        <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse emails/transcripts into tasks, or add one manually, and assign to anyone on the team</div>
       </div>
 
-      <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border);">
-        <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
-        <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
-        <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
-        <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
+        </div>
+        <!-- .btn-primary sets width:100% (it's --btn, the same hex as
+             --gold) — exactly the "full-width gold bar" this task asks to
+             shrink. Explicit width:auto here is the same fix
+             .btn-toggle-active's own comment above already documents for
+             this exact class. -->
+        <button class="btn btn-primary btn-sm" style="width:auto;flex-shrink:0;margin:0 0 6px;" onclick="openTaskEditModal(null)">+ New Task</button>
       </div>
 
       <div id="ta-subtab-parse">
@@ -1537,20 +1554,19 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
              filter (assignee/client/category/quick-filter/search) without
              double-counting the currently-selected status tab itself. -->
         <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-outline btn-toggle-active" id="taStatusTabNotStartedBtn" onclick="setTaStatusTab('notstarted')">Not Started <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountNotStarted">0</span></button>
-          <button class="btn btn-sm btn-outline" id="taStatusTabInProgressBtn" onclick="setTaStatusTab('inprogress')">In Progress <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountInProgress">0</span></button>
-          <button class="btn btn-sm btn-outline" id="taStatusTabDoneBtn" onclick="setTaStatusTab('done')">Done <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountDone">0</span></button>
-          <button class="btn btn-sm btn-outline" id="taStatusTabAllBtn" onclick="setTaStatusTab('all')">All <span style="font-size:10px;background:var(--bg2);border-radius:10px;padding:1px 6px;margin-left:2px;" id="taStatusCountAll">0</span></button>
+          <button class="ta-status-pill active" id="taStatusTabNotStartedBtn" onclick="setTaStatusTab('notstarted')">Not Started <span class="ta-pill-count" id="taStatusCountNotStarted">0</span></button>
+          <button class="ta-status-pill" id="taStatusTabInProgressBtn" onclick="setTaStatusTab('inprogress')">In Progress <span class="ta-pill-count" id="taStatusCountInProgress">0</span></button>
+          <button class="ta-status-pill" id="taStatusTabDoneBtn" onclick="setTaStatusTab('done')">Done <span class="ta-pill-count" id="taStatusCountDone">0</span></button>
+          <button class="ta-status-pill" id="taStatusTabAllBtn" onclick="setTaStatusTab('all')">All <span class="ta-pill-count" id="taStatusCountAll">0</span></button>
         </div>
 
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-sm btn-outline btn-toggle-active" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
-            <button class="btn btn-sm btn-outline" id="taViewDayBtn" onclick="setTaView('day')">Day</button>
-            <button class="btn btn-sm btn-outline" id="taViewWeekBtn" onclick="setTaView('week')">Week</button>
-            <button class="btn btn-sm btn-outline" id="taViewMonthBtn" onclick="setTaView('month')">📅 Month</button>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <div style="display:flex;gap:6px;margin-bottom:10px;">
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taViewListBtn" onclick="setTaView('list')">☰ List</button>
+          <button class="btn btn-sm btn-outline" id="taViewDayBtn" onclick="setTaView('day')">Day</button>
+          <button class="btn btn-sm btn-outline" id="taViewWeekBtn" onclick="setTaView('week')">Week</button>
+          <button class="btn btn-sm btn-outline" id="taViewMonthBtn" onclick="setTaView('month')">📅 Month</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
             <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
             <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
             <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
@@ -1558,7 +1574,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
             <button class="btn btn-sm btn-outline" id="taFilterUnassignedBtn" onclick="toggleTaQuickFilter('unassigned')">Unassigned</button>
-          </div>
         </div>
         <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
 
@@ -8565,6 +8580,13 @@ function startLiveSync(level){
 // "Task") was dropped entirely — no TA_TYPES here, nothing to collect or
 // display. ──
 const TA_CATEGORIES = ['Production','Updates','Sales','Admin','Other','Invoices/Payments'];
+// Display order for the category PILL ROW only (2026-09-02) — "Other"
+// moved to the end, matching user.html's DT_CATEGORY_PILL_ORDER. Deliberately
+// NOT reordering TA_CATEGORIES itself, which also drives the edit modal's
+// <select> — reordering that shared constant would have silently reordered
+// the dropdown too, exactly the mistake DT_CATEGORY_PILL_ORDER's own
+// comment already flags for its own copy of this same fix.
+const TA_CATEGORY_PILL_ORDER = ['Production','Updates','Sales','Admin','Invoices/Payments','Other'];
 const TA_CATEGORY_LABELS = {'Invoices/Payments':'Invoices'};
 // Card redesign (2026-08-28) — a fixed, deterministic color per category
 // pill; purely cosmetic, invented for this PR (no prior color-coding
@@ -8732,13 +8754,14 @@ function loadTaskAssignments(){
 
   const pillsEl = document.getElementById('taCategoryPills');
   if(pillsEl){
-    // Same fixed-size active-state fix as setTaView()/toggleTaQuickFilter()
-    // above — btn-primary's width:100% is especially visible here, since a
-    // flex-wrap row of pills would have the active one balloon out to fill
-    // the entire row on its own line.
-    pillsEl.innerHTML = ['All', ...TA_CATEGORIES].map(c=>{
+    // Rounded gold pills matching user.html's DT_CATEGORY_PILL_ORDER
+    // treatment — a fixed base class that never changes between active/
+    // inactive, so nothing resizes on toggle (same reasoning the old
+    // btn-toggle-active fix documented, just gold instead of --btn's
+    // generic toggle look).
+    pillsEl.innerHTML = ['All', ...TA_CATEGORY_PILL_ORDER].map(c=>{
       const active = (c==='All' && !_taActiveCategory) || c===_taActiveCategory;
-      return `<button class="btn btn-sm btn-outline${active?' btn-toggle-active':''}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
+      return `<button class="ta-cat-pill${active?' active':''}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
   renderTaskAssignments();
@@ -8947,7 +8970,7 @@ function _taRenderStatusTabBar(){
   const counts = _taStatusTabCounts();
   Object.entries(TA_STATUS_TAB_BTN_IDS).forEach(([tab,id])=>{
     const el = document.getElementById(id);
-    if(el) el.className = 'btn btn-sm btn-outline'+(_taStatusTab===tab?' btn-toggle-active':'');
+    if(el) el.className = 'ta-status-pill'+(_taStatusTab===tab?' active':'');
   });
   Object.entries(TA_STATUS_TAB_COUNT_IDS).forEach(([tab,id])=>{
     const el = document.getElementById(id);
