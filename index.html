@@ -177,6 +177,12 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .roadmap-phase-title{font-size:12px;font-weight:700;color:var(--btn);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em;}
 .roadmap-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:4px;}
 .roadmap-dot{width:6px;height:6px;background:var(--text);border-radius:50%;margin-top:5px;flex-shrink:0;}
+/* My Roadmap (admin, 2026-09-01) — same three rules user.html's own My
+   Roadmap already has (hand-duplicated, zero-shared-code); index.html's
+   .roadmap-* classes above already existed for the static onboarding
+   widget and are reused as-is for full visual parity. */
+.roadmap-subtitle{font-size:11px;color:var(--text-light);margin-bottom:14px;}
+.roadmap-phase.active-phase{background:rgba(45,107,182,.06);border-radius:10px;padding:10px;}
 
 /* ── REPORTS ── */
 .report-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:10px;padding:4px;margin-bottom:20px;width:fit-content;}
@@ -1254,6 +1260,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
+
+      <!-- My Roadmap (admin, 2026-09-01) — per-admin, read-only, own
+           assigned services + ops_tasks bucketed by due date. Same look as
+           user.html's employee My Roadmap (.roadmap-* classes, hand-
+           duplicated per the zero-shared-code rule) via renderMyRoadmapAdmin()
+           below, called from refreshAdminOverview() the same way
+           renderTeamProductionAnalytics() already is. -->
+      <div class="roadmap-section" id="admin-my-roadmap-section" style="margin-bottom:20px;"></div>
 
       <div class="card" style="margin-bottom:20px;">
         <div class="card-header">
@@ -7107,6 +7121,91 @@ function _ovOpenPersonDailyView(personId){
   if(navEl && typeof switchAdminTab==='function') switchAdminTab(navEl,'taskAssignments');
   openPersonDailyView(personId);
 }
+// My Roadmap (admin, 2026-09-01) — per-admin, read-only. Same bucketing
+// pattern as user.html's employee renderRoadmap()/_collectMyWorkItems()
+// (7/30/60-day windows, undated or beyond-60 falls to Long Term),
+// hand-duplicated per the zero-shared-code rule since index.html shares
+// no JS with user.html. Deliberately narrower than the employee version's
+// data sources (which also walks recurringServices/projects/subprojects)
+// — this task's own scope is just "services assigned to them... plus
+// their ops_tasks", so it reuses the exact two data sources already
+// established elsewhere on this page for "a person's assigned work":
+// _activeServicesForAssessment()/_wlSvcAssignedTo() (Team Production
+// Analytics' own per-person service scoping) and _taTasks() (Task
+// Assignments' own accessor) — no new data-collection helper needed.
+function renderMyRoadmapAdmin(){
+  const el = document.getElementById('admin-my-roadmap-section');
+  if(!el) return;
+  const myId = _currentAdminId();
+  if(!myId) return;
+  const myName = currentAdminInfo?.name || '';
+
+  // Active clients' services (top-level + franchise locations), same
+  // active/not-cancelled-or-archived set _activeServicesForAssessment()
+  // already scopes to — walked directly here (not through that shared
+  // function) only because a raw service object carries no client name of
+  // its own; every other filter/exclusion matches it exactly.
+  const items = [];
+  _getClientDB().filter(c=>(c.status||'active')==='active').forEach(c=>{
+    const svcLists = [c.services||[], ...(c.locations||[]).map(loc=>loc.services||[])];
+    svcLists.flat().filter(s=>!_chIsInactiveService(s) && _wlSvcAssignedTo(s, myId, myName)).forEach(s=>{
+      items.push({name:s.name||'', client:c.name||'', due:s.due||''});
+    });
+  });
+  // !mergedIntoId (2026-08-26 duplicate-merge feature): a soft-merged-away
+  // duplicate must never surface here, same exclusion _personWorkSummary()
+  // already applies to every other per-person task count on this page.
+  _taTasks().filter(t=>t.assigneeId===myId && t.status!=='Done' && !t.mergedIntoId).forEach(t=>{
+    items.push({name:t.subject||'', client:t.clientName||'', due:t.dueDate||''});
+  });
+
+  const todayStr = new Date().toISOString().slice(0,10);
+  const horizon = d=>{ const dt=new Date(); dt.setDate(dt.getDate()+d); return dt.toISOString().slice(0,10); };
+  const in7s=horizon(7), in30s=horizon(30), in60s=horizon(60);
+
+  const overdue  = items.filter(i=>i.due && i.due<todayStr);
+  const b7       = items.filter(i=>i.due && i.due>=todayStr && i.due<=in7s);
+  const b30      = items.filter(i=>i.due && i.due>in7s && i.due<=in30s);
+  const b60      = items.filter(i=>i.due && i.due>in30s && i.due<=in60s);
+  const longTerm = items.filter(i=>!i.due || i.due>in60s);
+
+  const row = i=>`<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:var(--text-mid);margin-bottom:6px;">
+    <span class="roadmap-dot"></span><span style="flex:1;color:var(--text-dark);">${escHtmlAdmin(i.name)}</span>
+    <span style="font-size:10px;color:var(--text-light);white-space:nowrap;">${[i.client?escHtmlAdmin(i.client):'', i.due].filter(Boolean).join(' · ')}</span>
+  </div>`;
+  const renderList = list => list.length ? list.map(row).join('') : '<div style="font-size:11px;color:var(--text-light);padding:4px 0;">Nothing here.</div>';
+
+  const totalOpen = items.length;
+  const insight = totalOpen===0
+    ? "No open work right now — you're all caught up."
+    : overdue.length===0
+      ? `You're on track — ${totalOpen} open item${totalOpen===1?'':'s'}, none overdue.`
+      : `${overdue.length} overdue item${overdue.length===1?'':'s'} out of ${totalOpen} — may be worth revisiting your scheduling and prioritization.`;
+
+  el.innerHTML = `
+    <div class="roadmap-title">📍 My Roadmap</div>
+    <div class="roadmap-subtitle">Your assigned work, grouped by how soon it's due</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;">
+      <div class="roadmap-phase${overdue.length?' active-phase':''}">
+        <div class="roadmap-phase-title">NEXT 7 DAYS</div>
+        ${overdue.length?`<div style="font-size:10px;font-weight:700;color:var(--red);margin-bottom:6px;">${overdue.length} overdue</div>`:''}
+        ${renderList(overdue.concat(b7))}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">NEXT 30 DAYS</div>
+        ${renderList(b30)}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">NEXT 60 DAYS</div>
+        ${renderList(b60)}
+      </div>
+      <div class="roadmap-phase">
+        <div class="roadmap-phase-title">LONG TERM</div>
+        ${renderList(longTerm)}
+        <div style="font-size:11px;color:var(--text-mid);margin-top:10px;padding-top:8px;border-top:1px solid var(--cream-dark);">${insight}</div>
+      </div>
+    </div>`;
+}
 function renderTeamProductionAnalytics(){
   const statsEl=document.getElementById('tpa-team-stats');
   const tbody=document.getElementById('tpa-person-table');
@@ -9902,6 +10001,7 @@ function refreshAdminOverview(){
   // contained (reads its own DOM targets, guards on their absence) so
   // calling it here is the whole integration — no computation duplicated.
   if(typeof renderTeamProductionAnalytics==='function') renderTeamProductionAnalytics();
+  if(typeof renderMyRoadmapAdmin==='function') renderMyRoadmapAdmin();
 
   // Recent Activity — service-work events only, done items surfaced first.
   //

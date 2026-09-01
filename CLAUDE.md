@@ -4719,6 +4719,177 @@ not a code change) — no preview/approval needed despite the original
 task's own instruction to that effect, since there is no diff to
 `api/ops-sync.js` to preview.
 
+**Declutter employee Daily Tasks header (2026-09-01).** `user.html` only,
+display-layer restyle — every element kept its original id, so no JS
+logic changed. Four changes, one combined header restructure:
+
+1. **List/Calendar view toggle moved** from its own row further down to
+   the top-right of the "My assigned tasks / Add-import" sub-tab row
+   (same row, `justify-content:space-between`) — one less row in the
+   header, and the toggle now reads as "controls this whole page," not
+   scoped under the status/category filters.
+2. **Status tabs restyled as pills.** New `.dt-status-pill`/`.active`
+   classes (fully rounded, `border-radius:20px`) replace the generic
+   `btn btn-sm btn-outline`/`btn-toggle-active` combo these shared with
+   every other toggle in the file — the "toggle-style graphic" the task
+   asked to remove was that generic button look; the count badge
+   (`.dt-pill-count`) is now nested cleanly inside the pill either style.
+   Selected state is unchanged in substance (still the app's existing
+   `--gold`, same color `.btn-toggle-active` always used) — the CSS class
+   changed, not the color.
+3. **Category pills restyled + reordered.** New `.dt-cat-pill`/`.active`
+   classes, visually smaller than the status pills (`font-size:11px` vs
+   `12px`, tighter padding) per the task's "small pills, not the large
+   bar." Reordered to All → Production → Updates → Sales → Admin →
+   Invoices → Other via a new local `DT_CATEGORY_PILL_ORDER` array used
+   only by the pill renderer — `DT_CATEGORIES` itself (the underlying
+   category list, also used by the edit form's `<select>`) was
+   deliberately left in its original order, since the task's own scope
+   was the header pill row specifically, not that dropdown, and reordering
+   the shared constant would have silently reordered the select too.
+4. **Duplicate-check panel collapsed to a link.** The old
+   `.card`/`.card-header` wrapper (title "🔍 Duplicate tasks", subtitle,
+   and the "Check for duplicates" button inside a bordered card) is gone
+   — replaced with a single `.dt-dup-link` button sharing a row with the
+   category pills (`justify-content:space-between`, pills left / link
+   right, matching the request's mockup). `checkDtDuplicates()`,
+   `_renderDtDuplicateReview()`, and the `dt-dup-status`/
+   `dt-dup-review-wrap`/`dt-dup-recent-merges` containers underneath are
+   completely untouched — they already only ever populate/reveal
+   themselves via JS on click, never on load, so removing the wrapper
+   card around them needed no JS change at all.
+
+**Color-consistency follow-up, added mid-task and folded into the same
+change:** pull primary/dark-UI text from the app's own existing
+`var(--text-dark)` (the sidebar/header navy already used for every dark
+heading and label throughout this file, `#1A3A6E` in light mode,
+automatically flipping to white in the dark theme) rather than a literal
+color — applied to both new pill classes' unselected-state text and the
+duplicate-check link, so nothing in this header ever hardcodes a navy or
+black literal. Selected pills stay the app's existing `--gold`; the
+category-pill visual distinctions the request's mockup showed are just
+the existing selected/unselected treatment (no new per-category color
+scheme was requested or built here, distinct from the Task Assignments
+card redesign's own invented per-category colors from 2026-08-28).
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s own
+baseline exactly (both 0 net after stripping HTML/JS/CSS comments —
+raw/uncommented delta also matched cleanly here, no comment-text false
+positive this time). A new Playwright suite against the real UI (26/26,
+run 3× clean): the view toggle sits on the same row as the sub-tabs and
+is the rightmost element on that row; all four status pills use the new
+class with zero leftover generic button classes, are visibly pill-shaped,
+and exactly one starts active; the selected pill's background resolves
+to the live `--gold` custom property (not a hardcoded color) and an
+unselected pill's text resolves to the live `--text-dark` value and is
+confirmed NOT pure black; category pills render in the exact requested
+order and are visually smaller than the status pills; the old "Duplicate
+tasks" card title/subtitle text is gone, the trigger is a bare link (not
+a bordered button), results stay hidden until clicked, and clicking it
+both reveals the panel AND actually surfaces a real detected duplicate
+pair (not just a UI toggle). Every existing behavior still confirmed
+working through the new markup: category filtering, status-tab
+switching, the List/Calendar toggle, and the My-assigned/Add-import
+sub-tab switch. Nine pre-existing Daily Tasks Playwright suites re-run:
+seven passed unmodified (`verify_dt_blocked_status.js` 10/10,
+`verify_dt_card_redesign.js` 25/25, `verify_dt_delete_inline_status.js`
+9/9, `verify_dt_staging.js` 17/17, `verify_employee_duplicate_merge.js`
+24/24, `verify_task_undo_new_user.js` 14/14, `verify_pr5_subtab_toggle_
+parity.js` 20/20 — that last one specifically covers the sub-tab buttons
+this restyle repositioned but didn't reclass, confirming the move was
+purely positional); two needed a one-line selector update each (not a
+regression — they asserted the OLD `btn-toggle-active` class name on
+elements this task deliberately reclassed): `verify_dt_status_tabs.js`
+(now 19/19) and `verify_dt_filter_buttons_fix.js` (now 10/10, including
+its own pre-existing "no pill anywhere uses btn-primary" resize-bug
+regression check, still passing). One pre-existing, unrelated failure
+(`verify_task_assignments_ui.js`'s stale `#taViewCalBtn` reference on
+`index.html`, already documented above) reproduces identically — out of
+scope here, this PR touches `user.html` only.
+
+Low-risk per rule #10: `user.html` only, display-layer restyle, no data/
+sync/permission logic touched — eligible for direct merge once CI is
+green.
+
+**Add personal My Roadmap to the admin Overview (2026-09-01).** `index.html`
+only, read-only — no writes. A new per-admin `#admin-my-roadmap-section`,
+placed near the top of Overview (right after the stat tiles, before "Open
+Work by Urgency") via a single new `renderMyRoadmapAdmin()`, called from
+`refreshAdminOverview()` the same guarded way `renderTeamProductionAnalytics()`
+already is. Mirrors `user.html`'s employee `renderRoadmap()`/
+`_collectMyWorkItems()` bucketing exactly (Next 7/30/60 days + Long Term,
+same day-offset math, same "overdue folds into the 7-day bucket with its
+own count badge" and "no due date or beyond 60 days → Long Term" rules) —
+hand-duplicated per the zero-shared-code rule, since `index.html` shares no
+JS with `user.html`.
+
+Per this task's own explicit scope, the admin version's data sources are
+narrower than the employee one's (which also walks `recurringServices`/
+`projects`/`subprojects`): just "services assigned to them" and "their
+`ops_tasks`", so it reuses two data sources this page already established
+for "a person's assigned work" rather than porting the employee version's
+full complexity — `_wlSvcAssignedTo()` (the same `assigneeId`/`assigneeIds`
+check Team Production Analytics' own `_personWorkSummary()` already uses)
+and `_taTasks()` (Task Assignments' own accessor), scoped to
+`_currentAdminId()`. One real gap found while wiring the service side:
+`_activeServicesForAssessment()` (the existing active/not-cancelled-or-
+archived service list) returns bare service objects with no client name
+attached — confirmed by reading its own body and how its one other caller,
+`renderWorkloadDashboard()`, has to separately reconstruct a `clientName`
+per row via `_svcBreakdownRow()`. Rather than modify that shared function
+(other callers rely on its current bare-object shape) or add a second new
+helper, `renderMyRoadmapAdmin()` walks `_getClientDB()` directly — the same
+active-client/not-cancelled-or-archived scan `_activeServicesForAssessment()`
+does internally — so it can attach `c.name` itself; every filter/exclusion
+still matches that shared function's own scoping exactly. Task-side,
+`!t.mergedIntoId` is applied (the same soft-merged-away-duplicate exclusion
+`_personWorkSummary()` already uses everywhere else on this page), so a
+duplicate task folded into another one via the 2026-08-26 merge feature
+never double-counts here either.
+
+CSS reused `index.html`'s own pre-existing `.roadmap-section`/
+`.roadmap-title`/`.roadmap-phase`/`.roadmap-phase-title`/`.roadmap-item`/
+`.roadmap-dot` rules — these already existed in this file for an unrelated
+static "30–60–90 Day Roadmap" onboarding mockup elsewhere on the page (a
+coincidence of shared naming, not a dependency) — plus two small additions
+hand-duplicated from `user.html`'s own copy to close the visual gap:
+`.roadmap-subtitle` and `.roadmap-phase.active-phase` (the amber-tinted
+overdue-bucket highlight). `user.html`'s CSS also defines a `.done-phase`
+rule, confirmed via grep to be dead/unused in that file's own actual
+render function — not ported here, since porting a rule neither version
+ever applies would just be dead weight.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance matches `main`'s own
+baseline exactly (delta +11, both). `ls api/*.js | wc -l` unaffected —
+this PR touches no server file at all. A new Playwright suite (20/20, run
+3× clean) logging in as two different real admins (David, Abby) against
+the same seeded client/task data: each admin sees their own assigned
+service and task, correctly bucketed (an overdue service under NEXT 7
+DAYS with its own "N overdue" badge, a 45-day-out task under NEXT 60
+DAYS, an undated task under LONG TERM) and never the other admin's;
+a cancelled service assigned to David is excluded; a Done task and a
+merged-away duplicate task assigned to David are both excluded; the
+client name renders next to the service row; all four bucket headers are
+present; and the markup uses the exact same 4-column grid plus
+`roadmap-phase`/`roadmap-dot` classes the employee version uses, for
+genuine visual parity, not just a similarly-named clone. Three
+pre-existing Overview Playwright suites (`verify_overview_revamp.js`,
+`verify_overview_stacked_layout.js`, `verify_pr1_overview_analytics_
+landing.js`) were re-run and their failures confirmed to reproduce
+identically against unmodified `main` (`git stash`) — all reference the
+long-retired "Team Assessment" table (superseded by Team Production
+Analytics on 2026-08-24, see that entry above), unrelated to this change
+and already stale before this PR. One unrelated suite
+(`verify_recent_activity_and_clickable_overview.js`) re-run clean, 11/11,
+confirming the new section's insertion point doesn't disturb the
+Refresh/Team-Production-Analytics-row-click flow immediately below it.
+
+Low-risk per rule #10: `index.html` only, read-only display feature, no
+data-write/sync/auth/permission logic touched — eligible for direct merge
+once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
