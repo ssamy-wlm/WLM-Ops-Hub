@@ -5184,6 +5184,65 @@ per this batch's own instruction — not auto-merged despite being
 display-only, since the batch treats all five PRs as a set awaiting her
 review together.
 
+**My Tasks batch, PR E — item 7 (route "Submitted for review" to the
+submitter's manager too) needed no change; already fully built
+(2026-09-01).** Given as: "Today Assmaa's 'Submitted for review' email
+goes to Sarah only; it should ALSO go to Abby, her manager... Generalize:
+when anyone submits work for review, also notify their manager (via
+`managerId`/`managedUserIds`), in addition to current recipients. Don't
+hard-code Assmaa/Abby." Investigated `api/ops-sync.js` before writing
+anything (rule #7) and found this premise doesn't match the live code:
+`resolveReviewRecipients(assigneeId, users, admins)` (introduced in the
+original "My Work: 'Submit for review' on Done" feature, predating this
+session's own documented history — first appearance in this repo's git
+log, not something built or touched during any prior task recorded in
+this file) already resolves the submitting employee's `managerId`
+generically — looking it up first against `ops_admins`, then
+`ops_users`, so a manager can be either kind of account — and pushes them
+as an ADDITIONAL recipient alongside the `'primary-admin'` sentinel
+(Sarah), always included. `fireSubmittedForReviewNotifications()` (the
+function that actually fires on a client-service `reviewSubmittedAt`
+transition, wired into the `clients` write path in two places — an
+admin's own edit and a member's edit, both funnel through the identical
+call) already sends via the same `insertNotifications()`/Resend path
+every other notification type in this file uses, so both in-app and
+email delivery are already covered, not just the in-app half.
+Server-side, this is scoped by `managerId` alone, generically, never a
+hardcoded name — `managedUserIds` (mentioned in the task's own wording,
+present on `ops_admins` rows like Abby's) is the redundant REVERSE
+pointer of the same relationship and isn't separately read anywhere in
+this resolution path, which is fine: `user.managerId === admin.id` is
+already the single source of truth this function walks, so there's
+nothing for `managedUserIds` to additionally contribute here.
+
+Rather than silently doing nothing or silently rebuilding something
+already correct, verified directly against the task's own exact example
+data shape with a `node:test --experimental-test-module-mocks` run
+against the real, byte-identical `api/ops-sync.js` handler (no live DB
+access, rule #11): seeded `ops_users.assmaa` with
+`managerId:'adm_abby_conklin'` and an `ops_admins` row for Abby at that
+exact id (also carrying `managedUserIds:['assmaa']`, matching the task's
+own claimed live data, though as noted above this field is never actually
+read by the resolution logic itself), then drove a real client-service
+edit setting `reviewSubmittedAt` through the actual `handler` — 9/9
+checks passing: exactly 2 notification rows result (`primary-admin` +
+Abby's real admin id), Abby's row carries her correct real name/email
+(not a placeholder), a real outbound email is sent specifically to her
+address (not just Sarah's), and the "no manager resolved" honesty-notice
+does NOT fire (since one legitimately was). A regression control (a
+different assignee with no `managerId` at all) confirms the pre-existing,
+correct fallback behavior is unaffected: exactly 1 recipient (Sarah
+only), with the honest "no manager resolved — Super Admin notified only"
+notice still firing exactly as designed for that case.
+
+No `api/ops-sync.js` change was made — there was nothing to fix. Per rule
+#10, this is a docs-only entry (recording a completed investigation, not
+a code change) — flagged plainly rather than silently treated as "PR E
+done" with nothing to show for it, since the task explicitly asked for a
+fifth PR in this batch and this is instead a "no-op, already correct"
+finding, matching the same pattern already established elsewhere in this
+file (see the 2026-08-28 "Wire Task Assignments... — no change needed"
+entry above) for exactly this situation.
 **URGENT hotfix: `user.html` was fatally broken on `main` immediately
 after PR A's merge — the same class of parallel-session merge-conflict
 damage documented in the 2026-08-21 `client.html` hotfix entry above,
