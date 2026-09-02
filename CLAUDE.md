@@ -6037,6 +6037,259 @@ Every pre-existing Task Assignments Playwright suite from the same
 session re-run clean (12/12 Reply status removal, 16/16 notifications,
 13/13 self-assigned badge, 11/11 calendar rebuild) — no regressions.
 
+**Never assign due dates on weekends — `clampToWeekday()`, applied at
+every due-date write site (2026-09-02).** A new shared algorithm
+(Saturday → the Friday before, Sunday → the Monday after), hand-
+duplicated per this codebase's own convention: `lib/dateUtils.js`
+exports one real implementation shared by the two server files
+(`lib/` doesn't count against the 12-function Hobby-plan cap, unlike
+`api/*.js`); `index.html` and `user.html` each carry their own byte-
+identical copy under the same name, per rule #3 — frontends share no
+JS module. Parses `YYYY-MM-DD` as local y/m/d integers, never
+`new Date(dateStr)` directly, avoiding the same UTC-parse bug class
+already fixed once in this codebase's time-off day-count entry.
+
+**Point 4 (recurring service next-due computation) needed no new
+code** — confirmed by reading the code before writing anything (rule
+#7): `client.html`'s and `user.html`'s existing `calcNextDue()` already
+route every recurring rollover through their own pre-existing
+`adjustOffWeekend()`, which implements the identical Sat→Fri/Sun→Mon
+rule (see the 2026-08-06 "no-weekend due dates" entry above). Left
+untouched — `client.html` was out of scope for this task's own file
+list regardless.
+
+**Point 1 — parser estimation (`api/process-transcript.js`).** The
+`dueDate` field in the extracted-task object is now
+`clampToWeekday(validDueDate(t.dueDate))` — clamp applied AFTER the
+existing `validDueDate()` round-trip guard, so an empty/invalid result
+(`''`) is never clamped into a fake real date (`clampToWeekday('')` is
+a no-op by design). The model's own prompt text (urgency-tier
+estimation language from the 2026-08-28 entry above) was deliberately
+NOT changed — the server-side clamp is authoritative regardless of
+what the model returns, so there's no need for the prompt to also
+"know" about weekends.
+
+**Point 2 — self-assign auto-daily (`api/ops-sync.js`).** The
+2026-09-02 "self-assigned tasks" auto-daily due date
+(`assigneeId===session.id ? todayIsoUtc() : inc.dueDate`, added the
+same day as this task) is now `clampToWeekday(todayIsoUtc())` — if a
+member opens the app and self-assigns a task on an actual Saturday or
+Sunday, the auto-daily due date still lands on the adjacent weekday,
+never the weekend day itself. The sibling report-assignment branch
+(a manager-tier member creating a task for a direct report) is
+unaffected — it never touched `todayIsoUtc()` to begin with.
+
+**Point 3 — manual due-date entry.** Investigated every real
+`type="date"` input touching a task due date in both files (rule #7,
+not guessed): `index.html`'s task edit modal (`#tem-due`, now
+`onchange="_taSnapDueDateInput(this)"`, and `saveTaskEdit()`'s own read
+of that field wrapped in `clampToWeekday()` as a second, redundant
+safety net in case a browser's native date picker or a scripted value
+change ever bypasses the `onchange` handler) and both files' staging-
+review due-date field (`_taUpdateStaged()`/`_dtUpdateStaged()` — a
+`field==='dueDate'` write now clamps the value, stores the CLAMPED
+result, and re-renders so the visible input reflects the snapped date
+rather than silently storing something different than what's
+displayed). **Flagged, not built:** the task's own wording named
+"service edit" as a fourth manual-entry surface — grepped every
+`type="date"` input in both `index.html` and `user.html` and confirmed
+neither file has one; services are only ever edited in `client.html`,
+out of this task's stated file scope, so nothing was touched there.
+Also confirmed the one other bare due-date-shaped input in `index.html`
+(the "Set a New Goal" modal, line ~3344) is the already-documented,
+pre-existing, fully non-functional dead mockup from an earlier session
+entry — correctly left alone, not mistaken for a real entry point.
+
+Verified with a `node:test --experimental-test-module-mocks` run
+against the real, byte-identical `api/ops-sync.js` (self-assign clamp,
+3/3, plus the full pre-existing 2026-09-02 self-assign-auto-daily suite
+re-run clean, 9/9 — confirming the report-assignment branch is
+unaffected) and a composition-based check against
+`api/process-transcript.js` (7/7 — imports the real `clampToWeekday`
+from `lib/dateUtils.js` directly and extracts the real `validDueDate`
+via string-slicing, since the full-handler route hits this session's
+already-documented `@anthropic-ai/sdk` `mock.module()` resolution
+limitation; confirms the composed call site
+`dueDate: clampToWeekday(validDueDate(t.dueDate))` is genuinely present
+in the real file, and that an empty/impossible/non-ISO date is never
+clamped into a fake real one). A dedicated unit suite for the shared
+helper itself (`lib/dateUtils.js`, 11/11 — both weekend directions, a
+month/year boundary each way, every pass-through case). Two Playwright
+suites against the real UIs: `index.html` (4/4 — picking a Saturday in
+the task edit modal snaps the visible input and the saved payload both
+land on the Friday before; picking a Sunday in the staging review
+snaps the underlying row data and the re-rendered input both to the
+Monday after) and `user.html` (4/4 — the one real due-date input that
+exists there, the staging review field, same Saturday→Friday
+coverage). `node --check` passed on both server files; `new Function()`
+syntax-check clean on all script blocks in both HTML files;
+comment-stripped div-balance unchanged vs. `main` in both (`index.html`
++9, `user.html` −1); `ls api/*.js | wc -l` still 11 (no new server
+file — `lib/dateUtils.js` doesn't count).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction — touches real due-date write
+logic (`api/ops-sync.js`) and the parser's estimation output
+(`api/process-transcript.js`).
+
+**Fix Recent Activity: exclude System events at the query level
+(2026-09-02).** `api/ops-state.js` only, read-only. Root-caused by
+reading both the client-side render filter AND the actual event source
+before writing anything (rule #7): `recentClientFeedQ` (the dedicated,
+SQL-scoped query added in the 2026-08-25 "Fix Recent Activity" entry
+above) fetches the 50 most-recent `type:'client'` rows with no further
+exclusion — but `client.html`'s own `runScheduledAlerts()` pushes every
+automated due-date reminder (`[OVERDUE]`/`[Due TODAY]`/`[Upcoming]
+<service>`, etc.) as its OWN `type:'client'` event, always carrying
+`fromUser:'System'` (i.e. `data.user==='System'`). With enough of that
+automated volume (the reported case: 1,000+), the 50-row window landed
+entirely on System noise, which `index.html`'s existing render-time
+`.filter(e=>e.user!=='System')` then correctly excluded — leaving
+nothing to show. Fixed by excluding it at the query itself:
+`.neq('data->>user', 'System')` added to the same Supabase call,
+alongside the pre-existing `.eq('data->>type','client')`. Confirmed
+this single exclusion is both necessary and sufficient — every
+auto-alert variant shares the identical `fromUser:'System'` field, so
+no separate `'[Upcoming]'`-text pattern match was needed despite the
+task's own wording suggesting two things to exclude. Client-side
+(`index.html`) needed no change — its own filter is now redundant but
+harmless, left in place rather than removed, since removing a
+belt-and-suspenders filter wasn't asked for and this task's own file
+list was `api/ops-state.js` only.
+
+Verified with a `node:test --experimental-test-module-mocks` run
+against the real, byte-identical `api/ops-state.js` handler (7/7): the
+query now genuinely carries both `.eq('data->>type','client')` AND
+`.neq('data->>user','System')` (not just one or the other); a seeded
+mix of System auto-alerts and real named-person events returns only
+the real ones, newest-first, with a real person's name (e.g. "Sherine
+Amin — Service done: Social Media Management") surviving; a
+non-`client`-type event is still excluded regardless of its `user`
+field (regression check); ordering and the 50-row cap are both
+unaffected. `node --check` passed; `ls api/*.js | wc -l` unaffected —
+no server file added or removed, this is a one-line filter addition to
+an existing query.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction, despite being read-only —
+touches the live `ops_feed` query every admin session's Overview page
+depends on.
+
+**Clean up notifications when their task is deleted (2026-09-02).**
+`api/ops-sync.js` (real cleanup) + `index.html` (client-side safety
+filter) — no new `api/*.js` file, still 11. Reused the exact same
+type-based routing distinction already established the same day in
+`_routeAdminNotifClick()` (the notifications View-all/click-through
+work): `taskAssignment`/`taskReported` are the only two notification
+types whose `context.taskId` is a real `ops_tasks` row id — the older
+`assignment` type's own `context.taskId` (when present at all) is a
+completely different, legacy `client.projects[].tasks[]` id, and must
+never be checked against `ops_tasks` or it would falsely look
+"orphaned" for every single legitimate `assignment`-type notification.
+
+**Server-side (`api/ops-sync.js`), the real fix.** Inside the existing
+`tombstones.taskIds` hard-delete block's success branch — AFTER the
+real `ops_tasks` delete succeeds, scoped to `deletableIds` (the ids
+ACTUALLY removed, never the full requested list, which can include ids
+a non-admin caller wasn't authorized to delete and are still real
+rows) — a new `supabase.from('ops_notifications').delete().in('data->
+context->>taskId', deletableIds)` removes every notification pointing
+at one of the just-deleted tasks. Best-effort: a failure here is
+logged as a warning but never turns the task deletion itself into a
+failure — the task is already gone either way, and per this table's own
+established convention (no `deleted_at`/append-only guard, a genuine
+hard SQL DELETE), there's no soft-tombstone fallback to lean on for
+retry.
+
+**Client-side (`index.html`), a defensive backstop, not the real
+enforcement.** A new `_notifTaskWasDeleted(n)` returns true only for a
+`taskAssignment`/`taskReported` notification whose `context.taskId` no
+longer matches any row in `_taTasks()` — wired into both
+`renderAdminNotifPanel()` (the bell dropdown) and
+`_notifViewAllFiltered()` (the View-all modal), so a stale local cache
+that hasn't yet pulled the server-side deletion above never shows an
+orphaned entry either. Deliberately NOT wired into
+`refreshAdminNotifBadge()` (the unread-count badge) — `_taTasks()` can
+legitimately be empty very early after login, before the first pull
+completes, which would make every real taskAssignment/taskReported
+notification look falsely orphaned and undercount the badge; the badge
+stays as a simple unread count, unaffected by this filter.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (10/10) — an admin deleting a task with a
+`taskAssignment` notification removes both the task and the
+notification, leaving an unrelated `message`-type notification
+untouched; the same for a `taskReported` notification; an
+UNAUTHORIZED member delete attempt leaves both the task AND its
+notification completely untouched (the delete is rejected before the
+cleanup code is ever reached); deleting one task among several only
+ever removes that task's own notification, never a sibling task's.
+(Caught and fixed a bug in my OWN test during this verification, not a
+product bug: the test initially nested `tombstones` inside
+`body.changes`, but `api/ops-sync.js` reads `tombstones` as a
+top-level key off `req.body` — `const { changes, tombstones,
+restoreUserIds } = req.body || {}` — so the delete block never ran at
+all; every assertion happened to look like it passed anyway, since
+"nothing was deleted" coincidentally matched the one scenario, the
+unauthorized-delete case, expecting exactly that outcome. Fixed the
+test's request shape to match the real API contract; re-ran clean.)
+(2) A Playwright run against the real `index.html` UI (16/16) — a
+mixed seed of 2 orphaned notifications (pointing at task ids absent
+from the local `tasks` array), 1 real task's notification, and 1
+legacy `assignment`-type notification (pointing at an equally-absent,
+but unrelated-id-space, legacy id) shows exactly the 2 non-orphaned
+entries in both the bell dropdown and the View-all modal — the legacy
+notification is never mistakenly hidden, confirming the type-gating is
+correct, not just "any missing id is orphaned"; direct
+`_notifTaskWasDeleted()` calls confirm the exact same six cases
+(orphaned taskAssignment/taskReported → true; a real task, the legacy
+type, no `context.taskId` at all, and an unrelated type carrying a
+taskId-shaped field → all false).
+
+`node --check` passed on `api/ops-sync.js`; `new Function()`
+syntax-check clean on `index.html`; comment-stripped div-balance
+unchanged vs. `main` (+9); `ls api/*.js | wc -l` still 11. Every
+pre-existing notifications/Task-Assignments Playwright suite from this
+session re-run clean and unaffected: `verify_notif_routing.mjs`
+(26/26), `verify_notif_viewall_ui.mjs` (16/16),
+`verify_ta_reported_logic.mjs` (11/11), `verify_ta_reported_ui.mjs`
+(13/13), `verify_self_assigned_badge_ui.mjs` (13/13),
+`verify_ta_calendar_clutter_ui.mjs` (14/14),
+`verify_ta_reply_status_removed.mjs` (12/12).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction — touches a real delete path in
+`api/ops-sync.js`.
+
+**Log when email is skipped for a missing key (2026-09-02).**
+`api/ops-sync.js` only, `insertNotifications()`. The existing `if
+(process.env.RESEND_API_KEY) { ... }` email-send gate had no `else` —
+a runtime missing the key silently sent zero emails with nothing
+anywhere to show for it, indistinguishable from "everything's fine, no
+notifications happened to need email today." Added a parallel `else`
+branch calling the existing `logError()` (`lib/errorLog.js`, already
+used elsewhere in this same function for a genuine per-recipient send
+failure) with `endpoint:'notifications:email'` and a plain, greppable
+message (`'SKIPPED — RESEND_API_KEY missing in runtime env'`) —
+non-fatal, `logError()` itself never throws, so this stays exactly as
+safe as the try/catch branch it sits beside. Only fires when there's
+actually at least one notification that WOULD have tried to email
+(never logs a spurious row for a write that created zero
+notifications, e.g. a status-only resave with no assignee change).
+
+Verified with a `node:test --experimental-test-module-mocks` run
+against the real, byte-identical `api/ops-sync.js` handler (8/8): with
+`RESEND_API_KEY` unset, assigning a task writes exactly one
+`ops_error_log` row with the exact endpoint/message; with the key set,
+zero such rows are written and a real send is genuinely attempted
+instead; a resave with no actual assignee change (zero notifications)
+produces zero SKIPPED rows either way. `node --check` passed; `ls
+api/*.js | wc -l` unaffected. Low-risk per rule #10: a single
+additive, non-fatal logging branch with no change to what gets
+written, sent, or returned — eligible for direct merge once CI is
+green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

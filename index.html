@@ -2820,7 +2820,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div>
           <label class="form-label">Due date <span id="tem-due-lock" style="display:none;font-size:10px;font-weight:700;color:var(--text-light);">🔒 Locked</span></label>
-          <input class="form-input" type="date" id="tem-due">
+          <input class="form-input" type="date" id="tem-due" onchange="_taSnapDueDateInput(this)">
         </div>
         <div>
           <label class="form-label">Service</label>
@@ -8153,9 +8153,26 @@ function _notifRowHtml(n){
       </div>
     </div>`;
 }
+// Safety filter (2026-09-02) — skips a taskAssignment/taskReported
+// notification whose real ops_tasks row has since been deleted, as a
+// defensive backstop alongside api/ops-sync.js's own server-side cleanup
+// on the task-delete path (this only matters if a local cache hasn't yet
+// pulled that deletion, or some other path ever leaves one orphaned).
+// Deliberately scoped to ONLY these two types — the older `assignment`
+// type's own context.taskId is a completely different, legacy
+// client.projects[] id that will never be found in _taTasks(), so
+// applying this check to every type would incorrectly hide every
+// legitimate assignment-type notification (same distinction
+// _routeAdminNotifClick() already has to make).
+function _notifTaskWasDeleted(n){
+  if(n.type!=='taskAssignment' && n.type!=='taskReported') return false;
+  const taskId = n.context?.taskId;
+  if(!taskId) return false;
+  return !_taTasks().some(t=>t.id===taskId);
+}
 function renderAdminNotifPanel(){
   const el = document.getElementById('admin-notif-list'); if(!el) return;
-  const notifs = (dbGet(DB_KEYS.notifications)||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
+  const notifs = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!_notifTaskWasDeleted(n)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
   if(!notifs.length){ el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:12px;">No notifications</div>'; return; }
   el.innerHTML = notifs.map(_notifRowHtml).join('');
 }
@@ -8249,6 +8266,7 @@ function setNotifViewAllReadFilter(v){
 }
 function _notifViewAllFiltered(){
   return (dbGet(DB_KEYS.notifications)||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).filter(n=>{
+    if(_notifTaskWasDeleted(n)) return false;
     if(_notifViewAllType && n.type!==_notifViewAllType) return false;
     if(_notifViewAllReadFilter==='unread' && n.read) return false;
     if(_notifViewAllReadFilter==='read' && !n.read) return false;
@@ -8844,6 +8862,25 @@ function _taActiveClients(){ return _getClientDB().filter(c=>c.status==='active'
 function _taTasks(){ return dbGet(DB_KEYS.tasks)||[]; }
 function _taSaveTasks(arr){ dbSet(DB_KEYS.tasks, arr); }
 function _taToday(){ return new Date().toISOString().slice(0,10); }
+// Never lands a due date on a weekend (2026-09-02): Saturday snaps to the
+// Friday before, Sunday snaps to the Monday after. Own copy (zero-shared-
+// code rule) of the exact same algorithm client.html/user.html's
+// adjustOffWeekend() already applies to recurring service due dates —
+// this is the Task Assignments equivalent for manually-entered task due
+// dates. Named clampToWeekday to match the shared server-side helper in
+// lib/dateUtils.js (api/process-transcript.js/api/ops-sync.js).
+function clampToWeekday(dateStr){
+  if(!dateStr) return dateStr;
+  const parts=String(dateStr).slice(0,10).split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>Number.isNaN(n))) return dateStr;
+  const [y,m,dd]=parts;
+  const d=new Date(y, m-1, dd);
+  const day=d.getDay(); // 0=Sun...6=Sat
+  if(day===6) d.setDate(d.getDate()-1);      // Saturday -> Friday before
+  else if(day===0) d.setDate(d.getDate()+1); // Sunday -> Monday after
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function _taSnapDueDateInput(el){ el.value = clampToWeekday(el.value); }
 
 // "New" highlight (2026-08-20) — same _rmIsNew/rm-card-new/rm-new-tag
 // pattern as the Roadmap tab (see loadRoadmap() above), ported here: any
@@ -9851,7 +9888,11 @@ function saveTaskEdit(){
   const clientSel = document.getElementById('tem-client');
   const assigneeId = document.getElementById('tem-assignee').value || null;
   const assigneeChanged = isNew ? !!assigneeId : (assigneeId !== (existing.assigneeId||null));
-  const newDueDate = document.getElementById('tem-due').value;
+  // Defensive re-clamp (2026-09-02) — the input's own onchange handler
+  // already snaps a picked weekend date visually, but this guards the
+  // actual saved value too in case that handler was ever bypassed (e.g. a
+  // value set programmatically without firing change).
+  const newDueDate = clampToWeekday(document.getElementById('tem-due').value);
   // dueDate locks the first time it's actually CHANGED on an existing task
   // (never at creation, never on a resave that leaves it unchanged) —
   // server-enforced too (api/ops-sync.js ignores any further dueDate once
@@ -10052,6 +10093,15 @@ function _taUpdateStaged(id, field, value){
   // input itself isn't otherwise re-synced to row.subject on every keystroke.
   if(field==='subject' && !value.trim()){
     showToast('Subject is required');
+    _renderTaStaging();
+    return;
+  }
+  // Weekend-clamped (2026-09-02), same as saveTaskEdit()'s own due-date
+  // field — re-renders so the input visually shows the snapped date
+  // rather than silently storing a different value than what's displayed.
+  if(field==='dueDate' && value){
+    const clamped = clampToWeekday(value);
+    row[field] = clamped;
     _renderTaStaging();
     return;
   }
