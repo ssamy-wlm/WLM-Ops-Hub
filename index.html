@@ -1493,6 +1493,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported</button>
         </div>
         <!-- .btn-primary sets width:100% (it's --btn, the same hex as
              --gold) — exactly the "full-width gold bar" this task asks to
@@ -1656,6 +1657,25 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            view in this file, nothing new. -->
       <div id="ta-subtab-attention" style="display:none;">
         <div id="ta-attention-body"></div>
+      </div>
+
+      <!-- "Reported" (2026-09-02) — every client SERVICE submitted for
+           review (svc.reviewSubmittedAt, the only "submitted for review"
+           concept that actually exists — ops_tasks has no equivalent
+           field) PLUS every ops_tasks row flagged reportedMisassigned (a
+           different concept — an assignee saying "I don't think this is
+           mine" — grouped here anyway since both are "something a team
+           member flagged for admin attention," per an explicit decision
+           on this exact ambiguity, not a guess). Display/navigation only —
+           no approve/return actions here; opening a row leads to that
+           item's own EXISTING editable view (the task detail panel, or
+           the Tracker), where an admin already has every control needed
+           (status, reassign, notes) — also an explicit decision, not
+           assumed, since neither field has ever had an approve/dismiss
+           action anywhere in this codebase and inventing one here would
+           be new write behavior, not a display feature. -->
+      <div id="ta-subtab-reported" style="display:none;">
+        <div id="ta-reported-body"></div>
       </div>
     </div>
 
@@ -8007,6 +8027,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
+    if(typeof renderTaReported==='function' && document.getElementById('ta-subtab-reported')?.style.display!=='none') renderTaReported();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -8924,17 +8945,21 @@ function setTaSubtab(tab){
   document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline'+(tab==='assigned'?' btn-toggle-active':'');
   document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline'+(tab==='person'?' btn-toggle-active':'');
   document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm btn-outline'+(tab==='attention'?' btn-toggle-active':'');
+  document.getElementById('taSubtabReportedBtn').className = 'btn btn-sm btn-outline'+(tab==='reported'?' btn-toggle-active':'');
   document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAttentionBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('taSubtabReportedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
   document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
   document.getElementById('ta-subtab-person').style.display = tab==='person' ? '' : 'none';
   document.getElementById('ta-subtab-attention').style.display = tab==='attention' ? '' : 'none';
+  document.getElementById('ta-subtab-reported').style.display = tab==='reported' ? '' : 'none';
   if(tab==='assigned') renderTaskAssignments();
   if(tab==='person') renderTaPersonRoster();
   if(tab==='attention') renderTaNeedsAttention();
+  if(tab==='reported') renderTaReported();
 }
 
 // ── Per-person Daily Tasks view (admin) — 2026-08-20. _taPersonViewId,
@@ -9059,6 +9084,106 @@ function renderTaNeedsAttention(){
       <div class="card-body">${rowsHtml}</div>
     </div>`;
   }).join('');
+}
+
+// ── "Reported" (2026-09-02) — see the HTML comment above ta-subtab-reported
+// for the scope decisions this reflects (both data sources included;
+// list+click-through only, no new approve/return write action). Two
+// genuinely different data sources, merged into one list sorted newest-
+// first: ops_tasks flagged reportedMisassigned, and active clients'
+// services (including franchise locations[], same scan shape
+// _activeServicesForAssessment() already uses — but that helper returns
+// bare service objects with no client name attached, the same gap
+// renderMyRoadmapAdmin() already had to work around by walking
+// _getClientDB() directly instead of reusing it, so this does the same
+// rather than modifying that shared helper's return shape for its other
+// callers) with svc.reviewSubmittedAt set. !t.mergedIntoId excludes a
+// soft-merged-away duplicate task, same convention as every other task
+// view in this file.
+function _taReportedItems(){
+  const items = [];
+  _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).forEach(t=>{
+    items.push({
+      kind:'task', taskId:t.id, clientId:null, serviceId:null,
+      submitterName:t.reportedMisassignedByName||'—',
+      itemLabel:t.subject||'(untitled task)',
+      clientName:t.clientName||'—',
+      date:t.reportedMisassignedAt||'',
+    });
+  });
+  const clients = _getClientDB().filter(c=>(c.status||'active')==='active');
+  const scanServices = (list, c, locName) => {
+    (list||[]).forEach(s=>{
+      if(!s?.id || !s.reviewSubmittedAt) return;
+      items.push({
+        kind:'service', taskId:null, clientId:c.id, serviceId:s.id,
+        submitterName:s.reviewSubmittedByName||'—',
+        itemLabel:`${s.name||''}${locName?' ('+locName+')':''}`,
+        clientName:c.name||'—',
+        date:s.reviewSubmittedAt,
+      });
+    });
+  };
+  clients.forEach(c=>{
+    scanServices(c.services, c, null);
+    (c.locations||[]).forEach(loc=>scanServices(loc.services, c, loc.name));
+  });
+  items.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  return items;
+}
+// Rendered rows are looked up by index from this cache rather than
+// threading each item's fields through the onclick attribute as a JSON
+// blob — simpler and safer (no attribute-escaping edge cases for a
+// submitter name or subject containing a quote), and matches how every
+// other row in this file passes just an id/index through onclick.
+let _taReportedItemsCache = [];
+// Click-through reuses the EXACT SAME two navigation paths
+// _routeAdminNotifClick() already established for these two notification
+// types (taskReported -> the task's own editable detail panel;
+// submittedForReview -> the Tracker at the right client+service) — see
+// that function's own comment for why field type must decide the route,
+// never field presence alone. Genuine plumbing reuse, not a new pattern.
+function _taOpenReportedItem(i){
+  const item = _taReportedItemsCache[i];
+  if(!item) return;
+  if(item.kind==='task'){
+    setTaSubtab('assigned');
+    openTaDetailPanel(item.taskId);
+  } else {
+    openAdminTrackerToClient(item.clientId, item.serviceId);
+  }
+}
+const TA_REPORTED_KIND_LABEL = { task:'🚩 Reported', service:'📤 Submitted for review' };
+function renderTaReported(){
+  const container = document.getElementById('ta-reported-body');
+  if(!container) return;
+  const items = _taReportedItems();
+  _taReportedItemsCache = items;
+  if(!items.length){
+    container.innerHTML = `<div class="card"><div class="card-body"><div style="font-size:12px;color:var(--text-light);padding:6px 0 2px;font-style:italic;">Nothing here — all clear.</div></div></div>`;
+    return;
+  }
+  container.innerHTML = `<div class="card">
+    <div class="card-body" style="padding:0;">
+      <table style="width:100%;">
+        <thead><tr>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Type</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Submitter</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Item</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Date</th>
+        </tr></thead>
+        <tbody>${items.map((it,i)=>`
+          <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
+            <td style="padding:12px 18px;font-size:12px;white-space:nowrap;">${TA_REPORTED_KIND_LABEL[it.kind]}</td>
+            <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
+            <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(it.itemLabel)}</td>
+            <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
+            <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 const TA_VIEW_BTN_IDS = {list:'taViewListBtn', day:'taViewDayBtn', week:'taViewWeekBtn', month:'taViewMonthBtn'};
