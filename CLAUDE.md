@@ -5488,6 +5488,41 @@ display-only, non-data-touching CSS/markup fix, since the batch treats
 all five PRs as a set awaiting her review together. Before/after
 screenshots (1400px and 900px) sent alongside this PR.
 
+**"Surface email-send failures to the error log" — already built, no
+code change needed (2026-09-02).** Given as: `insertNotifications()`'s
+email-send catch in `api/ops-sync.js` swallows failures with only
+`console.warn`; change it to also call `logError()` (from
+`lib/errorLog.js`, already used by `send-assignment-email.js`) —
+`endpoint:'notifications:email'`, with the error message and recipient —
+so a failed send lands in `ops_error_log`. Read `api/ops-sync.js` before
+writing anything (rule #7) and found this exact change already present
+on `main`: the batching rework landed by PR #319
+(`claude/batch-assignment-emails`, merged just before this task was
+given, no CLAUDE.md entry of its own found for it) added precisely this
+— the catch block around `maybeEmailNotification()` still `console.warn`s
+first, then calls `await logError({ endpoint: 'notifications:email',
+error: e, extra: { recipient: to, itemCount: notifs.length } })`,
+matching every part of the ask: same endpoint name, the real error
+message, and the recipient (plus `itemCount`, harmless extra context from
+the same-PR batching-by-recipient rework). `logError()` itself already
+never throws (see its own header comment), so this stays exactly as
+non-fatal as the `console.warn` it sits next to.
+
+Verified against the real, byte-identical `api/ops-sync.js` handler with
+a `node:test --experimental-test-module-mocks` run (no live DB access,
+rule #11; `lib/errorLog.js` deliberately NOT mocked, so a real
+`ops_error_log` row from the real `logError()` is what's being checked,
+not a stub) — 8/8: a Resend send rejecting with an error still lets the
+underlying write succeed (200, task applied) and still inserts the
+in-app notification row (email failure is non-fatal, as designed);
+exactly one `ops_error_log` row results, `endpoint:'notifications:email'`,
+the logged error message names the real failure text, and `extra.recipient`
+carries the real recipient email; a regression control (a successful send)
+writes zero `ops_error_log` rows. No `api/ops-sync.js` change was made —
+there was nothing to fix. Docs-only entry per rule #10 (recording a
+completed investigation, not a code change) — no preview needed, since
+there is no diff to preview.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
