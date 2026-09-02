@@ -5869,6 +5869,97 @@ anyway against an unconfirmed precedent, this is flagged back plainly: if
 a specific existing pattern was meant, it isn't in this file's own record
 and item C's design will need to be worked out fresh when it's built.
 
+**Task Assignments calendar rebuild: Mon-start, weekends grayed, per-person
+colors, fixed collapse (2026-09-02).** `index.html` only, display-only —
+follow-up to the same-day earlier calendar-clutter PR, whose ×N collapse
+had a real bug this fixes.
+
+**Root cause of the reported "×8 collapse doesn't work" bug:** the earlier
+version only collapsed clones carrying `assigneeIds.length>1` — the
+"whole team"/Everyone-assignment marker (`_taBuildEveryoneClones()`). But
+a real repeating daily task like "Log daily tasks each shift" is 8
+INDEPENDENTLY-created single-assignee `ops_tasks` rows (one per person,
+each with a plain `assigneeId`, never an `assigneeIds` array) — so the old
+gate never fired and all 8 repeated in the cell instead of collapsing.
+`_taGroupDayTasks()` now groups by exact subject text alone, with no
+`assigneeIds` gate at all — every task passed in already shares the same
+due date by construction (the caller pre-buckets by `dateStr` before
+calling this), so "same subject + same due date" reduces to just "same
+subject" at this scope. A group now tracks `overdue` across ALL its
+merged tasks (true if any one of them is overdue), not just whichever
+task happened to be first.
+
+**A second real bug found while reviewing the FIRST screenshot, not
+caught by the Node/DOM tests alone** (exactly the failure mode this
+task's own instructions warned about): the `×8` count and the task
+subject were concatenated into one ellipsis-truncating span, so a long
+subject like "Log daily tasks each shift" pushed the count off past the
+truncation point — the collapse was working correctly underneath, but
+the one piece of information that matters most on a collapsed row
+(*how many*) was invisible. Split into two spans: the subject truncates
+on its own, the `×N` badge is a separate `flex-shrink:0` sibling that's
+never truncated. Confirmed by regenerating the screenshot after the fix
+and reading it — see below.
+
+**Per-person color map** — `TA_PERSON_COLOR_MAP`, matched by NAME (never a
+hardcoded id — no live DB access to confirm real `ops_users`/`ops_admins`
+ids in this environment, same reasoning as every other name-based match
+already in this file, e.g. the task parser's Sarah-alias resolution).
+`'sarah ibrahim'` deliberately requires the full two-word match, not bare
+`'sarah'`, so it can never also color-match Sarah Samy (the primary admin
+sentinel — a different person who happens to share a first name).
+Unmapped people get a deterministic hash-based fallback from a small flat
+palette, visually distinct from the 8 fixed colors. A collapsed GROUP row
+has no single owner to color by (now that grouping isn't gated to
+same-assignee team clones — a group can legitimately span 8 different
+people), so it gets a neutral gray "👥" treatment instead of misattributing
+it to whichever task happened to be first — a deliberate design choice,
+not an oversight. A legend (`_taPersonColorLegendHtml()`) renders above
+both grids, listing all 8 named people's colors plus the overdue-dot key.
+
+**Monday-start** — `_taStartOfWeek()` rewritten (`dow===0 ? -6 : 1-dow`
+instead of `-d.getDay()`); Month's header row and leading-blank-cell count
+both switched from Sunday-first to Monday-first
+(`leadingBlanks = (firstDow+6)%7`). **Weekend graying** — Sat/Sun columns
+get a muted background, faded header text, and roughly half the min-height
+of a weekday cell (they won't normally carry assigned tasks) — column
+WIDTH is untouched (`repeat(7,1fr)` on both grids, unchanged), so this
+never breaks the equal-width requirement; only a weekend cell's own
+height/tint shrinks. `min-width:0` added to every grid cell (Month header
+cells included) — the same CSS-grid shrink fix already used once in this
+codebase for `user.html`'s Daily Tasks calendar — plus
+`overflow-x:hidden` on both grid containers, so a long chip's own text can
+never force the grid wider than its card.
+
+Verified two ways, per this task's own explicit instruction that logic
+tests alone weren't enough last time: (1) a Node script against the real,
+byte-identical `_taStartOfWeek()`/`_taGroupDayTasks()`/
+`_taPersonColorFor()`/`_taPersonColorLegendHtml()`/`_taCalRowHtml()`/
+`_taCalCellRowsHtml()` (37/37) — Monday-start including the Sunday-itself
+edge case (resolves BACK to the preceding Monday, never forward), the
+exact reported 8-independent-single-assignee-tasks scenario collapsing to
+one row, a group's overdue flag surviving even when the first merged task
+isn't itself overdue, all 8 fixed colors resolving correctly, Sarah
+Ibrahim vs. Sarah Samy disambiguation, a deterministic fallback for
+unmapped people, the row cap + "+N more", and the group's neutral-gray
+color; (2) real Playwright screenshots of the live-rendered Week AND
+Month grids (not just DOM assertions) — actually read back and visually
+confirmed: Monday-first columns, Sat/Sun visibly grayed and shorter, the
+`×8` badge fully visible next to a long truncated subject (the second bug
+above, caught this way and fixed before the screenshots were finalized),
+each chip's initials+color matching its real assignee, an overdue red dot
+on two chips, and a Thursday cell correctly capping at 4 chips with a
+working "+2 more". Screenshots sent directly to the user (this session's
+tools can't attach a binary image to a GitHub PR body/comment) rather than
+just asserted as passing. 11/11 additional DOM-level Playwright checks
+(no horizontal overflow, header order, legend content, cap behavior)
+alongside the screenshots. Every pre-existing Task Assignments Playwright
+suite from earlier the same day re-run clean (14/14 calendar-clutter,
+12/12 Reply status removal, 16/16 notifications, 13/13 self-assigned
+badge) — the older calendar suite's own 8-team-clone seed data still
+collapses correctly under the new subject-only grouping, confirming this
+is a superset of the old behavior, not a narrower replacement.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

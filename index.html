@@ -1611,7 +1611,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <div id="taWeekLabel" style="font-weight:700;font-size:14px;"></div>
                 <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
               </div>
-              <div id="taWeekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+              <div id="taWeekLegend"></div>
+              <div id="taWeekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;width:100%;overflow-x:hidden;"></div>
             </div>
           </div>
         </div>
@@ -1624,7 +1625,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <div id="taCalLabel" style="font-weight:700;font-size:14px;"></div>
                 <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
               </div>
-              <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+              <div id="taCalLegend"></div>
+              <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;width:100%;overflow-x:hidden;"></div>
               <div id="taCalUndated" style="display:none;margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-mid);cursor:pointer;" onclick="setTaView('list')"></div>
             </div>
           </div>
@@ -9404,52 +9406,123 @@ function _taShiftPeriod(delta){
   renderTaskAssignments();
 }
 function _taDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function _taStartOfWeek(d){ const s = new Date(d.getFullYear(), d.getMonth(), d.getDate()-d.getDay()); return s; }
+// Monday-start (2026-09-02) — d.getDay() is 0=Sun..6=Sat; shift back to the
+// most recent Monday (Sunday itself shifts back 6 days, everything else
+// shifts back day-1).
+function _taStartOfWeek(d){ const dow=d.getDay(); const diff = dow===0 ? -6 : 1-dow; return new Date(d.getFullYear(), d.getMonth(), d.getDate()+diff); }
 
-// Groups one day's tasks for Week/Month calendar display (2026-09-02):
-// identical-subject clones from a "whole team" assignment — assigneeIds
-// carrying more than one id, the exact marker _taBuildEveryoneClones()/the
-// parser's own multi-name co-assign already stamp on every clone (see the
-// "Whole team" pill elsewhere in this file, same predicate) — collapse into
-// ONE row with an "×N" count instead of repeating once per person. Grouped
-// by exact subject text among ONLY the wholeTeam-flagged tasks, so two
-// unrelated single-assignee tasks that happen to share wording are never
-// merged. Order is first-occurrence, so the row order still roughly
-// follows the day's original task order.
+// Fixed per-person color map for the Week/Month calendars (2026-09-02),
+// matched by NAME (never a hardcoded id — this environment has no live DB
+// access to confirm real ops_users/ops_admins ids, and every other
+// name-based match already in this file, e.g. the task parser's Sarah-
+// alias resolution, follows the same "never guess an id" rule). `match` is
+// checked via a lowercase substring test against the resolved person's
+// full name — 'sarah ibrahim' deliberately requires the FULL two-word
+// match, not bare 'sarah', so this can never also color-match Sarah Samy
+// (the primary admin sentinel, a completely different person who also
+// happens to be named Sarah).
+const TA_PERSON_COLOR_MAP = [
+  { match:'abby', label:'Abby', color:'#8B5CF6' },
+  { match:'jacob', label:'Jacob', color:'#2563EB' },
+  { match:'michael', label:'Michael', color:'#16A34A' },
+  { match:'assmaa', label:'Assmaa', color:'#06B6D4' },
+  { match:'sherine', label:'Sherine', color:'#EC4899' },
+  { match:'rana', label:'Rana', color:'#F97316' },
+  { match:'sarah ibrahim', label:'Sarah Ibrahim', color:'#CA8A04' },
+  { match:'david', label:'David', color:'#64748B' },
+];
+// Deterministic fallback for anyone not in the fixed map above — same
+// hash-off-the-id technique as _taAvatarColor(), but its own small flat-hex
+// palette (not _taAvatarColor's gradients, and deliberately visually
+// distinct from the 8 fixed colors above) so an unmapped person still gets
+// a stable, distinguishable color across renders rather than a repeated
+// default gray.
+const TA_PERSON_FALLBACK_PALETTE = ['#0EA5E9','#84CC16','#F43F5E','#A855F7','#14B8A6','#EAB308'];
+function _taPersonColorFor(assigneeId, roster){
+  const person = assigneeId ? roster.find(p=>p.id===assigneeId) : null;
+  const name = (person?.name || '').toLowerCase();
+  if(name){
+    const fixed = TA_PERSON_COLOR_MAP.find(e=>name.includes(e.match));
+    if(fixed) return fixed.color;
+  }
+  const key = String(assigneeId || 'unassigned');
+  let h=0; for(let i=0;i<key.length;i++) h = (h*31 + key.charCodeAt(i)) >>> 0;
+  return TA_PERSON_FALLBACK_PALETTE[h % TA_PERSON_FALLBACK_PALETTE.length];
+}
+// Legend shown above both the Week and Month grids — the fixed 8-person map
+// plus the overdue-dot key, so the color coding never needs guessing.
+function _taPersonColorLegendHtml(){
+  const chips = TA_PERSON_COLOR_MAP.map(e=>`<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:3px;background:${e.color};display:inline-block;flex-shrink:0;"></span>${escHtmlAdmin(e.label)}</span>`).join('');
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:12px;font-size:11px;color:var(--text-mid);">
+    <span style="font-weight:700;color:var(--text-light);">Who:</span>${chips}
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--red,#c94a4a);display:inline-block;flex-shrink:0;"></span>= overdue</span>
+  </div>`;
+}
+
+// Groups one day's tasks for Week/Month calendar display. Fixed 2026-09-02:
+// the earlier version only collapsed clones carrying assigneeIds.length>1
+// (the "whole team"/Everyone-assignment marker) — but real repeating daily
+// tasks (e.g. "Log daily tasks each shift", independently created once per
+// person, one single-assignee ops_tasks row each) never carry that field at
+// all, so they never collapsed and just repeated once per person instead.
+// Grouping key is exact subject text alone now — every task passed in here
+// already shares the same due date by construction (the caller always
+// pre-buckets by dateStr before calling this), so "same subject + same due
+// date" reduces to just "same subject" at this scope. A group tracks
+// whether ANY of its merged tasks is overdue (not just one representative),
+// so the red dot is never lost by whichever task happened to be first.
 function _taGroupDayTasks(dayTasks){
   const rows = [];
   const bySubject = new Map();
   dayTasks.forEach(t=>{
-    if((t.assigneeIds||[]).length > 1){
-      const key = t.subject||'';
-      let g = bySubject.get(key);
-      if(!g){ g = {type:'group', task:t, count:0}; bySubject.set(key, g); rows.push(g); }
-      g.count++;
-    } else {
-      rows.push({type:'single', task:t});
-    }
+    const key = t.subject||'';
+    let g = bySubject.get(key);
+    if(!g){ g = {type:'single', task:t, count:1, overdue:_taIsOverdue(t)}; bySubject.set(key, g); rows.push(g); return; }
+    if(g.type==='single'){ g.type='group'; }
+    g.count++;
+    if(_taIsOverdue(t)) g.overdue = true;
   });
   return rows;
 }
-// Row cap per cell, applied AFTER collapsing team clones above — a normal
-// day (not a whole-team broadcast) rarely even reaches this. Unlike the
-// pre-2026-09-02 design (see the removed comment this replaced), the "+N
-// more" here is a REAL link — it switches straight to Day view for that
-// exact date via _taOpenCalDay() below — never a dead end that hides tasks
-// with no way to reach them, which is exactly why a cap was deliberately
-// avoided here before.
+// Row cap per cell, applied AFTER collapsing above — a normal day rarely
+// even reaches this. The "+N more" is a REAL link — it switches straight to
+// Day view for that exact date via _taOpenCalDay() below — never a dead end
+// that hides tasks with no way to reach them.
 const TA_CAL_ROW_CAP = 4;
-function _taCalRowHtml(r, style){
+// Chips are colored by the representative task's ASSIGNEE for a real
+// single task, initialed + tinted per _taPersonColorFor() above. A
+// collapsed GROUP (2+ tasks sharing a subject, per _taGroupDayTasks() —
+// now possible across completely different assignees, since the grouping
+// key dropped the assigneeIds/wholeTeam gate) has no single owner to color
+// by, so it deliberately gets a neutral gray "👥" treatment instead of
+// misattributing it to whichever task happened to be first.
+function _taCalRowHtml(r, style, roster){
   const t = r.task;
-  const overdue = _taIsOverdue(t);
-  const label = r.type==='group' ? `${escHtmlAdmin(t.subject||'')} ×${r.count}` : escHtmlAdmin(t.subject||'');
-  return `<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:${style.padding};margin-bottom:${style.marginBottom};border-radius:3px;background:${overdue?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${overdue?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>`;
+  const isGroup = r.type==='group';
+  const countSuffix = isGroup ? ` ×${r.count}` : '';
+  const person = !isGroup ? roster.find(p=>p.id===t.assigneeId) : null;
+  const color = isGroup ? '#94A3B8' : _taPersonColorFor(t.assigneeId, roster);
+  const initials = isGroup ? '👥' : (person ? _taInitials(person.name) : '?');
+  const bg = isGroup ? 'rgba(148,163,184,.14)' : `${color}22`;
+  const dot = r.overdue ? `<span style="width:6px;height:6px;border-radius:50%;background:var(--red,#c94a4a);flex-shrink:0;margin-left:auto;"></span>` : '';
+  // The ×N count is the single most important piece of information on a
+  // collapsed row — it must never be truncated away by a long subject's own
+  // ellipsis. Split into two spans: the subject truncates on its own
+  // (min-width:0/flex:1, ellipsis scoped to just that span), the count
+  // badge is a separate flex-shrink:0 sibling that always stays visible.
+  const countBadge = isGroup ? `<span style="flex-shrink:0;font-weight:800;color:var(--text-mid);">×${r.count}</span>` : '';
+  return `<div onclick="openTaDetailPanel('${t.id}')" title="${escHtmlAdmin((t.subject||'')+countSuffix)}" style="cursor:pointer;display:flex;align-items:center;gap:4px;font-size:10px;padding:${style.padding};margin-bottom:${style.marginBottom};border-radius:3px;background:${bg};min-width:0;">
+    <span style="background:${color};color:#fff;border-radius:3px;font-size:8px;font-weight:800;padding:1px 3px;flex-shrink:0;line-height:1.4;">${escHtmlAdmin(initials)}</span>
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dark);min-width:0;flex:1;">${escHtmlAdmin(t.subject||'')}</span>
+    ${countBadge}
+    ${dot}
+  </div>`;
 }
-function _taCalCellRowsHtml(dayTasks, dateStr, style){
+function _taCalCellRowsHtml(dayTasks, dateStr, style, roster){
   const rows = _taGroupDayTasks(dayTasks);
   const visible = rows.slice(0, TA_CAL_ROW_CAP);
   const hidden = rows.length - visible.length;
-  let html = visible.map(r=>_taCalRowHtml(r, style)).join('');
+  let html = visible.map(r=>_taCalRowHtml(r, style, roster)).join('');
   if(hidden>0){
     html += `<div onclick="event.stopPropagation();_taOpenCalDay('${dateStr}')" style="cursor:pointer;font-size:10px;font-weight:700;padding:${style.padding};color:var(--text-light);">+${hidden} more</div>`;
   }
@@ -9469,29 +9542,44 @@ function _renderTaCalendar(tasks){
   const grid = document.getElementById('taCalGrid');
   const label = document.getElementById('taCalLabel');
   const undatedEl = document.getElementById('taCalUndated');
+  const legendEl = document.getElementById('taCalLegend');
   if(!grid) return;
+  if(legendEl) legendEl.innerHTML = _taPersonColorLegendHtml();
+  const roster = _timeOffRoster();
   const y = _taCalDate.getFullYear(), m = _taCalDate.getMonth();
   if(label) label.textContent = _taCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
+  // Mon-start (2026-09-02): new Date().getDay() is 0=Sun..6=Sat; converting
+  // to a Monday-first offset means Monday->0 ... Sunday->6, so the leading-
+  // blank count before day 1 is (firstDow+6)%7 rather than firstDow itself.
   const firstDow = new Date(y,m,1).getDay();
+  const leadingBlanks = (firstDow+6)%7;
   const daysInMonth = new Date(y,m+1,0).getDate();
   const byDate = {};
   let undatedCount = 0;
   tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } else { undatedCount++; } });
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
-  for(let i=0;i<firstDow;i++) html += '<div></div>';
+  let html = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;min-width:0;${i>=5?'opacity:.55;':''}">${d}</div>`).join('');
+  for(let i=0;i<leadingBlanks;i++) html += '<div></div>';
   for(let d=1; d<=daysInMonth; d++){
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
+    // Weekend columns (Sat/Sun) are grayed + shorter (2026-09-02) — they
+    // won't normally carry assigned tasks, so a full-height cell just to
+    // stay blank wastes space; the actual weekday is computed directly
+    // (dow===0||dow===6), not from grid column position, so this stays
+    // correct regardless of leadingBlanks. Column WIDTH stays equal
+    // (repeat(7,1fr) on the grid, untouched) — only the cell's own height/
+    // tint shrinks, never its share of the row.
+    const dow = new Date(y,m,d).getDay();
+    const isWeekend = dow===0 || dow===6;
     // Team-task clones collapse and the row list caps at TA_CAL_ROW_CAP —
     // see _taGroupDayTasks()/_taCalCellRowsHtml() above for why this is
     // safe now (a real "+N more" link into Day view) where it wasn't
-    // before (a dead-end truncation). min-height keeps empty days from
-    // looking cramped; a day with more rows than the cap still shows the
-    // "+N more" link rather than growing unbounded again.
-    html += `<div style="min-height:70px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(46,93,166,.06);':''}">
-      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
-      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'2px 4px', marginBottom:'2px'})}
+    // before (a dead-end truncation).
+    const cellBg = isToday ? 'background:rgba(46,93,166,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
+    html += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid var(--border);border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}${isToday?' · Today':''}</div>
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'2px 4px', marginBottom:'2px'}, roster)}
     </div>`;
   }
   grid.innerHTML = html;
@@ -9530,7 +9618,12 @@ function _renderTaDay(tasks){
 function _renderTaWeek(tasks){
   const grid = document.getElementById('taWeekGrid');
   const label = document.getElementById('taWeekLabel');
+  const legendEl = document.getElementById('taWeekLegend');
   if(!grid) return;
+  if(legendEl) legendEl.innerHTML = _taPersonColorLegendHtml();
+  const roster = _timeOffRoster();
+  // _taStartOfWeek() is Monday-start (2026-09-02) — i=0..4 are Mon-Fri,
+  // i=5/6 are Sat/Sun.
   const start = _taStartOfWeek(_taCalDate);
   const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+6);
   if(label) label.textContent = `${start.toLocaleString('en-US',{month:'short',day:'numeric'})} – ${end.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
@@ -9542,9 +9635,14 @@ function _renderTaWeek(tasks){
     const dateStr = _taDateStr(d);
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
-    html += `<div style="min-height:140px;border:1px solid var(--border);border-radius:6px;padding:6px;${isToday?'background:rgba(46,93,166,.06);':''}">
-      <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}</div>
-      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'3px 5px', marginBottom:'3px'})}
+    // Weekend columns grayed + shorter, same as Month — see the matching
+    // comment in _renderTaCalendar(). Column WIDTH stays equal
+    // (repeat(7,1fr) on #taWeekGrid, untouched).
+    const isWeekend = i>=5;
+    const cellBg = isToday ? 'background:rgba(46,93,166,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
+    html += `<div style="min-height:${isWeekend&&!isToday?'50px':'140px'};min-width:0;border:1px solid var(--border);border-radius:6px;padding:6px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}${isToday?' · Today':''}</div>
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'3px 5px', marginBottom:'3px'}, roster)}
     </div>`;
   }
   grid.innerHTML = html;
