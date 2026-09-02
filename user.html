@@ -451,6 +451,14 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    own copy (hand-duplicated, zero-shared-code) and Workload's "Stuck"
    service status. Combines harmlessly with .dt-row-new. */
 .dt-row-blocked{border-color:rgba(224,85,85,.35)!important;background:rgba(224,85,85,.05)!important;}
+/* Self-assigned task accent (2026-09-02) — hand-duplicated from
+   index.html's own .ta-row-self (zero-shared-code rule), same
+   assignedById===assigneeId check. Every task in THIS file is already the
+   current user's own (no other-people's-tasks view exists here), so this
+   distinguishes "I put this on my own plate" from "an admin/manager gave
+   me this" — the pill next to the due badge (see _dtAssignedByDisplay())
+   already says who assigned it in words; this is the at-a-glance color. */
+.dt-row-self{border-color:var(--accent,#2E5DA6)!important;background:rgba(46,93,166,.05)!important;}
 /* Task card list (2026-08-28) — replaces the old <table> row layout;
    hand-duplicated from index.html's own .ta-task-card etc. (zero-shared-
    code rule), same visual language under a dt- prefix matching this
@@ -2102,6 +2110,12 @@ function _renderDtListTable(tasks){
   body.innerHTML = tasks.map(t=>{
     const isNew = _dtIsNew(t, seen);
     const blocked = t.status==='Blocked';
+    // Same assignedById===assigneeId field-equality check as index.html's
+    // own copy (hand-duplicated, zero-shared-code rule) — every task here
+    // is already this member's own, so this specifically distinguishes a
+    // task THEY added for themselves from one an admin/manager assigned.
+    const selfAssigned = !!t.assignedById && t.assignedById===t.assigneeId;
+    const selfBadge = selfAssigned ? ' <span style="font-size:10px;background:rgba(46,93,166,.12);border:1px solid rgba(46,93,166,.35);border-radius:4px;padding:1px 5px;color:var(--accent,#2E5DA6);font-weight:700;">👤 Self-assigned</span>' : '';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlUser(t.blockReason||'')}">🚧 Blocked</span>` : '';
     // Assignee pill — every task here is already this member's own (see
     // this file's own "no assignee dropdown, no other people's tasks"
@@ -2113,10 +2127,10 @@ function _renderDtListTable(tasks){
     const assigneeHtml = wholeTeam
       ? `<span class="dt-pill" style="background:var(--bg2);color:var(--text-mid);">👥 Whole team</span>`
       : `<span class="dt-assignee-pill"><span class="dt-avatar-mini" style="background:${_dtAvatarColor(currentUser?.id)};">${_dtInitials(currentUser?.name)}</span>${escHtmlUser(currentUser?.name||'You')}</span>`;
-    return `<div class="dt-task-card${isNew?' dt-row-new':''}${blocked?' dt-row-blocked':''}" onclick="openDtDetailPanel('${t.id}')">
+    return `<div class="dt-task-card${isNew?' dt-row-new':''}${blocked?' dt-row-blocked':''}${selfAssigned?' dt-row-self':''}" onclick="openDtDetailPanel('${t.id}')">
       <div class="dt-card-top">
         <div>
-          <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
+          <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${selfBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
         </div>
         <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}</div>
