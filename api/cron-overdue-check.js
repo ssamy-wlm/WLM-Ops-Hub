@@ -250,6 +250,117 @@ export default async function handler(req, res) {
       warnings.push(`taskAttention: ${err.message}`);
     }
 
+    // ── Daily "your focus today" digest (2026-09-02) — one email per
+    // active team member, summarizing their OWN overdue / due-soon (today
+    // through the next 7 days) / in-progress work, across BOTH ops_tasks
+    // AND ops_clients services. Entirely separate from every notification
+    // type above (different shape: one full picture per person, not a
+    // single-signal escalation or reminder) — runs every invocation,
+    // unconditional on any toggle, same as the task-attention block above,
+    // and independently re-queries ops_clients (never reuses
+    // clientRows/events from the overdue-escalation block above, which
+    // only runs when overdueEnabled is true) so this digest is never
+    // silently skipped by an unrelated toggle.
+    //
+    // Deliberately excludes any TASK with assignedDate===today — a
+    // same-day assignment already fired its own immediate email via the
+    // assignment-notification path (api/ops-sync.js's
+    // fireOpsTaskAssignmentNotifications()/fireAssignmentNotifications()),
+    // so repeating it in today's digest would be a real duplicate. Services
+    // have no equivalent "when was this assigned" field to apply the same
+    // check to — flagged in CLAUDE.md rather than guessed at with a proxy.
+    try {
+      const { data: clientRowsForDigest, error: clientDigestErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
+      if (clientDigestErr) {
+        warnings.push(`clients (focus digest): ${clientDigestErr.message}`);
+      } else {
+        const today = new Date().toISOString().slice(0, 10);
+        const weekOutDate = new Date(); weekOutDate.setDate(weekOutDate.getDate() + 7);
+        const weekOut = weekOutDate.toISOString().slice(0, 10);
+        const isDueSoon = (due) => !!due && due >= today && due <= weekOut;
+
+        const { users: directoryUsers, admins: directoryAdmins } = await loadDirectory(supabase);
+        const isActivePerson = (p) => p && p.status !== 'inactive';
+
+        const focus = new Map(); // personId -> { kind, overdue: [], dueSoon: [], inProgress: [] }
+        const bucketFor = (id, kind) => {
+          if (!focus.has(id)) focus.set(id, { kind, overdue: [], dueSoon: [], inProgress: [] });
+          return focus.get(id);
+        };
+
+        // Tasks — independently re-queries ops_tasks (never reuses the
+        // `tasks` array from the task-attention block above, which is
+        // scoped to that block's own try/catch and unavailable here — same
+        // "each block loads its own data" convention as the client query
+        // above).
+        const { data: taskRowsForDigest, error: taskDigestErr } = await supabase.from('ops_tasks').select('id, data');
+        if (taskDigestErr) warnings.push(`tasks (focus digest): ${taskDigestErr.message}`);
+        const tasksForDigest = (taskRowsForDigest || []).map(r => ({ id: r.id, ...r.data }));
+        tasksForDigest.forEach(t => {
+          if (!t.assigneeId || t.status === 'Done' || t.mergedIntoId) return;
+          if (t.assignedDate === today) return; // just assigned today -> already emailed
+          const kind = directoryUsers.find(u => u.id === t.assigneeId) ? 'user' : 'admin';
+          const person = personOf(t.assigneeId, kind, { users: directoryUsers, admins: directoryAdmins });
+          if (!isActivePerson(person)) return;
+          const b = bucketFor(t.assigneeId, kind);
+          const label = t.subject || 'Untitled task';
+          if (taskIsOverdue(t, today)) b.overdue.push(`${label} — due ${t.dueDate}`);
+          else if (isDueSoon(t.dueDate)) b.dueSoon.push(`${label} — due ${t.dueDate}`);
+          if (t.status === 'In progress') b.inProgress.push(label);
+        });
+
+        // Services — active clients + franchise locations, same scan shape
+        // the service-overdue-escalation block above uses, reusing its
+        // isOverdue()/isInactiveService() predicates directly so this can
+        // never disagree with that block on what counts as overdue.
+        (clientRowsForDigest || []).forEach(row => {
+          const client = row.data;
+          if (!client) return;
+          const scanServices = (list, locationName) => {
+            (list || []).forEach(s => {
+              if (!s?.id || !s.assigneeId || isInactiveService(s)) return;
+              const kind = directoryUsers.find(u => u.id === s.assigneeId) ? 'user' : 'admin';
+              const person = personOf(s.assigneeId, kind, { users: directoryUsers, admins: directoryAdmins });
+              if (!isActivePerson(person)) return;
+              const b = bucketFor(s.assigneeId, kind);
+              const label = `${s.name}${locationName ? ' (' + locationName + ')' : ''} — ${client.name}`;
+              if (isOverdue(s, today)) b.overdue.push(`${label} — due ${s.due}`);
+              else if (!isDoneThisCycle(s, today) && isDueSoon(s.due)) b.dueSoon.push(`${label} — due ${s.due}`);
+              if (s.workStatus === 'in_progress') b.inProgress.push(label);
+            });
+          };
+          scanServices(client.services, null);
+          (client.locations || []).forEach(loc => scanServices(loc.services, loc.name));
+        });
+
+        const focusRows = [];
+        focus.forEach((b, personId) => {
+          if (!b.overdue.length && !b.dueSoon.length && !b.inProgress.length) return; // empty list -> skip entirely, no email
+          const person = personOf(personId, b.kind, { users: directoryUsers, admins: directoryAdmins });
+          if (!person || !person.email) return;
+          const sections = [];
+          if (b.overdue.length) sections.push(`Overdue (${b.overdue.length}):\n${b.overdue.map(x => `• ${x}`).join('\n')}`);
+          if (b.dueSoon.length) sections.push(`Due soon (${b.dueSoon.length}):\n${b.dueSoon.map(x => `• ${x}`).join('\n')}`);
+          if (b.inProgress.length) sections.push(`In progress (${b.inProgress.length}):\n${b.inProgress.map(x => `• ${x}`).join('\n')}`);
+          focusRows.push({
+            type: 'focusDigest', recipientId: personId, recipientKind: b.kind,
+            recipientName: person.name || '', recipientEmail: person.email,
+            title: 'Your focus today',
+            body: sections.join('\n\n'),
+            link: '', context: {},
+          });
+        });
+        summary.focusDigestSent = focusRows.length;
+        // insertNotifications() batches its own outgoing email per
+        // recipient (see its own header comment) — one row per person here
+        // means exactly one email per person, never per-item.
+        await insertNotifications(supabase, focusRows, warnings);
+      }
+    } catch (err) {
+      await logError({ endpoint: 'cron-overdue-check:focusDigest', error: err });
+      warnings.push(`focusDigest: ${err.message}`);
+    }
+
     // Daily backup snapshot — see the header comment above. Runs every
     // invocation, independent of the overdue-notifications branch above, so
     // a disabled overdue toggle (or an overdue-side warning) never silently

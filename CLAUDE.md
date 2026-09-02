@@ -5523,6 +5523,92 @@ there was nothing to fix. Docs-only entry per rule #10 (recording a
 completed investigation, not a code change) — no preview needed, since
 there is no diff to preview.
 
+**Daily "your focus today" digest email (2026-09-02).**
+`api/cron-overdue-check.js` only — no new `api/*.js` file (still 11).
+A new, fourth independent try/catch block in this file's own established
+"each block owns its own query, never reuses a sibling block's in-scope
+variables" convention (same pattern the pre-existing Task Needs Attention
+block already follows relative to the service-overdue-escalation block
+above it): once per invocation, for every ACTIVE user/admin
+(`status !== 'inactive'`, the same default-active convention
+`api/ops-sync.js`/`api/ops-auth.js` already use), gathers their own
+overdue / due-soon (today through +7 days) / in-progress work across both
+`ops_tasks` and `ops_clients` services (including franchise
+`locations[].services[]`), and sends them exactly ONE `focusDigest`
+notification — which, via `insertNotifications()`'s existing per-recipient
+email batching, means exactly one email — titled "Your focus today"; skips
+anyone with a genuinely empty list, and skips a person with no email on
+file (no crash). Reuses `isOverdue()`/`isInactiveService()`/
+`isDoneThisCycle()`/`taskIsOverdue()`/`taskIsDueToday()` — all already
+defined at the top of this file — rather than reimplementing due-date
+logic a third time. A `Done` task, a task soft-merged away via
+`mergedIntoId` (2026-08-26's duplicate-merge feature), and a cancelled/
+archived service are all excluded, matching how every other view in this
+codebase already treats those states. Runs unconditionally, same as the
+Task Needs Attention block — not gated behind any settings toggle (there's
+no dedicated toggle for it; adding one wasn't asked for).
+
+**Anti-duplication, per the task's own explicit requirement:** a task
+whose `assignedDate === today` is excluded even if it would otherwise
+qualify (e.g. assigned today with a due date already in the past) — a
+same-day assignment already fired its own immediate email via
+`api/ops-sync.js`'s `fireOpsTaskAssignmentNotifications()`/
+`fireAssignmentNotifications()`, so repeating it here would be a real
+duplicate. **Flagged, not solved for services:** `ops_clients` services
+have no equivalent "when was this assigned" field to apply the same check
+to — a service assigned today with an already-past due date (a real, if
+unusual, data shape) could appear in day-one's digest with no way to
+distinguish it from a stale, previously-known overdue item. No proxy
+signal was invented for this (rule #7) — flagged here rather than guessed
+at.
+
+**Flagged, not resolved — an acknowledged overlap with an existing,
+untouched feature:** the pre-existing `taskReminder` self-reminder
+(Task Needs Attention block, 2026-08-20) already emails a person their own
+overdue+due-today TASK counts every single cron run, unconditionally. This
+new digest was not merged into that one, and that one wasn't removed or
+gated — per this task's own scope ("extend... do not re-list brand-new
+assignments," nothing about consolidating existing reminders), so a person
+with qualifying tasks can now receive TWO emails on the same morning: the
+older, narrower count-only `taskReminder` and the new, fuller
+`focusDigest` (tasks + services, with item names, plus due-soon/in-progress
+buckets `taskReminder` never had). Left as two separate, both-firing
+features rather than silently consolidating a working, existing feature
+that wasn't asked to change — worth a follow-up decision (retire
+`taskReminder` now that this digest supersedes it, or leave both) if the
+overlap turns out to be unwanted in practice.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `handler` (no live DB access, rule #11;
+`lib/resendClient.js` mocked to capture outgoing sends rather than hitting
+Resend) — 30/30: a person with a real overdue task, an overdue service, a
+due-soon service, and an in-progress task gets exactly one `focusDigest`
+notification whose body correctly lists all four and excludes a cancelled
+service, a service due beyond the 7-day window, a task assigned that same
+day (the anti-duplication case), a `Done` task, and a merged-away
+duplicate task; a person with a genuinely empty qualifying list gets no
+notification and no email; an inactive person is excluded even with
+qualifying items; a person with no email on file is skipped without
+crashing; exactly one email (not one per item) is sent, with no `from`/
+`reply_to` override in the outgoing call (confirming `lib/resendClient.js`
+handles both via its own env/config, untouched by this change); and the
+pre-existing service-overdue-escalation block, the Task Needs Attention
+digest/reminder block, and the daily backup-snapshot block all still run
+and produce their own correct, unaffected output in the same invocation
+(regression check). `node --check` passed; `ls api/*.js | wc -l` still 11
+(no new file). One pre-existing, already-failing check in an older
+scratchpad regression file (`test_cron_overdue_backup.mjs`'s "notification
+inserted" assertion, which predates the Task Needs Attention block and
+never accounted for its own unconditional per-run digest row) was
+confirmed to fail identically against unmodified `main` via `git stash` —
+unrelated to this change, out of scope here.
+
+Per rule #10, this touches `api/` (a data-triggering scheduled job, even
+though it's read-mostly/notification-only) — held for the user's own
+click-through on the Vercel preview + a real Resend send before being
+considered fully done, same caveat as every other server-side feature in
+this session verified without live DB/API access.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
