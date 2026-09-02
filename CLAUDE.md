@@ -5960,6 +5960,83 @@ badge) — the older calendar suite's own 8-team-clone seed data still
 collapses correctly under the new subject-only grouping, confirming this
 is a superset of the old behavior, not a narrower replacement.
 
+**Task Assignments: "Reported" sub-tab (2026-09-02).** `index.html` only,
+display/navigation only — no new write behavior, no new `api/*.js` file.
+
+**Two real ambiguities investigated and confirmed with Sarah before
+building, not guessed (rule #7):**
+1. **Data scope.** The only "submitted for review" concept that actually
+   exists in this codebase is on client SERVICES
+   (`svc.reviewSubmittedAt`/`reviewSubmittedBy`/`reviewSubmittedByName`,
+   the "My Work redesign follow-on" feature) — `ops_tasks` has no
+   equivalent field at all. A DIFFERENT, unrelated `ops_tasks` flag,
+   `reportedMisassigned` (an assignee saying "I don't think this task is
+   mine," the 2026-09-01 Report-task-button feature), happens to share the
+   word "reported" with this sub-tab's own name. Confirmed: **include
+   both** — both are "something a team member flagged for admin
+   attention," and both already had working click-through plumbing from
+   the same-day notifications fix (`_routeAdminNotifClick()`), so
+   combining them cost nothing extra to build correctly.
+2. **Approve/Return.** Neither field has ever had an approve/dismiss
+   action anywhere in this codebase — `reviewSubmittedAt` only ever clears
+   automatically at the next Done cycle (`client.html`'s own
+   `markServiceDone()`); `reportedMisassigned` never clears at all today.
+   Building real Approve/Return buttons would have meant a brand-new write
+   action reusing existing fields (still no new API endpoint, but a real
+   behavior change, not a display tweak). Confirmed: **list +
+   click-through only** — the sub-tab lists items and opens each one's
+   EXISTING editable view; whatever an admin decides ("approve" it by
+   doing nothing further, or "return" it by changing status/reassigning/
+   adding a note) happens through controls that already exist there. This
+   keeps the whole feature genuinely display-only.
+
+**Built:** `_taReportedItems()` merges two sources into one newest-first
+list: `_taTasks()` filtered to `reportedMisassigned && !mergedIntoId`
+(the soft-merged-away-duplicate exclusion every other task view already
+applies), and active clients' services (top-level + franchise
+`locations[]`) with `reviewSubmittedAt` set — walking `_getClientDB()`
+directly rather than reusing `_activeServicesForAssessment()`, since that
+shared helper returns bare service objects with no client name attached
+(the same gap `renderMyRoadmapAdmin()` already had to work around the
+same way, rather than changing that helper's return shape for its other
+callers). Table columns: Type, Submitter, Item, Client, Date. Click-through
+(`_taOpenReportedItem()`) reuses the exact two navigation paths
+`_routeAdminNotifClick()` already established the same day: a reported
+task switches to the Assigned Tasks sub-tab and opens the real
+`openTaDetailPanel()`; a submitted service opens the Tracker via
+`openAdminTrackerToClient()` at the right client+service — genuine
+plumbing reuse, not a new pattern. Rows are looked up by index from a
+small render-time cache (`_taReportedItemsCache`) rather than threading
+each item's fields through the `onclick` attribute as a JSON blob — avoids
+attribute-escaping edge cases for a submitter name or subject containing a
+quote, and matches how every other row in this file passes just an id/
+index through `onclick`. Wired into the existing sub-tab bar (Add/Import,
+Assigned Tasks, By Person, Needs Attention, now **Reported**) via the same
+`setTaSubtab()`/`.btn-toggle-active` convention, and refreshes on the
+existing tasks-array pull-refresh hook in `cloudPullAll()` when the tab is
+already open (same limitation `renderTaNeedsAttention()`'s own hook
+already has — a client-only change won't live-refresh an open Reported
+tab until the next tab-switch or full pull, an accepted pre-existing
+pattern, not a new gap introduced here).
+
+Verified with a Node script against the real, byte-identical
+`_taReportedItems()`/`_taOpenReportedItem()` (11/11): both sources merge
+and sort newest-first; a merged-away duplicate task, an unsubmitted
+service, and an inactive client's service are all correctly excluded; a
+franchise-location service's item label includes the location name; and
+the click-through routes a task to the real detail panel (never a
+client-services id passed to `openTaDetailPanel()`) and a service to the
+correct Tracker client+service. A Playwright run against the real UI
+(13/13): the sub-tab button and content toggle correctly; exactly the
+real reported task + submitted service render (the unsubmitted service
+never appears); every column shows real data (submitter, subject/service
+name, client); clicking the task row opens the genuine editable detail
+panel for the right task; clicking the service row opens the Tracker at
+the right client+service and switches off the Task Assignments tab.
+Every pre-existing Task Assignments Playwright suite from the same
+session re-run clean (12/12 Reply status removal, 16/16 notifications,
+13/13 self-assigned badge, 11/11 calendar rebuild) — no regressions.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
