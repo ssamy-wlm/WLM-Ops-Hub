@@ -5609,6 +5609,95 @@ click-through on the Vercel preview + a real Resend send before being
 considered fully done, same caveat as every other server-side feature in
 this session verified without live DB/API access.
 
+**Task Assignments Week/Month calendar clutter fix (2026-09-02).**
+`index.html` only, display-only — no data/sync/permission logic touched.
+Two changes to `_renderTaCalendar()` (Month) and `_renderTaWeek()`, both
+now funneled through new shared helpers so the two views can never drift
+apart on this behavior:
+
+1. **Team-task clone collapsing** — `_taGroupDayTasks()` groups a day's
+   tasks by exact subject text, but ONLY among tasks where
+   `assigneeIds.length > 1` (the existing "whole team" marker
+   `_taBuildEveryoneClones()`/the parser's own multi-name co-assign already
+   stamp on every clone — same predicate the "Whole team" pill elsewhere in
+   this file already uses). A genuine team-wide task like "Log daily tasks
+   each shift" assigned to 8 people no longer repeats 8 times in one cell —
+   it collapses to one row with an "×8" count, clicking through to one
+   representative clone's detail panel. Two single-assignee tasks that
+   merely happen to share subject text are never merged (no `assigneeIds`
+   at all, so they never enter the grouping in the first place) — the
+   `assigneeIds.length>1` gate is what makes this safe, not the subject
+   match alone.
+2. **Row cap with a REAL "+N more" link** — `TA_CAL_ROW_CAP` (4), applied
+   after the clone-collapsing above, so a normal day rarely even reaches
+   it. This is a deliberate reversal of the 2026-08-19 "Task Assignments:
+   quick-filter/view button resize + calendar completeness" decision,
+   which removed a per-day cap specifically because its own "+N more" was
+   a dead end with nothing to click — that reasoning still holds, so this
+   time the "+N more" (`_taOpenCalDay()`) is a genuine link: it sets
+   `_taCalDate` to that exact date (parsed from the plain `YYYY-MM-DD`
+   string as a LOCAL date via y/m/d integers, never `new Date(dateStr)` —
+   the same UTC-parse bug class already fixed once in this codebase's
+   time-off day-count entry) and calls the real `setTaView('day')`, landing
+   on Day view for that date where every task, capped or not, always
+   renders (Day view was never capped and still isn't).
+
+Verified with a Node script against the real, byte-identical
+`_taGroupDayTasks()`/`_taCalCellRowsHtml()`/`_taOpenCalDay()` (extracted
+directly from `index.html`, not reimplemented — 14/14: 8 team clones
+collapse to 1 row with `count:8`, a real single task and two
+coincidentally-same-subject-but-not-team tasks stay separate, the cap
+triggers a "+N more" with the correct count and the correct date string,
+no "+N more" when under the cap or when clone-collapsing alone brings a
+busy day under it, and the date parses as a genuine local date with no
+off-by-one) and a real Playwright run against the live `index.html` UI
+(14/14, mocked `/api/ops-state` seeding 8 team clones + 6 singles on
+today's date): both Week and Month cells for today show ≤4 rows including
+the "×8" collapsed row and a "+N more" link, the cell is confirmed
+genuinely visible via real bounding-box geometry (not just DOM presence —
+the false-positive class this codebase's own verification standard calls
+out), clicking "+N more" switches to Day view and shows all 14 real tasks
+uncapped, and clicking an individual row opens the real task detail panel.
+
+**Removed the "Reply status" filter/field from Task Assignments
+(2026-09-02).** `index.html` only, display-only — `user.html` was checked
+and never had an equivalent (this field only ever existed on the parser's
+`parsed-email`-sourced tasks, admin-side only). Removed: the
+`#taFilterReply` filter-row input and its `reply` filter clause in
+`_taTasksMatchingOtherFilters()`; the "Reply status" field
+(`#tem-reply-status`) from the edit modal's "From parsed email" section
+(collapsed that section's grid back to a single column now that only
+"Email received" remains); and the "Reply status" row from the task
+detail panel. The underlying `replyStatus` data field itself is untouched
+on existing tasks — nothing writes an empty value over it.
+
+**Found and fixed while removing the edit-modal field, not a separate
+bug:** `saveTaskEdit()` built its outgoing task object with
+`replyStatus: document.getElementById('tem-reply-status').value` — simply
+deleting the `<input>` without also fixing this line would have made
+`getElementById()` return `null` and `.value` throw, crashing Save for
+EVERY task edit (not just parsed-email ones) the moment this shipped.
+Fixed by preserving whatever the task already had
+(`replyStatus: existing.replyStatus || ''`) instead of reading a removed
+input — matches the "leave the data field intact, just stop editing it"
+instruction and avoids the crash. The staging-review path's own
+`replyStatus: ''` (a plain default on a brand-new parsed task object, not
+a DOM read) needed no change — it never touches an existing task's data.
+
+Verified with a real Playwright run against the live `index.html` UI
+(12/12): `#taFilterReply`/`#tem-reply-status` are both absent from the
+DOM and no "Reply status" text remains in the filter row, edit modal, or
+detail panel; "Email received" is still shown in both the modal and the
+detail panel (only Reply status was removed); saving a parsed-email task
+with an existing `replyStatus:'4h'` untouched does NOT throw and the
+sync push confirms `replyStatus` is still `'4h'`, not blanked (the exact
+crash/data-loss case above, caught by testing the real save path rather
+than just checking the field is gone); and the search filter still works
+after removing the `reply` filter variable (regression check). `node
+--check`-equivalent syntax check (`new Function()` per extracted
+`<script>` block) and a comment-stripped div-balance check both confirm
+clean/unchanged-delta against `main`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

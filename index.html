@@ -1570,7 +1570,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
             <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
             <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
-            <input type="text" id="taFilterReply" placeholder="Reply status…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:110px;">
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
             <button class="btn btn-sm btn-outline" id="taFilterUnassignedBtn" onclick="toggleTaQuickFilter('unassigned')">Unassigned</button>
@@ -2813,14 +2812,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <input class="form-input" id="tem-tags" placeholder="e.g. urgent, social">
       <div id="tem-email-fields" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
         <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">From parsed email</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr;gap:12px;">
           <div>
             <label class="form-label">Email received</label>
             <input class="form-input" type="date" id="tem-email-received">
-          </div>
-          <div>
-            <label class="form-label">Reply status</label>
-            <input class="form-input" id="tem-reply-status" placeholder="e.g. 4h, 1d, —">
           </div>
         </div>
       </div>
@@ -9025,7 +9020,6 @@ function _taTasksMatchingOtherFilters(){
   // Week/Month) to exactly one person's tasks.
   const assignee = _taPersonViewId || (document.getElementById('taFilterAssignee')?.value||'');
   const client = document.getElementById('taFilterClient')?.value||'';
-  const reply = (document.getElementById('taFilterReply')?.value||'').trim().toLowerCase();
   return _taTasks().filter(t=>{
     // Soft-merged-away duplicate (2026-08-26) — excluded from every view
     // fed by this single funnel (List/Day/Week/Month/By-Person-drill-in)
@@ -9034,7 +9028,6 @@ function _taTasksMatchingOtherFilters(){
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
     if(assignee && t.assigneeId!==assignee) return false;
     if(client && t.clientId!==client) return false;
-    if(reply && !(t.replyStatus||'').toLowerCase().includes(reply)) return false;
     if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
     if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
     if(_taQuickFilter==='unassigned' && t.assigneeId) return false;
@@ -9263,6 +9256,65 @@ function _taShiftPeriod(delta){
 function _taDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 function _taStartOfWeek(d){ const s = new Date(d.getFullYear(), d.getMonth(), d.getDate()-d.getDay()); return s; }
 
+// Groups one day's tasks for Week/Month calendar display (2026-09-02):
+// identical-subject clones from a "whole team" assignment — assigneeIds
+// carrying more than one id, the exact marker _taBuildEveryoneClones()/the
+// parser's own multi-name co-assign already stamp on every clone (see the
+// "Whole team" pill elsewhere in this file, same predicate) — collapse into
+// ONE row with an "×N" count instead of repeating once per person. Grouped
+// by exact subject text among ONLY the wholeTeam-flagged tasks, so two
+// unrelated single-assignee tasks that happen to share wording are never
+// merged. Order is first-occurrence, so the row order still roughly
+// follows the day's original task order.
+function _taGroupDayTasks(dayTasks){
+  const rows = [];
+  const bySubject = new Map();
+  dayTasks.forEach(t=>{
+    if((t.assigneeIds||[]).length > 1){
+      const key = t.subject||'';
+      let g = bySubject.get(key);
+      if(!g){ g = {type:'group', task:t, count:0}; bySubject.set(key, g); rows.push(g); }
+      g.count++;
+    } else {
+      rows.push({type:'single', task:t});
+    }
+  });
+  return rows;
+}
+// Row cap per cell, applied AFTER collapsing team clones above — a normal
+// day (not a whole-team broadcast) rarely even reaches this. Unlike the
+// pre-2026-09-02 design (see the removed comment this replaced), the "+N
+// more" here is a REAL link — it switches straight to Day view for that
+// exact date via _taOpenCalDay() below — never a dead end that hides tasks
+// with no way to reach them, which is exactly why a cap was deliberately
+// avoided here before.
+const TA_CAL_ROW_CAP = 4;
+function _taCalRowHtml(r, style){
+  const t = r.task;
+  const overdue = _taIsOverdue(t);
+  const label = r.type==='group' ? `${escHtmlAdmin(t.subject||'')} ×${r.count}` : escHtmlAdmin(t.subject||'');
+  return `<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:${style.padding};margin-bottom:${style.marginBottom};border-radius:3px;background:${overdue?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${overdue?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>`;
+}
+function _taCalCellRowsHtml(dayTasks, dateStr, style){
+  const rows = _taGroupDayTasks(dayTasks);
+  const visible = rows.slice(0, TA_CAL_ROW_CAP);
+  const hidden = rows.length - visible.length;
+  let html = visible.map(r=>_taCalRowHtml(r, style)).join('');
+  if(hidden>0){
+    html += `<div onclick="event.stopPropagation();_taOpenCalDay('${dateStr}')" style="cursor:pointer;font-size:10px;font-weight:700;padding:${style.padding};color:var(--text-light);">+${hidden} more</div>`;
+  }
+  return html;
+}
+// Parses the plain YYYY-MM-DD string directly into a LOCAL Date — never
+// `new Date(dateStr)`, which parses as UTC midnight and can misread the
+// intended calendar day in a negative-UTC-offset timezone (the exact bug
+// class already fixed once in this codebase's time-off day-count entry).
+function _taOpenCalDay(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  _taCalDate = new Date(y, m-1, d);
+  setTaView('day');
+}
+
 function _renderTaCalendar(tasks){
   const grid = document.getElementById('taCalGrid');
   const label = document.getElementById('taCalLabel');
@@ -9281,13 +9333,15 @@ function _renderTaCalendar(tasks){
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
-    // No slice/cap here on purpose — a truncated "+N more" that goes
-    // nowhere is exactly how a day's tasks went invisible before. The cell
-    // just grows to fit everything due that day instead of hiding any of
-    // it; min-height keeps empty days from looking cramped.
+    // Team-task clones collapse and the row list caps at TA_CAL_ROW_CAP —
+    // see _taGroupDayTasks()/_taCalCellRowsHtml() above for why this is
+    // safe now (a real "+N more" link into Day view) where it wasn't
+    // before (a dead-end truncation). min-height keeps empty days from
+    // looking cramped; a day with more rows than the cap still shows the
+    // "+N more" link rather than growing unbounded again.
     html += `<div style="min-height:70px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(46,93,166,.06);':''}">
       <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
-      ${dayTasks.map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'2px 4px', marginBottom:'2px'})}
     </div>`;
   }
   grid.innerHTML = html;
@@ -9340,7 +9394,7 @@ function _renderTaWeek(tasks){
     const isToday = dateStr === _taToday();
     html += `<div style="min-height:140px;border:1px solid var(--border);border-radius:6px;padding:6px;${isToday?'background:rgba(46,93,166,.06);':''}">
       <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}</div>
-      ${dayTasks.map(t=>`<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:3px 5px;margin-bottom:3px;border-radius:3px;background:${_taIsOverdue(t)?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${_taIsOverdue(t)?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlAdmin(t.subject||'')}</div>`).join('')}
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'3px 5px', marginBottom:'3px'})}
     </div>`;
   }
   grid.innerHTML = html;
@@ -9366,7 +9420,6 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
       ${t.source==='parsed-email' ? `
       <div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>
-      <div style="color:var(--text-light);">Reply status</div><div>${escHtmlAdmin(t.replyStatus||'—')}</div>
       ` : ''}
     </div>
     ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
@@ -9410,7 +9463,6 @@ function openTaskEditModal(id){
   document.getElementById('tem-notes').value = t.notes || '';
   document.getElementById('tem-tags').value = (t.tags||[]).join(', ');
   document.getElementById('tem-email-received').value = t.emailReceivedDate || '';
-  document.getElementById('tem-reply-status').value = t.replyStatus || '';
   document.getElementById('tem-email-fields').style.display = t.source==='parsed-email' ? 'block' : 'none';
   // Nothing to delete server-side for a brand-new, unsaved task.
   document.getElementById('tem-delete-btn').style.display = isNew ? 'none' : '';
@@ -9468,7 +9520,11 @@ function saveTaskEdit(){
     notes: document.getElementById('tem-notes').value,
     tags: document.getElementById('tem-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
     emailReceivedDate: document.getElementById('tem-email-received').value,
-    replyStatus: document.getElementById('tem-reply-status').value,
+    // No UI field for this any more (Reply status removed from the edit
+    // modal/filter/detail panel, 2026-09-02) — preserved from whatever the
+    // task already had rather than read from a removed input, so existing
+    // data is never blanked by a resave.
+    replyStatus: existing.replyStatus || '',
     source: existing.source || 'manual',
     origin: existing.origin || 'admin',
     // Never blank, never reset by re-saving an existing task — an edit
