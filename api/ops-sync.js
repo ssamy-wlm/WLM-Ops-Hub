@@ -1706,7 +1706,19 @@ export default async function handler(req, res) {
             row = { ...inc, assignedById: inc.assignedById || session.id, assignedDate, dueDateLocked: false };
           } else {
             const assigneeId = creatableAssigneeIds.has(inc.assigneeId) ? inc.assigneeId : session.id;
-            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false };
+            // Self-assigned = auto-daily (2026-09-02): a member putting a
+            // task on their OWN plate always lands due today — never
+            // long-term — so it always shows up in today's My Tasks/
+            // Roadmap bucket, enforced here rather than trusted from the
+            // client. Deliberately scoped to true self-assign only
+            // (assigneeId === the caller) — this same branch also handles
+            // a manager-tier member (e.g. Sherine) creating a task for a
+            // direct report (creatableAssigneeIds includes reports too,
+            // see the comment above), which is managing someone ELSE's
+            // work, not "my own plate" — that case keeps whatever dueDate
+            // was actually submitted, unaffected by this change.
+            const dueDate = assigneeId === session.id ? todayIsoUtc() : inc.dueDate;
+            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false, dueDate };
           }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }

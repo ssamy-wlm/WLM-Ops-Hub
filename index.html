@@ -1214,6 +1214,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-xs btn-outline" onclick="markAllAdminNotifsRead()">Mark all read</button>
           </div>
           <div id="admin-notif-list" style="padding:6px;"></div>
+          <div style="padding:8px 14px;border-top:1px solid var(--border);text-align:center;">
+            <a href="javascript:void(0)" onclick="openNotifViewAll()" style="font-size:12px;font-weight:600;color:var(--blue,#2D6BB6);">View all notifications →</a>
+          </div>
         </div>
         <div class="admin-avatar" id="admin-sidebar-avatar"></div>
         <!-- Dual-mode switcher (Step 2) — hidden unless this account also carries
@@ -1608,7 +1611,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <div id="taWeekLabel" style="font-weight:700;font-size:14px;"></div>
                 <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
               </div>
-              <div id="taWeekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+              <div id="taWeekLegend"></div>
+              <div id="taWeekGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;width:100%;overflow-x:hidden;"></div>
             </div>
           </div>
         </div>
@@ -1621,7 +1625,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <div id="taCalLabel" style="font-weight:700;font-size:14px;"></div>
                 <button class="btn btn-sm btn-outline" onclick="_taShiftPeriod(1)">›</button>
               </div>
-              <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;"></div>
+              <div id="taCalLegend"></div>
+              <div id="taCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;width:100%;overflow-x:hidden;"></div>
               <div id="taCalUndated" style="display:none;margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text-mid);cursor:pointer;" onclick="setTaView('list')"></div>
             </div>
           </div>
@@ -2824,6 +2829,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-outline" onclick="closeModal('taskEditModal')">Cancel</button>
         <button class="btn btn-outline" id="tem-delete-btn" style="margin-left:auto;color:var(--red,#c94a4a);border-color:var(--red,#c94a4a);" onclick="deleteTaskFromModal()">🗑 Delete</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- "View all notifications" (2026-09-02) — every notification, not just
+     the bell dropdown's most-recent-20, with type + read/unread filters.
+     See openNotifViewAll()/renderNotifViewAll() above. -->
+<div id="notifViewAllModal" class="modal-overlay">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div><div class="modal-title">All Notifications</div></div>
+      <button class="modal-close" onclick="closeModal('notifViewAllModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <select id="notifViewAllTypeFilter" class="form-input" style="width:auto;font-size:12px;padding:6px 8px;" onchange="setNotifViewAllTypeFilter(this.value)"></select>
+        <button class="btn btn-sm btn-outline btn-toggle-active" id="notifViewAllReadBtn-all" onclick="setNotifViewAllReadFilter('')">All</button>
+        <button class="btn btn-sm btn-outline" id="notifViewAllReadBtn-unread" onclick="setNotifViewAllReadFilter('unread')">Unread</button>
+        <button class="btn btn-sm btn-outline" id="notifViewAllReadBtn-read" onclick="setNotifViewAllReadFilter('read')">Read</button>
+        <button class="btn btn-sm btn-outline" style="margin-left:auto;" onclick="markAllAdminNotifsRead()">Mark all read</button>
+      </div>
+      <div id="notifViewAllCount" style="font-size:11px;color:var(--text-light);margin-bottom:6px;"></div>
+      <div id="notifViewAllList" style="max-height:420px;overflow-y:auto;"></div>
     </div>
   </div>
 </div>
@@ -5983,6 +6011,14 @@ window.switchAdminTab = function(el, tab){
    stopped." Combines harmlessly with .ta-row-new (a task can be both
    newly assigned AND blocked). */
 .ta-row-blocked{border-color:rgba(224,85,85,.35)!important;background:rgba(224,85,85,.05)!important;}
+/* Self-assigned task accent (2026-09-02) — a task where the same person is
+   both assigneeId AND assignedById (a member put it on their own plate,
+   never a manager-tier member assigning to a direct report through this
+   same code path — see api/ops-sync.js's own comment on that distinction)
+   gets this blue treatment, distinct from an admin/manager-assigned task's
+   plain card. Combines harmlessly with .ta-row-new/.ta-row-blocked, same
+   "a task can be more than one of these" convention as those two. */
+.ta-row-self{border-color:var(--blue,#2D6BB6)!important;background:rgba(45,107,182,.05)!important;}
 /* Task card list (2026-08-28) — replaces the old <table> row layout in
    both Task Assignments (index.html, here) and My Tasks (user.html, its
    own hand-duplicated copy per the zero-shared-code rule). */
@@ -8046,7 +8082,26 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 // triggering action happens; this file only ever pulls them (cloudPullAll
 // above) and pushes back a `read` toggle — never creates or infers one from
 // local state.
-const NOTIF_TYPE_ICON_ADMIN = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤' };
+// Every notification type the server can actually create (api/ops-sync.js
+// + api/cron-overdue-check.js — grepped for every `type: '...'` literal in
+// insertNotifications() call sites, not just the original 5 this map used
+// to have), so a type added later doesn't silently fall back to the
+// generic 🔔 just because nobody remembered to list it here too.
+const NOTIF_TYPE_ICON_ADMIN = {
+  assignment:'📌', taskAssignment:'📌', timeOff:'🗓️', message:'💬',
+  serviceUpdate:'📝', serviceDone:'✅', submittedForReview:'📤',
+  taskReported:'🚩', overdue:'⏰', attentionDigest:'📊', taskReminder:'🔔', focusDigest:'🧭',
+};
+// Human-readable labels for the "View all notifications" type filter
+// (2026-09-02) — kept as its own object rather than derived from the icon
+// map above, so a type missing a filter label is a separate, independently
+// visible gap from one missing an icon.
+const NOTIF_TYPE_LABELS_ADMIN = {
+  assignment:'Assignment', taskAssignment:'Task assigned', serviceUpdate:'Service update',
+  serviceDone:'Done', submittedForReview:'Submitted for review', taskReported:'Task reported',
+  overdue:'Overdue', timeOff:'Time off', message:'Message',
+  attentionDigest:'Daily task digest', taskReminder:'Task reminder', focusDigest:'Daily focus digest',
+};
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
   const dot = document.getElementById('admin-notif-dot');
@@ -8066,41 +8121,126 @@ function toggleAdminNotifPanel(){
   p.style.display = opening ? 'block' : 'none';
   if(opening) renderAdminNotifPanel();
 }
-function renderAdminNotifPanel(){
-  const el = document.getElementById('admin-notif-list'); if(!el) return;
-  const notifs = (dbGet(DB_KEYS.notifications)||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
-  if(!notifs.length){ el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:12px;">No notifications</div>'; return; }
-  el.innerHTML = notifs.map(n=>`
+function _notifRowHtml(n){
+  return `
     <div onclick="readAdminNotif('${n.id}')" style="display:flex;gap:10px;padding:10px;border-radius:8px;cursor:pointer;${n.read?'':'background:rgba(45,107,182,.06);'}">
       <div style="font-size:16px;flex-shrink:0;">${NOTIF_TYPE_ICON_ADMIN[n.type]||'🔔'}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:12px;font-weight:${n.read?600:800};color:var(--text-dark);">${escHtmlAdmin(n.title||'')}</div>
         <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtmlAdmin(n.body||'')}</div>
-        <div style="font-size:10px;color:var(--text-light);margin-top:3px;">${n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}</div>
+        <div style="font-size:10px;color:var(--text-light);margin-top:3px;">${NOTIF_TYPE_LABELS_ADMIN[n.type]||n.type||''} · ${n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+}
+function renderAdminNotifPanel(){
+  const el = document.getElementById('admin-notif-list'); if(!el) return;
+  const notifs = (dbGet(DB_KEYS.notifications)||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
+  if(!notifs.length){ el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:12px;">No notifications</div>'; return; }
+  el.innerHTML = notifs.map(_notifRowHtml).join('');
+}
+// Notification click-through, dispatched by TYPE first, never by field
+// presence alone (2026-09-02). Two different notification types both use a
+// context field called `taskId` for two UNRELATED ids: `taskAssignment`/
+// `taskReported` (the Task Assignments feature, api/ops-sync.js) carry a
+// real ops_tasks row id, directly openable via openTaDetailPanel(). The
+// older `assignment` type's own taskId (see collectTaskAssignmentEvents in
+// api/ops-sync.js) is a client.projects[].tasks[] id from the pre-ops_tasks
+// legacy project-task model — a completely different table, with no
+// relation to ops_tasks at all. Routing "any context.taskId ->
+// openTaDetailPanel" without checking `n.type` first would silently no-op
+// on the legacy kind (openTaDetailPanel's own _taTasks().find() just
+// wouldn't find it) — every prior version of this function's click-through
+// only ever checked context.clientId, which is why a task notification
+// landed on the Tracker (wrong surface, and via the old default-to-first-
+// client bug this whole fix replaces) instead of opening the task at all.
+function _routeAdminNotifClick(n){
+  if(!n) return;
+  const ctx = n.context||{};
+  if((n.type==='taskAssignment' || n.type==='taskReported') && ctx.taskId){
+    document.getElementById('admin-notif-panel').style.display='none';
+    closeModal('notifViewAllModal');
+    const taNavEl = document.querySelector('.admin-nav-item[onclick*="\'taskAssignments\'"]');
+    if(taNavEl) switchAdminTab(taNavEl, 'taskAssignments');
+    openTaDetailPanel(ctx.taskId);
+    return;
+  }
+  if(ctx.clientId){
+    // Service/subitem assignment, service update/done, overdue, submitted
+    // for review — and the legacy `assignment`-type project-task case from
+    // the comment above, which still carries a real clientId even though
+    // its own taskId can't be used the way the two types above use theirs.
+    // Lands on the correct CLIENT every time (Projects tab by default when
+    // there's no serviceId) — never a random/default one. Flagged, not
+    // solved: that legacy case can't also expand/highlight the exact task
+    // row the way client.html's own ?openTask= deep link would, since
+    // collectTaskAssignmentEvents() never recorded a projectId to pass —
+    // only this notification's clientId is used here.
+    document.getElementById('admin-notif-panel').style.display='none';
+    closeModal('notifViewAllModal');
+    openAdminTrackerToClient(ctx.clientId, ctx.serviceId||null);
+    return;
+  }
+  // timeOff/message/attentionDigest/taskReminder/focusDigest carry no
+  // clientId or ops_tasks taskId at all (context is either {requestId}/
+  // {messageId} or, for the three digest/reminder types, empty) — nothing
+  // resolvable to open, so this intentionally does nothing rather than
+  // falling back to any default.
 }
 function readAdminNotif(id){
   const notifs = dbGet(DB_KEYS.notifications)||[];
   const n = notifs.find(x=>x.id===id);
-  if(n && !n.read){ n.read=true; dbSet(DB_KEYS.notifications, notifs); refreshAdminNotifBadge(); renderAdminNotifPanel(); cloudAutoSync(); }
-  // Click-through — reuses the exact same client.html deep-link mechanism
-  // user.html's notification dropdown uses (openTrackerToClient/
-  // openAdminTrackerToClient just being this portal's own copy of the same
-  // iframe-src pattern), resolving by exact serviceId, never by name. A
-  // notification with no resolvable context.clientId (most local/legacy
-  // ones) simply doesn't navigate — never an error.
-  if(n?.context?.clientId){
-    document.getElementById('admin-notif-panel').style.display='none';
-    openAdminTrackerToClient(n.context.clientId, n.context.serviceId||null);
-  }
+  if(n && !n.read){ n.read=true; dbSet(DB_KEYS.notifications, notifs); refreshAdminNotifBadge(); cloudAutoSync(); }
+  renderAdminNotifPanel();
+  if(document.getElementById('notifViewAllModal')?.classList.contains('open')) renderNotifViewAll();
+  _routeAdminNotifClick(n);
 }
 function markAllAdminNotifsRead(){
   const notifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({...n, read:true}));
   dbSet(DB_KEYS.notifications, notifs);
   refreshAdminNotifBadge();
   renderAdminNotifPanel();
+  if(document.getElementById('notifViewAllModal')?.classList.contains('open')) renderNotifViewAll();
   cloudAutoSync();
+}
+
+// ── "View all notifications" (2026-09-02) — every notification, not just
+// the small panel's most-recent-20, with type + read/unread filters. ──
+let _notifViewAllType = '';
+let _notifViewAllReadFilter = '';
+function openNotifViewAll(){
+  document.getElementById('admin-notif-panel').style.display='none';
+  const typeSel = document.getElementById('notifViewAllTypeFilter');
+  if(typeSel && !typeSel.options.length){
+    typeSel.innerHTML = '<option value="">All types</option>' +
+      Object.keys(NOTIF_TYPE_LABELS_ADMIN).map(t=>`<option value="${t}">${NOTIF_TYPE_LABELS_ADMIN[t]}</option>`).join('');
+  }
+  renderNotifViewAll();
+  openModal('notifViewAllModal');
+}
+function setNotifViewAllTypeFilter(v){ _notifViewAllType = v; renderNotifViewAll(); }
+function setNotifViewAllReadFilter(v){
+  _notifViewAllReadFilter = v;
+  ['all','unread','read'].forEach(k=>{
+    const btn = document.getElementById('notifViewAllReadBtn-'+k);
+    if(btn) btn.className = 'btn btn-sm btn-outline'+((v||'all')===k?' btn-toggle-active':'');
+  });
+  renderNotifViewAll();
+}
+function _notifViewAllFiltered(){
+  return (dbGet(DB_KEYS.notifications)||[]).slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).filter(n=>{
+    if(_notifViewAllType && n.type!==_notifViewAllType) return false;
+    if(_notifViewAllReadFilter==='unread' && n.read) return false;
+    if(_notifViewAllReadFilter==='read' && !n.read) return false;
+    return true;
+  });
+}
+function renderNotifViewAll(){
+  const el = document.getElementById('notifViewAllList'); if(!el) return;
+  const notifs = _notifViewAllFiltered();
+  const countEl = document.getElementById('notifViewAllCount');
+  if(countEl) countEl.textContent = `${notifs.length} notification${notifs.length===1?'':'s'}`;
+  if(!notifs.length){ el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-light);font-size:13px;">No notifications match this filter.</div>'; return; }
+  el.innerHTML = notifs.map(_notifRowHtml).join('');
 }
 document.addEventListener('click', (e)=>{
   const panel = document.getElementById('admin-notif-panel');
@@ -9089,8 +9229,20 @@ function _renderTaListTable(tasks){
   body.innerHTML = tasks.map(t=>{
     const isNew = _taIsNew(t);
     const blocked = t.status==='Blocked';
+    // Self-assigned = assignedById === assigneeId, a real field-equality
+    // check, NOT `origin==='self'` alone — that field is also set when a
+    // manager-tier member (e.g. Sherine) creates a task for a direct
+    // report, which is a completely different action from "I put this on
+    // my own plate" and must not get the same blue treatment. See
+    // api/ops-sync.js's matching comment on the write path this mirrors.
+    const selfAssigned = !!t.assignedById && t.assignedById===t.assigneeId;
     const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlAdmin(t.blockReason||'')}">🚧 Blocked</span>` : '';
+    // Distinct from admin/manager-assigned at a glance (2026-09-02) — an
+    // admin viewing anyone's tasks can tell what a person put on their own
+    // plate vs. what was given to them, same badge shown regardless of
+    // whose task this is.
+    const selfBadge = selfAssigned ? ' <span style="font-size:10px;background:rgba(45,107,182,.12);border:1px solid rgba(45,107,182,.35);border-radius:4px;padding:1px 5px;color:var(--blue,#2D6BB6);font-weight:700;">👤 Self-assigned</span>' : '';
     // "Report instead" fallback (2026-08-26, employee duplicate-detection
     // feature) — an employee who isn't sure enough to merge two tasks
     // themselves flags them here instead. Purely a visibility badge; no
@@ -9116,10 +9268,10 @@ function _renderTaListTable(tasks){
         ${roster.map(p=>`<option value="${p.id}" ${p.id===t.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
       </select></span>`;
     }
-    return `<div class="ta-task-card${isNew?' ta-row-new':''}${blocked?' ta-row-blocked':''}" onclick="openTaDetailPanel('${t.id}')">
+    return `<div class="ta-task-card${isNew?' ta-row-new':''}${blocked?' ta-row-blocked':''}${selfAssigned?' ta-row-self':''}" onclick="openTaDetailPanel('${t.id}')">
       <div class="ta-card-top">
         <div>
-          <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
+          <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${selfBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
           ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_taFormatShortDate(t.assignedDate)}</div>`:''}
         </div>
         ${_taDueBadgeHtml(t)}
@@ -9254,52 +9406,123 @@ function _taShiftPeriod(delta){
   renderTaskAssignments();
 }
 function _taDateStr(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function _taStartOfWeek(d){ const s = new Date(d.getFullYear(), d.getMonth(), d.getDate()-d.getDay()); return s; }
+// Monday-start (2026-09-02) — d.getDay() is 0=Sun..6=Sat; shift back to the
+// most recent Monday (Sunday itself shifts back 6 days, everything else
+// shifts back day-1).
+function _taStartOfWeek(d){ const dow=d.getDay(); const diff = dow===0 ? -6 : 1-dow; return new Date(d.getFullYear(), d.getMonth(), d.getDate()+diff); }
 
-// Groups one day's tasks for Week/Month calendar display (2026-09-02):
-// identical-subject clones from a "whole team" assignment — assigneeIds
-// carrying more than one id, the exact marker _taBuildEveryoneClones()/the
-// parser's own multi-name co-assign already stamp on every clone (see the
-// "Whole team" pill elsewhere in this file, same predicate) — collapse into
-// ONE row with an "×N" count instead of repeating once per person. Grouped
-// by exact subject text among ONLY the wholeTeam-flagged tasks, so two
-// unrelated single-assignee tasks that happen to share wording are never
-// merged. Order is first-occurrence, so the row order still roughly
-// follows the day's original task order.
+// Fixed per-person color map for the Week/Month calendars (2026-09-02),
+// matched by NAME (never a hardcoded id — this environment has no live DB
+// access to confirm real ops_users/ops_admins ids, and every other
+// name-based match already in this file, e.g. the task parser's Sarah-
+// alias resolution, follows the same "never guess an id" rule). `match` is
+// checked via a lowercase substring test against the resolved person's
+// full name — 'sarah ibrahim' deliberately requires the FULL two-word
+// match, not bare 'sarah', so this can never also color-match Sarah Samy
+// (the primary admin sentinel, a completely different person who also
+// happens to be named Sarah).
+const TA_PERSON_COLOR_MAP = [
+  { match:'abby', label:'Abby', color:'#8B5CF6' },
+  { match:'jacob', label:'Jacob', color:'#2563EB' },
+  { match:'michael', label:'Michael', color:'#16A34A' },
+  { match:'assmaa', label:'Assmaa', color:'#06B6D4' },
+  { match:'sherine', label:'Sherine', color:'#EC4899' },
+  { match:'rana', label:'Rana', color:'#F97316' },
+  { match:'sarah ibrahim', label:'Sarah Ibrahim', color:'#CA8A04' },
+  { match:'david', label:'David', color:'#64748B' },
+];
+// Deterministic fallback for anyone not in the fixed map above — same
+// hash-off-the-id technique as _taAvatarColor(), but its own small flat-hex
+// palette (not _taAvatarColor's gradients, and deliberately visually
+// distinct from the 8 fixed colors above) so an unmapped person still gets
+// a stable, distinguishable color across renders rather than a repeated
+// default gray.
+const TA_PERSON_FALLBACK_PALETTE = ['#0EA5E9','#84CC16','#F43F5E','#A855F7','#14B8A6','#EAB308'];
+function _taPersonColorFor(assigneeId, roster){
+  const person = assigneeId ? roster.find(p=>p.id===assigneeId) : null;
+  const name = (person?.name || '').toLowerCase();
+  if(name){
+    const fixed = TA_PERSON_COLOR_MAP.find(e=>name.includes(e.match));
+    if(fixed) return fixed.color;
+  }
+  const key = String(assigneeId || 'unassigned');
+  let h=0; for(let i=0;i<key.length;i++) h = (h*31 + key.charCodeAt(i)) >>> 0;
+  return TA_PERSON_FALLBACK_PALETTE[h % TA_PERSON_FALLBACK_PALETTE.length];
+}
+// Legend shown above both the Week and Month grids — the fixed 8-person map
+// plus the overdue-dot key, so the color coding never needs guessing.
+function _taPersonColorLegendHtml(){
+  const chips = TA_PERSON_COLOR_MAP.map(e=>`<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:3px;background:${e.color};display:inline-block;flex-shrink:0;"></span>${escHtmlAdmin(e.label)}</span>`).join('');
+  return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:12px;font-size:11px;color:var(--text-mid);">
+    <span style="font-weight:700;color:var(--text-light);">Who:</span>${chips}
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--red,#c94a4a);display:inline-block;flex-shrink:0;"></span>= overdue</span>
+  </div>`;
+}
+
+// Groups one day's tasks for Week/Month calendar display. Fixed 2026-09-02:
+// the earlier version only collapsed clones carrying assigneeIds.length>1
+// (the "whole team"/Everyone-assignment marker) — but real repeating daily
+// tasks (e.g. "Log daily tasks each shift", independently created once per
+// person, one single-assignee ops_tasks row each) never carry that field at
+// all, so they never collapsed and just repeated once per person instead.
+// Grouping key is exact subject text alone now — every task passed in here
+// already shares the same due date by construction (the caller always
+// pre-buckets by dateStr before calling this), so "same subject + same due
+// date" reduces to just "same subject" at this scope. A group tracks
+// whether ANY of its merged tasks is overdue (not just one representative),
+// so the red dot is never lost by whichever task happened to be first.
 function _taGroupDayTasks(dayTasks){
   const rows = [];
   const bySubject = new Map();
   dayTasks.forEach(t=>{
-    if((t.assigneeIds||[]).length > 1){
-      const key = t.subject||'';
-      let g = bySubject.get(key);
-      if(!g){ g = {type:'group', task:t, count:0}; bySubject.set(key, g); rows.push(g); }
-      g.count++;
-    } else {
-      rows.push({type:'single', task:t});
-    }
+    const key = t.subject||'';
+    let g = bySubject.get(key);
+    if(!g){ g = {type:'single', task:t, count:1, overdue:_taIsOverdue(t)}; bySubject.set(key, g); rows.push(g); return; }
+    if(g.type==='single'){ g.type='group'; }
+    g.count++;
+    if(_taIsOverdue(t)) g.overdue = true;
   });
   return rows;
 }
-// Row cap per cell, applied AFTER collapsing team clones above — a normal
-// day (not a whole-team broadcast) rarely even reaches this. Unlike the
-// pre-2026-09-02 design (see the removed comment this replaced), the "+N
-// more" here is a REAL link — it switches straight to Day view for that
-// exact date via _taOpenCalDay() below — never a dead end that hides tasks
-// with no way to reach them, which is exactly why a cap was deliberately
-// avoided here before.
+// Row cap per cell, applied AFTER collapsing above — a normal day rarely
+// even reaches this. The "+N more" is a REAL link — it switches straight to
+// Day view for that exact date via _taOpenCalDay() below — never a dead end
+// that hides tasks with no way to reach them.
 const TA_CAL_ROW_CAP = 4;
-function _taCalRowHtml(r, style){
+// Chips are colored by the representative task's ASSIGNEE for a real
+// single task, initialed + tinted per _taPersonColorFor() above. A
+// collapsed GROUP (2+ tasks sharing a subject, per _taGroupDayTasks() —
+// now possible across completely different assignees, since the grouping
+// key dropped the assigneeIds/wholeTeam gate) has no single owner to color
+// by, so it deliberately gets a neutral gray "👥" treatment instead of
+// misattributing it to whichever task happened to be first.
+function _taCalRowHtml(r, style, roster){
   const t = r.task;
-  const overdue = _taIsOverdue(t);
-  const label = r.type==='group' ? `${escHtmlAdmin(t.subject||'')} ×${r.count}` : escHtmlAdmin(t.subject||'');
-  return `<div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;font-size:10px;padding:${style.padding};margin-bottom:${style.marginBottom};border-radius:3px;background:${overdue?'rgba(201,74,74,.12)':'rgba(46,93,166,.08)'};color:${overdue?'var(--red,#c94a4a)':'var(--text-dark)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>`;
+  const isGroup = r.type==='group';
+  const countSuffix = isGroup ? ` ×${r.count}` : '';
+  const person = !isGroup ? roster.find(p=>p.id===t.assigneeId) : null;
+  const color = isGroup ? '#94A3B8' : _taPersonColorFor(t.assigneeId, roster);
+  const initials = isGroup ? '👥' : (person ? _taInitials(person.name) : '?');
+  const bg = isGroup ? 'rgba(148,163,184,.14)' : `${color}22`;
+  const dot = r.overdue ? `<span style="width:6px;height:6px;border-radius:50%;background:var(--red,#c94a4a);flex-shrink:0;margin-left:auto;"></span>` : '';
+  // The ×N count is the single most important piece of information on a
+  // collapsed row — it must never be truncated away by a long subject's own
+  // ellipsis. Split into two spans: the subject truncates on its own
+  // (min-width:0/flex:1, ellipsis scoped to just that span), the count
+  // badge is a separate flex-shrink:0 sibling that always stays visible.
+  const countBadge = isGroup ? `<span style="flex-shrink:0;font-weight:800;color:var(--text-mid);">×${r.count}</span>` : '';
+  return `<div onclick="openTaDetailPanel('${t.id}')" title="${escHtmlAdmin((t.subject||'')+countSuffix)}" style="cursor:pointer;display:flex;align-items:center;gap:4px;font-size:10px;padding:${style.padding};margin-bottom:${style.marginBottom};border-radius:3px;background:${bg};min-width:0;">
+    <span style="background:${color};color:#fff;border-radius:3px;font-size:8px;font-weight:800;padding:1px 3px;flex-shrink:0;line-height:1.4;">${escHtmlAdmin(initials)}</span>
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dark);min-width:0;flex:1;">${escHtmlAdmin(t.subject||'')}</span>
+    ${countBadge}
+    ${dot}
+  </div>`;
 }
-function _taCalCellRowsHtml(dayTasks, dateStr, style){
+function _taCalCellRowsHtml(dayTasks, dateStr, style, roster){
   const rows = _taGroupDayTasks(dayTasks);
   const visible = rows.slice(0, TA_CAL_ROW_CAP);
   const hidden = rows.length - visible.length;
-  let html = visible.map(r=>_taCalRowHtml(r, style)).join('');
+  let html = visible.map(r=>_taCalRowHtml(r, style, roster)).join('');
   if(hidden>0){
     html += `<div onclick="event.stopPropagation();_taOpenCalDay('${dateStr}')" style="cursor:pointer;font-size:10px;font-weight:700;padding:${style.padding};color:var(--text-light);">+${hidden} more</div>`;
   }
@@ -9319,29 +9542,44 @@ function _renderTaCalendar(tasks){
   const grid = document.getElementById('taCalGrid');
   const label = document.getElementById('taCalLabel');
   const undatedEl = document.getElementById('taCalUndated');
+  const legendEl = document.getElementById('taCalLegend');
   if(!grid) return;
+  if(legendEl) legendEl.innerHTML = _taPersonColorLegendHtml();
+  const roster = _timeOffRoster();
   const y = _taCalDate.getFullYear(), m = _taCalDate.getMonth();
   if(label) label.textContent = _taCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
+  // Mon-start (2026-09-02): new Date().getDay() is 0=Sun..6=Sat; converting
+  // to a Monday-first offset means Monday->0 ... Sunday->6, so the leading-
+  // blank count before day 1 is (firstDow+6)%7 rather than firstDow itself.
   const firstDow = new Date(y,m,1).getDay();
+  const leadingBlanks = (firstDow+6)%7;
   const daysInMonth = new Date(y,m+1,0).getDate();
   const byDate = {};
   let undatedCount = 0;
   tasks.forEach(t=>{ if(t.dueDate){ (byDate[t.dueDate] = byDate[t.dueDate]||[]).push(t); } else { undatedCount++; } });
-  let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;">${d}</div>`).join('');
-  for(let i=0;i<firstDow;i++) html += '<div></div>';
+  let html = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;min-width:0;${i>=5?'opacity:.55;':''}">${d}</div>`).join('');
+  for(let i=0;i<leadingBlanks;i++) html += '<div></div>';
   for(let d=1; d<=daysInMonth; d++){
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
+    // Weekend columns (Sat/Sun) are grayed + shorter (2026-09-02) — they
+    // won't normally carry assigned tasks, so a full-height cell just to
+    // stay blank wastes space; the actual weekday is computed directly
+    // (dow===0||dow===6), not from grid column position, so this stays
+    // correct regardless of leadingBlanks. Column WIDTH stays equal
+    // (repeat(7,1fr) on the grid, untouched) — only the cell's own height/
+    // tint shrinks, never its share of the row.
+    const dow = new Date(y,m,d).getDay();
+    const isWeekend = dow===0 || dow===6;
     // Team-task clones collapse and the row list caps at TA_CAL_ROW_CAP —
     // see _taGroupDayTasks()/_taCalCellRowsHtml() above for why this is
     // safe now (a real "+N more" link into Day view) where it wasn't
-    // before (a dead-end truncation). min-height keeps empty days from
-    // looking cramped; a day with more rows than the cap still shows the
-    // "+N more" link rather than growing unbounded again.
-    html += `<div style="min-height:70px;border:1px solid var(--border);border-radius:6px;padding:4px;${isToday?'background:rgba(46,93,166,.06);':''}">
-      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}</div>
-      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'2px 4px', marginBottom:'2px'})}
+    // before (a dead-end truncation).
+    const cellBg = isToday ? 'background:rgba(46,93,166,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
+    html += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid var(--border);border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}${isToday?' · Today':''}</div>
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'2px 4px', marginBottom:'2px'}, roster)}
     </div>`;
   }
   grid.innerHTML = html;
@@ -9380,7 +9618,12 @@ function _renderTaDay(tasks){
 function _renderTaWeek(tasks){
   const grid = document.getElementById('taWeekGrid');
   const label = document.getElementById('taWeekLabel');
+  const legendEl = document.getElementById('taWeekLegend');
   if(!grid) return;
+  if(legendEl) legendEl.innerHTML = _taPersonColorLegendHtml();
+  const roster = _timeOffRoster();
+  // _taStartOfWeek() is Monday-start (2026-09-02) — i=0..4 are Mon-Fri,
+  // i=5/6 are Sat/Sun.
   const start = _taStartOfWeek(_taCalDate);
   const end = new Date(start.getFullYear(), start.getMonth(), start.getDate()+6);
   if(label) label.textContent = `${start.toLocaleString('en-US',{month:'short',day:'numeric'})} – ${end.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
@@ -9392,9 +9635,14 @@ function _renderTaWeek(tasks){
     const dateStr = _taDateStr(d);
     const dayTasks = byDate[dateStr]||[];
     const isToday = dateStr === _taToday();
-    html += `<div style="min-height:140px;border:1px solid var(--border);border-radius:6px;padding:6px;${isToday?'background:rgba(46,93,166,.06);':''}">
-      <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}</div>
-      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'3px 5px', marginBottom:'3px'})}
+    // Weekend columns grayed + shorter, same as Month — see the matching
+    // comment in _renderTaCalendar(). Column WIDTH stays equal
+    // (repeat(7,1fr) on #taWeekGrid, untouched).
+    const isWeekend = i>=5;
+    const cellBg = isToday ? 'background:rgba(46,93,166,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
+    html += `<div style="min-height:${isWeekend&&!isToday?'50px':'140px'};min-width:0;border:1px solid var(--border);border-radius:6px;padding:6px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;font-weight:700;color:var(--text-light);margin-bottom:4px;">${d.toLocaleString('en-US',{weekday:'short'})} ${d.getDate()}${isToday?' · Today':''}</div>
+      ${_taCalCellRowsHtml(dayTasks, dateStr, {padding:'3px 5px', marginBottom:'3px'}, roster)}
     </div>`;
   }
   grid.innerHTML = html;

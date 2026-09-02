@@ -5698,6 +5698,268 @@ after removing the `reply` filter variable (regression check). `node
 `<script>` block) and a comment-stripped div-balance check both confirm
 clean/unchanged-delta against `main`.
 
+**Notifications: "View all" + type filters + correct click-through
+(2026-09-02).** `index.html` only, admin bell/notification panel — no new
+`api/*.js` file, no server change. Two problems, one PR: the bell dropdown
+hard-capped at 20 with no way to see older ones, and every click routed
+through `openAdminTrackerToClient()` regardless of what the notification
+was actually about — a Task Assignments notification (`type:'taskAssignment'`)
+carries a real `ops_tasks` row id in `context.taskId`, which the Tracker has
+no concept of at all, so clicking one either did nothing or (worse) opened
+whatever `context.clientId` happened to also be set, landing on the wrong
+surface entirely.
+
+**Root-caused a real ambiguity before writing any routing code (rule #7):**
+the reported "just route by context.taskId" fix would have been WRONG.
+Two different notification types both use a context field literally called
+`taskId` for two unrelated ids — `taskAssignment`/`taskReported` (the Task
+Assignments feature) carry a real `ops_tasks` row id; the much older
+`assignment` type's own `taskId` (see `collectTaskAssignmentEvents()` in
+`api/ops-sync.js`) is a `client.projects[].tasks[]` id from the pre-
+`ops_tasks` legacy project-task model — a completely different table, with
+zero relation to `ops_tasks`. Routing "any `context.taskId` →
+`openTaDetailPanel()`" without checking `n.type` first would have silently
+no-op'd on the legacy kind (`openTaDetailPanel()`'s own `_taTasks().find()`
+just wouldn't find it). Fixed by dispatching on `n.type` FIRST, in a new
+`_routeAdminNotifClick()`:
+- `taskAssignment`/`taskReported` + `context.taskId` → switches to the Task
+  Assignments tab and opens that task's real, editable detail panel
+  (`taDetailOverlay` via `openTaDetailPanel()`) — never the Tracker.
+- Anything else with `context.clientId` (service/subitem assignment, the
+  legacy `assignment`-type project-task case, `serviceUpdate`, `serviceDone`,
+  `overdue`, `submittedForReview`) → the Tracker at that exact client
+  (+ service, when set) — the pre-existing, correct behavior, now reached
+  deliberately instead of by accident.
+- `timeOff`/`message`/`attentionDigest`/`taskReminder`/`focusDigest` (no
+  `clientId` or real `taskId` at all) → nothing opens. Never a random/
+  default fallback in any branch — the literal bug this task reported.
+
+**Flagged, not solved:** the legacy `assignment`-type project-task case
+correctly opens the right CLIENT (never a random one — the actual reported
+bug is fixed) but can't also expand/highlight the exact task row the way
+`client.html`'s own `?openClient=&openProject=&openTask=` deep link
+supports (confirmed by reading `_openDeepLinkFromUrl()`) — because
+`collectTaskAssignmentEvents()` never recorded a `projectId` in the event/
+notification context to begin with (only `taskId`, `taskName`,
+`projectName` — a string, not an id). Adding one would mean touching
+`api/ops-sync.js`, outside this task's stated `index.html`-only scope;
+flagged for a follow-up rather than guessed at or silently left broken.
+
+**"View all notifications" modal** (`notifViewAllModal`) lists every
+notification (not capped at 20), with a type filter (`NOTIF_TYPE_LABELS_ADMIN`
+— a genuinely complete list this time, one entry per type the server can
+actually create, not the original hardcoded 5; verified by grepping every
+`type: '...'` literal across `api/ops-sync.js` + `api/cron-overdue-check.js`
+directly rather than hand-copying a possibly-stale list), a read/unread
+toggle (same `.btn-toggle-active` fixed-size-toggle convention already
+established elsewhere in this file), and "Mark all read." `submittedForReview`
+is one of the filterable types per item 3's own ask — it needed no special
+click-through case, since it already carries `clientId`/`serviceId` and so
+already routes correctly through the same general clientId branch above.
+The bell dropdown and the modal share one row template (`_notifRowHtml()`)
+and one click handler (`readAdminNotif()` → `_routeAdminNotifClick()`), so
+they can never drift apart on read-state or routing behavior.
+
+Verified with a Node script against the real, byte-identical
+`_routeAdminNotifClick()`/`_notifViewAllFiltered()` (extracted directly
+from `index.html`, not reimplemented — 26/26): `taskAssignment`/
+`taskReported` route to the task detail panel with the tab switched first;
+the legacy `assignment`-type `taskId` is NEVER passed to
+`openTaDetailPanel()` and instead opens the correct client; every other
+clientId-bearing type opens the Tracker correctly; every context-less type
+opens nothing; a null/undefined notification (a stale id) doesn't throw;
+the type+read filters combine correctly; and — the regression check for
+the original 5-entry map's own staleness — every real server-created type
+(12, grepped fresh) has both a label and an icon. A Playwright run against
+the real UI (16/16): the bell dropdown genuinely caps at 20 out of 23 seeded
+notifications; View all shows all 23; the type filter's own options list
+matches the real type set; filtering and read/unread filtering both narrow
+correctly; clicking a real task notification opens the task detail panel
+(confirmed by its actual subject text) with the Tracker iframe NOT navigated;
+and clicking the legacy project-task notification opens the Tracker at the
+correct client (`openClient=c2`) without ever opening the task detail panel.
+
+**Self-assigned tasks: blue accent + auto-daily due date (2026-09-02,
+items A+B of a 3-item batch — item C explicitly deferred, see below).**
+`index.html` + `user.html` (display, item A) + `api/ops-sync.js` (write
+logic, item B) — no new `api/*.js` file, still 11.
+
+**Investigated before implementing, per rule #7 — the task's own framing
+("origin === 'self', i.e. assignedById === assigneeId") treats those two
+as equivalent; they are NOT.** `api/ops-sync.js`'s member new-task branch
+sets `origin:'self'` for BOTH a member assigning a task to themselves AND
+a manager-tier member (e.g. Sherine) assigning a task to one of their
+direct reports (`creatableAssigneeIds` includes reports too, from the
+2026-08-19 "client roster in prompt" work) — in the report-assignment
+case, `assignedById` (the manager) and `assigneeId` (the report) are
+different people, so `origin==='self'` alone would misclassify "a manager
+gave this to their report" as "the person self-assigned it," coloring it
+blue for the WRONG reason. Implemented against the literal, correct
+definition instead — `t.assignedById && t.assignedById===t.assigneeId` —
+in both the display logic (item A) and the write logic (item B), so a
+report-assignment never gets the blue treatment and never gets its due
+date force-set, while a genuine self-assign always does, regardless of
+what `origin` happens to say.
+
+**Item A — blue accent, both portals.** A `.ta-row-self`/`.dt-row-self`
+card border+background tint (hand-duplicated per file, zero-shared-code
+rule) plus a "👤 Self-assigned" badge next to the task title — same
+pattern as the existing `.ta-row-new`/`.ta-row-blocked` tints, combining
+harmlessly with both. Shown on the admin side too (`index.html`'s
+`_renderTaListTable()`, the single shared funnel behind List/Day/Week/
+Month/By-Person), so an admin can tell at a glance what each person put
+on their own plate vs. what was assigned to them — no separate admin-only
+code path needed, since the same card renderer already shows everyone's
+tasks. **Flagged, not built:** the task's own framing implied an existing
+"yellow = admin/manager-assigned" indicator to contrast against — no such
+indicator was found (the existing amber `.ta-row-new`/`.rm-new-tag` is a
+"recently (re)assigned" freshness marker, unrelated to WHO assigned it,
+and already used for other purposes). Rather than inventing a new
+admin-assigned-yellow scheme nobody asked for by name, only the blue
+self-assigned side was built; an admin/manager-assigned task keeps its
+existing, undecorated look. `user.html`'s copy needed no new "who assigned
+this" signal beyond the color — `_dtAssignedByDisplay()` (2026-09-01) was
+already showing "Added by you" in words on every card; this adds the
+color/badge for the same fact.
+
+**Item B — auto-daily due date, server-enforced.** In the exact branch the
+task named (`api/ops-sync.js`'s member new-task path, `origin:'self'`),
+a task where the resolved `assigneeId === session.id` (true self-assign)
+now has its `dueDate` forced to today — overriding whatever the client
+sent, including an explicit far-future date — so it always lands in
+today's My Tasks/Roadmap bucket, never long-term. Deliberately scoped to
+true self-assign only: the SAME branch's report-assignment case (a
+manager-tier member creating a task for a direct report) keeps whatever
+`dueDate` was actually submitted, unaffected — per the reasoning above,
+that's managing someone else's work, not "my own plate," and forcing it
+to today would have been a real, unrequested behavior change for that
+case. Admin-created tasks (the sibling `isAdmin` branch) are completely
+untouched.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `api/ops-sync.js` handler (9/9): a member
+self-assigning a brand-new task with no `dueDate` sent gets it forced to
+today; an explicit far-future `dueDate` is still overridden; a manager-
+tier member assigning to a direct report keeps the submitted `dueDate`
+(with or without one sent) and is confirmed to genuinely be the
+report-assignment path (`assigneeId` is the report, `assignedById` is the
+manager); and an admin-created task's own `dueDate` is completely
+unaffected (regression check). A Playwright run against both real portal
+UIs (13/13): a self-assigned card gets the right class + badge in both
+`index.html` and `user.html`; an admin-assigned card gets neither; and —
+the case that actually justified reading the code instead of trusting the
+task's own framing — a report-assignment card (`origin:'self'` but
+`assignedById!==assigneeId`) correctly gets NEITHER the class nor the
+badge on the admin side, confirming the field-equality check (not
+`origin`) is what's actually driving the color.
+
+**Item C — deferred, not built, per the task's own suggested order**
+("ship A + B together... then C as its own PR"). A "Request due-date
+change" workflow (member proposes a new date on their own task → notifies
+their manager + super admins → approve/reject) is real, standalone design
+work — new state on a task, a new notification type, a new approve/reject
+UI on both portals, and its own server-side permission surface —
+genuinely a separate PR, not attempted here. **Flagged, not verified:**
+the task's own text described this as "the same request→approval pattern
+as the deferred manager-delete workflow" — grepped this file's entire
+history for any prior manager-delete request/approval feature and found
+none; no such workflow has been built or previously deferred here. Rather
+than silently inventing a match to point at, or silently building item C
+anyway against an unconfirmed precedent, this is flagged back plainly: if
+a specific existing pattern was meant, it isn't in this file's own record
+and item C's design will need to be worked out fresh when it's built.
+
+**Task Assignments calendar rebuild: Mon-start, weekends grayed, per-person
+colors, fixed collapse (2026-09-02).** `index.html` only, display-only —
+follow-up to the same-day earlier calendar-clutter PR, whose ×N collapse
+had a real bug this fixes.
+
+**Root cause of the reported "×8 collapse doesn't work" bug:** the earlier
+version only collapsed clones carrying `assigneeIds.length>1` — the
+"whole team"/Everyone-assignment marker (`_taBuildEveryoneClones()`). But
+a real repeating daily task like "Log daily tasks each shift" is 8
+INDEPENDENTLY-created single-assignee `ops_tasks` rows (one per person,
+each with a plain `assigneeId`, never an `assigneeIds` array) — so the old
+gate never fired and all 8 repeated in the cell instead of collapsing.
+`_taGroupDayTasks()` now groups by exact subject text alone, with no
+`assigneeIds` gate at all — every task passed in already shares the same
+due date by construction (the caller pre-buckets by `dateStr` before
+calling this), so "same subject + same due date" reduces to just "same
+subject" at this scope. A group now tracks `overdue` across ALL its
+merged tasks (true if any one of them is overdue), not just whichever
+task happened to be first.
+
+**A second real bug found while reviewing the FIRST screenshot, not
+caught by the Node/DOM tests alone** (exactly the failure mode this
+task's own instructions warned about): the `×8` count and the task
+subject were concatenated into one ellipsis-truncating span, so a long
+subject like "Log daily tasks each shift" pushed the count off past the
+truncation point — the collapse was working correctly underneath, but
+the one piece of information that matters most on a collapsed row
+(*how many*) was invisible. Split into two spans: the subject truncates
+on its own, the `×N` badge is a separate `flex-shrink:0` sibling that's
+never truncated. Confirmed by regenerating the screenshot after the fix
+and reading it — see below.
+
+**Per-person color map** — `TA_PERSON_COLOR_MAP`, matched by NAME (never a
+hardcoded id — no live DB access to confirm real `ops_users`/`ops_admins`
+ids in this environment, same reasoning as every other name-based match
+already in this file, e.g. the task parser's Sarah-alias resolution).
+`'sarah ibrahim'` deliberately requires the full two-word match, not bare
+`'sarah'`, so it can never also color-match Sarah Samy (the primary admin
+sentinel — a different person who happens to share a first name).
+Unmapped people get a deterministic hash-based fallback from a small flat
+palette, visually distinct from the 8 fixed colors. A collapsed GROUP row
+has no single owner to color by (now that grouping isn't gated to
+same-assignee team clones — a group can legitimately span 8 different
+people), so it gets a neutral gray "👥" treatment instead of misattributing
+it to whichever task happened to be first — a deliberate design choice,
+not an oversight. A legend (`_taPersonColorLegendHtml()`) renders above
+both grids, listing all 8 named people's colors plus the overdue-dot key.
+
+**Monday-start** — `_taStartOfWeek()` rewritten (`dow===0 ? -6 : 1-dow`
+instead of `-d.getDay()`); Month's header row and leading-blank-cell count
+both switched from Sunday-first to Monday-first
+(`leadingBlanks = (firstDow+6)%7`). **Weekend graying** — Sat/Sun columns
+get a muted background, faded header text, and roughly half the min-height
+of a weekday cell (they won't normally carry assigned tasks) — column
+WIDTH is untouched (`repeat(7,1fr)` on both grids, unchanged), so this
+never breaks the equal-width requirement; only a weekend cell's own
+height/tint shrinks. `min-width:0` added to every grid cell (Month header
+cells included) — the same CSS-grid shrink fix already used once in this
+codebase for `user.html`'s Daily Tasks calendar — plus
+`overflow-x:hidden` on both grid containers, so a long chip's own text can
+never force the grid wider than its card.
+
+Verified two ways, per this task's own explicit instruction that logic
+tests alone weren't enough last time: (1) a Node script against the real,
+byte-identical `_taStartOfWeek()`/`_taGroupDayTasks()`/
+`_taPersonColorFor()`/`_taPersonColorLegendHtml()`/`_taCalRowHtml()`/
+`_taCalCellRowsHtml()` (37/37) — Monday-start including the Sunday-itself
+edge case (resolves BACK to the preceding Monday, never forward), the
+exact reported 8-independent-single-assignee-tasks scenario collapsing to
+one row, a group's overdue flag surviving even when the first merged task
+isn't itself overdue, all 8 fixed colors resolving correctly, Sarah
+Ibrahim vs. Sarah Samy disambiguation, a deterministic fallback for
+unmapped people, the row cap + "+N more", and the group's neutral-gray
+color; (2) real Playwright screenshots of the live-rendered Week AND
+Month grids (not just DOM assertions) — actually read back and visually
+confirmed: Monday-first columns, Sat/Sun visibly grayed and shorter, the
+`×8` badge fully visible next to a long truncated subject (the second bug
+above, caught this way and fixed before the screenshots were finalized),
+each chip's initials+color matching its real assignee, an overdue red dot
+on two chips, and a Thursday cell correctly capping at 4 chips with a
+working "+2 more". Screenshots sent directly to the user (this session's
+tools can't attach a binary image to a GitHub PR body/comment) rather than
+just asserted as passing. 11/11 additional DOM-level Playwright checks
+(no horizontal overflow, header order, legend content, cap behavior)
+alongside the screenshots. Every pre-existing Task Assignments Playwright
+suite from earlier the same day re-run clean (14/14 calendar-clutter,
+12/12 Reply status removal, 16/16 notifications, 13/13 self-assigned
+badge) — the older calendar suite's own 8-team-clone seed data still
+collapses correctly under the new subject-only grouping, confirming this
+is a superset of the old behavior, not a narrower replacement.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
