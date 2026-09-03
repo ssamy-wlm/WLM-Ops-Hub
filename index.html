@@ -1659,21 +1659,24 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div id="ta-attention-body"></div>
       </div>
 
-      <!-- "Reported" (2026-09-02) — every client SERVICE submitted for
-           review (svc.reviewSubmittedAt, the only "submitted for review"
-           concept that actually exists — ops_tasks has no equivalent
-           field) PLUS every ops_tasks row flagged reportedMisassigned (a
-           different concept — an assignee saying "I don't think this is
-           mine" — grouped here anyway since both are "something a team
-           member flagged for admin attention," per an explicit decision
-           on this exact ambiguity, not a guess). Display/navigation only —
-           no approve/return actions here; opening a row leads to that
-           item's own EXISTING editable view (the task detail panel, or
-           the Tracker), where an admin already has every control needed
-           (status, reassign, notes) — also an explicit decision, not
-           assumed, since neither field has ever had an approve/dismiss
+      <!-- "Reported" (2026-09-02, narrowed 2026-09-02) — task-reports
+           ONLY: every ops_tasks row flagged reportedMisassigned (an
+           assignee saying "I don't think this is mine"). Service review
+           submissions (svc.reviewSubmittedAt) briefly lived here too, but
+           were moved to the Tracker instead — services live there, so
+           that's where an admin actually reviews/approves them (see the
+           "Submitted for review" badge on _serviceRow() in client.html).
+           Display/navigation only — no approve/return action here;
+           opening a row leads to the task's own EXISTING editable detail
+           panel, where an admin already has every control needed
+           (status, reassign, notes) — an explicit decision, not assumed,
+           since reportedMisassigned has never had an approve/dismiss
            action anywhere in this codebase and inventing one here would
-           be new write behavior, not a display feature. -->
+           be new write behavior, not a display feature. Opening/editing/
+           deleting a row deliberately never switches subtabs — see
+           _taOpenReportedItem()'s and _taRefreshReportedIfActive()'s own
+           comments — so working through a list of reports stays on this
+           tab the whole time. -->
       <div id="ta-subtab-reported" style="display:none;">
         <div id="ta-reported-body"></div>
       </div>
@@ -8027,7 +8030,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
-    if(typeof renderTaReported==='function' && document.getElementById('ta-subtab-reported')?.style.display!=='none') renderTaReported();
+    if(typeof _taRefreshReportedIfActive==='function') _taRefreshReportedIfActive();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -9123,50 +9126,20 @@ function renderTaNeedsAttention(){
   }).join('');
 }
 
-// ── "Reported" (2026-09-02) — see the HTML comment above ta-subtab-reported
-// for the scope decisions this reflects (both data sources included;
-// list+click-through only, no new approve/return write action). Two
-// genuinely different data sources, merged into one list sorted newest-
-// first: ops_tasks flagged reportedMisassigned, and active clients'
-// services (including franchise locations[], same scan shape
-// _activeServicesForAssessment() already uses — but that helper returns
-// bare service objects with no client name attached, the same gap
-// renderMyRoadmapAdmin() already had to work around by walking
-// _getClientDB() directly instead of reusing it, so this does the same
-// rather than modifying that shared helper's return shape for its other
-// callers) with svc.reviewSubmittedAt set. !t.mergedIntoId excludes a
-// soft-merged-away duplicate task, same convention as every other task
-// view in this file.
+// ── "Reported" (2026-09-02, narrowed 2026-09-02) — see the HTML comment
+// above ta-subtab-reported for the scope decisions this reflects. Task-
+// reports only now — service review-submissions moved to the Tracker
+// (see client.html's _serviceRow()). !t.mergedIntoId excludes a soft-
+// merged-away duplicate task, same convention as every other task view
+// in this file.
 function _taReportedItems(){
-  const items = [];
-  _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).forEach(t=>{
-    items.push({
-      kind:'task', taskId:t.id, clientId:null, serviceId:null,
-      submitterName:t.reportedMisassignedByName||'—',
-      itemLabel:t.subject||'(untitled task)',
-      clientName:t.clientName||'—',
-      date:t.reportedMisassignedAt||'',
-    });
-  });
-  const clients = _getClientDB().filter(c=>(c.status||'active')==='active');
-  const scanServices = (list, c, locName) => {
-    (list||[]).forEach(s=>{
-      if(!s?.id || !s.reviewSubmittedAt) return;
-      items.push({
-        kind:'service', taskId:null, clientId:c.id, serviceId:s.id,
-        submitterName:s.reviewSubmittedByName||'—',
-        itemLabel:`${s.name||''}${locName?' ('+locName+')':''}`,
-        clientName:c.name||'—',
-        date:s.reviewSubmittedAt,
-      });
-    });
-  };
-  clients.forEach(c=>{
-    scanServices(c.services, c, null);
-    (c.locations||[]).forEach(loc=>scanServices(loc.services, c, loc.name));
-  });
-  items.sort((a,b)=>new Date(b.date)-new Date(a.date));
-  return items;
+  return _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).map(t=>({
+    taskId:t.id,
+    submitterName:t.reportedMisassignedByName||'—',
+    itemLabel:t.subject||'(untitled task)',
+    clientName:t.clientName||'—',
+    date:t.reportedMisassignedAt||'',
+  })).sort((a,b)=>new Date(b.date)-new Date(a.date));
 }
 // Rendered rows are looked up by index from this cache rather than
 // threading each item's fields through the onclick attribute as a JSON
@@ -9174,23 +9147,30 @@ function _taReportedItems(){
 // submitter name or subject containing a quote), and matches how every
 // other row in this file passes just an id/index through onclick.
 let _taReportedItemsCache = [];
-// Click-through reuses the EXACT SAME two navigation paths
-// _routeAdminNotifClick() already established for these two notification
-// types (taskReported -> the task's own editable detail panel;
-// submittedForReview -> the Tracker at the right client+service) — see
-// that function's own comment for why field type must decide the route,
-// never field presence alone. Genuine plumbing reuse, not a new pattern.
+// Click-through reuses the EXACT SAME navigation _routeAdminNotifClick()
+// already established for a taskReported notification: the task's own
+// editable detail panel — genuine plumbing reuse, not a new pattern.
+// Deliberately does NOT call setTaSubtab('assigned') (unlike this
+// function's own original version) — staying on the Reported subtab
+// while the detail panel/edit modal is open is the whole point of the
+// "don't reset the view" fix; see _taRefreshReportedIfActive() for how
+// the list itself stays current after an edit/delete without a subtab
+// switch doing that refresh for free the way it used to.
 function _taOpenReportedItem(i){
   const item = _taReportedItemsCache[i];
   if(!item) return;
-  if(item.kind==='task'){
-    setTaSubtab('assigned');
-    openTaDetailPanel(item.taskId);
-  } else {
-    openAdminTrackerToClient(item.clientId, item.serviceId);
-  }
+  openTaDetailPanel(item.taskId);
 }
-const TA_REPORTED_KIND_LABEL = { task:'🚩 Reported', service:'📤 Submitted for review' };
+// Called after any task edit/delete that might affect the Reported list
+// (a report can be resolved by editing the task, or the task can be
+// deleted outright) — re-renders ta-reported-body IN PLACE only when
+// that subtab is actually the one showing, so working through a list of
+// reports one at a time never gets silently kicked back to Assigned
+// Tasks. Mirrors the identical guard cloudPullAll() already uses for
+// this same container on a live-sync pull.
+function _taRefreshReportedIfActive(){
+  if(typeof renderTaReported==='function' && document.getElementById('ta-subtab-reported')?.style.display!=='none') renderTaReported();
+}
 function renderTaReported(){
   const container = document.getElementById('ta-reported-body');
   if(!container) return;
@@ -9204,15 +9184,13 @@ function renderTaReported(){
     <div class="card-body" style="padding:0;">
       <table style="width:100%;">
         <thead><tr>
-          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Type</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Submitter</th>
-          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Item</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Task</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
-          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Date</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reported</th>
         </tr></thead>
         <tbody>${items.map((it,i)=>`
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
-            <td style="padding:12px 18px;font-size:12px;white-space:nowrap;">${TA_REPORTED_KIND_LABEL[it.kind]}</td>
             <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
             <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(it.itemLabel)}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
@@ -9545,6 +9523,7 @@ function _taDeleteTask(id){
   dbSet(DB_KEYS.deletedTaskIds, tomb);
   cloudAutoSync();
   renderTaskAssignments();
+  _taRefreshReportedIfActive();
   showToast('Task deleted');
   return true;
 }
@@ -9987,6 +9966,7 @@ function saveTaskEdit(){
   cloudAutoSync();
   closeModal('taskEditModal');
   renderTaskAssignments();
+  _taRefreshReportedIfActive();
   showToast(isNew ? 'Task created ✓' : 'Task saved ✓');
 }
 

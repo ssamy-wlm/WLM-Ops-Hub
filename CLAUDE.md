@@ -6290,6 +6290,119 @@ additive, non-fatal logging branch with no change to what gets
 written, sent, or returned — eligible for direct merge once CI is
 green.
 
+**Reported: move service-reviews to Tracker; keep task-reports in the tab;
+record reporter; don't reset the tab (2026-09-02).** `index.html` +
+`client.html`, display/navigation only — no server change, no new
+`api/*.js` file, still 11.
+
+**Investigated before touching anything (rule #7), since two of the three
+asks contradicted what the code already did.** The "Reported" sub-tab
+(merged via PR #324, same day) already included BOTH data sources —
+`_taReportedItems()` genuinely did filter in `ops_tasks` rows flagged
+`reportedMisassigned`, and `reportedMisassignedByName` genuinely was
+stamped server-side from `session.name` at the moment of the report
+(`api/ops-sync.js`, gated on `cur.origin==='admin'`, confirmed set
+correctly by `saveTaskEdit()`'s own `origin: existing.origin || 'admin'`
+default for every admin-created task). Reproduced this directly with a
+seeded task before writing any code: task reports DID show, with the real
+reporter name, in the tab as it existed. So items 2's literal premise
+("they currently don't [show]... it's blank") didn't match the code —
+flagged here rather than silently assumed true or silently ignored. The
+REAL, reproducible bug was item 3's: `_taOpenReportedItem()` unconditionally
+called `setTaSubtab('assigned')` before opening a reported task's detail
+panel, so clicking any reported row immediately jumped you off the
+Reported tab before you could even look at it, let alone edit/delete and
+stay to work through the rest of the list — a real usability defect that
+plausibly reads as "these don't really show up here" even though the row
+itself briefly rendered. All three items were still implemented as asked,
+since items 1 and 3 are unambiguous regardless, and item 2's "task-only +
+reporter shown" becomes automatically true once item 1 removes the other
+source.
+
+**1. Service reviews moved to the Tracker.** `_taReportedItems()`'s
+`scanServices()`/client-walk half is removed outright — the Reported tab
+is now `ops_tasks` rows with `reportedMisassigned` only, matching the
+function's own simplified return shape (no more `kind` discriminator,
+since there's only one now). In its place, `client.html`'s `_serviceRow()`
+(the row renderer `_serviceTable()` uses for a client's general Services
+tab — the view any admin actually opens to review a specific client's
+work, NOT the same as `_myWorkStatusCell()`'s narrower personal "My Work"
+view, which already had its own copy of this same badge for the assignee
+only) gained a `reviewBadge`: a small read-only "📤 Submitted for review"
+line under the Status cell, shown whenever `svc.reviewSubmittedAt` is set,
+tooltipped with who submitted it and when — visible to anyone who can see
+the row at all, same as the existing comment-count button, not gated
+behind edit permission. This is genuinely "where services live," per the
+task's own wording, rather than a personal list scoped to one person's own
+assignments. No new approve/reject action was built — same explicit,
+already-established decision from PR #324's own build (neither field has
+ever had one anywhere in this codebase) — "review/approve" happens via the
+service's own existing edit/status controls, already present on the same
+row; the flag itself already self-clears on the next Done cycle
+(`markServiceDone()`'s pre-existing reset), so there's nothing to
+"dismiss."
+
+**2. Reported tab is task-reports only, with the reporter's name.** Now
+automatically true once (1) removed the other source — `_taReportedItems()`
+returns one row per `reportedMisassigned` task, `submitterName` from
+`t.reportedMisassignedByName`. The now-redundant Type column (every row
+said the same thing once services were removed) was dropped from
+`renderTaReported()`'s table, matching this codebase's own established
+"remove a column that no longer varies" precedent (the parser's `Type`
+field removal, 2026-08-19).
+
+**3. Don't reset the view.** `_taOpenReportedItem()` no longer calls
+`setTaSubtab('assigned')` — it just opens the task's existing detail panel
+(`taDetailOverlay`), which is a standalone fixed overlay independent of
+whichever subtab is showing underneath it, so staying on Reported while
+it's open needed no other change. The harder half: `saveTaskEdit()` and
+`_taDeleteTask()` both call the page-wide `renderTaskAssignments()` after
+a write, but that function only re-renders the Assigned Tasks List/Day/
+Week/Month view — it never touched `#ta-reported-body`, so the Reported
+list itself would have gone stale (a resolved/deleted report still shown)
+even though the tab correctly stayed put. Fixed with a new
+`_taRefreshReportedIfActive()` — the same "only re-render if this subtab
+is the one currently visible" guard `cloudPullAll()`'s own live-sync hook
+already used for this exact container, now factored out and reused at all
+three call sites (`saveTaskEdit()`, `_taDeleteTask()`, and the pull hook
+itself) so they can't drift apart.
+
+Verified with two new Playwright suites against the real, live-rendered
+UIs (no logic-only test trusted alone, per this session's own standing
+instruction that logic tests can pass while the visual stays broken):
+`index.html` (14/14, using a STATEFUL `/api/ops-state`+`/api/ops-sync`
+mock — a static echo would have made the genuinely-working edit/delete
+round-trip look like it silently reverted after `cloudAutoSync()`'s own
+post-push re-pull, the exact test-mock pitfall this codebase's history
+already documents; caught and fixed before trusting the result) — only 1
+row renders (the task report, not the service), the submitted service and
+all "Submitted for review" text are absent from the tab, the reporter's
+real name shows, the Type column is gone, clicking a reported row opens
+the real detail panel while staying on the Reported subtab, editing and
+saving keeps you there with the list re-rendering the new subject live,
+and deleting keeps you there too with the row actually gone and the
+"Nothing here — all clear" empty state showing. `client.html` (5/5): the
+Services tab renders both a submitted and a not-submitted service, exactly
+one "Submitted for review" badge appears and it's on the correct row
+(never bleeding onto the unsubmitted service), and its tooltip names the
+real submitter.
+
+Two pre-existing scratchpad suites from PR #324's own build
+(`verify_ta_reported_logic.mjs`, `verify_ta_reported_ui.mjs`) now fail —
+confirmed as expected supersession, not a regression: they assert the
+literal old behavior this task deliberately replaced (a `kind`/
+`TA_REPORTED_KIND_LABEL` discriminator that no longer exists, a submitted
+service rendering inside the Reported tab). Every other regression suite
+touching notifications/Task Assignments from this session re-ran clean
+and unaffected: `verify_notif_routing.mjs` (26/26), `verify_notif_
+viewall_ui.mjs` (16/16), `verify_notif_task_deleted_filter.mjs` (16/16),
+`verify_self_assigned_badge_ui.mjs` (13/13), `verify_ta_reply_status_
+removed.mjs` (12/12), `verify_weekend_clamp_ui.mjs` (4/4), `verify_
+weekend_clamp_user_ui.mjs` (4/4). `new Function()` syntax-check clean on
+every extracted `<script>` block in both files; comment-stripped
+div-balance unchanged vs. `main` in both (`client.html` 0, `index.html`
++9); `ls api/*.js | wc -l` still 11 (no server file touched at all).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
