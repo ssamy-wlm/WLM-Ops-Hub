@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { logError } from '../lib/errorLog.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
+import { clampToWeekday } from '../lib/dateUtils.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
 
@@ -759,7 +760,13 @@ async function handleTaskEmailMode(req, res) {
           tags: Array.isArray(t.tags) ? t.tags.filter(x => typeof x === 'string') : [],
           category: TASK_CATEGORIES.includes(t.category) ? t.category : 'Other',
           priority: TASK_PRIORITIES.includes(t.priority) ? t.priority : 'Normal',
-          dueDate: validDueDate(t.dueDate),
+          // Weekend-clamped (2026-09-02) — an estimated or explicitly-
+          // resolved dueDate must never land on a Sat/Sun, same rule the
+          // browser-side portals already apply to recurring service due
+          // dates via their own adjustOffWeekend(). Applied AFTER
+          // validDueDate() so an empty/invalid value ('') is never clamped
+          // into a real date — clampToWeekday('') is a no-op by design.
+          dueDate: clampToWeekday(validDueDate(t.dueDate)),
           assignedDate,
           clientId: matchedClient ? matchedClient.id : null,
           clientName: matchedClient ? matchedClient.name : '',

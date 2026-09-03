@@ -81,7 +81,18 @@ export default async function handler(req, res) {
       // leaving Recent Activity with nothing even when plenty of client
       // events exist further back — a dedicated, type-scoped query is the
       // only way to guarantee Recent Activity actually sees them.
-      supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').order('created_at', { ascending: false }).limit(50),
+      // .neq('data->>user','System') (2026-09-02) — excludes the automated
+      // due-date reminder alerts client.html's runScheduledAlerts() pushes
+      // (title "[OVERDUE]"/"[Due TODAY]"/"[Upcoming] <service>", always
+      // fromUser:'System', i.e. data.user==='System') at the QUERY level,
+      // not just at render time. index.html's own renderer already
+      // filtered these out (`.filter(e=>e.user!=='System')`), but that
+      // filter ran AFTER this query's 50-row cap — with enough System
+      // volume (1000+ auto events is the real reported case), the 50 most
+      // recent type:'client' rows were ALL System noise, leaving nothing
+      // for the render-time filter to keep. Excluding it here instead
+      // means the 50-row window is always real team activity.
+      supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').neq('data->>user', 'System').order('created_at', { ascending: false }).limit(50),
       supabase.from('ops_messages').select('id, data'),
       supabase.from('ops_roadmap_tasks').select('id, data'),
       supabase.from('ops_time_off_requests').select('id, data'),

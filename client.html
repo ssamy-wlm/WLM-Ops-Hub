@@ -3889,6 +3889,18 @@ function _serviceRow(c, svc, locationId){
   const statusCell=(svcCanEdit && !inactive)
     ?`<select class="form-select" style="font-size:10.5px;padding:4px 6px;border-color:${workStatusMeta.color};color:${workStatusMeta.color};font-weight:700;" title="Status" onchange="setServiceStatus('${c.id}','${svc.id}','${locationId||''}',this.value)">${SERVICE_STATUSES.map(s=>`<option value="${s.value}"${s.value===workStatus?' selected':''}>${s.label}</option>`).join('')}</select>`
     :`<span class="chip" style="background:${workStatusMeta.bg};color:${workStatusMeta.color};font-weight:700;">${workStatusLabel}</span>`;
+  // "Submitted for review" — moved here from the now-task-only Task
+  // Assignments "Reported" sub-tab (2026-09-02): services live in the
+  // Tracker, so this is where an admin actually reviews/approves them,
+  // right on the row alongside the status it applies to. Read-only, same
+  // as commentBtn above — visible to anyone who can see this row at all,
+  // not gated behind svcCanEdit. Mirrors _myWorkStatusCell()'s own
+  // read-only badge (the employee's personal My Work view), which is left
+  // untouched — that's a different, narrower view (only the assignee's own
+  // services) and still needs its own copy of this same information.
+  const reviewBadge=svc.reviewSubmittedAt
+    ?`<div style="margin-top:4px;font-size:9px;color:var(--text-light);white-space:nowrap;" title="Submitted by ${escHtmlClient(svc.reviewSubmittedByName||'')} · ${new Date(svc.reviewSubmittedAt).toLocaleString()}">📤 Submitted for review</div>`
+    :'';
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
@@ -3896,7 +3908,7 @@ function _serviceRow(c, svc, locationId){
         <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
         <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
         <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
-        <td>${statusCell}</td>
+        <td>${statusCell}${reviewBadge}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
           ${inactive
             ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})" title="Reactivate">${ICON_UNDO}</button>`:''}${commentBtn}${subitemsBtn}`

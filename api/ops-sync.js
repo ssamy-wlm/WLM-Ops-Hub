@@ -44,6 +44,7 @@ import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 import { logError } from '../lib/errorLog.js';
 import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
+import { clampToWeekday } from '../lib/dateUtils.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
@@ -1023,6 +1024,13 @@ export async function insertNotifications(supabase, rows, warnings) {
         await logError({ endpoint: 'notifications:email', error: e, extra: { recipient: to, itemCount: notifs.length } });
       }
     }
+  } else {
+    // Surfaced (2026-09-02), not just silently dormant — a missing key in
+    // the runtime env used to mean every notification's email half quietly
+    // never fired, with nothing anywhere to show for it. logError() itself
+    // never throws (see lib/errorLog.js), so this stays exactly as
+    // non-fatal as the try/catch branch above it.
+    await logError({ endpoint: 'notifications:email', error: 'SKIPPED — RESEND_API_KEY missing in runtime env' });
   }
 }
 
@@ -1717,7 +1725,11 @@ export default async function handler(req, res) {
             // see the comment above), which is managing someone ELSE's
             // work, not "my own plate" — that case keeps whatever dueDate
             // was actually submitted, unaffected by this change.
-            const dueDate = assigneeId === session.id ? todayIsoUtc() : inc.dueDate;
+            // Weekend-clamped (2026-09-02): if today itself is a Sat/Sun
+            // (e.g. a member opens the app over the weekend), the
+            // auto-daily due date still never lands on that weekend day —
+            // clampToWeekday() snaps it to the adjacent weekday.
+            const dueDate = assigneeId === session.id ? clampToWeekday(todayIsoUtc()) : inc.dueDate;
             row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false, dueDate };
           }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
@@ -1861,8 +1873,25 @@ export default async function handler(req, res) {
         }
         if (deletableIds.length) {
           const { error } = await supabase.from('ops_tasks').delete().in('id', deletableIds);
-          if (error) warnings.push(`taskIds delete: ${error.message}`);
-          else applied.deletedTaskIds = deletableIds.length;
+          if (error) {
+            warnings.push(`taskIds delete: ${error.message}`);
+          } else {
+            applied.deletedTaskIds = deletableIds.length;
+            // Clean up any notification pointing at a now-deleted task
+            // (2026-09-02) — taskAssignment/taskReported are the only two
+            // types whose context carries a real ops_tasks id (see
+            // _routeAdminNotifClick()'s own comment on this file's other
+            // notification types, whose context.taskId — when present at
+            // all — is a completely different, legacy id). Scoped to just
+            // deletableIds, the tasks ACTUALLY removed above, never the
+            // full requested list (which can include ids a non-admin
+            // caller wasn't authorized to delete and are still real rows).
+            // Best-effort: a failure here is logged as a warning but never
+            // turns the task deletion itself into a failure — the task is
+            // already gone either way.
+            const { error: notifErr } = await supabase.from('ops_notifications').delete().in('data->context->>taskId', deletableIds);
+            if (notifErr) warnings.push(`orphaned notifications cleanup: ${notifErr.message}`);
+          }
         }
       }
     }
