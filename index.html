@@ -1484,12 +1484,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-taskAssignments" class="page-section">
       <div style="margin-bottom:16px;">
         <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse emails/transcripts into tasks, or add one manually, and assign to anyone on the team</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse meeting transcripts into tasks, or add one manually, and assign to anyone on the team</div>
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);">
         <div style="display:flex;gap:6px;">
-          <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📧 Add / Import</button>
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📝 Add / Import</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
@@ -1507,12 +1507,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="card" style="margin-bottom:16px;">
           <div class="card-header">
             <div>
-              <div class="card-title">📧 Import &amp; parse</div>
-              <div class="card-sub">Paste a transcript/email, or drop one or more .eml files</div>
+              <div class="card-title">📝 Import &amp; parse</div>
+              <div class="card-sub">Paste a meeting transcript, or drop one or more files</div>
             </div>
           </div>
           <div class="card-body">
-            <textarea id="taParseText" rows="4" placeholder="Paste transcript or email text here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
+            <textarea id="taParseText" rows="4" placeholder="Paste a meeting transcript here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
               <input type="file" id="taParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onTaParseFilesChosen(event)">
               <button class="btn btn-sm btn-primary" id="taParseBtn" onclick="runTaskEmailParse()">Parse &amp; extract tasks</button>
@@ -2825,10 +2825,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <label class="form-label">Due date <span id="tem-due-lock" style="display:none;font-size:10px;font-weight:700;color:var(--text-light);">🔒 Locked</span></label>
           <input class="form-input" type="date" id="tem-due" onchange="_taSnapDueDateInput(this)">
         </div>
-        <div>
-          <label class="form-label">Service</label>
-          <input class="form-input" id="tem-service" placeholder="Optional">
-        </div>
       </div>
       <div id="tem-block-reason-wrap" style="display:none;margin-top:12px;">
         <label class="form-label">Why is this blocked? <span style="color:var(--red,#c94a4a);">*</span></label>
@@ -2838,15 +2834,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <textarea class="form-input" id="tem-notes" rows="3" placeholder="Optional"></textarea>
       <label class="form-label" style="margin-top:12px;">Tags (comma-separated)</label>
       <input class="form-input" id="tem-tags" placeholder="e.g. urgent, social">
-      <div id="tem-email-fields" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
-        <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">From parsed email</div>
-        <div style="display:grid;grid-template-columns:1fr;gap:12px;">
-          <div>
-            <label class="form-label">Email received</label>
-            <input class="form-input" type="date" id="tem-email-received">
-          </div>
-        </div>
-      </div>
       <div style="margin-top:16px;display:flex;gap:10px;">
         <button class="btn btn-primary" onclick="saveTaskEdit()">Save</button>
         <button class="btn btn-outline" onclick="closeModal('taskEditModal')">Cancel</button>
@@ -5509,7 +5496,7 @@ const HELP_CONTENT = {
     tip: "For admins who manage people — see your direct reports' workload in one place.",
     learnMore: "Shows the services assigned to the people you manage, with its own notification-preferences panel so you can tune what you're alerted about. Visible to any admin who manages team members." },
   taskAssignments: { label: 'Task assignments', sel: '.admin-nav-item[onclick*="\'taskAssignments\'"]',
-    tip: "Parse emails and meeting notes into tasks, or manage everything assigned across the team.",
+    tip: "Parse meeting transcripts into tasks, or manage everything assigned across the team.",
     learnMore: "Paste text into Add/Import — it's parsed into draft tasks you review and edit before committing, never auto-assigned. Track everything in Assigned Tasks (List, Day, Week, or Month view), drill into one person's load in By Person, and catch anything slipping through in Needs Attention (overdue, due today, blocked, or unassigned). Change a task's status right from the list, or delete it outright. A team member only ever sees tasks assigned to them or to someone who reports to them — you see everyone's." },
   users: { label: 'Users', sel: '#admin-drop-users',
     tip: "Manage your team's accounts, roles, and pay rates.",
@@ -9339,6 +9326,22 @@ function _taPersonName(id){
   const p = _timeOffRoster().find(p=>p.id===id);
   return p ? p.name : '—';
 }
+// "Assigned by" display (2026-09-03) — _taPersonName() above is a plain
+// roster lookup, which is why an admin-assigned task always rendered
+// "Assigned by —": the primary-admin sentinel (Sarah Samy — her session
+// id, see api/ops-auth.js's PRIMARY_ADMIN_EMAIL branch) has no
+// ops_admins row, so she can never be found by a roster search. Checked
+// first here, same fix user.html's own _dtPersonName() already applies.
+// A self-added task (assignedById === its own assigneeId — the same
+// field-equality check this file's "Self-assigned" badge already uses,
+// see _renderTaListTable()) reads "Added by you" rather than resolving
+// to a name, mirroring user.html's _dtAssignedByDisplay() verbatim per
+// this task's explicit "show it the same way in both files" instruction.
+function _taAssignedByDisplay(t){
+  if(t.assignedById && t.assignedById===t.assigneeId) return 'Added by you';
+  if(t.assignedById==='primary-admin') return 'Sarah Samy';
+  return _taPersonName(t.assignedById);
+}
 
 function renderTaskAssignments(){
   _taRenderStatusTabBar();
@@ -9376,7 +9379,6 @@ function _renderTaListTable(tasks){
     // my own plate" and must not get the same blue treatment. See
     // api/ops-sync.js's matching comment on the write path this mirrors.
     const selfAssigned = !!t.assignedById && t.assignedById===t.assigneeId;
-    const emailBadge = t.source==='parsed-email' ? ' <span style="font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text-light);">✉️ email</span>' : '';
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlAdmin(t.blockReason||'')}">🚧 Blocked</span>` : '';
     // Distinct from admin/manager-assigned at a glance (2026-09-02) — an
     // admin viewing anyone's tasks can tell what a person put on their own
@@ -9411,8 +9413,8 @@ function _renderTaListTable(tasks){
     return `<div class="ta-task-card${isNew?' ta-row-new':''}${blocked?' ta-row-blocked':''}${selfAssigned?' ta-row-self':''}" onclick="openTaDetailPanel('${t.id}')">
       <div class="ta-card-top">
         <div>
-          <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${emailBadge}${blockedBadge}${dupReportedBadge}${selfBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
-          ${t.assignedDate?`<div style="font-size:11px;color:var(--text-light);margin-top:2px;">Assigned ${_taFormatShortDate(t.assignedDate)}</div>`:''}
+          <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${blockedBadge}${dupReportedBadge}${selfBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_taFormatShortDate(t.assignedDate)} · `:''}${escHtmlAdmin(_taAssignedByDisplay(t))}</div>
         </div>
         ${_taDueBadgeHtml(t)}
       </div>
@@ -9799,17 +9801,13 @@ function openTaDetailPanel(id){
     <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-size:13px;">
       <div style="color:var(--text-light);">Client</div><div>${escHtmlAdmin(t.clientName||'—')}</div>
       <div style="color:var(--text-light);">Assignee</div><div>${escHtmlAdmin(_taPersonName(t.assigneeId))}</div>
-      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlAdmin(_taPersonName(t.assignedById))}</div>
-      <div style="color:var(--text-light);">Service</div><div>${escHtmlAdmin(t.service||'—')}</div>
+      <div style="color:var(--text-light);">Assigned by</div><div>${escHtmlAdmin(_taAssignedByDisplay(t))}</div>
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlAdmin(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Status</div><div style="color:${_taStatusColor(t.status)};font-weight:600;">${t.status||'Not started'}</div>
       ${t.status==='Blocked' && t.blockReason ? `<div style="color:var(--text-light);">Blocked reason</div><div style="color:var(--red,#c94a4a);">${escHtmlAdmin(t.blockReason)}</div>` : ''}
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_taFormatShortDate(t.assignedDate)} · ${_taAgeLabel(_taDaysSinceAssigned(t))}` : '—'}</div>
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
-      ${t.source==='parsed-email' ? `
-      <div style="color:var(--text-light);">Email received</div><div>${t.emailReceivedDate||'—'}</div>
-      ` : ''}
     </div>
     ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
     ${(t.tags||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">${t.tags.map(tag=>`<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 8px;">${escHtmlAdmin(tag)}</span>`).join('')}</div>` : ''}
@@ -9848,11 +9846,8 @@ function openTaskEditModal(id){
   // server-enforced regardless of what this input would otherwise submit.
   document.getElementById('tem-due').disabled = !!t.dueDateLocked;
   document.getElementById('tem-due-lock').style.display = t.dueDateLocked ? '' : 'none';
-  document.getElementById('tem-service').value = t.service || '';
   document.getElementById('tem-notes').value = t.notes || '';
   document.getElementById('tem-tags').value = (t.tags||[]).join(', ');
-  document.getElementById('tem-email-received').value = t.emailReceivedDate || '';
-  document.getElementById('tem-email-fields').style.display = t.source==='parsed-email' ? 'block' : 'none';
   // Nothing to delete server-side for a brand-new, unsaved task.
   document.getElementById('tem-delete-btn').style.display = isNew ? 'none' : '';
   closeTaDetailPanel();
@@ -9909,14 +9904,16 @@ function saveTaskEdit(){
     // lingers on a task that's since moved on.
     blockReason: status==='Blocked' ? blockReason : '',
     dueDate, dueDateLocked,
-    service: document.getElementById('tem-service').value.trim(),
     notes: document.getElementById('tem-notes').value,
     tags: document.getElementById('tem-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
-    emailReceivedDate: document.getElementById('tem-email-received').value,
-    // No UI field for this any more (Reply status removed from the edit
-    // modal/filter/detail panel, 2026-09-02) — preserved from whatever the
-    // task already had rather than read from a removed input, so existing
-    // data is never blanked by a resave.
+    // No UI field for these any more (Service removed 2026-09-03 — see
+    // that entry: always-blank in practice, never linked to the real
+    // Service Catalog; Email received/Reply status removed the same way,
+    // 2026-09-02/03) — all three preserved from whatever the task already
+    // had rather than read from a removed input, so existing stored data
+    // is never blanked by an unrelated resave.
+    service: existing.service || '',
+    emailReceivedDate: existing.emailReceivedDate || '',
     replyStatus: existing.replyStatus || '',
     source: existing.source || 'manual',
     origin: existing.origin || 'admin',
@@ -10044,7 +10041,12 @@ async function runTaskEmailParse(){
         ownerRaw: et.ownerRaw||'',
         category: et.category, priority: et.priority,
         status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
-        source: 'parsed-email', origin: 'admin',
+        // 'parsed-transcript', not 'parsed-email' (2026-09-03) — nobody
+        // gets tasks from email, they come from pasted meeting
+        // transcripts (or a dropped .eml file's text content, extracted
+        // the same way); a provenance tag only, never displayed anywhere
+        // in this file any more (see the removed "Email received" field).
+        source: 'parsed-transcript', origin: 'admin',
         emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
         replyStatus: '',
         assignedDate: et.assignedDate||_taToday(),
