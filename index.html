@@ -1503,6 +1503,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👤 By Person</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
           <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabDupBtn" onclick="setTaSubtab('duplicates')" style="border-radius:8px 8px 0 0;">🧬 Duplicates</button>
         </div>
         <!-- .btn-primary sets width:100% (it's --btn, the same hex as
              --gold) — exactly the "full-width gold bar" this task asks to
@@ -1688,6 +1689,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            tab the whole time. -->
       <div id="ta-subtab-reported" style="display:none;">
         <div id="ta-reported-body"></div>
+      </div>
+
+      <!-- Company-wide duplicate sweep (2026-09-03) — the admin-side port
+           of the employee's own "Check for duplicates" feature (user.html,
+           2026-08-26), scoped to ALL tasks instead of just one person's
+           own. Never runs on load/timer — only from the button's onclick
+           inside renderTaDuplicateSweep(). Merge is additive+reversible via
+           mergedIntoId, same as everywhere else this pattern is used —
+           never a hard delete. -->
+      <div id="ta-subtab-duplicates" style="display:none;">
+        <div id="ta-dup-body"></div>
       </div>
     </div>
 
@@ -9012,20 +9024,24 @@ function setTaSubtab(tab){
   document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline'+(tab==='person'?' btn-toggle-active':'');
   document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm btn-outline'+(tab==='attention'?' btn-toggle-active':'');
   document.getElementById('taSubtabReportedBtn').className = 'btn btn-sm btn-outline'+(tab==='reported'?' btn-toggle-active':'');
+  document.getElementById('taSubtabDupBtn').className = 'btn btn-sm btn-outline'+(tab==='duplicates'?' btn-toggle-active':'');
   document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAttentionBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabReportedBtn').style.borderRadius = '8px 8px 0 0';
+  document.getElementById('taSubtabDupBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
   document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
   document.getElementById('ta-subtab-person').style.display = tab==='person' ? '' : 'none';
   document.getElementById('ta-subtab-attention').style.display = tab==='attention' ? '' : 'none';
   document.getElementById('ta-subtab-reported').style.display = tab==='reported' ? '' : 'none';
+  document.getElementById('ta-subtab-duplicates').style.display = tab==='duplicates' ? '' : 'none';
   if(tab==='assigned') renderTaskAssignments();
   if(tab==='person') renderTaPersonRoster();
   if(tab==='attention') renderTaNeedsAttention();
   if(tab==='reported') renderTaReported();
+  if(tab==='duplicates') renderTaDuplicateSweep();
 }
 
 // ── Per-person Daily Tasks view (admin) — 2026-08-20. _taPersonViewId,
@@ -9245,6 +9261,198 @@ function renderTaReported(){
       </table>
     </div>
   </div>`;
+}
+
+// ── Company-wide duplicate sweep (2026-09-03) — the admin-side port of
+// user.html's employee "Check for duplicates" feature (_dtIsSameTask()/
+// mergeDtDuplicate()/etc., 2026-08-26), hand-duplicated per the zero-
+// shared-code rule. Scope is the one real difference: the employee version
+// only ever scans that person's OWN tasks; this scans every NOT-Done,
+// not-already-merged-away task company-wide, pairing same-assignee +
+// similar-subject candidates regardless of who they're assigned to. Never
+// runs on load/timer — only from the "Scan for duplicates" button's own
+// onclick. Merge is additive/reversible via mergedIntoId (never a hard
+// delete), identical semantics to the employee version: notes newline-
+// joined, tags unioned, due date filled only if missing, status escalated
+// to Done only if either side already was.
+const TA_DUP_SUBJECT_THRESHOLD = 0.6;
+function _taDupIsSameTask(a,b){
+  if((a.clientId||null) !== (b.clientId||null)) return false;
+  if((a.assigneeId||null) !== (b.assigneeId||null)) return false;
+  return _taDupSubjectSimilarity(a.subject, b.subject) >= TA_DUP_SUBJECT_THRESHOLD;
+}
+// No existing token-overlap similarity helper lives in index.html today —
+// this is the first consumer here — so define a local copy, matching
+// user.html's own DT_STOPWORDS/_dtSubjectTokens naming/shape.
+const TA_DUP_STOPWORDS = new Set(['a','an','the','to','for','of','on','in','and','or','with','is','are','be','this','that']);
+function _taDupSubjectTokens(subject){
+  return String(subject||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w && !TA_DUP_STOPWORDS.has(w));
+}
+function _taDupSubjectSimilarity(a,b){
+  const ta=new Set(_taDupSubjectTokens(a)), tb=new Set(_taDupSubjectTokens(b));
+  if(!ta.size || !tb.size) return 0;
+  let overlap=0;
+  for(const w of ta) if(tb.has(w)) overlap++;
+  return overlap / new Set([...ta,...tb]).size;
+}
+
+// Company-wide, greedy pairing (each task is primary or duplicate of at
+// most one pair per scan) — every active person's tasks are candidates,
+// not just one person's own, which is the entire point of this being an
+// admin-only sweep rather than the employee's own self-scoped check.
+function _taFindDuplicatePairsCompanyWide(){
+  const candidates = _taTasks().filter(t=>t.status!=='Done' && !t.mergedIntoId)
+    .slice()
+    .sort((a,b)=>(a.assignedDate||a.createdAt||'').localeCompare(b.assignedDate||b.createdAt||''));
+  const claimed = new Set();
+  const pairs = [];
+  for(let i=0;i<candidates.length;i++){
+    const primary = candidates[i];
+    if(claimed.has(primary.id)) continue;
+    for(let j=i+1;j<candidates.length;j++){
+      const other = candidates[j];
+      if(claimed.has(other.id)) continue;
+      if(_taDupIsSameTask(primary, other)){
+        pairs.push({ primaryId: primary.id, duplicateId: other.id });
+        claimed.add(primary.id); claimed.add(other.id);
+        break;
+      }
+    }
+  }
+  return pairs;
+}
+
+let _taDupPairs = [];
+function scanTaDuplicates(){
+  _taDupPairs = _taFindDuplicatePairsCompanyWide();
+  _renderTaDupReview();
+}
+function dismissTaDupPair(primaryId, duplicateId){
+  _taDupPairs = _taDupPairs.filter(p=>!(p.primaryId===primaryId && p.duplicateId===duplicateId));
+  _renderTaDupReview();
+}
+function _taPersonNameFor(id){
+  const roster = _timeOffRoster();
+  const p = roster.find(r=>r.id===id);
+  return p ? p.name : (id||'Unassigned');
+}
+function _renderTaDupReview(){
+  const wrap = document.getElementById('ta-dup-review-wrap');
+  const statusEl = document.getElementById('ta-dup-status');
+  if(!wrap || !statusEl) return;
+  if(!_taDupPairs.length){
+    statusEl.style.display = '';
+    statusEl.textContent = 'No likely duplicates found in the last scan.';
+    wrap.innerHTML = '';
+    return;
+  }
+  statusEl.style.display = 'none';
+  const tasks = _taTasks();
+  const byId = id => tasks.find(t=>t.id===id);
+  wrap.innerHTML = _taDupPairs.map(p=>{
+    const primary = byId(p.primaryId), dup = byId(p.duplicateId);
+    if(!primary || !dup) return '';
+    const willFillDue = !primary.dueDate && dup.dueDate;
+    const willEscalateDone = primary.status!=='Done' && dup.status==='Done';
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:8px;">Same assignee (${escHtmlAdmin(_taPersonNameFor(primary.assigneeId))}) — these two look like the same task:</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;color:var(--green,#2e9e6e);text-transform:uppercase;">Keep</div>
+          <div style="font-weight:600;">${escHtmlAdmin(primary.subject||'')}</div>
+          <div style="font-size:11px;color:var(--text-light);">${escHtmlAdmin(primary.clientName||'—')} · Due ${primary.dueDate||'—'} · ${primary.status||'Not started'}</div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;color:var(--red,#c94a4a);text-transform:uppercase;">Merges in</div>
+          <div style="font-weight:600;">${escHtmlAdmin(dup.subject||'')}</div>
+          <div style="font-size:11px;color:var(--text-light);">${escHtmlAdmin(dup.clientName||'—')} · Due ${dup.dueDate||'—'} · ${dup.status||'Not started'}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:10px;">
+        Notes will be combined${dup.tags&&dup.tags.length?', tags combined':''}${willFillDue?', due date filled in from the other task':''}${willEscalateDone?', status set to Done':''}.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" style="width:auto;" onclick="mergeTaDuplicate('${p.primaryId}','${p.duplicateId}')">✅ Merge</button>
+        <button class="btn btn-sm btn-outline" onclick="dismissTaDupPair('${p.primaryId}','${p.duplicateId}')">Not a duplicate</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Merge — additive-only, reversible (mergedIntoId, never a hard delete),
+// identical semantics to user.html's mergeDtDuplicate(). Admin-side write
+// convention here is fire-and-forget cloudAutoSync() (see _taChangeStatus()
+// immediately above), not the employee side's stricter server-confirmed-
+// before-success pattern — matching this file's own existing task-write
+// functions rather than importing a convention this file doesn't use.
+let _taRecentDupMerges = [];
+function mergeTaDuplicate(primaryId, duplicateId){
+  const tasks = _taTasks();
+  const primary = tasks.find(t=>t.id===primaryId);
+  const dup = tasks.find(t=>t.id===duplicateId);
+  if(!primary || !dup) return;
+  const primarySnapshot = { notes: primary.notes, tags: (primary.tags||[]).slice(), dueDate: primary.dueDate, status: primary.status, completedAt: primary.completedAt };
+  if(dup.notes) primary.notes = primary.notes ? `${primary.notes}\n${dup.notes}` : dup.notes;
+  primary.tags = [...new Set([...(primary.tags||[]), ...(dup.tags||[])])];
+  if(!primary.dueDate && dup.dueDate) primary.dueDate = dup.dueDate;
+  if(dup.status==='Done' && primary.status!=='Done'){
+    primary.completedAt = _taCompletedAt(primary.status||'Not started', 'Done', primary.completedAt);
+    primary.status = 'Done';
+  }
+  dup.mergedIntoId = primaryId;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  _taRecentDupMerges.unshift({ duplicateId, primaryId, primarySnapshot, subject: dup.subject });
+  _taRecentDupMerges = _taRecentDupMerges.slice(0,10);
+  _taDupPairs = _taDupPairs.filter(p=>p.duplicateId!==duplicateId);
+  _renderTaDupReview();
+  _renderTaRecentDupMerges();
+  showToast('Merged ✓');
+}
+function _renderTaRecentDupMerges(){
+  const wrap = document.getElementById('ta-dup-recent-merges');
+  if(!wrap) return;
+  if(!_taRecentDupMerges.length){ wrap.innerHTML=''; return; }
+  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent merges (this session)</div>` +
+    _taRecentDupMerges.map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
+        <span>Merged "${escHtmlAdmin(m.subject||'')}"</span>
+        <button class="btn btn-xs btn-outline" onclick="undoTaDupMerge('${m.duplicateId}')">↩ Undo this merge</button>
+      </div>`).join('');
+}
+function undoTaDupMerge(duplicateId){
+  const entry = _taRecentDupMerges.find(m=>m.duplicateId===duplicateId);
+  if(!entry) return;
+  const tasks = _taTasks();
+  const primary = tasks.find(t=>t.id===entry.primaryId);
+  const dup = tasks.find(t=>t.id===duplicateId);
+  if(!primary || !dup) return;
+  Object.assign(primary, entry.primarySnapshot);
+  dup.mergedIntoId = null;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  _taRecentDupMerges = _taRecentDupMerges.filter(m=>m.duplicateId!==duplicateId);
+  _renderTaRecentDupMerges();
+  showToast('Merge undone ✓');
+}
+function renderTaDuplicateSweep(){
+  const container = document.getElementById('ta-dup-body');
+  if(!container) return;
+  container.innerHTML = `<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title">🧬 Company-wide duplicate sweep</div>
+        <div class="card-sub">Finds same-person / same-subject task duplicates across everyone — never runs automatically</div>
+      </div>
+      <button class="btn btn-sm btn-primary" style="width:auto;" onclick="scanTaDuplicates()">🔍 Scan for duplicates</button>
+    </div>
+    <div class="card-body">
+      <div id="ta-dup-status" style="font-size:12px;color:var(--text-light);font-style:italic;">Click "Scan for duplicates" to check.</div>
+      <div id="ta-dup-review-wrap"></div>
+      <div id="ta-dup-recent-merges"></div>
+    </div>
+  </div>`;
+  _taDupPairs = [];
+  _renderTaRecentDupMerges();
 }
 
 const TA_VIEW_BTN_IDS = {list:'taViewListBtn', day:'taViewDayBtn', week:'taViewWeekBtn', month:'taViewMonthBtn'};
