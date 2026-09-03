@@ -959,6 +959,81 @@ async function fireTaskReportedNotifications(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
+// Due-date-change request approver resolution (2026-09-03) — deliberately
+// NOT resolveReviewRecipients(): that function ALWAYS additionally includes
+// Sarah's primary-admin sentinel even when a real manager resolves, which
+// is right for "submit for review" (a manager AND Sarah both plausibly want
+// to know) but wrong here — this feature's own spec is a strict either/or
+// ("the requester's direct manager... if no manager, route to the super
+// admin"), never both at once. Same manager-lookup shape as
+// resolveNotifyRecipients()/resolveReviewRecipients() (users[].managerId,
+// resolved against either table), falling back to JUST the primary-admin
+// sentinel by her literal id when no manager is configured — the same
+// special case those two functions already need, since she has no real
+// ops_admins row for an admins-array scan to ever find.
+export function resolveDueDateApprover(requesterId, users, admins) {
+  const user = users.find(u => u.id === requesterId);
+  if (user && user.managerId && user.managerId !== requesterId) {
+    const asAdmin = admins.find(a => a.id === user.managerId);
+    if (asAdmin) return [{ id: user.managerId, kind: 'admin' }];
+    const asUser = users.find(u => u.id === user.managerId);
+    if (asUser) return [{ id: user.managerId, kind: 'user' }];
+  }
+  return [{ id: 'primary-admin', kind: 'admin' }];
+}
+
+// Fired when a member's request is written (see the member-write branch
+// below) — notifies the resolved approver only, never the requester
+// themselves (resolveDueDateApprover() never returns the requester's own
+// id, since it only ever returns a manager or the fallback super-admin).
+async function fireDueDateChangeRequestedNotification(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    resolveDueDateApprover(ev.requestedBy, users, admins).forEach(r => {
+      const isPrimary = r.id === 'primary-admin';
+      const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
+      rows.push({
+        type: 'dueDateChangeRequested', recipientId: r.id, recipientKind: r.kind,
+        recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+        recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+        title: `Due-date change requested: ${ev.subject}`,
+        body: `${ev.requestedByName || 'Someone'} requested moving the due date to ${ev.proposedDate}${ev.reason ? ` — "${ev.reason}"` : ''}.`,
+        link: '',
+        context: { taskId: ev.taskId, clientId: ev.clientId || null },
+      });
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// Fired when an admin resolves a pending request (approve or decline — see
+// the isAdmin update branch below, which detects which one happened by
+// comparing the incoming dueDate to the request's own proposedDate).
+// Notifies the ORIGINAL REQUESTER only — never the approver, who obviously
+// already knows what they just did.
+async function fireDueDateChangeResolvedNotification(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    const kind = users.find(u => u.id === ev.requestedBy) ? 'user' : 'admin';
+    const person = personOf(ev.requestedBy, kind, { users, admins });
+    if (!person) return;
+    rows.push({
+      type: ev.approved ? 'dueDateChangeApproved' : 'dueDateChangeDeclined',
+      recipientId: ev.requestedBy, recipientKind: kind,
+      recipientName: person.name || '', recipientEmail: person.email || '',
+      title: ev.approved ? `Due-date change approved: ${ev.subject}` : `Due-date change declined: ${ev.subject}`,
+      body: ev.approved ? `Your requested due date (${ev.proposedDate}) was approved.` : `Your requested due date (${ev.proposedDate}) was declined — the due date is unchanged.`,
+      link: '',
+      context: { taskId: ev.taskId, clientId: ev.clientId || null },
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
 async function fireTimeOffNotification(supabase, request, warnings, notices) {
   const { users, admins } = await getDirectory(supabase);
   const requester = users.find(u => String(u.name || '').toLowerCase() === String(request.userName || '').toLowerCase());
@@ -1839,6 +1914,8 @@ export default async function handler(req, res) {
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
       const reportEvents = [];
+      const dueDateRequestEvents = [];
+      const dueDateResolveEvents = [];
       // Every session.id check below (here and in the "not your task"
       // check further down) already uses this caller's CANONICAL employee
       // id for a dual-role admin/manager account, not their separate
@@ -1929,6 +2006,31 @@ export default async function handler(req, res) {
             dueDate,
             dueDateLocked: dueDateLocked || dueDateJustLocked,
           };
+          // Due-date-change request resolution (2026-09-03) — detected, not
+          // trusted from a client-sent flag: a pending request existed on
+          // `cur` and is now absent from `row` (the client clears it to
+          // resolve one, whether approving or declining — an unrelated edit
+          // that never touches this field leaves it exactly as `cur` had
+          // it, so this block never fires for those). Approved vs declined
+          // is the actual dueDate outcome above, not a separate signal the
+          // client could get out of sync with: approving is precisely "the
+          // date actually changed" (dueDateJustLocked, computed from the
+          // exact same dueDate this write already applied), declining is
+          // precisely "it didn't." "Any admin may resolve any pending
+          // request" (manager/super-admin only, i.e. isAdmin generally) —
+          // this feature does not scope resolution to specifically the
+          // routed approver, matching this codebase's existing convention
+          // that admin capability over ops_tasks is uniform across every
+          // admin tier, never per-record-scoped to one specific person.
+          if (cur.dueDateChangeRequest && !row.dueDateChangeRequest) {
+            dueDateResolveEvents.push({
+              taskId: inc.id, subject: row.subject,
+              requestedBy: cur.dueDateChangeRequest.requestedBy,
+              proposedDate: cur.dueDateChangeRequest.proposedDate,
+              approved: dueDateJustLocked,
+              clientId: row.clientId || null,
+            });
+          }
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else {
@@ -1981,12 +2083,38 @@ export default async function handler(req, res) {
             reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
             reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
             reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+            // Due-date-change request (Item C, 2026-09-03) — a member can
+            // only ever CREATE one, never clear/edit it (there's no self-
+            // cancel here, out of this feature's stated scope); an
+            // incoming clear/edit attempt is silently ignored, always
+            // falling back to whatever cur already had. Resolving a
+            // pending request (approve/decline) only ever happens on the
+            // isAdmin branch above.
+            dueDateChangeRequest: cur.dueDateChangeRequest || null,
           };
           if (row.reportedMisassigned && !cur.reportedMisassigned && cur.origin === 'admin') {
             row = { ...row, reportedMisassignedBy: session.id, reportedMisassignedByName: session.name, reportedMisassignedAt: new Date().toISOString() };
             reportEvents.push({
               taskId: inc.id, subject: row.subject, assignedById: cur.assignedById || null,
               clientId: row.clientId || null, reportedByName: session.name,
+            });
+          }
+          // Only fires on the actual transition into a pending request
+          // (never a resave that leaves one already set, and never when
+          // one is already pending — one request at a time). requestedBy/
+          // requestedByName/requestedAt are always taken from the caller's
+          // own session, never trusted from the client, same convention
+          // reportedMisassigned* above already established.
+          if (!cur.dueDateChangeRequest && inc.dueDateChangeRequest && hasContent(inc.dueDateChangeRequest.proposedDate)) {
+            const proposedDate = String(inc.dueDateChangeRequest.proposedDate);
+            const reason = String(inc.dueDateChangeRequest.reason || '').slice(0, 500);
+            row = {
+              ...row,
+              dueDateChangeRequest: { proposedDate, reason, requestedBy: session.id, requestedByName: session.name, requestedAt: new Date().toISOString() },
+            };
+            dueDateRequestEvents.push({
+              taskId: inc.id, subject: row.subject, proposedDate, reason,
+              requestedBy: session.id, requestedByName: session.name, clientId: row.clientId || null,
             });
           }
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
@@ -2009,6 +2137,8 @@ export default async function handler(req, res) {
       applied.tasks = n;
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
       await fireTaskReportedNotifications(supabase, reportEvents, warnings);
+      await fireDueDateChangeRequestedNotification(supabase, dueDateRequestEvents, warnings);
+      await fireDueDateChangeResolvedNotification(supabase, dueDateResolveEvents, warnings);
     }
 
     // ── Task hard delete — genuine hard SQL DELETE. ops_tasks has no
