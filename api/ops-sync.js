@@ -1236,6 +1236,139 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── "Email everyone their work summary" (2026-09-03) — Super Admin/Owner
+  // only, same top-level `action` dispatch convention as the password-
+  // cutover block above (a guarded administrative action, never a per-
+  // record sync write). Reuses insertNotifications() — the same
+  // established "build one row per recipient, it resolves the email and
+  // sends via Resend, batched one email per distinct recipientEmail"
+  // mechanism every other notification type in this file already uses —
+  // rather than writing a second, parallel email-sending path.
+  if (req.body?.action === 'email-team-summaries') {
+    if (tier !== 'super') return res.status(403).json({ error: 'Super Admin/Owner only' });
+
+    // Server-enforced cooldown (~3h) — the client's confirm() dialog is a
+    // UX nicety, not a guarantee; this is the real guard against a
+    // spam-clicked repeat blast, checked and stamped here regardless of
+    // what the client does. Stored in ops_settings (the same key-value
+    // table notificationSettings/teamNotifPrefs_* already live in), not a
+    // new table.
+    const COOLDOWN_MS = 3 * 60 * 60 * 1000;
+    const warnings = [];
+    try {
+      const { data: lastRow } = await supabase.from('ops_settings').select('data').eq('key', 'lastTeamSummaryEmailAt').maybeSingle();
+      const lastAt = lastRow?.data ? new Date(lastRow.data).getTime() : 0;
+      const elapsed = Date.now() - lastAt;
+      if (lastAt && elapsed < COOLDOWN_MS) {
+        const waitMin = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
+        return res.status(429).json({ error: `Team summaries were already sent recently — please wait ${waitMin} more minute(s) before sending again.` });
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const weekOutDate = new Date(); weekOutDate.setDate(weekOutDate.getDate() + 7);
+      const weekOut = weekOutDate.toISOString().slice(0, 10);
+      // Same semantics as api/cron-overdue-check.js's own isInactiveService/
+      // isDoneThisCycle/isOverdue/taskIsOverdue — duplicated here rather than
+      // imported (that file is a handler, not a shared library, and
+      // importing back into this one would be a circular dependency; this
+      // file already already imports FROM it nowhere and is imported BY it),
+      // same "kept in sync deliberately" convention this codebase already
+      // uses between client.html and that same cron file.
+      const isInactiveService = (s) => s.status === 'cancelled' || s.status === 'archived';
+      const isDoneThisCycle = (s) => !!(s.lastDone && !(s.due && s.due < today));
+      const isOverdueService = (s) => !isInactiveService(s) && !isDoneThisCycle(s) && !!s.due && s.due < today;
+      const isDueSoonService = (s) => !isInactiveService(s) && !isDoneThisCycle(s) && !!s.due && s.due >= today && s.due <= weekOut;
+      const isOverdueTask = (t) => !!t.dueDate && t.dueDate < today && t.status !== 'Done';
+      const isDueSoonTask = (t) => !!t.dueDate && t.dueDate >= today && t.dueDate <= weekOut && t.status !== 'Done';
+      const svcAssignedTo = (s, personId) => (Array.isArray(s.assigneeIds) && s.assigneeIds.length ? s.assigneeIds.includes(personId) : s.assigneeId === personId);
+
+      const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: taskRows, error: tErr }, { data: clientRows, error: cErr }] = await Promise.all([
+        supabase.from('ops_users').select('id, data'),
+        supabase.from('ops_admins').select('id, data'),
+        supabase.from('ops_tasks').select('id, data'),
+        supabase.from('ops_clients').select('id, status, data').eq('status', 'active'),
+      ]);
+      const firstErr = uErr || aErr || tErr || cErr;
+      if (firstErr) return res.status(500).json({ error: firstErr.message });
+
+      const tasks = (taskRows || []).map(r => ({ id: r.id, ...r.data })).filter(t => !t.mergedIntoId);
+      const services = [];
+      (clientRows || []).forEach(row => {
+        const client = row.data; if (!client) return;
+        (client.services || []).forEach(s => { if (s?.id) services.push(s); });
+        (client.locations || []).forEach(loc => (loc.services || []).forEach(s => { if (s?.id) services.push(s); }));
+      });
+
+      // Every active employee + admin, PLUS the primary-admin sentinel by
+      // her literal id (same special case resolveReportRecipients()/
+      // resolveReviewRecipients() already establish elsewhere in this file
+      // — she has no real ops_admins row, but can genuinely have work
+      // assigned to her like anyone else).
+      const people = [
+        { id: 'primary-admin', kind: 'admin', name: 'Sarah Samy', email: 'ssamy@weblightmedia.com' },
+        ...(userRows || []).filter(r => r.data?.status !== 'inactive').map(r => ({ id: r.id, kind: 'user', name: r.data?.name || '', email: r.data?.email || '' })),
+        ...(adminRows || []).filter(r => r.data?.status !== 'inactive').map(r => ({ id: r.id, kind: 'admin', name: r.data?.name || '', email: r.data?.email || '' })),
+      ];
+
+      const rows = [];
+      let skippedCount = 0;
+      for (const person of people) {
+        const tasksForPerson = tasks.filter(t => t.assigneeId === person.id);
+        const tasksAssigned = tasksForPerson.length;
+        const tasksDone = tasksForPerson.filter(t => t.status === 'Done').length;
+        const tasksNotStarted = tasksForPerson.filter(t => t.status === 'Not started').length;
+        const tasksInProgress = tasksForPerson.filter(t => t.status === 'In progress').length;
+        const servicesForPerson = services.filter(s => svcAssignedTo(s, person.id));
+        const servicesAssigned = servicesForPerson.length;
+        const servicesDone = servicesForPerson.filter(s => s.workStatus === 'done').length;
+        const totalAssigned = tasksAssigned + servicesAssigned;
+        // "Genuinely empty plate" -> skip entirely, no email, no row.
+        if (!totalAssigned) { skippedCount++; continue; }
+        if (!person.email) { skippedCount++; continue; }
+
+        const pctDone = Math.round((tasksDone + servicesDone) / totalAssigned * 100);
+        const overdueItems = [
+          ...tasksForPerson.filter(isOverdueTask).map(t => t.subject || 'Untitled task'),
+          ...servicesForPerson.filter(isOverdueService).map(s => s.name || 'Untitled service'),
+        ];
+        const dueSoonItems = [
+          ...tasksForPerson.filter(isDueSoonTask).map(t => `${t.subject || 'Untitled task'} — due ${t.dueDate}`),
+          ...servicesForPerson.filter(isDueSoonService).map(s => `${s.name || 'Untitled service'} — due ${s.due}`),
+        ];
+        const DUE_SOON_LIMIT = 5;
+        const dueSoonLines = dueSoonItems.slice(0, DUE_SOON_LIMIT).map(x => `• ${x}`);
+        if (dueSoonItems.length > DUE_SOON_LIMIT) dueSoonLines.push(`…and ${dueSoonItems.length - DUE_SOON_LIMIT} more`);
+
+        const bodyLines = [
+          `Tasks: ${tasksAssigned} assigned · ${tasksDone} done · ${tasksNotStarted} not started · ${tasksInProgress} in progress (${pctDone}% done)`,
+          `Services: ${servicesAssigned} assigned · ${servicesDone} done`,
+          '',
+          `Overdue: ${overdueItems.length}`,
+        ];
+        if (dueSoonLines.length) {
+          bodyLines.push('', 'Due this week:', ...dueSoonLines);
+        }
+
+        rows.push({
+          type: 'workSummary', recipientId: person.id, recipientKind: person.kind,
+          recipientName: person.name, recipientEmail: person.email,
+          title: "Here's your work summary",
+          body: bodyLines.join('\n'),
+          link: '', context: {},
+        });
+      }
+
+      await insertNotifications(supabase, rows, warnings);
+      const { error: stampErr } = await supabase.from('ops_settings').upsert({ key: 'lastTeamSummaryEmailAt', data: new Date().toISOString() }, { onConflict: 'key' });
+      if (stampErr) warnings.push(`lastTeamSummaryEmailAt: ${stampErr.message}`);
+
+      return res.status(200).json({ ok: true, sentCount: rows.length, skippedCount, warnings });
+    } catch (err) {
+      await logError({ endpoint: 'ops-sync', error: err, session });
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   const { changes, tombstones, restoreUserIds } = req.body || {};
   const warnings = []; // genuine per-row write failures ONLY — logged as an error every time
   // Informational/expected fallbacks — a notification correctly went out via
