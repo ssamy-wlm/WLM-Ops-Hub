@@ -712,28 +712,43 @@ export function personOf(id, kind, { users, admins }) {
   return kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
 }
 
+// Assignment emails go to the ASSIGNEE ONLY (2026-09-03) — no manager/
+// leader escalation on a routine assignment (that used to come from
+// resolveNotifyRecipients()'s own manager-fallback/broadcaster logic,
+// removed here entirely rather than gated off, since this event type never
+// wants it regardless of any admin's teamNotifPrefs.assigned toggle;
+// resolveNotifyRecipients() itself is untouched and still used exactly as
+// before for every OTHER event type — overdue/done/comment/etc.). No
+// notification at all for a genuine self-assign: `ev.assignedById` is
+// attached at every push site below (never trusted from the collector
+// functions, which have no such field on a service/legacy-task/sub-item —
+// see each push site's own comment), compared by the same literal
+// field-equality definition of "self-assigned" already established
+// elsewhere in this codebase (the 2026-09-02 self-assigned-badge feature:
+// assignedById===assigneeId, not a session-id proxy).
 async function fireAssignmentNotifications(supabase, events, warnings) {
   if (!events.length) return;
   const { users, admins } = await getDirectory(supabase);
   const rows = [];
   events.forEach(ev => {
-    resolveNotifyRecipients(ev.assigneeId, users, admins, 'assigned').forEach(r => {
-      const person = personOf(r.id, r.kind, { users, admins });
-      const isTask = !!ev.taskId;
-      const isSubitem = !!ev.subitemId;
-      const title = isSubitem ? `New sub-item assigned: ${ev.subitemText}`
-        : isTask ? `New task assigned: ${ev.taskName}` : `New service assigned: ${ev.serviceName}`;
-      const body = isSubitem
-        ? `${ev.serviceName} — ${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`
-        : isTask
-        ? `${ev.clientName} — ${ev.projectName}${ev.subName ? ' / ' + ev.subName : ''}`
-        : `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`;
-      rows.push({
-        type: 'assignment', recipientId: r.id, recipientKind: r.kind,
-        recipientName: person?.name || '', recipientEmail: person?.email || '',
-        title, body, link: '',
-        context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null, subitemId: ev.subitemId || null },
-      });
+    if (!ev.assigneeId) return;
+    if (ev.assignedById && ev.assignedById === ev.assigneeId) return;
+    const kind = users.find(u => u.id === ev.assigneeId) ? 'user' : 'admin';
+    const person = personOf(ev.assigneeId, kind, { users, admins });
+    const isTask = !!ev.taskId;
+    const isSubitem = !!ev.subitemId;
+    const title = isSubitem ? `New sub-item assigned: ${ev.subitemText}`
+      : isTask ? `New task assigned: ${ev.taskName}` : `New service assigned: ${ev.serviceName}`;
+    const body = isSubitem
+      ? `${ev.serviceName} — ${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`
+      : isTask
+      ? `${ev.clientName} — ${ev.projectName}${ev.subName ? ' / ' + ev.subName : ''}`
+      : `${ev.clientName}${ev.locationName ? ' — ' + ev.locationName : ''}`;
+    rows.push({
+      type: 'assignment', recipientId: ev.assigneeId, recipientKind: kind,
+      recipientName: person?.name || '', recipientEmail: person?.email || '',
+      title, body, link: '',
+      context: { clientId: ev.clientId, serviceId: ev.serviceId || null, taskId: ev.taskId || null, subitemId: ev.subitemId || null },
     });
   });
   await insertNotifications(supabase, rows, warnings);
@@ -749,21 +764,25 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
 // email itself via Resend — see insertNotifications' own comment) rather
 // than the separate api/send-assignment-email.js tool, for consistency with
 // every other assignment-type notification in this file.
+//
+// Assignee only, no manager escalation, no self-assign email (2026-09-03) —
+// same rule and same reasoning as fireAssignmentNotifications() above.
 async function fireOpsTaskAssignmentNotifications(supabase, events, warnings) {
   if (!events.length) return;
   const { users, admins } = await getDirectory(supabase);
   const rows = [];
   events.forEach(ev => {
-    resolveNotifyRecipients(ev.assigneeId, users, admins, 'assigned').forEach(r => {
-      const person = personOf(r.id, r.kind, { users, admins });
-      rows.push({
-        type: 'taskAssignment', recipientId: r.id, recipientKind: r.kind,
-        recipientName: person?.name || '', recipientEmail: person?.email || '',
-        title: `New task assigned: ${ev.subject}`,
-        body: `${ev.clientName || 'No client'}${ev.dueDate ? ' — due ' + ev.dueDate : ''}`,
-        link: '',
-        context: { taskId: ev.taskId, clientId: ev.clientId || null },
-      });
+    if (!ev.assigneeId) return;
+    if (ev.assignedById && ev.assignedById === ev.assigneeId) return;
+    const kind = users.find(u => u.id === ev.assigneeId) ? 'user' : 'admin';
+    const person = personOf(ev.assigneeId, kind, { users, admins });
+    rows.push({
+      type: 'taskAssignment', recipientId: ev.assigneeId, recipientKind: kind,
+      recipientName: person?.name || '', recipientEmail: person?.email || '',
+      title: `New task assigned: ${ev.subject}`,
+      body: `${ev.clientName || 'No client'}${ev.dueDate ? ' — due ' + ev.dueDate : ''}`,
+      link: '',
+      context: { taskId: ev.taskId, clientId: ev.clientId || null },
     });
   });
   await insertNotifications(supabase, rows, warnings);
@@ -1568,9 +1587,16 @@ export default async function handler(req, res) {
           for (const inc of incoming) {
             const cur = byId.get(inc.id);
             if (!cur) continue; // brand-new client (e.g. a bulk import) — nothing to diff against
-            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
-            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
-            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc));
+            // assignedById attached here, not by the collector functions
+            // themselves (services/legacy tasks/sub-items have no such
+            // stored field at all) — the caller making THIS assignment
+            // write, right now, is the only meaningful "who assigned it"
+            // for the self-assign check fireAssignmentNotifications() does
+            // (2026-09-03: assignment emails go to the assignee only, never
+            // when they assigned it to themselves).
+            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
           }
         }
         if (notifSettings.serviceUpdate) {
@@ -1617,9 +1643,16 @@ export default async function handler(req, res) {
           if (uErr) { warnings.push(`clients(${inc.id}): ${uErr.message}`); continue; }
           n++;
           if (notifSettings.assignment) {
-            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc));
-            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc));
-            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc));
+            // assignedById attached here, not by the collector functions
+            // themselves (services/legacy tasks/sub-items have no such
+            // stored field at all) — the caller making THIS assignment
+            // write, right now, is the only meaningful "who assigned it"
+            // for the self-assign check fireAssignmentNotifications() does
+            // (2026-09-03: assignment emails go to the assignee only, never
+            // when they assigned it to themselves).
+            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
           }
           if (notifSettings.serviceUpdate) {
             serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
@@ -1827,9 +1860,15 @@ export default async function handler(req, res) {
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         }
         n++;
-        if (notifSettings.assignment && row.assigneeId && row.assigneeId !== session.id && assigneeChanged(cur, row)) {
+        // row.assigneeId!==session.id was the old proxy for "not a self-
+        // assign" here — removed (2026-09-03): the real, literal
+        // self-assign definition (assignedById===assigneeId) is now
+        // enforced inside fireOpsTaskAssignmentNotifications() itself, from
+        // row.assignedById passed through below, so this gate only needs
+        // to decide whether an assignment actually happened at all.
+        if (notifSettings.assignment && row.assigneeId && assigneeChanged(cur, row)) {
           taskAssignmentEvents.push({
-            taskId: inc.id, subject: row.subject, assigneeId: row.assigneeId,
+            taskId: inc.id, subject: row.subject, assigneeId: row.assigneeId, assignedById: row.assignedById || null,
             clientId: row.clientId || null, clientName: row.clientName || '', dueDate: row.dueDate || '',
           });
         }

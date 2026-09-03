@@ -2955,6 +2955,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       </div>
+      <!-- "Reports To" for admins (2026-09-03) — the inverse of "Manages"
+           below: who THIS admin's own managerId points at, not who they
+           manage. Hidden for the primary admin (__primary__ has no real
+           ops_admins row for managerId to live on — see openEditAdminModal()
+           and saveEditAdmin()'s own early return for that sentinel). -->
+      <div id="editAdminManagerWrap" class="form-group" style="margin-top:14px;">
+        <label class="form-label">Reports To (Manager)</label>
+        <select class="form-select" id="editAdminManager"><option value="">— None / Top Level —</option></select>
+      </div>
       <div id="editAdminManagedUsersWrap" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px;">
         <label class="form-label">Manages (team activity notifications)</label>
         <div style="font-size:11px;color:var(--text-light);margin-bottom:8px;">Team members this admin gets notified about — Super Admin only.</div>
@@ -11596,13 +11605,31 @@ function _downloadLocalRecoveryStore(key){
   showToast('✅ Downloaded '+key);
 }
 
-// Also update populateManagerDropdown to keep manager list current
-function populateManagerDropdown(){
-  const sel=document.getElementById('newUserManager');
+// Manager candidate list + shared select-populator (2026-09-03) — replaces
+// two earlier, overlapping implementations: populateManagerDropdown() (dead
+// code, never called) and populateManagerDropdownFull() (the one that WAS
+// active, but built its "admin" options from ORG-CHART NODE ids like
+// 'david'/'abby' for anyone without a matching ops_users row — a real,
+// previously-silent bug, since resolveNotifyRecipients() in api/ops-sync.js
+// resolves managerId by looking it up in the real ops_admins array by id;
+// an org-chart node id never matches a real admin row there, so a manager
+// picked this way could never actually resolve through the escalation
+// chain the whole notification-hierarchy feature depends on). Both are
+// removed; every real employee (ops_users) AND every real admin
+// (ops_admins) is now offered by its own genuine row id, the only id space
+// any write path or notification lookup ever checks against.
+function _managerCandidates(excludeId){
+  const list = [];
+  (dbGet(DB_KEYS.users)||[]).forEach(u=>{ if(u.id && u.id!==excludeId && u.status!=='inactive') list.push({ id:u.id, name:u.name||'', kind:'Employee' }); });
+  (dbGet(DB_KEYS.admins)||[]).forEach(a=>{ if(a.id && a.id!==excludeId && a.status!=='inactive') list.push({ id:a.id, name:a.name||'', kind:'Admin' }); });
+  return list.sort((a,b)=>a.name.localeCompare(b.name));
+}
+function _populateManagerSelect(selId, excludeId, currentValue){
+  const sel = document.getElementById(selId);
   if(!sel) return;
-  const allUsers=dbGet(DB_KEYS.users)||[];
-  const managers=allUsers.filter(u=>u.role==='Manager'||u.role==='Admin');
-  sel.innerHTML='<option value="">— None / Top Level —</option>'+managers.map(u=>`<option value="${u.id}">${u.name} (${u.role})</option>`).join('');
+  sel.innerHTML = '<option value="">— None / Top Level —</option>'
+    + _managerCandidates(excludeId).map(c=>`<option value="${escHtml(c.id)}">${escHtml(c.name)} (${c.kind})</option>`).join('');
+  sel.value = currentValue||'';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -11617,7 +11644,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Refresh overview stats on load
   setTimeout(refreshAdminOverview, 500);
   // Populate manager dropdown
-  setTimeout(populateManagerDropdown, 600);
+  setTimeout(()=>_populateManagerSelect('newUserManager', null, ''), 600);
   // Refresh archive
   setTimeout(refreshArchive, 700);
 });
@@ -11849,43 +11876,9 @@ function collectNewUserCreds(){
   return creds;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// MANAGER DROPDOWN — includes ALL org chart members + DB users
-// ═══════════════════════════════════════════════════════════════════
-function populateManagerDropdownFull(){
-  const sel = document.getElementById('newUserManager');
-  if(!sel) return;
-  // Always load current saved org nodes so dropdown is up to date
-  orgLoad();
-  // Combine orgNodes + DB users, de-duplicate by name
-  const seenNames = new Set();
-  const options = [{ value:'', label:'— None / Top Level —' }];
-  // 1. Org chart members (directors, managers, CEO)
-  orgNodes.forEach(n=>{
-    if(n.level==='ceo'||n.level==='director'||n.level==='manager'){
-      if(!seenNames.has(n.name)){
-        seenNames.add(n.name);
-        options.push({ value: n.id, label: `${n.name} — ${n.title}` });
-      }
-    }
-  });
-  // 2. DB users with Manager / Admin role
-  const dbUsers = dbGet(DB_KEYS.users)||[];
-  dbUsers.forEach(u=>{
-    if((u.role==='Manager'||u.role==='Admin') && !seenNames.has(u.name)){
-      seenNames.add(u.name);
-      options.push({ value: u.id, label: `${u.name} (${u.role})` });
-    }
-  });
-  // 3. All org chart members (any level) — team members can also report to others
-  orgNodes.forEach(n=>{
-    if(!seenNames.has(n.name)){
-      seenNames.add(n.name);
-      options.push({ value: n.id, label: `${n.name} — ${n.title}` });
-    }
-  });
-  sel.innerHTML = options.map(o=>`<option value="${escHtml(o.value)}">${escHtml(o.label)}</option>`).join('');
-}
+// MANAGER DROPDOWN for new-employee creation — see _managerCandidates()/
+// _populateManagerSelect() above (2026-09-03), which replaced this
+// function's own former org-chart-node-id-based implementation.
 
 // ═══════════════════════════════════════════════════════════════════
 // UNIFIED EMAIL PREVIEW MODAL — works for both user and admin emails
@@ -12029,7 +12022,7 @@ Director of Systems & Operations at WebLight Media
 const _origOpenAddUserModal = window.openAddUserModal;
 window.openAddUserModal = function(){
   _origOpenAddUserModal();
-  populateManagerDropdownFull();
+  _populateManagerSelect('newUserManager', null, '');
   renderNewUserCredRows();
   _platformsLocal = getPlatforms();
   // Default probation: today → +2 months
@@ -12741,6 +12734,10 @@ function openEditAdminModal(adminId){
     // below), so the panel doesn't apply here.
     const primaryManagedWrap = document.getElementById('editAdminManagedUsersWrap');
     if(primaryManagedWrap) primaryManagedWrap.style.display = 'none';
+    // Same reason as managedUserIds above — no real row to store managerId
+    // on for the primary-admin sentinel.
+    const primaryManagerWrap = document.getElementById('editAdminManagerWrap');
+    if(primaryManagerWrap) primaryManagerWrap.style.display = 'none';
     openModal('editAdminModal');
     return;
   }
@@ -12750,6 +12747,13 @@ function openEditAdminModal(adminId){
   const managedWrap = document.getElementById('editAdminManagedUsersWrap');
   if(managedWrap) managedWrap.style.display = 'block';
   _populateManagedUsersGrid('editAdminManagedUsersGrid', a.managedUserIds||[]);
+  const managerWrap = document.getElementById('editAdminManagerWrap');
+  if(managerWrap) managerWrap.style.display = '';
+  // Allow selecting a manager for admins too (2026-09-03) — excludes this
+  // same admin from their own candidate list (no self-loop) and pre-fills
+  // whatever managerId they already have, exactly like the employee "Reports
+  // To" field at creation time.
+  _populateManagerSelect('editAdminManager', a.id, a.managerId||'');
   const nameParts = a.name.split(' ');
   document.getElementById('editAdminId').value    = a.id;
   document.getElementById('editAdminFirst').value = nameParts[0]||'';
@@ -12818,6 +12822,12 @@ function saveEditAdmin(){
   admins[idx].email         = email;
   admins[idx].title         = title;
   admins[idx].level         = level;
+  // Reports-to manager (2026-09-03) — same field/id-space the escalation
+  // logic (resolveNotifyRecipients() in api/ops-sync.js) already reads for
+  // employees; letting an admin have one too is what makes Rana→Sherine/
+  // Michael→David/Assmaa→Abby-style chains work when the "manager" is
+  // itself an admin. Never the admin's own id (the select excludes self).
+  admins[idx].managerId     = document.getElementById('editAdminManager')?.value || '';
   admins[idx].assignedUsers = RESTRICTED_ADMIN_ROLES.includes(level)
     ? _getAssignedFromChips('editAdminChips')
     : [];
