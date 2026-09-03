@@ -1860,6 +1860,21 @@ async function reportDtDuplicate(primaryId, duplicateId){
 }
 
 function _dtToday(){ return new Date().toISOString().slice(0,10); }
+// Never lands a due date on a weekend (2026-09-02) — own copy
+// (zero-shared-code rule) of the exact same algorithm index.html's own
+// clampToWeekday()/client.html's adjustOffWeekend() already apply
+// elsewhere in this app.
+function clampToWeekday(dateStr){
+  if(!dateStr) return dateStr;
+  const parts=String(dateStr).slice(0,10).split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>Number.isNaN(n))) return dateStr;
+  const [y,m,dd]=parts;
+  const d=new Date(y, m-1, dd);
+  const day=d.getDay(); // 0=Sun...6=Sat
+  if(day===6) d.setDate(d.getDate()-1);      // Saturday -> Friday before
+  else if(day===0) d.setDate(d.getDate()+1); // Sunday -> Monday after
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 // Same shared wl_clients_db this file already reads elsewhere (My
 // Assignments/My Work — see _ASSIGN_CL_KEY below) — no DB_KEYS.clients
 // entry exists (tasks never needed a client LIST before, only the id/name
@@ -2526,6 +2541,13 @@ function _dtUpdateStaged(id, field, value){
   // row.subject on every keystroke.
   if(field==='subject' && !value.trim()){
     showToast('Subject is required');
+    _renderDtStaging();
+    return;
+  }
+  // Weekend-clamped (2026-09-02), same as index.html's own copy —
+  // re-renders so the input visually shows the snapped date.
+  if(field==='dueDate' && value){
+    row[field] = clampToWeekday(value);
     _renderDtStaging();
     return;
   }
