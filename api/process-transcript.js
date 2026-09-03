@@ -518,12 +518,29 @@ function subjectSimilarity(a, b) {
   return overlap / new Set([...ta, ...tb]).size;
 }
 const SUBJECT_SIMILARITY_THRESHOLD = 0.6;
-// "Same task" requires BOTH a strong subject match AND agreement on client
-// and assignee — a similar-sounding subject about a DIFFERENT client is
-// never treated as the same work, no matter how close the wording is.
+// A bad parse that leaves the client blank (or invents one the roster/
+// client list doesn't actually contain, e.g. a hallucinated "Knowless/
+// Nulls Company") never satisfies the normal clientId-match requirement
+// below — two clearly-duplicate blank/unmatched-client tasks would
+// otherwise never dedupe. This higher bar (vs. the normal 0.6) is the
+// tradeoff for dropping the client signal entirely: with one less signal
+// to agree on, a near-miss is more likely to be a false positive, so this
+// path requires the subjects to be almost identical, not just similar.
+const SUBJECT_SIMILARITY_THRESHOLD_NO_CLIENT = 0.85;
+// "Same task" requires BOTH a strong subject match AND agreement on
+// assignee — a similar-sounding subject about a DIFFERENT person is never
+// treated as the same work, no matter how close the wording is. Client
+// agreement is required too, UNLESS the client is blank/missing on
+// EITHER side — in that case, fall back to assignee + a stricter subject
+// match instead of refusing to dedupe at all (2026-09-03: closes the gap
+// where a blank/fabricated client let real duplicates slip through).
 function isSameTask(a, b) {
-  if ((a.clientId || null) !== (b.clientId || null)) return false;
   if ((a.assigneeId || null) !== (b.assigneeId || null)) return false;
+  const clientA = a.clientId || null, clientB = b.clientId || null;
+  if (clientA === null || clientB === null) {
+    return subjectSimilarity(a.subject, b.subject) >= SUBJECT_SIMILARITY_THRESHOLD_NO_CLIENT;
+  }
+  if (clientA !== clientB) return false;
   return subjectSimilarity(a.subject, b.subject) >= SUBJECT_SIMILARITY_THRESHOLD;
 }
 
