@@ -8120,6 +8120,12 @@ const NOTIF_TYPE_ICON_ADMIN = {
   assignment:'📌', taskAssignment:'📌', timeOff:'🗓️', message:'💬',
   serviceUpdate:'📝', serviceDone:'✅', submittedForReview:'📤',
   taskReported:'🚩', overdue:'⏰', attentionDigest:'📊', taskReminder:'🔔', focusDigest:'🧭',
+  dueDateChangeRequested:'📅', dueDateChangeApproved:'✅', dueDateChangeDeclined:'🚫',
+  // workSummary/managerOverdueSummary/superAdminAlert (PRs #327/#328) never
+  // got an entry here when they shipped — a pre-existing gap this session's
+  // own regression suite (verify_notif_routing.mjs) already flags; closed
+  // here since Item C (2026-09-03) is already touching this exact map.
+  workSummary:'📤', managerOverdueSummary:'📈', superAdminAlert:'🚨',
 };
 // Human-readable labels for the "View all notifications" type filter
 // (2026-09-02) — kept as its own object rather than derived from the icon
@@ -8130,6 +8136,9 @@ const NOTIF_TYPE_LABELS_ADMIN = {
   serviceDone:'Done', submittedForReview:'Submitted for review', taskReported:'Task reported',
   overdue:'Overdue', timeOff:'Time off', message:'Message',
   attentionDigest:'Daily task digest', taskReminder:'Task reminder', focusDigest:'Daily focus digest',
+  dueDateChangeRequested:'Due-date change requested', dueDateChangeApproved:'Due-date change approved',
+  dueDateChangeDeclined:'Due-date change declined',
+  workSummary:'Work summary', managerOverdueSummary:'Team overdue rollup', superAdminAlert:'Super-admin alert',
 };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
@@ -8202,7 +8211,19 @@ function renderAdminNotifPanel(){
 function _routeAdminNotifClick(n){
   if(!n) return;
   const ctx = n.context||{};
-  if((n.type==='taskAssignment' || n.type==='taskReported') && ctx.taskId){
+  // Item C (2026-09-03): dueDateChangeRequested (approver-facing) and
+  // dueDateChangeApproved/Declined (requester-facing, only reachable here
+  // for an admin-tier requester) all carry a real ops_tasks context.taskId
+  // the same way taskAssignment/taskReported already do — same routing.
+  // Deliberately NOT gated on the Task Assignments nav item being visible:
+  // switchAdminTab()/openTaDetailPanel() operate on the DOM directly and
+  // don't check nav visibility, so this still works for a restricted role
+  // (e.g. Creative Manager, whose own nav hides Task Assignments) clicking
+  // a notification that routes them here — the only way such a caller can
+  // reach the approve/decline UI as the resolved approver for their own
+  // report's request, since their nav has no other path to it.
+  const TASK_DETAIL_NOTIF_TYPES = ['taskAssignment','taskReported','dueDateChangeRequested','dueDateChangeApproved','dueDateChangeDeclined'];
+  if(TASK_DETAIL_NOTIF_TYPES.includes(n.type) && ctx.taskId){
     document.getElementById('admin-notif-panel').style.display='none';
     closeModal('notifViewAllModal');
     const taNavEl = document.querySelector('.admin-nav-item[onclick*="\'taskAssignments\'"]');
@@ -9131,21 +9152,41 @@ function renderTaNeedsAttention(){
   }).join('');
 }
 
-// ── "Reported" (2026-09-02, narrowed 2026-09-02) — see the HTML comment
-// above ta-subtab-reported for the scope decisions this reflects. Task-
-// reports only now — service review-submissions moved to the Tracker
-// (see client.html's _serviceRow()). !t.mergedIntoId excludes a soft-
-// merged-away duplicate task, same convention as every other task view
-// in this file.
+// ── "Reported" (2026-09-02, narrowed 2026-09-02, extended 2026-09-03) —
+// see the HTML comment above ta-subtab-reported for the scope decisions
+// this reflects. Task-scoped only — service review-submissions moved to
+// the Tracker (see client.html's _serviceRow()). Two kinds share this one
+// list now: reportedMisassigned ("not mine") and a pending
+// dueDateChangeRequest (Item C) — both are "something a team member
+// flagged for admin/manager attention," same reasoning that originally
+// justified merging reportedMisassigned + submittedForReview here before
+// the latter moved out. kind drives the small type icon in
+// renderTaReported() below; click-through is identical either way
+// (_taOpenReportedItem() just opens the task's detail panel, where BOTH
+// kinds already have their own resolution UI — reportedMisassigned via
+// the task's own edit/delete controls, dueDateChangeRequest via
+// _taDueDateRequestBlockHtml()'s Approve/Decline buttons). !t.mergedIntoId
+// excludes a soft-merged-away duplicate task, same convention as every
+// other task view in this file.
 function _taReportedItems(){
-  return _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).map(t=>({
-    taskId:t.id,
+  const tasks = _taTasks();
+  const reported = tasks.filter(t=>t.reportedMisassigned && !t.mergedIntoId).map(t=>({
+    taskId:t.id, kind:'reported',
     submitterName:t.reportedMisassignedByName||'—',
     itemLabel:t.subject||'(untitled task)',
     clientName:t.clientName||'—',
     date:t.reportedMisassignedAt||'',
-  })).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  }));
+  const dueDateChanges = tasks.filter(t=>t.dueDateChangeRequest && !t.mergedIntoId).map(t=>({
+    taskId:t.id, kind:'dueDateChange',
+    submitterName:t.dueDateChangeRequest.requestedByName||'—',
+    itemLabel:t.subject||'(untitled task)',
+    clientName:t.clientName||'—',
+    date:t.dueDateChangeRequest.requestedAt||'',
+  }));
+  return [...reported, ...dueDateChanges].sort((a,b)=>new Date(b.date)-new Date(a.date));
 }
+const TA_REPORTED_KIND_ICON = { reported:'🚩', dueDateChange:'📅' };
 // Rendered rows are looked up by index from this cache rather than
 // threading each item's fields through the onclick attribute as a JSON
 // blob — simpler and safer (no attribute-escaping edge cases for a
@@ -9197,7 +9238,7 @@ function renderTaReported(){
         <tbody>${items.map((it,i)=>`
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
             <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
-            <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(it.itemLabel)}</td>
+            <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
             <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
           </tr>`).join('')}</tbody>
@@ -9827,10 +9868,53 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_taFormatShortDate(t.assignedDate)} · ${_taAgeLabel(_taDaysSinceAssigned(t))}` : '—'}</div>
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
     </div>
+    ${_taDueDateRequestBlockHtml(t)}
     ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
     ${(t.tags||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">${t.tags.map(tag=>`<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 8px;">${escHtmlAdmin(tag)}</span>`).join('')}</div>` : ''}
   `;
   document.getElementById('taDetailOverlay').classList.add('open');
+}
+// Due-date-change request (Item C, 2026-09-03) — a highlighted callout on
+// the task detail panel, the "live editable panel" this feature's own spec
+// names as the primary place an approver acts. Approve/decline is a plain
+// admin capability, same as every other write this panel already allows
+// (any isAdmin caller, not scoped to specifically the routed approver —
+// matching this codebase's existing convention that admin authority over
+// ops_tasks is uniform across every admin tier, never per-record-scoped to
+// one specific person; see the matching server-side comment in
+// api/ops-sync.js for the same reasoning).
+function _taDueDateRequestBlockHtml(t){
+  const req = t.dueDateChangeRequest;
+  if(!req) return '';
+  return `<div style="margin-top:12px;padding:10px 12px;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;">
+    <div style="font-size:12px;font-weight:700;color:var(--orange,#b45309);margin-bottom:4px;">📅 Due-date change requested</div>
+    <div style="font-size:13px;">${escHtmlAdmin(_taPersonName(req.requestedBy))} requested moving the due date to <strong>${escHtmlAdmin(req.proposedDate)}</strong>${req.reason?` — "${escHtmlAdmin(req.reason)}"`:''}</div>
+    <div style="margin-top:8px;display:flex;gap:8px;">
+      <button class="btn btn-sm btn-primary" onclick="_taResolveDueDateRequest('${t.id}',true)">✓ Approve</button>
+      <button class="btn btn-sm btn-outline" onclick="_taResolveDueDateRequest('${t.id}',false)">✕ Decline</button>
+    </div>
+  </div>`;
+}
+// approve=true applies clampToWeekday(proposedDate) to dueDate (never the
+// raw proposed value — the whole point of reusing this same helper the
+// weekend-clamp feature already established, so an approved date can never
+// land on a weekend even if the member happened to propose one); approve=
+// false leaves dueDate completely untouched. Either way the request clears
+// and api/ops-sync.js detects which one happened by comparing the actual
+// dueDate outcome to what was stored — see that file's own comment — never
+// a separate flag this client has to keep in sync with reality.
+function _taResolveDueDateRequest(id, approve){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t || !t.dueDateChangeRequest) return;
+  if(approve) t.dueDate = clampToWeekday(t.dueDateChangeRequest.proposedDate);
+  t.dueDateChangeRequest = null;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  openTaDetailPanel(id);
+  renderTaskAssignments();
+  _taRefreshReportedIfActive();
+  showToast(approve ? 'Due-date change approved ✓' : 'Due-date change declined');
 }
 function closeTaDetailPanel(){
   document.getElementById('taDetailOverlay').classList.remove('open');

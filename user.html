@@ -1911,6 +1911,15 @@ function _dtReportButtonHtml(t){
   if(t.reportedMisassigned) return `<span title="You flagged this as possibly not yours" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">🚩 Reported</span>`;
   return `<button type="button" class="dt-report-btn" title="Flag this task as possibly not yours" aria-label="Report task as possibly not yours" onclick="event.stopPropagation();reportDtTaskMisassigned('${t.id}')">⚠️</button>`;
 }
+// Due-date-change request (Item C, 2026-09-03) — a small "pending" badge
+// for the list-row card, matching _dtReportButtonHtml's own established
+// read-state pattern. The full request form (proposed date + reason) only
+// ever lives in the detail panel — see _dtDueChangeBlockHtml() below —
+// this is just the at-a-glance indicator.
+function _dtDueChangePendingBadgeHtml(t){
+  if(!t.dueDateChangeRequest) return '';
+  return `<span title="Due-date change requested — waiting on your manager" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">⏳ Pending</span>`;
+}
 function _dtDueBadgeHtml(t){
   if(!t.dueDate) return '';
   if(_dtIsOverdue(t)) return `<span class="dt-due-badge overdue">⏱ Overdue</span>`;
@@ -2148,7 +2157,7 @@ function _renderDtListTable(tasks){
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${selfBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
         </div>
-        <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}</div>
+        <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}${_dtDueChangePendingBadgeHtml(t)}</div>
       </div>
       <div class="dt-card-foot">
         <div class="dt-pill-row">
@@ -2257,6 +2266,7 @@ function openDtDetailPanel(id){
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}${_dtReportButtonHtml(t)}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_dtFormatShortDate(t.assignedDate)} · ${_dtAgeLabel(_dtDaysSinceAssigned(t))}` : '—'}</div>
     </div>
+    ${_dtDueChangeBlockHtml(t)}
     <label class="form-label">Status</label>
     <select class="form-input" id="dt-status-select" onchange="_dtToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
     <div id="dt-block-reason-wrap" style="display:none;margin-top:10px;">
@@ -2292,6 +2302,71 @@ function _dtToggleBlockReasonField(){
 function closeDtDetailPanel(){
   document.getElementById('dtDetailOverlay').classList.remove('open');
   _dtDetailTaskId = null;
+}
+
+// Due-date-change request (Item C, 2026-09-03) — members can't edit
+// dueDate directly (still locked server-side in TASK_KEYS_MEMBER_MAY_NOT_
+// TOUCH), so this only ever records a PENDING request — the date itself
+// never moves here. Routed to the requester's manager (or the super admin
+// if none) by api/ops-sync.js's resolveDueDateApprover(); approved/
+// declined from the admin's own task detail panel in index.html (this
+// file has no "view/edit someone else's task" surface at all to build an
+// approve/decline UI on top of — a deliberate, pre-existing architectural
+// choice in this codebase, not something this feature should add). While
+// pending, shows the read-only "waiting" state instead of the request
+// form; once resolved either way the server clears dueDateChangeRequest
+// and the next pull naturally reverts this back to the request button.
+function _dtDueChangeBlockHtml(t){
+  const req = t.dueDateChangeRequest;
+  if(req){
+    return `<div style="margin-top:10px;padding:8px 10px;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;font-size:12px;">
+      ⏳ Due-date change requested — proposed <strong>${escHtmlUser(req.proposedDate)}</strong>${req.reason?` — "${escHtmlUser(req.reason)}"`:''}. Waiting on your manager.
+    </div>`;
+  }
+  return `<div style="margin-top:10px;">
+    <button type="button" class="btn btn-outline btn-sm" onclick="_dtToggleDueChangeForm()">📅 Request due-date change</button>
+    <div id="dt-due-change-form" style="display:none;margin-top:8px;">
+      <label class="form-label">Proposed date</label>
+      <input type="date" class="form-input" id="dt-due-change-date">
+      <label class="form-label" style="margin-top:6px;">Reason (optional)</label>
+      <input class="form-input" id="dt-due-change-reason" placeholder="e.g. finished homepage, need 2 more days for copy">
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="submitDtDueDateChangeRequest('${t.id}')">Submit request</button>
+    </div>
+  </div>`;
+}
+function _dtToggleDueChangeForm(){
+  const el = document.getElementById('dt-due-change-form');
+  if(el) el.style.display = el.style.display==='none' ? '' : 'none';
+}
+// Same optimistic-then-rollback pattern reportDtTaskMisassigned() already
+// established for this file's other "flag something for admin attention"
+// action — not the fully server-confirmed-before-render pattern
+// saveDtTaskUpdate() uses, since that one's stricter rule was specific to
+// edits/merges of a task's own real fields, not a request record.
+// requestedBy/requestedByName/requestedAt are entirely server-derived
+// from the caller's session (see api/ops-sync.js) — this only ever sends
+// proposedDate + reason.
+async function submitDtDueDateChangeRequest(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.dueDateChangeRequest) return;
+  const dateInput = document.getElementById('dt-due-change-date');
+  const proposedDate = dateInput ? dateInput.value : '';
+  if(!proposedDate){ showToast('Pick a proposed date first'); return; }
+  const reason = (document.getElementById('dt-due-change-reason')?.value||'').trim();
+  t.dueDateChangeRequest = { proposedDate, reason };
+  dbSet(DB_KEYS.tasks, tasks);
+  if(_dtDetailTaskId===id) openDtDetailPanel(id);
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    t.dueDateChangeRequest = null;
+    dbSet(DB_KEYS.tasks, tasks);
+    if(_dtDetailTaskId===id) openDtDetailPanel(id);
+    if(!rejectedThis) showToast('❌ Could not send request — try again');
+    return;
+  }
+  showToast('Request sent ✓ — your manager will be notified');
 }
 
 // A member may only ever touch subject/status/notes/tags on a task already
@@ -4022,7 +4097,7 @@ function deleteServiceSubitem(subitemId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
-const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤' };
+const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤', dueDateChangeRequested:'📅', dueDateChangeApproved:'✅', dueDateChangeDeclined:'🚫' };
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';

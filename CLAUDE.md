@@ -6686,6 +6686,186 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction — sends real email to the whole
 team.
 
+**Item C: due-date-change request → manager approval (2026-09-03).**
+`api/ops-sync.js` (request write + approval gate + notify) +
+`index.html` (approve/decline on the task detail panel + Reported-tab
+surfacing) + `user.html` (request UI on My Tasks) — no new `api/*.js`
+file, still 11. Members still cannot edit a task's `dueDate` directly
+(unchanged in `TASK_KEYS_MEMBER_MAY_NOT_TOUCH`) — this only ever records
+a pending `dueDateChangeRequest: {proposedDate, reason, requestedBy,
+requestedByName, requestedAt}` on the task, applied server-side only.
+
+**Approver resolution — a new, purpose-built `resolveDueDateApprover()`,
+not a reuse of any existing resolver.** Every existing notification
+resolver in this file does something subtly different:
+`resolveNotifyRecipients()` escalates to a manager AND broadcast-opted-in
+admins; `resolveReviewRecipients()` notifies the manager AND always,
+additionally, Sarah; `resolveReportRecipients()` always notifies Sarah AND
+every super/owner admin, plus the assigner. This feature's own spec is a
+strict either/or — the requester's manager (via `managerId`, resolved
+against either `ops_users` or `ops_admins`) OR the `primary-admin`
+sentinel if none, never both — which none of the existing three match, so
+reusing one would have silently over- or under-notified. Verified this
+distinction directly (test case 3): a no-manager request notifies ONLY
+Sarah's sentinel, never also a real super/owner admin like David.
+
+**Approve vs. decline — detected server-side from the actual dueDate
+OUTCOME, not a new flag the client has to keep in sync with reality.**
+The isAdmin update branch already computes `dueDateJustLocked` (whether
+the incoming `dueDate` genuinely differs from what's stored) for the
+pre-existing once-only-admin-dueDate-lock mechanism (2026-08-21) — reused
+as-is: `approved = dueDateJustLocked`. Approve applies
+`clampToWeekday(proposedDate)` — never the raw proposed value, so an
+approved date can never land on a weekend even if the member proposed
+one (verified: proposing Saturday 2026-09-05 approves to Friday
+2026-09-04). Decline leaves `dueDate` completely untouched. Either way
+the request is cleared and the ORIGINAL requester is notified+emailed
+(`fireDueDateChangeResolvedNotification()`, type `dueDateChangeApproved`/
+`dueDateChangeDeclined`) — never the approver, who already knows what
+they just did. An unrelated admin edit (e.g. a status change) that
+doesn't touch `dueDate` leaves a pending request completely untouched,
+with no spurious resolve notification — verified directly.
+
+**Member write path:** a member may set `dueDateChangeRequest` only on a
+task already assigned to them (the existing ownership check), only when
+none is already pending (a duplicate attempt while one's outstanding is
+silently ignored — the original is preserved, never overwritten, and no
+duplicate notification fires), and never touches `dueDate` itself in the
+same write (still fully locked). `requestedBy`/`requestedByName`/
+`requestedAt` are always server-stamped from the real session, never
+trusted from the client — the client only ever sends `proposedDate` +
+`reason`. A member cannot self-clear their own pending request (no code
+path allows it — the request only ever clears via the admin
+approve/decline branch).
+
+**Scope decision on the approver's UI — flagged, not silently narrowed.**
+The task's own spec says approve/decline lives "on the task detail
+panel — the live editable panel is the primary place the approver
+acts." `user.html` has NO existing "view/edit someone else's task"
+surface at all — a deliberate, pre-existing architectural choice in this
+codebase (My Tasks/Daily Tasks is self-scoped by design, confirmed by
+this file's own established history: "no assignee dropdown, no other
+people's tasks, no team roster"). Building one specifically for this
+feature would be a materially larger, unscoped UI change beyond what the
+acceptance criteria strictly requires. So Approve/Decline is built ONLY
+in `index.html`'s task detail panel (`_taDueDateRequestBlockHtml()` /
+`_taResolveDueDateRequest()`); `user.html` gets the request-creation UI,
+a read-only pending-state indicator, and passive notification of the
+resolution via the existing bell — no click-through needed there, since
+no existing notification type in that file click-throughs to a task
+detail panel today either.
+
+**A real consequence of that scope decision, found and closed, not left
+as a silent gap:** the Reported/approver path is `index.html`-only, but
+this codebase's own `CREATIVE_MANAGER_ROLE` role restriction
+(`applyAdminRoleRestrictions()`) hides the entire Task Assignments nav
+item for a Creative-Manager-tier admin (Sherine's own role) — her
+`showOnly` whitelist is `['overview','tracker','messages','livefeed',
+...]`, `taskAssignments` is not in it. Since Sherine is a real, existing
+`managerId` target this session's own notification-hierarchy work
+(2026-09-03, same day) explicitly exercises (Rana→Sherine), a
+manager-tier approver reachable ONLY through Task Assignments' nav item
+would have had no path at all to approve/decline a report's request —
+confirmed by reading `applyAdminRoleRestrictions()` directly, not
+assumed. Resolved: `applyAdminRoleRestrictions()` only ever hides the NAV
+LINK (`el.style.display='none'`), never the underlying page-section or
+`taDetailOverlay` — both stay fully present and functional in the DOM.
+`_routeAdminNotifClick()` (extended to also cover `dueDateChangeRequested`/
+`dueDateChangeApproved`/`dueDateChangeDeclined`, alongside the pre-existing
+`taskAssignment`/`taskReported` types) calls `switchAdminTab()`/
+`openTaDetailPanel()` directly by DOM lookup, which doesn't check nav
+visibility — so clicking a `dueDateChangeRequested` bell notification
+still opens the real, editable detail panel for a restricted-nav admin
+like Sherine, even though she has no other path to Task Assignments at
+all. Verified directly (not just reasoned about): a Playwright check
+hides the Task Assignments nav item to simulate her role, then confirms
+the notification click still opens the correct task's detail panel with
+the Approve/Decline callout visible.
+
+**Reported tab, extended to a second kind.** `_taReportedItems()` now
+merges two sources — `reportedMisassigned` tasks (kind `'reported'`,
+🚩) and pending-`dueDateChangeRequest` tasks (kind `'dueDateChange'`,
+📅) — sorted together newest-first, since both are "something a team
+member flagged for admin/manager attention," the same reasoning that
+originally justified merging `reportedMisassigned` + submittedForReview
+here before the latter moved to the Tracker (2026-09-02). Click-through
+is identical either way (`_taOpenReportedItem()` just opens the task's
+detail panel, where both kinds already have their own resolution UI).
+Approving/declining from within the Reported flow clears the item out of
+the list live, staying on the Reported sub-tab throughout — reuses the
+existing `_taRefreshReportedIfActive()` guard, called from
+`_taResolveDueDateRequest()` the same way `saveTaskEdit()`/
+`_taDeleteTask()` already call it.
+
+**A small, pre-existing, unrelated gap found and closed in the same
+edit:** `NOTIF_TYPE_ICON_ADMIN`/`NOTIF_TYPE_LABELS_ADMIN` were missing
+entries for `workSummary`/`managerOverdueSummary`/`superAdminAlert` —
+three real server notification types from the same-day PRs #327/#328
+that never got added to this map when those shipped. Found via this
+session's own `verify_notif_routing.mjs` regression suite (which greps
+`api/ops-sync.js`+`api/cron-overdue-check.js` fresh for every real
+`type:'...'` literal rather than hardcoding an expected list) — confirmed
+via `git stash` that this fails identically on unmodified `main` (a
+pre-existing gap, not something this PR introduced), and closed here
+since Item C is already touching this exact map for its own three new
+types. `dueDateChangeApproved`/`dueDateChangeDeclined` needed their own
+manual grep-workaround check too: they're produced via a ternary
+(`type: ev.approved ? 'dueDateChangeApproved' : 'dueDateChangeDeclined'`),
+which the regex-based regression check's literal `type:\s*'...'` pattern
+can't see — both already had real labels/icons regardless, confirmed by
+direct inspection rather than relying on the (structurally blind to this
+one case) automated check.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (28/28) — request creation (dueDate unchanged,
+correct storage, server-stamped requester fields, the resolved approver
+notified+emailed via the `managerId` chain), rejection when the task
+isn't the requester's own, the no-manager fallback going ONLY to the
+primary-admin sentinel (never also a real super/owner admin), a duplicate
+request while one's pending being silently ignored (original preserved,
+no duplicate notification), a member unable to self-clear their own
+pending request, admin Approve (weekend-clamped date applied, request
+cleared, `dueDateLocked` flips true, requester notified+emailed
+"approved"), admin Decline (date unchanged, request cleared,
+`dueDateLocked` stays false, requester notified+emailed "declined"), an
+unrelated admin edit leaving a pending request completely untouched with
+no spurious resolve notification, and the regression check that members
+still cannot directly change `dueDate`. (2) Two new Playwright suites
+against the real UIs: `index.html` (27/27) — the detail-panel callout
+(requester name/proposed date/reason), Approve applying the weekend-
+clamped date and clearing the request, Decline leaving `dueDate`
+untouched, the Reported tab showing both kinds with distinct icons and
+excluding resolved requests, click-through from Reported staying on that
+sub-tab with the item clearing live on resolution, and the hidden-nav
+notification-routing case described above; `user.html` (22/22) — the
+request button/form on a member's own task, client-side validation
+requiring a date before submit, the pushed request never carrying
+requester-identity fields, the read-only pending state replacing the
+button once one exists, the list-row "⏳ Pending" badge, no approve/
+decline UI anywhere in this file, and `NOTIF_TYPE_ICON_USER` carrying all
+three new types. `node --check` passed on `api/ops-sync.js`;
+`new Function()` syntax-check clean on every extracted `<script>` block
+in both HTML files; comment-stripped div-balance of this PR's own diff
+confirmed genuinely balanced in both (4 added `<div`/4 added `</div>` in
+each — the pre-existing whole-file baseline continues to carry unrelated
+drift from earlier sessions, unaffected by this change); `ls api/*.js |
+wc -l` still 11. Every pre-existing regression suite from this session
+re-run clean and unaffected: notification routing (26/26, now including
+the fixed pre-existing gap above), notification View-all (16/16), task-
+delete notification cleanup (16/16), self-assigned badge (13/13),
+narrowed Reported tab (14/14), admin manager assignment (11/11), cron
+hierarchy escalation, email-team-summaries, missing-key logging. Two
+pre-existing failures (`verify_ta_reply_status_removed.mjs`'s stale
+`tem-reply-status` selector reference, `verify_assignment_emails_
+hierarchy.mjs`'s email-delivery assertions) were confirmed to fail
+identically against unmodified `main` via `git stash` — unrelated to
+this change, out of scope here.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction — a new write workflow and
+permission gate (request/approve/decline on `ops_tasks`).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
