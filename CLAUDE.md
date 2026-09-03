@@ -6403,6 +6403,185 @@ every extracted `<script>` block in both files; comment-stripped
 div-balance unchanged vs. `main` in both (`client.html` 0, `index.html`
 +9); `ls api/*.js | wc -l` still 11 (no server file touched at all).
 
+**Allow assigning admins a manager, not just employees (2026-09-03).**
+`index.html` only, display + write — no server change. Given as its own
+small interruption task, arriving mid-investigation of the notification-
+hierarchy work below (which explicitly depends on the `managerId` chain
+working for admins too — Rana→Sherine, Michael→David, Assmaa→Abby all
+have an ADMIN as the "manager").
+
+**Root cause, found by reading the code, not guessed:** `editAdminModal`
+had no "Reports To" field at all — only the reverse direction
+(`editAdminManagedUsersWrap`, whom an admin manages, `managedUserIds`).
+Separately, the ONE existing manager picker (`#newUserManager`, the "Add
+User" employee-creation modal) was being populated by
+`populateManagerDropdownFull()` — genuinely active (confirmed via its one
+real call site, `openAddUserModal`'s override), but built its "admin"
+options from ORG-CHART NODE ids (`orgNodes`, e.g. literal `'david'`/
+`'abby'`) for anyone without a matching `ops_users` row — a real,
+previously-silent bug: `resolveNotifyRecipients()` in `api/ops-sync.js`
+resolves a `managerId` by looking it up in the real `ops_admins` array by
+id, and an org-chart node id never matches a real admin row there, so a
+manager picked this way could never actually resolve through the
+escalation chain either feature depends on. A second, fully dead function
+(`populateManagerDropdown()`, real `ops_users` ids but never called from
+anywhere except a stale `DOMContentLoaded` timeout that got immediately
+overwritten the moment the Add User modal actually opened) sat alongside
+it, adding to the confusion.
+
+**Fix:** both old functions removed outright, replaced with one shared
+`_managerCandidates(excludeId)` (every real, active `ops_users` row PLUS
+every real, active `ops_admins` row, by its own genuine id — never an
+org-chart node id) and `_populateManagerSelect(selId, excludeId,
+currentValue)`, used at all three real call sites: the Add User modal's
+`onclick` override, the `DOMContentLoaded` initial populate, and a new
+"Reports To (Manager)" field added to `editAdminModal` itself
+(`#editAdminManagerWrap`/`#editAdminManager`). `openEditAdminModal()`
+populates it (excluding the admin being edited, so they can't become
+their own manager) and pre-fills their existing `managerId`;
+`saveEditAdmin()` persists it. Hidden for the `__primary__` sentinel
+(Sarah), same reasoning as the pre-existing `managedUserIds` panel right
+below it — she has no real `ops_admins` row for either field to live on.
+
+**Deliberately not built:** a persistent "Reports To" editor for an
+EXISTING employee (`editUserModal`) — investigated and confirmed this
+gap already existed for employees too (the ONLY place `managerId` was
+ever written was at creation time, `addUser()`), but the task's own
+acceptance criteria only exercises admin editing (Abby/Jacob → David);
+widening `editUserModal` too wasn't asked for and would have been a
+separate, larger scope decision. Flagged here rather than silently
+expanded or silently ignored.
+
+Verified with a Playwright run against the real `index.html` UI (11/11):
+opening Edit Admin for a real admin shows the field with David listed by
+his real admin id (not an org-chart slug) alongside Rana (a real
+employee), excludes the admin being edited from their own candidate
+list, persists the selected manager's real id on save (confirmed both in
+the resulting local record AND the actual sync push body), hides the
+field entirely for the primary-admin sentinel, and confirms the Add-User
+dropdown now also lists every real admin with no bogus bare-slug ids
+leaking through. `node --check`-equivalent syntax check (`new Function()`
+per extracted `<script>` block) — clean; comment-stripped div-balance
+unchanged vs. `main` (+9); no server file touched.
+
+**Notification hierarchy + escalation logic (2026-09-03).**
+`api/ops-sync.js` (assignment path) + `api/cron-overdue-check.js`
+(daily escalation) + `vercel.json` (cron schedule) — no new `api/*.js`
+file, still 11.
+
+**1. Assignment emails → assignee only, no self-assign email.**
+`fireAssignmentNotifications()` (client services/legacy project tasks/
+sub-items) and `fireOpsTaskAssignmentNotifications()` (`ops_tasks`) both
+used to call `resolveNotifyRecipients(..., 'assigned')`, which escalates
+to the assignee's manager (or a scoped/super-admin fallback, or any
+admin with `teamNotifPrefs.assigned` broadcast on). Both now build
+exactly ONE row, addressed to the assignee alone — `resolveNotifyRecipients()`
+itself is completely untouched and still drives every OTHER event type
+(`overdue`/`done`/`comment`/`submittedForReview`), so this is scoped
+to assignment notifications only, not a change to the shared resolver.
+Self-assign suppression uses the same literal field-equality definition
+already established elsewhere in this codebase for "self-assigned"
+(the 2026-09-02 self-assigned-badge feature: `assignedById===assigneeId`,
+deliberately not a `session.id`-based proxy, which would misclassify an
+admin reassigning a task BACK to its original assigner as a self-assign).
+Since services/legacy project tasks/sub-items have no stored
+"who assigned this" field at all, `assignedById` is attached to each
+event at its own push site as `session.id` — the caller making that
+specific write, right now, which is the only meaningful definition of
+"who assigned it" for a same-request action. For `ops_tasks`, the
+pre-existing gate's own session-based proxy
+(`row.assigneeId !== session.id`) is removed — the real field-equality
+check inside the fire function is now the single source of truth,
+avoiding the two ever disagreeing. "Keep the existing per-commit
+batching" and "no drip/2-hour job" both needed zero further work —
+`insertNotifications()` already batches one email per distinct recipient
+per write, and there was never a periodic assignment-reminder job to
+begin with (the daily digest below is the only periodic piece).
+
+**2 & 3. Daily hierarchy escalation, three tiers, one new block in
+`api/cron-overdue-check.js`.** Deliberately its OWN independent query
+(tasks + active clients), never reusing the pre-existing focus-digest
+block's `focus` map even though the shapes look similar — that map
+deliberately EXCLUDES a task assigned the same day (to avoid double-
+emailing the ASSIGNEE about their own brand-new assignment), which would
+have silently UNDER-counted a genuinely overdue item for a MANAGER who's
+never been told about it. Runs unconditionally, same convention as the
+task-attention/focus-digest blocks above it (not gated behind the
+`overdueEnabled` toggle, which only ever governed the original per-
+service overdue escalation).
+
+- **Tier 1 — employee → manager rollup:** any `ops_users` row with
+  ≥5 overdue items (tasks + services, no same-day exclusion) whose
+  `managerId` is set gets its manager exactly ONE email covering every
+  one of that manager's qualifying reports (Rana→Sherine, Michael→David,
+  Assmaa→Abby are today's real chains this exercises — the mechanism
+  itself is fully generic, not hardcoded to those three names, and this
+  is exactly what the same-day "Allow assigning admins a manager" fix
+  above makes reachable for an admin-as-manager).
+- **Tier 2 — manager/admin → super-admin escalation:** any non-super/
+  owner `ops_admins` row (Sherine, Abby, David today) with ≥5 overdue of
+  their OWN work escalates straight to the super admins, bypassing their
+  own `managerId` chain entirely (their overdue load is everyone's
+  concern at the top, not just their own manager's, if they even have
+  one).
+- **Tier 3 — inactivity, folded into the same super-admin alert as tier 2:**
+  anyone (employee or admin, excluding the `primary-admin` sentinel
+  herself) with no `ops_session_activity` row (`api/session-ping.js`'s
+  existing capture-only table, its first real consumer since the
+  2026-08-06 migration that created it — "no login" is read as "no
+  session activity of any kind," since a heartbeat/end event can't exist
+  without a prior start) AND no completed work (a task's `completedAt`,
+  or a service's `lastDone`) since the start of the previous WORKING day.
+  A new `previousWorkingDayStart()` skips back over a weekend rather than
+  a flat 24h, so a Monday run compares against Friday, not Saturday/
+  Sunday. Tiers 2+3 combine into ONE email per super-admin recipient
+  (never two separate emails), reusing `resolveReportRecipients()`'s
+  existing "always Sarah's `primary-admin` sentinel by her literal id,
+  plus every real super/owner admin" resolution — the exact "super-admin
+  resolution" this task's own spec says to reuse, imported fresh into
+  `cron-overdue-check.js` rather than reinvented.
+
+**Cron schedule moved to 5 PM EST (2026-09-03).** `vercel.json`'s
+`crons[0].schedule` changed from `"0 13 * * *"` to `"0 22 * * *"`.
+**Flagged, a deliberate interpretation, not silently assumed:** Vercel
+cron schedules are fixed UTC with no DST awareness, so "EST" is treated
+literally as a fixed UTC-5 offset year-round (22:00 UTC = 5 PM EST) —
+during Eastern Daylight Time (roughly March–November) this actually
+fires at 6 PM local Eastern time, not 5 PM. This matches the task's own
+literal wording ("5 PM EST," not "5 PM Eastern") and is the only
+sensible behavior for a fixed-UTC cron; flagged here rather than
+silently building DST-aware scheduling logic nobody asked for.
+
+Verified with two Node integration-test suites against the real,
+byte-identical handlers (no live DB access, rule #11): `api/ops-sync.js`
+(12/12) — an admin assigning a service to someone else emails only that
+person, never their manager; the SAME admin assigning a service to
+THEMSELVES emails nobody; a member self-assigning a brand-new
+`ops_tasks` row emails nobody; an admin creating a new task for someone
+else emails only that assignee, not their manager; reassigning an
+existing task to a different person still correctly emails the new
+assignee. `api/cron-overdue-check.js` (21/21, using a real
+`ops_session_activity` table and real `completedAt`/`lastDone` fields) —
+Sherine gets exactly one rollup naming Rana's real overdue count and
+Abby gets none (Assmaa is under threshold); exactly 2 super-admin
+alerts (Sarah's sentinel + David) fire, naming Sherine's own 5-overdue
+escalation and Kyle's inactivity, correctly excluding the active person
+and confirming David (a real super/owner admin) is never himself a
+tier-2 escalation subject; every pre-existing block in the same run
+(service-overdue escalation, task-attention digest, focus digest, daily
+backup) still produces sane output with zero warnings, confirming no
+regression from the new block; a "quiet day" (everyone under threshold,
+everyone active) produces zero hierarchy-escalation rows, confirming no
+false positives. `node --check` passed on both server files;
+`vercel.json` re-parsed as valid JSON; `ls api/*.js | wc -l` still 11.
+Pre-existing regression suites re-run clean and unaffected: weekend-
+clamp self-assign (3/3), self-assign-auto-daily (9/9), missing-key
+logging (8/8), task-delete notification cleanup (10/10).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction — touches real notification
+write logic in `api/ops-sync.js` and the production cron's own schedule.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

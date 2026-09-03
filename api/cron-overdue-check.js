@@ -41,7 +41,7 @@
 // Create Manual Snapshot), so no capability was actually lost.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
-import { resolveNotifyRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
+import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
 import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
 
 function isInactiveService(s) { return s.status === 'cancelled' || s.status === 'archived'; }
@@ -57,6 +57,18 @@ function isOverdue(svc, t) { return !isInactiveService(svc) && !isDoneThisCycle(
 // from the browser-side file.
 function taskIsOverdue(t, today) { return !!t.dueDate && t.dueDate < today && t.status !== 'Done'; }
 function taskIsDueToday(t, today) { return t.dueDate === today && t.status !== 'Done'; }
+
+// Notification hierarchy + escalation (2026-09-03) — "1 full working day" of
+// inactivity means since the START of the previous WEEKDAY, skipping back
+// over a weekend rather than a flat 24h (a Monday-morning run should compare
+// against Friday, not Saturday/Sunday when nobody's expected to be active
+// anyway). Returns midnight UTC of that day.
+function previousWorkingDayStart(now) {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
 
 async function loadDirectory(supabase) {
   const [{ data: usersData }, { data: adminsData }, { data: teamPrefRows }] = await Promise.all([
@@ -359,6 +371,152 @@ export default async function handler(req, res) {
     } catch (err) {
       await logError({ endpoint: 'cron-overdue-check:focusDigest', error: err });
       warnings.push(`focusDigest: ${err.message}`);
+    }
+
+    // ── Notification hierarchy + escalation (2026-09-03) — three tiers,
+    // one combined block, its own independent query (never reuses the
+    // focus-digest block's `focus` map above: that map deliberately drops a
+    // task assigned THIS SAME DAY to avoid double-emailing the ASSIGNEE
+    // their own new-assignment email — a concern specific to that digest,
+    // not to a manager who's never been told about it, so reusing it here
+    // would silently UNDER-count a real overdue item for escalation
+    // purposes). Runs every invocation, unconditional on any toggle, same
+    // convention as the task-attention/focus-digest blocks above.
+    //
+    // 1. Employee -> manager rollup: any USER with >=5 overdue items whose
+    //    managerId is set gets their manager ONE rolled-up email covering
+    //    every one of that manager's qualifying reports (Rana->Sherine,
+    //    Michael->David, Assmaa->Abby are today's real managerId chains —
+    //    this itself is fully generic, not hardcoded to those three names).
+    // 2. Manager/admin -> super-admin escalation: any non-super/owner ADMIN
+    //    (Sherine, Abby, David today) with >=5 overdue of their OWN work
+    //    escalates straight to the super admins, bypassing their own
+    //    managerId chain entirely (an admin's overdue load is everyone's
+    //    concern at the top, not just their own manager's, if they have one
+    //    at all).
+    // 3. Super-admin "big-issue" alert: the tier-2 escalation above PLUS a
+    //    genuinely separate inactivity signal — anyone (employee or admin)
+    //    with no ops_session_activity row (session-ping.js; "no login" is
+    //    read as "no session activity of any kind," since a heartbeat can't
+    //    exist without a prior start) AND no completed work (a task's
+    //    completedAt, or a service's lastDone) since the start of the
+    //    previous WORKING day (previousWorkingDayStart() above, skips back
+    //    over a weekend). Both halves combine into ONE email per super-admin
+    //    recipient, reusing resolveReportRecipients()'s existing "always
+    //    Sarah's primary-admin sentinel by her literal id, plus every real
+    //    super/owner admin" resolution — the exact "super-admin resolution"
+    //    this feature's own spec says to reuse, not a new invented rule.
+    try {
+      const OVERDUE_ESCALATION_THRESHOLD = 5;
+      const now = new Date();
+      const today2 = now.toISOString().slice(0, 10);
+      const cutoff = previousWorkingDayStart(now);
+      const cutoffIso = cutoff.toISOString();
+      const cutoffDateStr = cutoffIso.slice(0, 10);
+
+      const { users: hUsers, admins: hAdmins } = await loadDirectory(supabase);
+
+      const { data: hTaskRows, error: hTaskErr } = await supabase.from('ops_tasks').select('id, data');
+      if (hTaskErr) warnings.push(`hierarchyEscalation tasks: ${hTaskErr.message}`);
+      const hTasks = (hTaskRows || []).map(r => ({ id: r.id, ...r.data }));
+
+      const { data: hClientRows, error: hClientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
+      if (hClientErr) warnings.push(`hierarchyEscalation clients: ${hClientErr.message}`);
+
+      // Per-person overdue counts, tasks + services, no same-day exclusion.
+      const overdueCounts = new Map();
+      const bump = (id) => { if (id) overdueCounts.set(id, (overdueCounts.get(id) || 0) + 1); };
+      hTasks.forEach(t => { if (!t.mergedIntoId && taskIsOverdue(t, today2)) bump(t.assigneeId); });
+      const scanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, today2)) bump(s.assigneeId); });
+      (hClientRows || []).forEach(row => {
+        const client = row.data; if (!client) return;
+        scanServiceOverdue(client.services);
+        (client.locations || []).forEach(loc => scanServiceOverdue(loc.services));
+      });
+
+      const hierarchyRows = [];
+
+      // Tier 1 — employee -> manager rollup.
+      const byManager = new Map();
+      hUsers.forEach(u => {
+        const count = overdueCounts.get(u.id) || 0;
+        if (count < OVERDUE_ESCALATION_THRESHOLD) return;
+        if (!u.managerId || u.managerId === u.id) return;
+        if (!byManager.has(u.managerId)) byManager.set(u.managerId, []);
+        byManager.get(u.managerId).push({ name: u.name || 'A team member', count });
+      });
+      let managerSummariesSent = 0;
+      byManager.forEach((reports, managerId) => {
+        const mKind = hUsers.find(u => u.id === managerId) ? 'user' : 'admin';
+        const manager = personOf(managerId, mKind, { users: hUsers, admins: hAdmins });
+        if (!manager || !manager.email) return;
+        hierarchyRows.push({
+          type: 'managerOverdueSummary', recipientId: managerId, recipientKind: mKind,
+          recipientName: manager.name || '', recipientEmail: manager.email,
+          title: 'Overdue summary for your team',
+          body: reports.map(r => `${r.name}: ${r.count} overdue`).join('\n'),
+          link: '', context: {},
+        });
+        managerSummariesSent++;
+      });
+
+      // Tier 2 — manager/admin -> super-admin escalation.
+      const escalatingAdmins = hAdmins.filter(a => a.level !== 'super' && a.level !== 'owner' && (overdueCounts.get(a.id) || 0) >= OVERDUE_ESCALATION_THRESHOLD);
+
+      // Tier 3 — inactivity: no session activity and no completed work since
+      // the previous working day.
+      const { data: activityRows, error: activityErr } = await supabase.from('ops_session_activity').select('user_id').gte('created_at', cutoffIso);
+      if (activityErr) warnings.push(`hierarchyEscalation activity: ${activityErr.message}`);
+      const activeSince = new Set((activityRows || []).map(r => r.user_id));
+      const completedSince = new Set();
+      hTasks.forEach(t => { if (t.assigneeId && t.completedAt && t.completedAt >= cutoffIso) completedSince.add(t.assigneeId); });
+      const scanServiceCompleted = (list) => (list || []).forEach(s => { if (s?.assigneeId && s.lastDone && s.lastDone >= cutoffDateStr) completedSince.add(s.assigneeId); });
+      (hClientRows || []).forEach(row => {
+        const client = row.data; if (!client) return;
+        scanServiceCompleted(client.services);
+        (client.locations || []).forEach(loc => scanServiceCompleted(loc.services));
+      });
+      const inactivePeople = [];
+      [...hUsers, ...hAdmins].forEach(p => {
+        if (!p.id || p.id === 'primary-admin' || p.status === 'inactive') return;
+        if (activeSince.has(p.id) || completedSince.has(p.id)) return;
+        inactivePeople.push(p.name || p.id);
+      });
+
+      // Tiers 2+3 combine into one "big-issue" email per super-admin recipient.
+      if (escalatingAdmins.length || inactivePeople.length) {
+        const sections = [];
+        if (escalatingAdmins.length) {
+          sections.push(`Manager/admin overdue (${OVERDUE_ESCALATION_THRESHOLD}+):\n`
+            + escalatingAdmins.map(a => `• ${a.name}: ${overdueCounts.get(a.id)} overdue`).join('\n'));
+        }
+        if (inactivePeople.length) {
+          sections.push(`Inactive since ${cutoffDateStr} (no login, no completed work):\n`
+            + inactivePeople.map(n => `• ${n}`).join('\n'));
+        }
+        const body = sections.join('\n\n');
+        resolveReportRecipients(null, hAdmins).forEach(r => {
+          // Same primary-admin-sentinel special case resolveReportRecipients()'s
+          // own other callers already need — she has no ops_admins row.
+          const isPrimary = r.id === 'primary-admin';
+          const person = isPrimary ? null : personOf(r.id, r.kind, { users: hUsers, admins: hAdmins });
+          hierarchyRows.push({
+            type: 'superAdminAlert', recipientId: r.id, recipientKind: r.kind,
+            recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+            recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+            title: 'Daily big-issue alert',
+            body, link: '', context: {},
+          });
+        });
+      }
+
+      summary.managerSummariesSent = managerSummariesSent;
+      summary.escalatingAdminsCount = escalatingAdmins.length;
+      summary.inactivePeopleCount = inactivePeople.length;
+      await insertNotifications(supabase, hierarchyRows, warnings);
+    } catch (err) {
+      await logError({ endpoint: 'cron-overdue-check:hierarchyEscalation', error: err });
+      warnings.push(`hierarchyEscalation: ${err.message}`);
     }
 
     // Daily backup snapshot — see the header comment above. Runs every
