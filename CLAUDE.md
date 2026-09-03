@@ -6582,6 +6582,110 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction — touches real notification
 write logic in `api/ops-sync.js` and the production cron's own schedule.
 
+**Overview: "Email everyone their work summary" button, admin-only
+(2026-09-03).** `index.html` + `api/ops-sync.js` — no new `api/*.js`
+file, still 11. A `📤 Email team summaries` button next to Overview's
+existing Refresh button, Super Admin/Owner only, sends each active
+person (employees + admins) one personal email breaking down their own
+work.
+
+**Server (`api/ops-sync.js`), a new guarded action, same dispatch
+convention the password-hash cutover already established (top-level
+`req.body.action`, never a per-record `changes` write).**
+`action==='email-team-summaries'`, `tier!=='super'` rejected with 403.
+Scans every active `ops_users`/`ops_admins` row PLUS the `primary-admin`
+sentinel by her literal id (same special case `resolveReportRecipients()`/
+`resolveReviewRecipients()` already establish elsewhere in this file —
+she can genuinely have work assigned to her like anyone else, but has no
+real row `personOf()` could look her name/email up from). For each
+person: tasks (assigned/done/not-started/in-progress, `ops_tasks`,
+`assigneeId` match, excluding a soft-merged-away duplicate) + services
+(assigned/done, active clients' `services[]`/franchise `locations[]`,
+`assigneeId`/`assigneeIds` match, excluding cancelled/archived) +
+overdue count (both kinds combined) + a short (capped at 5, "...and N
+more" beyond that) due-this-week list. **Skip = zero rows, per rule #7's
+"empty plate" requirement**: a person with `totalAssigned===0` gets no
+`ops_notifications` row and no email at all, not a blank one — same for
+a person with real work but no email on file (skipped, never crashes).
+Reuses `insertNotifications()` — the exact same "build one row per
+recipient, it resolves and sends via Resend, batched one email per
+distinct `recipientEmail`" mechanism every other notification type in
+this file already uses — rather than a second, parallel email-sending
+path; since this build is exactly one row per person, that's exactly one
+email per person, satisfying "reuse the existing send path" literally,
+not just in spirit.
+
+**Server-enforced ~3-hour cooldown** — the client's `confirm()` dialog
+is a UX nicety, not the real guard against a spam-clicked repeat blast;
+a new `ops_settings` key (`lastTeamSummaryEmailAt`, the same key-value
+table `notificationSettings`/`teamNotifPrefs_*` already live in, not a
+new table) is read and checked BEFORE any scanning/sending happens, and
+re-stamped after a successful send. A send inside the cooldown window
+returns `429` with a clear, human-readable "please wait N more
+minute(s)" message rather than silently no-op'ing, so the admin UI can
+surface a real reason instead of looking broken.
+
+**Interpretation flagged, not silently guessed:** the task's own bullet
+list ("Tasks: assigned · done · not-started · in-progress, with % done")
+could read as a task-only completion rate. Built instead as the SAME
+combined tasks+services `% done` this codebase's own `_personWorkSummary()`
+already computes and shows everywhere else a person's "% done" appears
+(Team Production Analytics, Overview's own roster) — using a different,
+task-only definition here would let the identical person's "% done"
+disagree between this email and the dashboard they'd compare it against
+in the same sitting. Flagged here rather than silently picked either way.
+
+**Client (`index.html`).** The button lives in Overview's existing
+header row (`justify-content:space-between`, next to Refresh), hidden by
+default (`style="display:none"`) and toggled by `refreshAdminOverview()`
+itself via the SAME `_adminLevel==='super'||'owner'` gate every other
+super-only control in this file already uses — a UX convenience, not the
+real boundary, which is the server's own `tier!=='super'` check
+regardless of what this toggle shows. `emailTeamSummaries()`'s confirm
+dialog names a real recipient ESTIMATE (`"(N recipients)"`), computed
+client-side via the exact same `_timeOffRoster()`/`_personWorkSummary()`
+pair Team Production Analytics already uses — so the number a Super
+Admin sees before confirming can never wildly disagree with the team
+roster they already see on this same page; the server's own fresh scan
+remains the actual authority on who gets skipped. The button disables
+and relabels itself ("📤 Sending…") for the duration of the request,
+re-enabling on both success and failure (including a cooldown
+rejection, whose real server message is surfaced via a toast, not
+swallowed).
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (21/21) — a non-super caller is rejected with
+403 and creates nothing; the full happy path produces a correctly-
+worded body (tasks/services/overdue/due-soon breakdown, combined %
+done) for a person with real work, while an empty-plate person, a
+person with no email, and an inactive person are all correctly excluded
+with zero rows and zero emails; the cooldown timestamp is stamped after
+a successful send and a second send inside the window is rejected with
+429 and a clear message while creating zero additional rows; a send
+after the cooldown has genuinely elapsed succeeds; the primary-admin
+sentinel receives her own summary, correctly resolved by her known
+name/email, when she has real assigned work. (2) A Playwright run
+against the real `index.html` UI (9/9) — the button is visible for a
+super-level admin and sits in the same header row as Refresh; the
+confirm dialog names a real, non-fabricated recipient count; declining
+it sends nothing; confirming it posts the real action and shows a
+success toast naming the actual sent count; a cooldown rejection
+surfaces its real server message and the button re-enables itself
+rather than sticking on "Sending…"; a non-super admin level never sees
+the button at all. `node --check` passed; `new Function()` syntax-check
+clean on every extracted `<script>` block; comment-stripped div-balance
+unchanged vs. `main` (+9); `ls api/*.js | wc -l` still 11. Every
+pre-existing regression suite touching `api/ops-sync.js`/Overview/admin
+manager assignment from this session re-run clean and unaffected:
+assignment-email hierarchy (12/12), cron hierarchy escalation (21/21),
+missing-key logging (8/8), task-delete notification cleanup (10/10),
+admin manager assignment (11/11), narrowed Reported tab (14/14).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction — sends real email to the whole
+team.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

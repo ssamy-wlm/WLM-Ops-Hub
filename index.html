@@ -1271,7 +1271,16 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-overview" class="page-section active">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <div style="font-size:12px;color:var(--text-light);" id="overviewDateLabel"></div>
-        <button class="btn btn-outline btn-sm" onclick="refreshAdminOverviewFromCloud()">↺ Refresh</button>
+        <div style="display:flex;gap:8px;">
+          <!-- "Email everyone their work summary" (2026-09-03) — Super
+               Admin/Owner only; visibility toggled in refreshAdminOverview()
+               below, same _adminLevel gate every other super-only control in
+               this file already uses. This is UX scoping only — the real
+               boundary is server-side (tier!=='super' -> 403), same as every
+               other admin-only action in this file. -->
+          <button id="emailTeamSummariesBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="emailTeamSummaries()">📤 Email team summaries</button>
+          <button class="btn btn-outline btn-sm" onclick="refreshAdminOverviewFromCloud()">↺ Refresh</button>
+        </div>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
@@ -10456,12 +10465,50 @@ async function refreshAdminOverviewFromCloud(){
     refreshAdminOverview();
   }
 }
+// "Email everyone their work summary" (2026-09-03) — Super Admin/Owner
+// only (button itself is already hidden otherwise; this is a second,
+// belt-and-suspenders check, same as every other admin-only action here).
+// The confirm dialog's "(N recipients)" count is a client-side ESTIMATE
+// only, via the exact same _timeOffRoster()/_personWorkSummary() pair
+// Team Production Analytics already uses (so it can never wildly disagree
+// with what the team roster actually looks like) — the real, authoritative
+// skip-empty-plate decision happens server-side in api/ops-sync.js, which
+// is the only place with a fresh, complete tasks+services scan. The
+// ~3-hour cooldown against a spam-clicked repeat blast is enforced
+// server-side (see that action's own comment) — this button only disables
+// itself for the run in progress, it is not the real guard.
+function emailTeamSummaries(){
+  if(_adminLevel!=='super' && _adminLevel!=='owner'){ showToast('Super Admin only'); return; }
+  const allTasks = dbGet(DB_KEYS.tasks)||[];
+  const allServices = _activeServicesForAssessment();
+  const roster = _timeOffRoster();
+  const recipientEstimate = roster.filter(p=>_personWorkSummary(p, allTasks, allServices).totalAssigned>0).length;
+  if(!confirm(`Send each person their work summary? (${recipientEstimate} recipient${recipientEstimate===1?'':'s'})`)) return;
+  _sendTeamSummaries();
+}
+async function _sendTeamSummaries(){
+  const token = _opsToken(); if(!token) return;
+  const btn = document.getElementById('emailTeamSummariesBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '📤 Sending…'; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({action:'email-team-summaries'}) });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
+    showToast(`✅ Sent ${data.sentCount} work summar${data.sentCount===1?'y':'ies'}`);
+  }catch(e){
+    showToast('❌ '+e.message, 'warn');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '📤 Email team summaries'; }
+  }
+}
 function refreshAdminOverview(){
   const now = new Date();
   const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const dateLabel = document.getElementById('overviewDateLabel');
   if(dateLabel) dateLabel.textContent = dayNames[now.getDay()]+', '+monthNames[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear();
+  const emailSummariesBtn = document.getElementById('emailTeamSummariesBtn');
+  if(emailSummariesBtn) emailSummariesBtn.style.display = (_adminLevel==='super'||_adminLevel==='owner') ? '' : 'none';
 
   const allUsers  = dbGet(DB_KEYS.users)||[];
   const allClients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
