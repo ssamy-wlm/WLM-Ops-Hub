@@ -7023,6 +7023,106 @@ zero changes to it) — no server file needed editing for this fix.
 Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction.
 
+**Task views: whole-team filter + consistent colors across List/By-Person/
+Day (2026-09-04).** `index.html` only, display/navigation — no server
+change, low-risk per rule #10.
+
+**1. "Whole team" quick filter.** A new button (`taFilterWholeTeamBtn`,
+"👥 Whole team") added to the existing Overdue/Due today/Unassigned quick-
+filter row, same single-select `_taQuickFilter` mechanism and
+`.btn-toggle-active` sizing convention the other three already use.
+Predicate: `(t.assigneeIds||[]).length>1` — the exact same multi-assignee
+marker `_renderTaListTable()`'s own "Whole team" pill and `_taCalRowHtml()`'s
+grouped-row gray treatment already key off, so this filter can never
+disagree with what those two already show as "whole team."
+
+**2. Consistent color coding.** Investigated first whether the List
+view's own avatar coloring actually matches Week/Month's `_taPersonColorFor()`
+fixed-name palette (rule #7, not assumed) — it doesn't: List view has
+always used `_taAvatarColor()` (a separate, purely hash-based palette), a
+genuinely different color system from Week/Month's named-person map. Since
+the task's own acceptance criteria is "By Person and Day views show the
+same colored cards... **as the List view**" (not as Week/Month), Day view
+was brought in line with List's own existing look — `_taAvatarColor()`+
+`_taInitials()` for the avatar chip, plus the identical self-assigned blue
+border/badge treatment — rather than introducing a third, mismatched color
+scheme, or silently changing List's own long-standing avatar colors (out
+of this task's stated scope). Week/Month's own `_taPersonColorFor()`
+scheme is untouched. Two new shared helpers,
+`_taIsSelfAssigned(t)`/`_taSelfAssignedBadgeHtml(t)`, extracted from
+`_renderTaListTable()`'s own inline computation (byte-identical logic, just
+de-duplicated) so Day's copy can never drift from List's definition of
+"self-assigned." A "Whole team" task in Day view gets the same neutral
+gray "👥" treatment `_taCalRowHtml()`'s collapsed calendar groups already
+use, for the same reason — no single person's color could correctly
+represent a multi-assignee task.
+
+**3. By Person: stays put + includes self-assigned tasks.** Root cause of
+"reverts to List view," found by reading the code, not guessed:
+`openPersonDailyView()` has always called `setTaSubtab('assigned')` —
+literally switching the visible sub-tab container to Assigned Tasks (List/
+Day/Week/Month, whichever `_taView` happened to be) and only cosmetically
+re-highlighting the "By Person" nav button on top, which is why it *looked*
+like By Person even though the actual visible content was Assigned Tasks'
+own container. `_taPersonViewId` (the pre-existing filter-narrowing
+mechanism) already correctly included a person's self-assigned tasks all
+along — `_taTasksMatchingOtherFilters()`'s `t.assigneeId!==assignee` check
+doesn't care WHO assigned a task, so this part was never actually broken;
+it just wasn't visible from inside "By Person," since clicking a person
+always jumped to a different sub-tab entirely.
+
+Fixed by adding a dedicated person-detail container (`ta-person-detail`,
+`taPersonTableBody`/`taPersonListEmpty`) directly inside `ta-subtab-person`
+itself — the old `ta-person-banner` (which lived inside `ta-subtab-assigned`)
+is removed outright, not left as dead markup, per rule #6. `openPersonDailyView()`
+now calls `setTaSubtab('person')` (ensuring the right sub-tab is visible
+regardless of where the click originated — covers both the normal
+in-sub-tab case and `_ovOpenPersonDailyView()`'s cross-tab entry from
+Overview), hides the roster, shows the detail container, and
+`renderTaskAssignments()` gained a `_taPersonViewId` branch that renders
+straight into `taPersonTableBody`/`taPersonListEmpty` via
+`_renderTaListTable(tasks, bodyId, emptyId)` — that function's signature
+gained two optional parameters (defaulting to the main List view's own
+`taTableBody`/`taListEmpty`) specifically so the person-detail view could
+reuse its EXACT card template with zero duplicated markup, rather than a
+second hand-written render path that could drift from List's own styling
+over time. This is also what makes item 2 apply to By Person "for free" —
+since it's the literal same function, every color/self-assigned fix in
+item 2 that touches `_renderTaListTable()` automatically covers By Person
+too.
+
+Verified: `new Function()` syntax-check clean on every extracted `<script>`
+block; comment-stripped div-balance of this PR's own diff confirmed
+genuinely balanced (11 added `<div`/11 added `</div>`, 7 removed/7 removed);
+`node --check` passed on `api/ops-sync.js` (untouched — this PR is
+`index.html` only). A new Playwright suite against the real UI (23/23,
+plus two screenshots sent to the user rather than just asserted): the
+Whole team filter shows exactly the multi-assignee task and toggles off
+cleanly; Day view's self-assigned row gets a genuinely different (not just
+class-name-different) computed border color from an admin-assigned row,
+shows the "Self-assigned" badge text, and its avatar chip carries a real
+background gradient (not just present in markup — `_taAvatarColor()`
+returns a CSS gradient, so the check reads `backgroundImage`, not
+`backgroundColor`, a distinction the first draft of this test got wrong
+and had to fix before trusting the result); By Person: clicking a person
+keeps `ta-subtab-person` visible and `ta-subtab-assigned` hidden (the
+literal "did it revert" check), the roster is replaced by the detail view,
+all 3 of the test person's tasks show including the self-assigned one, and
+that card's computed border color is confirmed to EXACTLY MATCH the List
+view's own self-assigned border color (genuine reuse, not a visually-
+similar reimplementation) — plus "Back to team" correctly restores the
+roster while staying on the By Person sub-tab. Regression: due-date-change
+request UI (27/27) and admin manager assignment (11/11) — both exercise
+Task Assignments/`cloudPullAll()` heavily, unaffected; the earlier same-day
+"Whole team" delete-resurrection fix suite (10/10) also re-run clean,
+confirming this PR's `_renderTaListTable()` signature change didn't disturb
+that fix.
+
+Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
+permission logic touched (pure display/navigation) — eligible for direct
+merge once CI is green, though the user's own screenshots were sent
+regardless given this is a visual redesign of an existing surface.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
