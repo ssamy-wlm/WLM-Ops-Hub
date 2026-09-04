@@ -7123,6 +7123,60 @@ permission logic touched (pure display/navigation) — eligible for direct
 merge once CI is green, though the user's own screenshots were sent
 regardless given this is a visual redesign of an existing surface.
 
+**Read-only Client Directory ported to the employee portal (2026-09-04).**
+`user.html` only, no server change, low-risk per rule #10 (additive,
+read-only UI). New "Client Directory" nav item under Tracker
+(`#nav-clientDirectory`) opening `#sec-clientDirectory` — a byte-equivalent
+port of `index.html`'s own Client Directory tab (#332, 2026-09-03): every
+client, active and inactive, one card per client (name, owner, joined
+emails, website), an Inactive badge + dimmed card for a non-active client,
+live search across name/owner/email/website with zero network calls, and
+a manual Refresh. Hand-duplicated per the zero-shared-code rule — new
+`_cdOwnerName()`/`_cdEmailDisplay()`/`_cdSearchBlob()`/
+`renderClientDirectory()`/`_cdReloadData()`/`filterClientDirectory()`/
+`_cdRenderGrid()`, logic identical to the admin copy.
+
+**Two small, deliberate deviations from the task's own wording, both
+flagged rather than silently followed or silently changed (rule #7):**
+(1) the task said to read from "`_getClientDB()`" — that function doesn't
+exist anywhere in `user.html` (confirmed by grep before writing anything);
+this file has always read the same live client snapshot through its own,
+already-established `_getAssignClients()` (`wl_clients_db`, the identical
+data `cloudPullAll()` already populates and My Services/My Tasks already
+read), so the port uses that instead of inventing a duplicate accessor for
+the same data. (2) the task said to wire the click-through "via
+`openTrackerPage`" — that function only ever takes a PAGE name, not a
+client id, so it structurally can't deep-link to a specific client at all;
+the real analog of the admin version's `openAdminTrackerToClient()` (which
+sets `?openClient=<id>` on the Tracker) is this file's own existing
+`openTrackerTo(clientId)`, used instead so a card click genuinely opens
+the exact clicked client, matching the admin version's actual behavior
+rather than the letter of the task's wording.
+
+Wired into the live-pull refresh hook the same way the admin copy is —
+`cloudPullAll()`'s existing `_applyServerArray('clients', ...)` call site
+gained one guarded line (`_cdReloadData()` when the section is active),
+so a background pull landing while an employee is mid-search re-reads the
+live data without wiping out what they'd typed, identical to the admin
+version's own `_cdReloadData()`/refresh-hook split.
+
+Verified: `new Function()` syntax-check clean on the one extracted
+`<script>` block; div-balance of this PR's own diff confirmed genuinely
+balanced (16 added `<div`/16 added `</div>`); `node --check` n/a (no
+server file touched, `api/*.js` count unaffected). A new Playwright suite
+against the real UI (22/22): the nav item exists directly after Tracker;
+clicking it activates the section and updates the page title; the header
+shows the real client count; all fields render correctly including the
+joined-emails and ownerEmail-fallback cases and the "no contact details"
+fallback for a client with none; the inactive card is genuinely dimmed
+(a real computed-`opacity` check, not just class presence) alongside its
+Inactive badge; live search narrows correctly by owner name and by
+website and shows the empty state for no matches; the page has no
+input/textarea besides the search box (confirming read-only); clicking a
+card switches to the Tracker section and deep-links the iframe to the
+exact clicked client's `openClient=` param; and Refresh genuinely re-reads
+`wl_clients_db` fresh rather than showing stale cached cards.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
