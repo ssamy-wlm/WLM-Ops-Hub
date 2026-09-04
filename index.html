@@ -1582,16 +1582,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       <div id="ta-subtab-assigned" style="display:none;">
-        <!-- Per-person Daily Tasks view (2026-08-20) — entered via
-             openPersonDailyView() from the "By Person" roster below. This
-             reuses the Assigned Tasks List/Day/Week/Month rendering
-             entirely (see _taFilteredTasks()'s _taPersonViewId check) —
-             the same editing/reassign/New-flag machinery, just narrowed to
-             one person's tasks, rather than a separate render path. -->
-        <div id="ta-person-banner" style="display:none;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;">
-          <div style="font-weight:700;font-size:13px;color:var(--text-dark);">👤 Viewing <span id="ta-person-banner-name"></span>'s tasks</div>
-          <button class="btn btn-sm btn-outline" onclick="closePersonDailyView()">← Back to team</button>
-        </div>
         <!-- Status sub-tabs (2026-08-26) — mutually-exclusive grouping,
              defaults to "Not Started" (see _taStatusTab). Badge counts are
              kept live by _taRenderStatusTabBar(), called on every
@@ -1618,6 +1608,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
             <button class="btn btn-sm btn-outline" id="taFilterUnassignedBtn" onclick="toggleTaQuickFilter('unassigned')">Unassigned</button>
+            <button class="btn btn-sm btn-outline" id="taFilterWholeTeamBtn" onclick="toggleTaQuickFilter('wholeTeam')" title="Tasks assigned to more than one person at once (Everyone/multi-name)">👥 Whole team</button>
         </div>
         <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
 
@@ -1680,11 +1671,28 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            (see _personWorkSummary(), shared with Team Assessment so the
            two can never disagree) and a red/amber dot for anyone with an
            overdue or blocked task. Clicking a person calls
-           openPersonDailyView(), which switches into the Assigned Tasks
-           view above, filtered to just them. -->
+           openPersonDailyView(), which now (2026-09-04) stays right here in
+           this same sub-tab — swapping the roster for a colored per-person
+           task list (below) instead of switching to the Assigned Tasks
+           sub-tab the way it used to, so selecting a person never looks
+           like it silently navigated somewhere else. -->
       <div id="ta-subtab-person" style="display:none;">
         <div id="ta-person-roster"></div>
         <div id="ta-person-roster-empty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active team members yet.</div>
+        <!-- Person detail (2026-09-04) — reuses _renderTaListTable()'s own
+             card template (byId a plain function parameter, see that
+             function's comment) into this dedicated pair of containers, so
+             the exact same self-assigned blue + avatar coloring the main
+             List view already has applies here for free, with zero
+             duplicated markup. -->
+        <div id="ta-person-detail" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;">
+            <div style="font-weight:700;font-size:13px;color:var(--text-dark);">👤 Viewing <span id="ta-person-detail-name"></span>'s tasks</div>
+            <button class="btn btn-sm btn-outline" onclick="closePersonDailyView()">← Back to team</button>
+          </div>
+          <div id="taPersonTableBody" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <div id="taPersonListEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:12px;">No tasks match these filters.</div>
+        </div>
       </div>
 
       <!-- "Needs Attention" (2026-08-20) — one screen consolidating what
@@ -7311,8 +7319,9 @@ function _ovUrgencyUnhover(){
 
 // Overview's Team Production Analytics lives on #admin-overview, but
 // openPersonDailyView() only manipulates state WITHIN the already-active
-// #admin-taskAssignments page (sub-tab, banner, filter visibility) — it
-// never switches which top-level admin tab is active. Calling it directly
+// #admin-taskAssignments page (its own "By Person" sub-tab and that
+// sub-tab's own person-detail container) — it never switches which
+// top-level admin tab is active. Calling it directly
 // from an Overview row click would update internal state correctly but
 // show nothing, since #admin-overview would still be the visible
 // page-section. This wrapper switches to Task Assignments first, mirroring
@@ -7687,25 +7696,52 @@ function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(tabl
 // getFn reads the CURRENT local array for this table (the same store
 // saveFn writes) — optional only for backward compatibility with any call
 // site that doesn't pass one; every call site in this file does.
-function _applyServerArray(table, serverArr, saveFn, getFn){
+// tombstoneIds (2026-09-04, fixing "can't delete Whole team/cloned tasks"):
+// an optional Set of ids that must NEVER be merged back in from a pull,
+// regardless of what the server's response says. Needed only for tables
+// with a genuine HARD delete and no server-side deleted_at filter (today:
+// just 'tasks' — see the tombstoneIds argument at its one call site below).
+// orgNodes/orgLinks/users don't need this: their tombstones are soft
+// (deleted_at), so api/ops-state.js already excludes a tombstoned row from
+// serverArr itself, and this function's existing dirty-preserving merge
+// was never the vulnerable part for those.
+//
+// The actual bug this closes: _opsDirty() only flags records STILL PRESENT
+// locally that differ from the last-known snapshot — a task REMOVED from
+// local storage (a delete) has no representation there at all, so it was
+// never protected by the dirty-preserving merge below. Any pull whose
+// server-side response still has the row — the 30s live-sync timer, or a
+// second concurrent cloudAutoSync() call already in flight when the delete
+// fires (e.g. right after committing a multi-clone "Whole team"/multi-name
+// batch, whose own push+pull round trip can still be running when the
+// admin immediately deletes one of the just-created clones) — silently
+// resurrected it, since dirtyIds.has(id) was false and the server's (still
+// non-deleted) copy was kept as-is. Reproduced directly before this fix:
+// a local delete followed by an unrelated pull that still returned the
+// task brought it right back. Excluding every ever-tombstoned id here,
+// unconditionally, closes this regardless of server-side timing — once
+// deleted locally, a task can never be merged back in again by ANY pull.
+function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
+  if(!filtered.length) return; // everything present was tombstoned — same empty-guard, never wipe local
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
-  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); return; } // unchanged fast path
+  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
   // Keep the LOCAL copy of every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
-  const merged = serverArr.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
-  const serverIds = new Set(serverArr.map(r=>r.id));
+  const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
   // server's response.
   local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
   saveFn(merged);
-  // Snapshot to the SERVER array, not the merged one — this is what keeps a
-  // preserved edit "dirty" against the next _opsDirty() check, so its
-  // pending debounced push still fires and the edit actually persists
-  // instead of silently sitting local-only forever.
-  _opsSetSnapshot(table, serverArr);
+  // Snapshot to the (tombstone-filtered) SERVER array, not the merged one —
+  // this is what keeps a preserved edit "dirty" against the next
+  // _opsDirty() check, so its pending debounced push still fires and the
+  // edit actually persists instead of silently sitting local-only forever.
+  _opsSetSnapshot(table, filtered);
 }
 // Same principle for singleton settings — a value's key can be present in
 // the response with a null value (role-hidden for this caller, or simply no
@@ -8160,7 +8196,11 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
-    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[]);
+    // deletedTaskIds passed as the tombstone-exclusion set (2026-09-04) —
+    // see _applyServerArray()'s own comment on this parameter for why
+    // ops_tasks specifically needs it (a genuine hard delete, no server-
+    // side deleted_at filter, unlike orgNodes/orgLinks/users below).
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]));
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
@@ -8999,7 +9039,7 @@ const TA_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 const TA_EVERYONE_ID = '__ALL__';
 
 let _taView = 'list';
-let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned'
+let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned' | 'wholeTeam'
 // Status sub-tab (2026-08-26): 'notstarted' | 'inprogress' | 'done' | 'all'.
 // Defaults to 'notstarted' per this feature's own spec — a fresh session
 // (and a fresh page load) always lands there. Persists across the session
@@ -9168,36 +9208,39 @@ function setTaSubtab(tab){
 
 // ── Per-person Daily Tasks view (admin) — 2026-08-20. _taPersonViewId,
 // when set, narrows _taFilteredTasks() below to exactly that one person's
-// tasks — the List/Day/Week/Month rendering, editing, reassign, and "New"
-// flag machinery all come along for free since it's the same render path
-// Assigned Tasks already uses, just pre-filtered. ──
+// tasks — the reassign/editing/"New"-flag machinery all comes along for
+// free since it's the same underlying task-filtering path Assigned Tasks
+// already uses, just pre-filtered. Rendering itself (2026-09-04) targets a
+// DEDICATED container inside this same "By Person" sub-tab
+// (taPersonTableBody/taPersonListEmpty — see renderTaskAssignments()'s own
+// _taPersonViewId branch and the markup comment at ta-subtab-person) rather
+// than switching to the Assigned Tasks sub-tab the way this used to —
+// selecting a person now genuinely stays on By Person instead of "reverting"
+// to a different tab. ──
 let _taPersonViewId = null;
 function openPersonDailyView(personId){
   _taPersonViewId = personId;
-  setTaSubtab('assigned');
-  // setTaSubtab('assigned') just marked "Assigned Tasks" active — this is
-  // still conceptually "By Person" drilled into one person, so flip the
-  // nav highlight back to that tab rather than leaving a confusing state
-  // ("clicked By Person, now Assigned Tasks looks selected").
-  document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline';
-  document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline btn-toggle-active';
+  // Ensures the "By Person" sub-tab (and its container) is actually the
+  // one visible, regardless of what was showing before — covers both the
+  // normal case (already on By Person, clicking a roster row) and
+  // _ovOpenPersonDailyView()'s cross-tab entry from Overview. Also
+  // re-renders the (about-to-be-hidden) roster underneath, which is
+  // harmless — it's simply not visible while the detail view is shown.
+  setTaSubtab('person');
   const p = _timeOffRoster().find(x=>x.id===personId);
-  const nameEl = document.getElementById('ta-person-banner-name');
+  const nameEl = document.getElementById('ta-person-detail-name');
   if(nameEl) nameEl.textContent = p ? p.name : '(unknown)';
-  document.getElementById('ta-person-banner').style.display = 'flex';
-  // The assignee filter is now redundant (overridden by _taPersonViewId)
-  // and would otherwise show a stale/confusing value — hide it while in
-  // person view rather than leave two conflicting "who" controls visible.
-  const assigneeSel = document.getElementById('taFilterAssignee');
-  if(assigneeSel) assigneeSel.style.display = 'none';
+  document.getElementById('ta-person-roster').style.display = 'none';
+  const rosterEmptyEl = document.getElementById('ta-person-roster-empty');
+  if(rosterEmptyEl) rosterEmptyEl.style.display = 'none';
+  document.getElementById('ta-person-detail').style.display = '';
   renderTaskAssignments();
 }
 function closePersonDailyView(){
   _taPersonViewId = null;
-  document.getElementById('ta-person-banner').style.display = 'none';
-  const assigneeSel = document.getElementById('taFilterAssignee');
-  if(assigneeSel) assigneeSel.style.display = '';
-  setTaSubtab('person');
+  document.getElementById('ta-person-detail').style.display = 'none';
+  document.getElementById('ta-person-roster').style.display = '';
+  renderTaPersonRoster();
 }
 // Red = has an overdue (not-done) task; amber = no overdue but has a
 // Blocked one; null = neither. Checked in that priority order — overdue
@@ -9603,6 +9646,7 @@ function toggleTaQuickFilter(kind){
   document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='overdue'?' btn-toggle-active':'');
   document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='dueToday'?' btn-toggle-active':'');
   document.getElementById('taFilterUnassignedBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='unassigned'?' btn-toggle-active':'');
+  document.getElementById('taFilterWholeTeamBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='wholeTeam'?' btn-toggle-active':'');
   renderTaskAssignments();
 }
 
@@ -9687,6 +9731,7 @@ function _taTasksMatchingOtherFilters(){
     if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
     if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
     if(_taQuickFilter==='unassigned' && t.assigneeId) return false;
+    if(_taQuickFilter==='wholeTeam' && !((t.assigneeIds||[]).length>1)) return false;
     if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
     return true;
   });
@@ -9735,10 +9780,37 @@ function _taAssignedByDisplay(t){
 function renderTaskAssignments(){
   _taRenderStatusTabBar();
   const tasks = _taFilteredTasks();
+  // Person drill-in (2026-09-04) — when a specific person is selected from
+  // By Person, render their tasks as a colored card list INTO that same
+  // sub-tab's own dedicated container (taPersonTableBody/taPersonListEmpty
+  // — see the markup comment at ta-subtab-person) rather than switching
+  // the visible sub-tab at all, so selecting a person never "reverts" to
+  // Assigned Tasks/List view the way it used to. Reuses _renderTaListTable
+  // completely unchanged (same self-assigned blue + avatar coloring the
+  // main List view already has) — just a different target container,
+  // ignoring whatever _taView (List/Day/Week/Month) happens to be set to.
+  if(_taPersonViewId){ _renderTaListTable(tasks, 'taPersonTableBody', 'taPersonListEmpty'); return; }
   if(_taView==='month') _renderTaCalendar(tasks);
   else if(_taView==='week') _renderTaWeek(tasks);
   else if(_taView==='day') _renderTaDay(tasks);
   else _renderTaListTable(tasks);
+}
+
+// Self-assigned = assignedById === assigneeId, a real field-equality
+// check, NOT `origin==='self'` alone — that field is also set when a
+// manager-tier member (e.g. Sherine) creates a task for a direct report,
+// which is a completely different action from "I put this on my own
+// plate" and must not get the same blue treatment. See api/ops-sync.js's
+// matching comment on the write path this mirrors. Shared by every card-
+// rendering view (List, By Person via _renderTaListTable's own reuse, and
+// Day — 2026-09-04) so the definition can never drift between them.
+function _taIsSelfAssigned(t){ return !!t.assignedById && t.assignedById===t.assigneeId; }
+// Distinct from admin/manager-assigned at a glance (2026-09-02) — an
+// admin viewing anyone's tasks can tell what a person put on their own
+// plate vs. what was given to them, same badge shown regardless of whose
+// task this is.
+function _taSelfAssignedBadgeHtml(t){
+  return _taIsSelfAssigned(t) ? ' <span style="font-size:10px;background:rgba(45,107,182,.12);border:1px solid rgba(45,107,182,.35);border-radius:4px;padding:1px 5px;color:var(--blue,#2D6BB6);font-weight:700;">👤 Self-assigned</span>' : '';
 }
 
 // Card redesign (2026-08-28) — replaces the old <table> row layout. Every
@@ -9747,9 +9819,13 @@ function renderTaskAssignments(){
 // changed. #taTableBody is now a plain container element (see the markup
 // comment at its declaration) so each task can render as a real card
 // instead of a table row (a tbody can only legally contain tr children).
-function _renderTaListTable(tasks){
-  const body = document.getElementById('taTableBody');
-  const empty = document.getElementById('taListEmpty');
+// bodyId/emptyId (2026-09-04) — optional, default to the main List view's
+// own containers; the By Person drill-in view passes its own dedicated
+// pair (taPersonTableBody/taPersonListEmpty, see renderTaskAssignments())
+// so the two views can never clobber each other's rendered content.
+function _renderTaListTable(tasks, bodyId, emptyId){
+  const body = document.getElementById(bodyId || 'taTableBody');
+  const empty = document.getElementById(emptyId || 'taListEmpty');
   if(!body) return;
   if(!tasks.length){
     body.innerHTML = '';
@@ -9761,19 +9837,9 @@ function _renderTaListTable(tasks){
   body.innerHTML = tasks.map(t=>{
     const isNew = _taIsNew(t);
     const blocked = t.status==='Blocked';
-    // Self-assigned = assignedById === assigneeId, a real field-equality
-    // check, NOT `origin==='self'` alone — that field is also set when a
-    // manager-tier member (e.g. Sherine) creates a task for a direct
-    // report, which is a completely different action from "I put this on
-    // my own plate" and must not get the same blue treatment. See
-    // api/ops-sync.js's matching comment on the write path this mirrors.
-    const selfAssigned = !!t.assignedById && t.assignedById===t.assigneeId;
+    const selfAssigned = _taIsSelfAssigned(t);
     const blockedBadge = blocked ? ` <span style="font-size:10px;background:rgba(224,85,85,.12);border:1px solid rgba(224,85,85,.3);border-radius:4px;padding:1px 5px;color:var(--red,#c94a4a);font-weight:700;" title="${escHtmlAdmin(t.blockReason||'')}">🚧 Blocked</span>` : '';
-    // Distinct from admin/manager-assigned at a glance (2026-09-02) — an
-    // admin viewing anyone's tasks can tell what a person put on their own
-    // plate vs. what was given to them, same badge shown regardless of
-    // whose task this is.
-    const selfBadge = selfAssigned ? ' <span style="font-size:10px;background:rgba(45,107,182,.12);border:1px solid rgba(45,107,182,.35);border-radius:4px;padding:1px 5px;color:var(--blue,#2D6BB6);font-weight:700;">👤 Self-assigned</span>' : '';
+    const selfBadge = _taSelfAssignedBadgeHtml(t);
     // "Report instead" fallback (2026-08-26, employee duplicate-detection
     // feature) — an employee who isn't sure enough to merge two tasks
     // themselves flags them here instead. Purely a visibility badge; no
@@ -10129,6 +10195,15 @@ function _renderTaCalendar(tasks){
   }
 }
 
+// Colored + self-assigned-aware (2026-09-04) — was a plain/white row with
+// no color coding at all; now matches the same visual language the main
+// List view's cards already use (_taIsSelfAssigned()/_taSelfAssignedBadgeHtml()
+// for the blue accent, _taAvatarColor()+_taInitials() for the same
+// hash-based avatar chip the List/By-Person cards render), rather than
+// inventing a third, mismatched color scheme just for this view. A
+// "Whole team"/multi-assignee task gets the same neutral gray "👥"
+// treatment _taCalRowHtml() already established for a collapsed calendar
+// group, since no single person's color could correctly represent it.
 function _renderTaDay(tasks){
   const list = document.getElementById('taDayList');
   const label = document.getElementById('taDayLabel');
@@ -10137,14 +10212,25 @@ function _renderTaDay(tasks){
   if(label) label.textContent = _taCalDate.toLocaleString('en-US',{weekday:'long', month:'long', day:'numeric', year:'numeric'});
   const dayTasks = tasks.filter(t=>t.dueDate===dateStr);
   if(!dayTasks.length){ list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-light);font-size:13px;">Nothing due this day.</div>'; return; }
-  list.innerHTML = dayTasks.map(t=>`
-    <div onclick="openTaDetailPanel('${t.id}')" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <div>
-        <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}</div>
-        <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtmlAdmin(t.clientName||'—')} · ${escHtmlAdmin(_taPersonName(t.assigneeId))}</div>
+  const roster = _timeOffRoster();
+  list.innerHTML = dayTasks.map(t=>{
+    const selfAssigned = _taIsSelfAssigned(t);
+    const wholeTeam = (t.assigneeIds||[]).length > 1;
+    const person = (!wholeTeam && t.assigneeId) ? roster.find(p=>p.id===t.assigneeId) : null;
+    const color = wholeTeam ? '#94A3B8' : _taAvatarColor(t.assigneeId);
+    const initials = wholeTeam ? '👥' : (person ? _taInitials(person.name) : '?');
+    const assigneeLabel = wholeTeam ? '👥 Whole team' : escHtmlAdmin(_taPersonName(t.assigneeId));
+    return `<div onclick="openTaDetailPanel('${t.id}')" class="${selfAssigned?'ta-row-self':''}" style="cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        <span style="background:${color};color:#fff;border-radius:4px;font-size:10px;font-weight:800;padding:2px 5px;flex-shrink:0;line-height:1.4;">${escHtmlAdmin(initials)}</span>
+        <div style="min-width:0;">
+          <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(t.subject||'')}${_taSelfAssignedBadgeHtml(t)}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtmlAdmin(t.clientName||'—')} · ${assigneeLabel}</div>
+        </div>
       </div>
-      <div style="font-size:11px;font-weight:700;color:${_taStatusColor(t.status)};white-space:nowrap;">${t.status||'Not started'}</div>
-    </div>`).join('');
+      <div style="font-size:11px;font-weight:700;color:${_taStatusColor(t.status)};white-space:nowrap;flex-shrink:0;">${t.status||'Not started'}</div>
+    </div>`;
+  }).join('');
 }
 
 function _renderTaWeek(tasks){

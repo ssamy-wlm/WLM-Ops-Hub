@@ -6932,6 +6932,197 @@ email-delivery assertions) reproduces identically against unmodified
 Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction.
 
+**Fix: can't delete "Whole team" / cloned tasks (2026-09-04).** `index.html`
+only — investigated `api/ops-sync.js`'s task-delete path first, per the
+task's own hypothesis ("likely the delete path keys on assigneeId... or
+the tombstone write is rejected"), and it does NOT hold up: reproduced a
+realistic multi-clone "Whole team" delete directly against the real
+handler (a fake-Supabase Node test sending the tombstone alongside two
+still-dirty sibling clones in the same request) and it succeeded cleanly
+— `deletableIds = idsToDelete` unconditionally for `isAdmin`, no
+`assigneeId`/`assigneeIds` check anywhere in that block. The server-side
+delete path was already correct; no server change was made or needed.
+
+**Actual root cause, found by reproducing the reported symptom end-to-end
+before touching any code (rule #7):** `_applyServerArray()`'s dirty-
+preserving merge — used by `cloudPullAll()` for every synced table,
+including `tasks` — has no concept of a LOCAL DELETION at all.
+`_opsDirty()` only flags records STILL PRESENT locally that differ from
+the last-known snapshot; a task removed from local storage (via
+`_taDeleteTask()`) simply isn't in the local array anymore, so it can
+never appear in `dirtyIds`. That means ANY pull whose server-side
+response still includes the row — the 30-second live-sync timer
+(`startLiveSync()`), or a second `cloudAutoSync()` call already in flight
+— gets treated as ordinary, non-conflicting server truth and silently
+merges the "deleted" task right back into local storage, regardless of
+the tombstone queue. Reproduced directly: a local delete followed by an
+unrelated pull that still returned the row brought it right back,
+confirmed with `console.log`-level tracing before writing any fix.
+
+**Why "Whole team"/multi-name-cloned tasks specifically surface this,
+even though the bug is general to any task delete:** creating one of
+these is a BATCH operation (`commitStagedTasks()`/`_taBuildEveryoneClones()`)
+that pushes N new clone rows in one `cloudAutoSync()` round trip — a
+push+pull sequence that takes measurably longer than a single-record
+edit, widening the window during which a SEPARATE concurrent pull (the
+live-sync timer, most commonly) can land with a stale, pre-delete view of
+`ops_tasks`. The realistic admin workflow this bug report describes —
+commit a "Whole team" assignment, immediately notice it went to the
+wrong scope, delete one of the just-created rows right away — lands
+squarely inside that widened window far more often than an isolated
+single-task delete would, which is why this surfaced here even though
+`_applyServerArray()`'s gap applies to every task delete equally.
+
+**Fix:** `_applyServerArray()` gained an optional 5th parameter,
+`tombstoneIds` — when given, ids in that Set are filtered out of
+`serverArr` before anything else runs (including the existing "don't
+wipe local on a genuinely empty pull" guard, re-checked after filtering
+so an all-tombstoned response still never wipes local data). Wired at
+the ONE call site that actually needs it — `'tasks'` in `cloudPullAll()`
+— passing `new Set(dbGet(DB_KEYS.deletedTaskIds)||[])`, the same
+tombstone queue `_taDeleteTask()` already maintains. No other
+`_applyServerArray()` call site needed this: `orgNodes`/`orgLinks`/`users`
+all use a SOFT `deleted_at` tombstone that `api/ops-state.js` already
+excludes server-side, so a tombstoned row there never even reaches
+`serverArr` in the first place — this function's existing dirty-
+preserving merge was never the vulnerable part for those tables.
+`ops_tasks` has no `deleted_at` column (a genuine hard SQL DELETE, see
+the 2026-08-20 undo-import entry above), so the client needed its own
+safeguard against a stale/concurrent pull specifically for this one
+table. Once an id is ever tombstoned, it's excluded from every future
+merge permanently (same "never shrinks" convention `deletedTaskIds`
+already had for its pre-existing "already sent" push-dedup purpose) —
+harmless at real-world scale, since task ids are high-entropy generated
+(`_taGenId()`) and never reused.
+
+Verified with a Node reproduction against the real, byte-identical
+`api/ops-sync.js` handler (no live DB access, rule #11) confirming the
+server-side delete path itself was never the problem — a realistic
+3-clone "Whole team" payload (one deleted, two re-sent as still-dirty in
+the same request) applies cleanly with `deletedTaskIds:1`, zero
+`rejected`, zero thrown exceptions. A new Playwright suite against the
+real `index.html` UI (10/10, run twice clean): the real × button on a
+"Whole team" list-row card deletes it end-to-end through the genuine
+`cloudAutoSync()` round trip, with the sync push carrying the real
+tombstone id and the server actually removing the row; the core
+root-cause reproduction — a task deleted locally, then an unrelated pull
+whose server response still has the row — no longer resurrects it, while
+a different, unrelated task in the same pull is correctly left alone
+(confirming this isn't an over-broad filter); and the fix holds across
+THREE repeated stale pulls in a row, not just the first one. Every
+pre-existing regression suite that exercises `cloudPullAll()`/Task
+Assignments re-run clean and unaffected: due-date-change request UI
+(27/27 — confirms the Reported-tab/notification-routing work from the
+same day isn't disturbed by this change) and admin manager assignment
+(11/11). `new Function()` syntax-check clean on every extracted
+`<script>` block; this PR's own diff added zero `<div>`s (pure JS
+change, confirmed via `git diff` div-count); `node --check` passed on
+`api/ops-sync.js` (untouched, confirmed via `git diff --stat` showing
+zero changes to it) — no server file needed editing for this fix.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction.
+
+**Task views: whole-team filter + consistent colors across List/By-Person/
+Day (2026-09-04).** `index.html` only, display/navigation — no server
+change, low-risk per rule #10.
+
+**1. "Whole team" quick filter.** A new button (`taFilterWholeTeamBtn`,
+"👥 Whole team") added to the existing Overdue/Due today/Unassigned quick-
+filter row, same single-select `_taQuickFilter` mechanism and
+`.btn-toggle-active` sizing convention the other three already use.
+Predicate: `(t.assigneeIds||[]).length>1` — the exact same multi-assignee
+marker `_renderTaListTable()`'s own "Whole team" pill and `_taCalRowHtml()`'s
+grouped-row gray treatment already key off, so this filter can never
+disagree with what those two already show as "whole team."
+
+**2. Consistent color coding.** Investigated first whether the List
+view's own avatar coloring actually matches Week/Month's `_taPersonColorFor()`
+fixed-name palette (rule #7, not assumed) — it doesn't: List view has
+always used `_taAvatarColor()` (a separate, purely hash-based palette), a
+genuinely different color system from Week/Month's named-person map. Since
+the task's own acceptance criteria is "By Person and Day views show the
+same colored cards... **as the List view**" (not as Week/Month), Day view
+was brought in line with List's own existing look — `_taAvatarColor()`+
+`_taInitials()` for the avatar chip, plus the identical self-assigned blue
+border/badge treatment — rather than introducing a third, mismatched color
+scheme, or silently changing List's own long-standing avatar colors (out
+of this task's stated scope). Week/Month's own `_taPersonColorFor()`
+scheme is untouched. Two new shared helpers,
+`_taIsSelfAssigned(t)`/`_taSelfAssignedBadgeHtml(t)`, extracted from
+`_renderTaListTable()`'s own inline computation (byte-identical logic, just
+de-duplicated) so Day's copy can never drift from List's definition of
+"self-assigned." A "Whole team" task in Day view gets the same neutral
+gray "👥" treatment `_taCalRowHtml()`'s collapsed calendar groups already
+use, for the same reason — no single person's color could correctly
+represent a multi-assignee task.
+
+**3. By Person: stays put + includes self-assigned tasks.** Root cause of
+"reverts to List view," found by reading the code, not guessed:
+`openPersonDailyView()` has always called `setTaSubtab('assigned')` —
+literally switching the visible sub-tab container to Assigned Tasks (List/
+Day/Week/Month, whichever `_taView` happened to be) and only cosmetically
+re-highlighting the "By Person" nav button on top, which is why it *looked*
+like By Person even though the actual visible content was Assigned Tasks'
+own container. `_taPersonViewId` (the pre-existing filter-narrowing
+mechanism) already correctly included a person's self-assigned tasks all
+along — `_taTasksMatchingOtherFilters()`'s `t.assigneeId!==assignee` check
+doesn't care WHO assigned a task, so this part was never actually broken;
+it just wasn't visible from inside "By Person," since clicking a person
+always jumped to a different sub-tab entirely.
+
+Fixed by adding a dedicated person-detail container (`ta-person-detail`,
+`taPersonTableBody`/`taPersonListEmpty`) directly inside `ta-subtab-person`
+itself — the old `ta-person-banner` (which lived inside `ta-subtab-assigned`)
+is removed outright, not left as dead markup, per rule #6. `openPersonDailyView()`
+now calls `setTaSubtab('person')` (ensuring the right sub-tab is visible
+regardless of where the click originated — covers both the normal
+in-sub-tab case and `_ovOpenPersonDailyView()`'s cross-tab entry from
+Overview), hides the roster, shows the detail container, and
+`renderTaskAssignments()` gained a `_taPersonViewId` branch that renders
+straight into `taPersonTableBody`/`taPersonListEmpty` via
+`_renderTaListTable(tasks, bodyId, emptyId)` — that function's signature
+gained two optional parameters (defaulting to the main List view's own
+`taTableBody`/`taListEmpty`) specifically so the person-detail view could
+reuse its EXACT card template with zero duplicated markup, rather than a
+second hand-written render path that could drift from List's own styling
+over time. This is also what makes item 2 apply to By Person "for free" —
+since it's the literal same function, every color/self-assigned fix in
+item 2 that touches `_renderTaListTable()` automatically covers By Person
+too.
+
+Verified: `new Function()` syntax-check clean on every extracted `<script>`
+block; comment-stripped div-balance of this PR's own diff confirmed
+genuinely balanced (11 added `<div`/11 added `</div>`, 7 removed/7 removed);
+`node --check` passed on `api/ops-sync.js` (untouched — this PR is
+`index.html` only). A new Playwright suite against the real UI (23/23,
+plus two screenshots sent to the user rather than just asserted): the
+Whole team filter shows exactly the multi-assignee task and toggles off
+cleanly; Day view's self-assigned row gets a genuinely different (not just
+class-name-different) computed border color from an admin-assigned row,
+shows the "Self-assigned" badge text, and its avatar chip carries a real
+background gradient (not just present in markup — `_taAvatarColor()`
+returns a CSS gradient, so the check reads `backgroundImage`, not
+`backgroundColor`, a distinction the first draft of this test got wrong
+and had to fix before trusting the result); By Person: clicking a person
+keeps `ta-subtab-person` visible and `ta-subtab-assigned` hidden (the
+literal "did it revert" check), the roster is replaced by the detail view,
+all 3 of the test person's tasks show including the self-assigned one, and
+that card's computed border color is confirmed to EXACTLY MATCH the List
+view's own self-assigned border color (genuine reuse, not a visually-
+similar reimplementation) — plus "Back to team" correctly restores the
+roster while staying on the By Person sub-tab. Regression: due-date-change
+request UI (27/27) and admin manager assignment (11/11) — both exercise
+Task Assignments/`cloudPullAll()` heavily, unaffected; the earlier same-day
+"Whole team" delete-resurrection fix suite (10/10) also re-run clean,
+confirming this PR's `_renderTaListTable()` signature change didn't disturb
+that fix.
+
+Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
+permission logic touched (pure display/navigation) — eligible for direct
+merge once CI is green, though the user's own screenshots were sent
+regardless given this is a visual redesign of an existing surface.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
