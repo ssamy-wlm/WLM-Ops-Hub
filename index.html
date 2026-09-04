@@ -9131,7 +9131,13 @@ function loadTaskAssignments(){
   if(!sessionStorage.getItem('wl_ta_page_load')){
     sessionStorage.setItem('wl_ta_page_load', Date.now().toString());
   }
-  const roster = _timeOffRoster();
+  // _taAllAssignablePeople() (2026-09-04), not _timeOffRoster() — includes
+  // admin-only accounts (David/Abby/Jacob) that _timeOffRoster()'s
+  // stricter status/seeded checks could otherwise drop; see that
+  // function's own comment. Both the quick filter and the New/Edit Task
+  // assignee picker share this one roster, so an admin is assignable
+  // (and filterable) everywhere a person is, consistently.
+  const roster = _taAllAssignablePeople();
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
   if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
@@ -9255,7 +9261,13 @@ function renderTaPersonRoster(){
   const container = document.getElementById('ta-person-roster');
   const emptyEl = document.getElementById('ta-person-roster-empty');
   if(!container) return;
-  const roster = _timeOffRoster();
+  // _taAllAssignablePeople() (2026-09-04), not _timeOffRoster() — same gap
+  // as the assignee filter above (an admin-only account like David/Abby/
+  // Jacob could be silently excluded), same fix. Scoped to just this view
+  // — Team Production Analytics/Overview's own _timeOffRoster() calls are
+  // untouched, out of this task's stated scope even if they share the
+  // same latent gap; flagged, not silently fixed elsewhere.
+  const roster = _taAllAssignablePeople();
   if(!roster.length){
     container.innerHTML = '';
     if(emptyEl) emptyEl.style.display = 'block';
@@ -12275,6 +12287,36 @@ function _timeOffRoster(){
   const seen   = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
   const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&a.id&&a.name&&a.seeded!==true&&!seen.has((a.name||'').trim().toLowerCase()));
   return [...users, ...admins];
+}
+// Every assignable person — employees AND admins — for Task Assignments
+// surfaces (the assignee filter, By Person, the New/Edit Task assignee
+// picker) that need admin-only accounts (David/Abby/Jacob) included, which
+// _timeOffRoster() above can silently drop: its `status==='active'` check
+// is a STRICT equality (excludes a row whose status is merely unset, not
+// explicitly 'active') and it hard-excludes `seeded:true` outright — both
+// conditions a long-standing admin-only account can plausibly hit despite
+// being completely real, unlike _timeOffRoster()'s own deliberate
+// seeded:true exclusion (which exists there specifically to hide known
+// placeholder/leftover-seed rows, see that function's own comment).
+// Reuses _managerCandidates()'s already-correct, more permissive
+// `status!=='inactive'` inclusion (2026-09-03, the "Allow assigning
+// admins a manager" fix) rather than re-deriving a third filtering rule —
+// but _managerCandidates() itself has no awareness of a dual-identity
+// account (e.g. Sherine, with both a real ops_users row AND a linked
+// ops_admins row) and would list her twice, once per table; this wrapper
+// adds back _timeOffRoster()'s own name-based dedup (users win over
+// admins, same precedence) specifically to avoid reintroducing that
+// already-fixed-once-elsewhere duplicate-listing bug (see
+// api/process-transcript.js's dedupeLinkedIdentities(), the same problem
+// in the task parser's own roster).
+function _taAllAssignablePeople(){
+  const seen = new Set();
+  return _managerCandidates(null).filter(p=>{
+    const key = (p.name||'').trim().toLowerCase();
+    if(!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Weekday count, inclusive of both endpoints (2026-08-08 fix). The loop

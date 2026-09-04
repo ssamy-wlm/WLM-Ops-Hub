@@ -7177,6 +7177,77 @@ card switches to the Tracker section and deep-links the iframe to the
 exact clicked client's `openClient=` param; and Refresh genuinely re-reads
 `wl_clients_db` fresh rather than showing stale cached cards.
 
+**Assignee filter/By Person: admins (David, Abby, Jacob) were silently
+excluded (2026-09-04).** `index.html` only, display-layer — no server
+change, low-risk per rule #10.
+
+**Root cause, found by reading the code, not guessed:** `taFilterAssignee`,
+the New/Edit Task assignee picker (`tem-assignee`, sharing the same
+`roster` variable in `loadTaskAssignments()`), and `renderTaPersonRoster()`
+all populated from `_timeOffRoster()` — which excludes a person two ways
+an admin-only account can plausibly hit despite being completely real:
+a STRICT `status==='active'` equality check (excludes a row whose status
+is simply unset, never explicitly written, rather than falsy-but-present)
+and a hard, unconditional `seeded!==true` exclusion (meant to hide known
+placeholder/leftover-seed rows from the original bootstrap batch — see
+that function's own comment — but an early, genuinely-real admin account
+created as part of that same original seed batch could still carry
+`seeded:true` today). `_managerCandidates()` (built 2026-09-03 for "Allow
+assigning admins a manager," the same session) already uses a more
+permissive `status!=='inactive'` check with no `seeded` exclusion at all,
+confirmed by re-reading it before reusing it rather than assuming.
+
+**Not a naive swap — `_managerCandidates()` has no dual-identity
+awareness.** It lists an `ops_users` row and a linked `ops_admins` row
+(e.g. Sherine, per this codebase's own documented dual-identity account
+model) as two SEPARATE candidates, which is deliberately fine for its own
+original use (a "Reports To" manager picker, where seeing both her
+identities might be reasonable) but would have been a real, visible
+duplicate-listing regression here — two "Sherine Amin" rows in the
+filter dropdown and in By Person. This is the exact same class of bug
+`api/process-transcript.js`'s `dedupeLinkedIdentities()` already fixed
+once, in the task parser's own roster (2026-08-25) — so a new
+`_taAllAssignablePeople()` wraps `_managerCandidates()` and adds back
+`_timeOffRoster()`'s own name-based dedup on top (first-seen-name wins,
+same employee-before-admin precedence `_timeOffRoster()` already has,
+preserved because `Array.sort()` is a stable sort and users are pushed
+before admins), rather than a bare pass-through.
+
+Wired at exactly the two call sites the task named: `loadTaskAssignments()`'s
+shared `roster` variable (covers both `taFilterAssignee` and, as a natural
+side effect of sharing that one variable, the New/Edit Task assignee
+picker too — an admin can now also be assigned a task via the edit modal,
+not just filtered by) and `renderTaPersonRoster()`. **Deliberately NOT
+touched, flagged rather than silently expanded to:** the inline reassign
+`<select>` in the List/Day/By-Person card views and Team Production
+Analytics/Overview's own separate `_timeOffRoster()` calls — both likely
+share the identical latent gap, but neither was named in this task's own
+scope, and touching the inline reassign select specifically would be a
+more consequential, visible change (present on every task card
+everywhere) than what was asked.
+
+Verified: `new Function()` syntax-check clean; this PR's own diff added
+zero `<div>`s (pure JS, confirmed via `git diff` div-count); no server
+file touched. A new Playwright suite against the real UI (13/13, using
+three deliberately distinct admin shapes to exercise each real failure
+mode separately — David with `status:'active'` explicitly set, as a
+"does the happy path still work" baseline; Abby with `status` simply
+absent, reproducing the strict-equality gap; Jacob with `seeded:true`,
+reproducing the hard-exclusion gap): the assignee filter dropdown lists
+all three plus the pre-existing employee Rana (regression check);
+filtering by David shows exactly his one real task; the New Task
+assignee picker also lists all three; the By Person roster lists all
+three; and — the regression this fix could plausibly have introduced —
+Sherine (seeded as both a real `ops_users` row and a linked `ops_admins`
+row, same name) appears exactly ONCE in both the filter dropdown and By
+Person, never twice. Regression sweep of same-session Task Assignments
+suites (whole-team filter/colors 23/23, delete-resurrection fix 10/10,
+due-date-change request 27/27) and the admin manager assignment suite
+(11/11, exercises `_managerCandidates()` directly) — all clean.
+
+Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
+permission logic touched — eligible for direct merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
