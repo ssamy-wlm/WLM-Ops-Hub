@@ -983,6 +983,37 @@ async function fireTaskReportedNotifications(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
+// Reported/dismiss (2026-09-04) — "optionally notify the reporter it was
+// kept," per this feature's own spec: fired only for a genuine DISMISS
+// (the isAdmin update branch below only ever pushes an event here when
+// assigneeId did NOT also change in the same write — a reassignment
+// already gets its own real notification via
+// fireOpsTaskAssignmentNotifications, so this never double-notifies for
+// that case). Recipient is the ORIGINAL REPORTER only — never the admin
+// who dismissed it, who obviously already knows. Same
+// user-or-admin-lookup shape fireDueDateChangeResolvedNotification()
+// below already uses, since reportedMisassignedBy can be either kind.
+async function fireTaskReportDismissedNotification(supabase, events, warnings) {
+  if (!events.length) return;
+  const { users, admins } = await getDirectory(supabase);
+  const rows = [];
+  events.forEach(ev => {
+    if (!ev.reportedBy) return;
+    const kind = users.find(u => u.id === ev.reportedBy) ? 'user' : 'admin';
+    const person = personOf(ev.reportedBy, kind, { users, admins });
+    if (!person) return;
+    rows.push({
+      type: 'taskReportDismissed', recipientId: ev.reportedBy, recipientKind: kind,
+      recipientName: person.name || '', recipientEmail: person.email || '',
+      title: `Report reviewed: ${ev.subject}`,
+      body: `Your report on "${ev.subject}" was reviewed — the task was kept as-is.`,
+      link: '',
+      context: { taskId: ev.taskId, clientId: ev.clientId || null },
+    });
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
 // Due-date-change request approver resolution (2026-09-03) — deliberately
 // NOT resolveReviewRecipients(): that function ALWAYS additionally includes
 // Sarah's primary-admin sentinel even when a real manager resolves, which
@@ -1938,6 +1969,7 @@ export default async function handler(req, res) {
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
       const reportEvents = [];
+      const reportDismissedEvents = [];
       const dueDateRequestEvents = [];
       const dueDateResolveEvents = [];
       // Every session.id check below (here and in the "not your task"
@@ -2067,6 +2099,32 @@ export default async function handler(req, res) {
               clientId: row.clientId || null,
             });
           }
+          // Reported/dismiss + reassign (2026-09-04) — detected the same
+          // way the due-date-request resolution above is: cur had the flag
+          // set, the incoming write clears it. reportedMisassignedAt/
+          // ByName/By are cleared authoritatively HERE, server-side,
+          // regardless of what the client sent for them — mirrors the
+          // member branch's own "stamp the metadata on the TRUE
+          // transition" convention (below), just for the reverse
+          // transition, so a client that forgot to null them out locally
+          // can never leave stale reporter metadata sitting on a task
+          // that's no longer flagged. "Reassign" vs "Dismiss / keep
+          // assigned" is distinguished by whether assigneeId actually
+          // changed in this same write — a reassignment already gets its
+          // own real notification via fireOpsTaskAssignmentNotifications
+          // below (the new assignee), so only a same-assignee dismiss
+          // fires the (optional, per this feature's own spec) "your report
+          // was reviewed and the task was kept as-is" notice to the
+          // original reporter.
+          if (cur.reportedMisassigned && row.reportedMisassigned === false) {
+            if (row.assigneeId === cur.assigneeId) {
+              reportDismissedEvents.push({
+                taskId: inc.id, subject: row.subject,
+                reportedBy: cur.reportedMisassignedBy, clientId: row.clientId || null,
+              });
+            }
+            row = { ...row, reportedMisassignedAt: null, reportedMisassignedByName: null, reportedMisassignedBy: null };
+          }
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else {
@@ -2173,6 +2231,7 @@ export default async function handler(req, res) {
       applied.tasks = n;
       await fireOpsTaskAssignmentNotifications(supabase, taskAssignmentEvents, warnings);
       await fireTaskReportedNotifications(supabase, reportEvents, warnings);
+      await fireTaskReportDismissedNotification(supabase, reportDismissedEvents, warnings);
       await fireDueDateChangeRequestedNotification(supabase, dueDateRequestEvents, warnings);
       await fireDueDateChangeResolvedNotification(supabase, dueDateResolveEvents, warnings);
     }

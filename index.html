@@ -8300,6 +8300,7 @@ const NOTIF_TYPE_ICON_ADMIN = {
   // own regression suite (verify_notif_routing.mjs) already flags; closed
   // here since Item C (2026-09-03) is already touching this exact map.
   workSummary:'📤', managerOverdueSummary:'📈', superAdminAlert:'🚨',
+  taskReportDismissed:'✅',
 };
 // Human-readable labels for the "View all notifications" type filter
 // (2026-09-02) — kept as its own object rather than derived from the icon
@@ -8313,6 +8314,7 @@ const NOTIF_TYPE_LABELS_ADMIN = {
   dueDateChangeRequested:'Due-date change requested', dueDateChangeApproved:'Due-date change approved',
   dueDateChangeDeclined:'Due-date change declined',
   workSummary:'Work summary', managerOverdueSummary:'Team overdue rollup', superAdminAlert:'Super-admin alert',
+  taskReportDismissed:'Report reviewed',
 };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
@@ -8396,7 +8398,7 @@ function _routeAdminNotifClick(n){
   // a notification that routes them here — the only way such a caller can
   // reach the approve/decline UI as the resolved approver for their own
   // report's request, since their nav has no other path to it.
-  const TASK_DETAIL_NOTIF_TYPES = ['taskAssignment','taskReported','dueDateChangeRequested','dueDateChangeApproved','dueDateChangeDeclined'];
+  const TASK_DETAIL_NOTIF_TYPES = ['taskAssignment','taskReported','dueDateChangeRequested','dueDateChangeApproved','dueDateChangeDeclined','taskReportDismissed'];
   if(TASK_DETAIL_NOTIF_TYPES.includes(n.type) && ctx.taskId){
     document.getElementById('admin-notif-panel').style.display='none';
     closeModal('notifViewAllModal');
@@ -9131,7 +9133,13 @@ function loadTaskAssignments(){
   if(!sessionStorage.getItem('wl_ta_page_load')){
     sessionStorage.setItem('wl_ta_page_load', Date.now().toString());
   }
-  const roster = _timeOffRoster();
+  // _taAllAssignablePeople() (2026-09-04), not _timeOffRoster() — includes
+  // admin-only accounts (David/Abby/Jacob) that _timeOffRoster()'s
+  // stricter status/seeded checks could otherwise drop; see that
+  // function's own comment. Both the quick filter and the New/Edit Task
+  // assignee picker share this one roster, so an admin is assignable
+  // (and filterable) everywhere a person is, consistently.
+  const roster = _taAllAssignablePeople();
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
   if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
@@ -9255,7 +9263,13 @@ function renderTaPersonRoster(){
   const container = document.getElementById('ta-person-roster');
   const emptyEl = document.getElementById('ta-person-roster-empty');
   if(!container) return;
-  const roster = _timeOffRoster();
+  // _taAllAssignablePeople() (2026-09-04), not _timeOffRoster() — same gap
+  // as the assignee filter above (an admin-only account like David/Abby/
+  // Jacob could be silently excluded), same fix. Scoped to just this view
+  // — Team Production Analytics/Overview's own _timeOffRoster() calls are
+  // untouched, out of this task's stated scope even if they share the
+  // same latent gap; flagged, not silently fixed elsewhere.
+  const roster = _taAllAssignablePeople();
   if(!roster.length){
     container.innerHTML = '';
     if(emptyEl) emptyEl.style.display = 'block';
@@ -9333,10 +9347,11 @@ function renderTaNeedsAttention(){
   }).join('');
 }
 
-// ── "Reported" (2026-09-02, narrowed 2026-09-02, extended 2026-09-03) —
-// see the HTML comment above ta-subtab-reported for the scope decisions
-// this reflects. Task-scoped only — service review-submissions moved to
-// the Tracker (see client.html's _serviceRow()). Two kinds share this one
+// ── "Reported" (2026-09-02, narrowed 2026-09-02, extended 2026-09-03,
+// given real dismiss/reassign resolution actions 2026-09-04) — see the
+// HTML comment above ta-subtab-reported for the scope decisions this
+// reflects. Task-scoped only — service review-submissions moved to the
+// Tracker (see client.html's _serviceRow()). Two kinds share this one
 // list now: reportedMisassigned ("not mine") and a pending
 // dueDateChangeRequest (Item C) — both are "something a team member
 // flagged for admin/manager attention," same reasoning that originally
@@ -9345,14 +9360,14 @@ function renderTaNeedsAttention(){
 // renderTaReported() below; click-through is identical either way
 // (_taOpenReportedItem() just opens the task's detail panel, where BOTH
 // kinds already have their own resolution UI — reportedMisassigned via
-// the task's own edit/delete controls, dueDateChangeRequest via
-// _taDueDateRequestBlockHtml()'s Approve/Decline buttons). !t.mergedIntoId
-// excludes a soft-merged-away duplicate task, same convention as every
-// other task view in this file.
+// _taReportedBlockHtml()'s Dismiss/Reassign actions below,
+// dueDateChangeRequest via _taDueDateRequestBlockHtml()'s Approve/Decline
+// buttons). !t.mergedIntoId excludes a soft-merged-away duplicate task,
+// same convention as every other task view in this file.
 function _taReportedItems(){
   const tasks = _taTasks();
   const reported = tasks.filter(t=>t.reportedMisassigned && !t.mergedIntoId).map(t=>({
-    taskId:t.id, kind:'reported',
+    taskId:t.id, kind:'reported', assigneeId:t.assigneeId||null,
     submitterName:t.reportedMisassignedByName||'—',
     itemLabel:t.subject||'(untitled task)',
     clientName:t.clientName||'—',
@@ -9415,6 +9430,7 @@ function renderTaReported(){
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Task</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reported</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Actions</th>
         </tr></thead>
         <tbody>${items.map((it,i)=>`
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
@@ -9422,6 +9438,14 @@ function renderTaReported(){
             <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
             <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
+            <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">${it.kind==='reported' ? `
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn btn-xs btn-outline" onclick="_taDismissReport('${it.taskId}')">✓ Keep assigned</button>
+                <select class="input" style="font-size:11px;padding:3px 6px;width:auto;" onchange="if(this.value){_taReassignAndClearReport('${it.taskId}',this.value);this.value='';}">
+                  <option value="">Reassign to…</option>
+                  ${_taAllAssignablePeople().filter(p=>p.id!==it.assigneeId).map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('')}
+                </select>
+              </div>` : ''}</td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
@@ -10285,6 +10309,7 @@ function openTaDetailPanel(id){
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
     </div>
     ${_taDueDateRequestBlockHtml(t)}
+    ${_taReportedBlockHtml(t)}
     ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
     ${(t.tags||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">${t.tags.map(tag=>`<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 8px;">${escHtmlAdmin(tag)}</span>`).join('')}</div>` : ''}
   `;
@@ -10331,6 +10356,84 @@ function _taResolveDueDateRequest(id, approve){
   renderTaskAssignments();
   _taRefreshReportedIfActive();
   showToast(approve ? 'Due-date change approved ✓' : 'Due-date change declined');
+}
+// "Not mine" report resolution (2026-09-04) — a member flags an
+// admin-assigned task as reportedMisassigned (see the 2026-09-01 Report-
+// task-button feature); before this, nothing ever cleared that flag —
+// the only way off the Reported tab was deleting the task outright. Two
+// resolutions, manager/admin only (every admin tier already has uniform
+// write authority over ops_tasks in this codebase, same reasoning as
+// _taDueDateRequestBlockHtml() above): "Keep assigned" leaves the
+// assignee untouched and just clears the flag (fires an optional
+// courtesy notice back to the original reporter, since nothing else
+// about their situation changed); "Reassign" changes the assignee AND
+// clears the flag in the same write — the new assignee already gets
+// their own real assignment notification via the existing
+// fireOpsTaskAssignmentNotifications path, so no separate notice is
+// needed for that case. api/ops-sync.js detects which happened the same
+// way it already does for the due-date-request resolution above:
+// comparing the actual assigneeId outcome to what was stored, never a
+// separate flag this client has to keep in sync with reality.
+function _taReportedBlockHtml(t){
+  if(!t.reportedMisassigned) return '';
+  const candidates = _taAllAssignablePeople().filter(p=>p.id!==t.assigneeId);
+  return `<div style="margin-top:12px;padding:10px 12px;background:rgba(201,74,74,.08);border:1px solid rgba(201,74,74,.3);border-radius:8px;">
+    <div style="font-size:12px;font-weight:700;color:var(--red,#c94a4a);margin-bottom:4px;">🚩 Reported as possibly not theirs</div>
+    <div style="font-size:13px;">${escHtmlAdmin(t.reportedMisassignedByName||'Someone')} flagged this task${t.reportedMisassignedAt?` on ${new Date(t.reportedMisassignedAt).toLocaleString()}`:''}.</div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-primary" onclick="_taDismissReport('${t.id}')">✓ Dismiss report / Keep assigned</button>
+      <select id="ta-report-reassign-${t.id}" class="input" style="font-size:12px;padding:4px 8px;width:auto;">
+        <option value="">Reassign to…</option>
+        ${candidates.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm btn-outline" onclick="_taReassignFromDetail('${t.id}')">↪ Reassign</button>
+    </div>
+  </div>`;
+}
+// "Dismiss report / Keep assigned" — clears the flag only, assignee and
+// everything else on the task is untouched.
+function _taDismissReport(id){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t || !t.reportedMisassigned) return;
+  t.reportedMisassigned = false;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  if(_taDetailTaskId===id) openTaDetailPanel(id);
+  renderTaskAssignments();
+  _taRefreshReportedIfActive();
+  showToast('Report dismissed — task kept as-is ✓');
+}
+// Reads the reassign-to select rendered alongside the detail-panel
+// callout above, then defers to the same _taReassignAndClearReport()
+// the Reported-tab row's own inline reassign select uses — one real
+// implementation, two entry points.
+function _taReassignFromDetail(id){
+  const sel = document.getElementById(`ta-report-reassign-${id}`);
+  const newAssigneeId = sel ? sel.value : '';
+  if(!newAssigneeId){ showToast('Pick someone to reassign to first'); return; }
+  _taReassignAndClearReport(id, newAssigneeId);
+}
+// "Reassign" — changes the assignee AND clears the flag in the same
+// write. The new assignee's own real assignment notification already
+// fires via the normal reassignment path (see _taReassign() above /
+// fireOpsTaskAssignmentNotifications in api/ops-sync.js), so this never
+// also fires the "report dismissed" courtesy notice — api/ops-sync.js's
+// own transition-detection only sends that when assigneeId did NOT
+// change in the same write.
+function _taReassignAndClearReport(id, newAssigneeId){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t || !t.reportedMisassigned) return;
+  t.assigneeId = newAssigneeId || null;
+  t.reportedMisassigned = false;
+  t.lastAssignedAt = new Date().toISOString();
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  if(_taDetailTaskId===id) openTaDetailPanel(id);
+  renderTaskAssignments();
+  _taRefreshReportedIfActive();
+  showToast('Task reassigned ✓');
 }
 function closeTaDetailPanel(){
   document.getElementById('taDetailOverlay').classList.remove('open');
@@ -12284,6 +12387,36 @@ function _timeOffRoster(){
   // filter, which is populated straight from this roster).
   const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>(a.status||'active')==='active'&&a.id&&a.name&&a.seeded!==true&&!seen.has((a.name||'').trim().toLowerCase()));
   return [...users, ...admins];
+}
+// Every assignable person — employees AND admins — for Task Assignments
+// surfaces (the assignee filter, By Person, the New/Edit Task assignee
+// picker) that need admin-only accounts (David/Abby/Jacob) included, which
+// _timeOffRoster() above can silently drop: its `status==='active'` check
+// is a STRICT equality (excludes a row whose status is merely unset, not
+// explicitly 'active') and it hard-excludes `seeded:true` outright — both
+// conditions a long-standing admin-only account can plausibly hit despite
+// being completely real, unlike _timeOffRoster()'s own deliberate
+// seeded:true exclusion (which exists there specifically to hide known
+// placeholder/leftover-seed rows, see that function's own comment).
+// Reuses _managerCandidates()'s already-correct, more permissive
+// `status!=='inactive'` inclusion (2026-09-03, the "Allow assigning
+// admins a manager" fix) rather than re-deriving a third filtering rule —
+// but _managerCandidates() itself has no awareness of a dual-identity
+// account (e.g. Sherine, with both a real ops_users row AND a linked
+// ops_admins row) and would list her twice, once per table; this wrapper
+// adds back _timeOffRoster()'s own name-based dedup (users win over
+// admins, same precedence) specifically to avoid reintroducing that
+// already-fixed-once-elsewhere duplicate-listing bug (see
+// api/process-transcript.js's dedupeLinkedIdentities(), the same problem
+// in the task parser's own roster).
+function _taAllAssignablePeople(){
+  const seen = new Set();
+  return _managerCandidates(null).filter(p=>{
+    const key = (p.name||'').trim().toLowerCase();
+    if(!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Weekday count, inclusive of both endpoints (2026-08-08 fix). The loop
