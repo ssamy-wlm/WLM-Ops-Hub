@@ -7248,6 +7248,126 @@ due-date-change request 27/27) and the admin manager assignment suite
 Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
 permission logic touched — eligible for direct merge once CI is green.
 
+**Reported tab: revoke/dismiss + reassign, no more forced delete
+(2026-09-04).** `api/ops-sync.js` + `index.html` — no new `api/*.js`
+file, still 11. Before this, a `reportedMisassigned` ("not mine") flag
+had no resolution action anywhere — nothing ever cleared it, so deleting
+the task outright was the only way off the Reported tab. Two real
+actions now exist, manager/admin only (same uniform admin-write-authority
+convention every other `ops_tasks` action in this file already uses, see
+`_taDueDateRequestBlockHtml()`'s own comment for the identical
+reasoning): **Dismiss report / Keep assigned** clears the flag with the
+assignee left completely untouched; **Reassign** changes the assignee AND
+clears the flag in the same action.
+
+**Server-side detection, mirroring the due-date-change-request pattern
+exactly.** A new block in `api/ops-sync.js`'s admin update branch,
+positioned right after the existing due-date-request resolution block:
+when `cur.reportedMisassigned` was true and the incoming write sets it to
+`false`, the reporter metadata (`reportedMisassignedAt`/`ByName`/`By`) is
+nulled out authoritatively server-side regardless of what the client
+sent for them — never left to the client to remember to clear. Dismiss
+vs. reassign is distinguished by comparing `row.assigneeId` to
+`cur.assigneeId` in that SAME write — unchanged means a dismiss (queues
+a `reportDismissedEvents` entry), changed means a reassign — never a
+separate flag the client has to keep in sync with reality, the same
+"detect the real transition, don't trust a boolean" principle the
+due-date-request feature already established. A reassign's new assignee
+already gets a real assignment notification via the pre-existing
+`fireOpsTaskAssignmentNotifications` path, so the dismiss-only courtesy
+notice is never fired for that case — confirmed directly, not assumed,
+since double-notifying on a reassign would have been a real, easy-to-miss
+bug.
+
+**New notification type, `taskReportDismissed`** — a new
+`fireTaskReportDismissedNotification()`, reusing the same
+`insertNotifications()`/`getDirectory()`/`personOf()` machinery every
+other notification type in this file already uses. Recipient is the
+ORIGINAL REPORTER only (never the admin who resolved it, who obviously
+already knows), resolved via the same either-`ops_users`-or-`ops_admins`
+lookup `fireDueDateChangeResolvedNotification()` already uses, since
+`reportedMisassignedBy` can be either kind. Added to
+`NOTIF_TYPE_ICON_ADMIN`/`NOTIF_TYPE_LABELS_ADMIN` and to
+`TASK_DETAIL_NOTIF_TYPES` in `_routeAdminNotifClick()` (it carries
+`context.taskId` exactly like `taskAssignment`/`taskReported`, so a bell
+click on it opens the real task detail panel the same way).
+
+**Client-side (`index.html`), two entry points, one real
+implementation.** A new `_taReportedBlockHtml(t)` callout on the task
+detail panel (alongside the existing `_taDueDateRequestBlockHtml()`
+callout — a task can show both if it happens to have a pending due-date
+request too) with a Dismiss button and a "Reassign to…" select +
+Reassign button, both restricted to real candidates via the existing
+`_taAllAssignablePeople()` (excluding the task's current assignee). The
+Reported tab's own table gained a 5th "Actions" column (only populated
+for `kind==='reported'` rows — a `dueDateChange` row still has no action
+here, unchanged, resolved only via its own existing Approve/Decline
+callout) with the identical "Keep assigned" button + inline reassign
+select, sharing the same two underlying functions
+(`_taDismissReport(id)`/`_taReassignAndClearReport(id, newAssigneeId)`)
+the detail-panel callout uses — one real implementation, two access
+points, never two copies that could drift. Both actions push via
+`_taSaveTasks()`+`cloudAutoSync()`, re-render the detail panel if it's
+open for that task, and call the pre-existing
+`_taRefreshReportedIfActive()` so a resolved item disappears from the
+Reported tab immediately without kicking the admin off that sub-tab —
+reusing the exact "don't reset the view" mechanism the 2026-09-02
+Reported-tab work already built. `_taReportedItems()` gained
+`assigneeId` on each mapped reported-task row so both the row-level and
+detail-panel reassign pickers can correctly exclude the current
+assignee.
+
+**A markup wrinkle caught and fixed during verification, not shipped
+blind:** the Actions column's inline controls needed `onclick="event.
+stopPropagation()"` on their own `<td>` so clicking Dismiss/reassign
+doesn't also trigger the row's own click-through-to-detail-panel handler
+— an early draft moved the row's click handler onto each of the OTHER
+cells individually instead of keeping it on the `<tr>`, which broke three
+pre-existing Playwright suites that click the row directly
+(`verify_reported_tab_narrowed.mjs`, `verify_notif_viewall_ui.mjs`,
+`verify_notif_task_deleted_filter.mjs` — all navigate through a reported
+row as part of their own, unrelated coverage). Caught by actually
+re-running those suites, not assumed safe — fixed by keeping the row-level
+`onclick` on the `<tr>` itself (matching this table's pre-existing
+convention) and stopping propagation only on the new Actions cell.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (21/21) — dismiss clears the flag and metadata
+with the assignee unchanged and fires the reporter courtesy notice with a
+real email; reassign clears the flag and metadata, changes the assignee,
+fires the new assignee's real assignment notification, and does NOT also
+fire the dismiss courtesy notice (the double-notification check); an
+unrelated status edit leaves a pending report and its metadata completely
+untouched with no resolve event; and two regression checks confirm report
+CREATION (a member flagging their own task) and the existing "not your
+task" rejection are both completely unaffected by this change. (2) A new
+Playwright suite against the real `index.html` UI (21/21, run clean) —
+the detail-panel callout renders with working Dismiss and Reassign
+controls, both clearing the flag without deleting the task (confirmed the
+task id still exists in the mock's own store afterward); the Reported
+tab's own inline Dismiss/reassign controls independently exercised on two
+more tasks, both correctly clearing the item from the list; the reassign
+select's candidate list correctly excludes the current assignee and
+includes a real alternate person. Regression sweep of same-session Task
+Assignments/notifications suites — `verify_due_date_change_request_ui.mjs`
+(27/27), `verify_notif_routing.mjs` (26/26),
+`verify_task_views_colors_wholeteam.mjs` (23/23),
+`verify_wholeteam_task_delete.mjs` (10/10),
+`verify_assignee_filter_admins.mjs` (13/13),
+`verify_reported_tab_narrowed.mjs` (14/14),
+`verify_notif_viewall_ui.mjs` (16/16), and
+`verify_notif_task_deleted_filter.mjs` (16/16, after the row-onclick fix
+above) — all clean. `node --check` passed on `api/ops-sync.js`; `new
+Function()` syntax-check clean on every extracted `<script>` block in
+`index.html`; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both, this PR's own diff adding exactly 5 opens/5 closes); `ls
+api/*.js | wc -l` still 11.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 — touches real write/notification logic in
+`api/ops-sync.js`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
