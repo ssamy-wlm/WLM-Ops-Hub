@@ -1152,6 +1152,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            parity — see CLAUDE.md. This is the only remaining Operations item. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'tracker')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'clientHealth')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>Client Health</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'clientDirectory')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="8" cy="14.5" r="1.6"/><line x1="12" y1="14.5" x2="17" y2="14.5"/></svg></span>Client Directory</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'workload')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-1a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>Workload</div>
       <!-- Manager→member links feature: hidden unless this admin actually
            manages someone (managedUserIds.length>0) — set in
@@ -1408,6 +1409,36 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="clientHealthEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No active clients with services yet.</div>
         </div>
       </div>
+    </div>
+
+    <!-- Client Directory (2026-09-03) — read-only, searchable directory of
+         every client, active AND inactive, modeled on the Email Tracker's
+         own Client Directory view (darker-blue accents here to match the
+         Ops Hub theme instead). Reads straight from _getClientDB() — the
+         SAME localStorage-cached ops_clients snapshot the Tracker and
+         Client Health already read (populated by cloudPullAll() from the
+         live server record) — never a separate copy, per CLAUDE.md's "no
+         whole-dataset duplication" rule. That's the whole point of the
+         "sync": a client set active/inactive on the Tracker changes the
+         one shared record, and this view just re-reads it — on the next
+         pull if this tab happens to be open (see the cloudPullAll() hook),
+         or immediately on tab-switch/Refresh otherwise. v1 scope is
+         strictly read + search — no edit/toggle actions live here; clicking
+         a card only opens that client in the Tracker (navigation, not a
+         write), same click-through Client Health's own rows already use. -->
+    <div id="admin-clientDirectory" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-dark);" id="cd-header">Client Directory</div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every client on file, active and inactive — click a card to open it in the Tracker</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="cdSearchInput" placeholder="Search name, owner, email, or website…" oninput="filterClientDirectory()" style="padding:9px 14px;border:1px solid var(--border);border-radius:8px;font:inherit;font-size:13px;width:280px;">
+          <button class="btn btn-outline btn-sm" onclick="renderClientDirectory()">↺ Refresh</button>
+        </div>
+      </div>
+      <div id="cdGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;"></div>
+      <div id="cdEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No clients match your search.</div>
     </div>
 
     <!-- Workload — assignment-module Feature D. Read-only: counts each
@@ -3568,6 +3599,7 @@ function switchAdminTab(el, tab){
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
+  if(tab==='clientDirectory') renderClientDirectory();
   if(tab==='workload'){
     renderWorkloadDashboard();
     setTimeout(()=>_maybeShowTip('workload','#workload-tip-anchor','Click a person to see their assignments.'),50);
@@ -5104,6 +5136,91 @@ function renderClientHealthDashboard(){
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.pending>0?'var(--accent)':'var(--text-light)'};">${r.pending}</span></td>
     </tr>`).join('');
+}
+
+// ── Client Directory (2026-09-03) — read-only, searchable, modeled on the
+// Email Tracker's own Client Directory. _cdAllClients is the full,
+// unfiltered list, rebuilt from _getClientDB() (the same live ops_clients
+// snapshot the Tracker/Client Health already read) every time
+// renderClientDirectory()/the cloudPullAll() refresh hook runs; the search
+// box only ever filters this in-memory array, never triggers a network
+// call — real-time-as-you-type per the task's own spec, no debounce needed
+// at this data size (fewer than 100 clients).
+let _cdAllClients = [];
+// Real ownerEmail/ownerPhone/ownerName fields already exist on a client
+// record (client.html's "Owner's Name/Email/Phone" form fields) — the
+// task's own wording named a literal `contact` field, but no such field
+// exists anywhere in this codebase's live client shape; ownerName is
+// unambiguously the same concept ("owner/contact name"), so it's read as
+// the primary source here. c.contact is also checked as a fallback in
+// case data ever lands under that literal key instead — this can only add
+// coverage, never suppress the real field. Flagged rather than silently
+// invented: whoever populates the sparse data described in this task's
+// brief should target ownerName, not a new contact key, to avoid two
+// disconnected fields meaning the same thing.
+function _cdOwnerName(c){ return c.ownerName || c.contact || ''; }
+// clientEmails[] is a real, already-established array field (the task
+// parser's own salvage-import client-matching reads it) — shown joined,
+// since the task asks for "the primary/first, or all" and joining loses
+// nothing a card has room to show anyway.
+function _cdEmailDisplay(c){
+  const arr = Array.isArray(c.clientEmails) ? c.clientEmails.filter(Boolean) : [];
+  return arr.length ? arr.join(', ') : (c.ownerEmail || '');
+}
+function _cdSearchBlob(c){
+  return [c.name, _cdOwnerName(c), _cdEmailDisplay(c), c.website]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+// Full entry point — tab-switch and the manual Refresh button both land
+// here, resetting any in-progress search back to the full list.
+function renderClientDirectory(){
+  const input = document.getElementById('cdSearchInput');
+  if(input) input.value = '';
+  _cdReloadData();
+}
+// Rebuilds _cdAllClients from the live source WITHOUT touching the search
+// box — used by the cloudPullAll() live-refresh hook below, so a pull
+// landing while an admin is mid-search (e.g. checking whether a client
+// they just flipped to inactive on the Tracker shows up here) doesn't
+// wipe out what they typed.
+function _cdReloadData(){
+  _cdAllClients = _getClientDB().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'}));
+  const header = document.getElementById('cd-header');
+  if(header) header.textContent = `Client Directory — ${_cdAllClients.length} client${_cdAllClients.length===1?'':'s'}`;
+  filterClientDirectory();
+}
+function filterClientDirectory(){
+  const input = document.getElementById('cdSearchInput');
+  const q = (input?.value || '').trim().toLowerCase();
+  const list = q ? _cdAllClients.filter(c => _cdSearchBlob(c).includes(q)) : _cdAllClients;
+  _cdRenderGrid(list);
+}
+function _cdRenderGrid(list){
+  const grid = document.getElementById('cdGrid');
+  const empty = document.getElementById('cdEmpty');
+  if(!grid) return;
+  if(!list.length){
+    grid.innerHTML = '';
+    if(empty) empty.style.display = 'block';
+    return;
+  }
+  if(empty) empty.style.display = 'none';
+  grid.innerHTML = list.map(c => {
+    const inactive = (c.status || 'active') !== 'active';
+    const owner = _cdOwnerName(c);
+    const emails = _cdEmailDisplay(c);
+    const website = c.website || '';
+    return `<div class="card" style="padding:16px 18px;cursor:pointer;border-left:4px solid ${inactive ? 'var(--cool-grey)' : 'var(--text-dark)'};${inactive ? 'opacity:.6;' : ''}" onclick="openAdminTrackerToClient('${c.id}')" title="Open ${escHtmlAdmin(c.name || '')} in the Tracker">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(c.name || '(unnamed)')}</div>
+        ${inactive ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(224,85,85,.1);border-radius:10px;padding:2px 8px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Inactive</span>' : ''}
+      </div>
+      ${owner ? `<div style="font-size:12px;color:var(--text-mid);margin-bottom:3px;">👤 ${escHtmlAdmin(owner)}</div>` : ''}
+      ${emails ? `<div style="font-size:12px;color:var(--text-mid);margin-bottom:3px;overflow-wrap:anywhere;">✉ ${escHtmlAdmin(emails)}</div>` : ''}
+      ${website ? `<div style="font-size:12px;color:var(--text-mid);overflow-wrap:anywhere;">🔗 ${escHtmlAdmin(website)}</div>` : ''}
+      ${!owner && !emails && !website ? '<div style="font-size:11px;color:var(--text-light);font-style:italic;">No contact details on file</div>' : ''}
+    </div>`;
+  }).join('');
 }
 // serviceId is optional (Client Health's row click never passes one; the
 // admin notification click-through below does) — resolves the exact
@@ -8111,6 +8228,11 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // pull triggered elsewhere) left it frozen on stale totals/rows. Guarded
     // to the active tab only, same as every visibility check elsewhere.
     if(document.getElementById('admin-clientHealth')?.classList.contains('active') && typeof renderClientHealthDashboard === 'function') renderClientHealthDashboard();
+    // Same guard, same reasoning — a pull landing while Client Directory is
+    // already open (the live-sync poll, or any other pull) shouldn't leave
+    // it frozen on a stale active/inactive status. Uses _cdReloadData(), not
+    // renderClientDirectory(), so an in-progress search isn't wiped out.
+    if(document.getElementById('admin-clientDirectory')?.classList.contains('active') && typeof _cdReloadData === 'function') _cdReloadData();
     if(!silent) showToast('✅ Synced');
   } catch(e){
     setCloudStatus('Sync failed: '+e.message,'error');
@@ -12402,7 +12524,7 @@ const ADMIN_TAB_TITLES = {
   overview:'Overview', users:'Users', livefeed:'Live feed',
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
-  clientHealth:'Client Health', myTeamsWork:"My Team's Work",
+  clientHealth:'Client Health', clientDirectory:'Client Directory', myTeamsWork:"My Team's Work",
 };
 (function patchSwitchAdminTabForTitle(){
   const _origSwitch = window.switchAdminTab;
