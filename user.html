@@ -572,6 +572,11 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div class="nav-item" onclick="showSection('mywork',this)" id="nav-mywork"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 13l2 2 4-4"/></svg></span>My Services<span class="msg-nav-badge" id="assignments-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="showSection('dailyTasks',this)" id="nav-dailytasks"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>My Tasks<span class="msg-nav-badge" id="daily-tasks-badge" style="display:none;">0</span></div>
       <div class="nav-item" onclick="openTrackerPage('',this)" id="nav-tracker"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Tracker</div>
+      <!-- Client Directory (2026-09-04) — read-only port of the admin
+           Client Directory tab. Reads the SAME live wl_clients_db snapshot
+           My Services/My Tasks already read (see _getAssignClients()) —
+           never a separate copy. -->
+      <div class="nav-item" onclick="showSection('clientDirectory',this)" id="nav-clientDirectory"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="8" cy="14.5" r="1.6"/><line x1="12" y1="14.5" x2="17" y2="14.5"/></svg></span>Client Directory</div>
       <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
       <div class="nav-group-label">Resources</div>
       <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Weblight media library</div>
@@ -713,6 +718,31 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div class="tracker-embed-wrap">
           <iframe id="trackerFrame" class="tracker-embed-frame" src="about:blank" title="Production Tracker"></iframe>
         </div>
+      </div>
+
+      <!-- Client Directory (2026-09-04) — read-only, searchable directory
+           of every client, active AND inactive, ported from index.html's
+           own Client Directory tab (#332) — same fields (name/owner/email/
+           website), same search, same Inactive badge. Reads straight from
+           the SAME live wl_clients_db snapshot My Services/My Tasks already
+           read (_getAssignClients(), see the render function below) — never
+           a separate copy. Read-only: no edit/toggle actions here, clicking
+           a card only opens that client in the Tracker (navigation, not a
+           write) via openTrackerTo(), the exact analog of the admin
+           version's openAdminTrackerToClient() deep-link. -->
+      <div id="sec-clientDirectory" class="page-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:16px;font-weight:700;color:var(--text-dark);" id="cd-header">Client Directory</div>
+            <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Every client on file, active and inactive — click a card to open it in the Tracker</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="cdSearchInput" placeholder="Search name, owner, email, or website…" oninput="filterClientDirectory()" style="padding:9px 14px;border:1px solid var(--border);border-radius:8px;font:inherit;font-size:13px;width:280px;">
+            <button class="btn btn-outline btn-sm" onclick="renderClientDirectory()">↺ Refresh</button>
+          </div>
+        </div>
+        <div id="cdGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;"></div>
+        <div id="cdEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No clients match your search.</div>
       </div>
 
       <!-- ── DOWNTIME TASKS ── -->
@@ -1427,6 +1457,10 @@ async function cloudFetchUsers(){
     _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
     _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
     _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)));
+    // Same guard/reasoning as index.html's own Client Directory refresh
+    // hook — a pull landing while this tab is open re-reads the live data
+    // WITHOUT resetting the search box (see _cdReloadData() below).
+    if(document.getElementById('sec-clientDirectory')?.classList.contains('active') && typeof _cdReloadData==='function') _cdReloadData();
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr));
     _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr));
     if(document.getElementById('sec-dailyTasks')?.classList.contains('active') && typeof renderDailyTasks==='function') renderDailyTasks();
@@ -3694,6 +3728,81 @@ const _TRACKER_NOTIF_KEY = 'wl_notifications_db'; // client.html notification st
 
 function _getAssignClients(){ try{ return JSON.parse(localStorage.getItem(_ASSIGN_CL_KEY)||'[]')||[]; }catch(e){ return []; } }
 
+// ── Client Directory (2026-09-04) — read-only port of index.html's own
+// Client Directory tab (#332). Hand-duplicated per CLAUDE.md's zero-
+// shared-code rule, not a shared module — logic is byte-equivalent to
+// that file's own _cdOwnerName()/_cdEmailDisplay()/_cdSearchBlob()/
+// renderClientDirectory()/_cdReloadData()/filterClientDirectory()/
+// _cdRenderGrid(), just reading _getAssignClients() (the SAME live
+// wl_clients_db snapshot My Services/My Tasks already read here) instead
+// of index.html's own _getClientDB() — that exact function doesn't exist
+// in this file, so the closest already-established equivalent was used
+// rather than inventing a duplicate accessor for the same data. Escaping
+// uses this file's own escHtmlUser(); the click-through opens the Tracker
+// via openTrackerTo(clientId) — the real deep-link analog of the admin
+// version's openAdminTrackerToClient() (sets ?openClient= on the Tracker
+// iframe), since openTrackerPage() only ever takes a PAGE name, not a
+// client id, so it can't deep-link to a specific client at all.
+let _cdAllClients = [];
+function _cdOwnerName(c){ return c.ownerName || c.contact || ''; }
+function _cdEmailDisplay(c){
+  const arr = Array.isArray(c.clientEmails) ? c.clientEmails.filter(Boolean) : [];
+  return arr.length ? arr.join(', ') : (c.ownerEmail || '');
+}
+function _cdSearchBlob(c){
+  return [c.name, _cdOwnerName(c), _cdEmailDisplay(c), c.website]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+// Full entry point — tab-switch and the manual Refresh button both land
+// here, resetting any in-progress search back to the full list.
+function renderClientDirectory(){
+  const input = document.getElementById('cdSearchInput');
+  if(input) input.value = '';
+  _cdReloadData();
+}
+// Rebuilds _cdAllClients from the live source WITHOUT touching the search
+// box — used by the cloudPullAll() live-refresh hook, so a pull landing
+// mid-search doesn't wipe out what was typed.
+function _cdReloadData(){
+  _cdAllClients = _getAssignClients().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'}));
+  const header = document.getElementById('cd-header');
+  if(header) header.textContent = `Client Directory — ${_cdAllClients.length} client${_cdAllClients.length===1?'':'s'}`;
+  filterClientDirectory();
+}
+function filterClientDirectory(){
+  const input = document.getElementById('cdSearchInput');
+  const q = (input?.value || '').trim().toLowerCase();
+  const list = q ? _cdAllClients.filter(c => _cdSearchBlob(c).includes(q)) : _cdAllClients;
+  _cdRenderGrid(list);
+}
+function _cdRenderGrid(list){
+  const grid = document.getElementById('cdGrid');
+  const empty = document.getElementById('cdEmpty');
+  if(!grid) return;
+  if(!list.length){
+    grid.innerHTML = '';
+    if(empty) empty.style.display = 'block';
+    return;
+  }
+  if(empty) empty.style.display = 'none';
+  grid.innerHTML = list.map(c => {
+    const inactive = (c.status || 'active') !== 'active';
+    const owner = _cdOwnerName(c);
+    const emails = _cdEmailDisplay(c);
+    const website = c.website || '';
+    return `<div class="card" style="padding:16px 18px;cursor:pointer;border-left:4px solid ${inactive ? 'var(--cool-grey)' : 'var(--text-dark)'};${inactive ? 'opacity:.6;' : ''}" onclick="openTrackerTo('${c.id}')" title="Open ${escHtmlUser(c.name || '')} in the Tracker">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlUser(c.name || '(unnamed)')}</div>
+        ${inactive ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(224,85,85,.1);border-radius:10px;padding:2px 8px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Inactive</span>' : ''}
+      </div>
+      ${owner ? `<div style="font-size:12px;color:var(--text-mid);margin-bottom:3px;">👤 ${escHtmlUser(owner)}</div>` : ''}
+      ${emails ? `<div style="font-size:12px;color:var(--text-mid);margin-bottom:3px;overflow-wrap:anywhere;">✉ ${escHtmlUser(emails)}</div>` : ''}
+      ${website ? `<div style="font-size:12px;color:var(--text-mid);overflow-wrap:anywhere;">🔗 ${escHtmlUser(website)}</div>` : ''}
+      ${!owner && !emails && !website ? '<div style="font-size:11px;color:var(--text-light);font-style:italic;">No contact details on file</div>' : ''}
+    </div>`;
+  }).join('');
+}
+
 // ── Per-user notification/work-view settings (Monday feature pack, Feature 4) ──
 // Local-only, per-person preferences that FILTER what My Work shows/counts —
 // they can only narrow or re-scope what this person's own view surfaces,
@@ -4693,7 +4802,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -4701,6 +4810,7 @@ function showSection(id, el){
   if(id==='operations'){ renderMyServiceSchedule(); renderRoadmap(); }
   if(id==='myreports') loadMyReports();
   if(id==='tracker') loadTrackerFrame();
+  if(id==='clientDirectory') renderClientDirectory();
   if(id==='bizSetup') loadCoC();
   if(id==='mywork'||id==='myassignments'){
     loadMyAssignments();
