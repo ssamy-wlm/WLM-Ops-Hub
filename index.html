@@ -12273,7 +12273,16 @@ function _timeOffRoster(){
   // alongside the real account someone actually created for that person.
   const users  = (dbGet(DB_KEYS.users)||[]).filter(u=>u.status==='active'&&u.id&&u.name&&u.seeded!==true);
   const seen   = new Set(users.map(u=>(u.name||'').trim().toLowerCase()));
-  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status==='active'&&a.id&&a.name&&a.seeded!==true&&!seen.has((a.name||'').trim().toLowerCase()));
+  // Admin "active" check must fail OPEN on a missing status field, same
+  // convention already used elsewhere in this file for admins
+  // ((a.status||'active')==='active' at the Team Notif Prefs read,
+  // a.status!=='inactive' at the manager-candidates list) — this function's
+  // own strict a.status==='active' silently dropped any real admin whose
+  // row simply never had a status field written (2026-09-04: found to be
+  // exactly why David Joslin/Abby Conklin/Jacob Joslin — real admins with
+  // real assigned tasks — never appeared in the Task Assignments assignee
+  // filter, which is populated straight from this roster).
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>(a.status||'active')==='active'&&a.id&&a.name&&a.seeded!==true&&!seen.has((a.name||'').trim().toLowerCase()));
   return [...users, ...admins];
 }
 
