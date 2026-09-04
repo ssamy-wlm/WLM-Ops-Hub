@@ -6932,6 +6932,97 @@ email-delivery assertions) reproduces identically against unmodified
 Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction.
 
+**Fix: can't delete "Whole team" / cloned tasks (2026-09-04).** `index.html`
+only — investigated `api/ops-sync.js`'s task-delete path first, per the
+task's own hypothesis ("likely the delete path keys on assigneeId... or
+the tombstone write is rejected"), and it does NOT hold up: reproduced a
+realistic multi-clone "Whole team" delete directly against the real
+handler (a fake-Supabase Node test sending the tombstone alongside two
+still-dirty sibling clones in the same request) and it succeeded cleanly
+— `deletableIds = idsToDelete` unconditionally for `isAdmin`, no
+`assigneeId`/`assigneeIds` check anywhere in that block. The server-side
+delete path was already correct; no server change was made or needed.
+
+**Actual root cause, found by reproducing the reported symptom end-to-end
+before touching any code (rule #7):** `_applyServerArray()`'s dirty-
+preserving merge — used by `cloudPullAll()` for every synced table,
+including `tasks` — has no concept of a LOCAL DELETION at all.
+`_opsDirty()` only flags records STILL PRESENT locally that differ from
+the last-known snapshot; a task removed from local storage (via
+`_taDeleteTask()`) simply isn't in the local array anymore, so it can
+never appear in `dirtyIds`. That means ANY pull whose server-side
+response still includes the row — the 30-second live-sync timer
+(`startLiveSync()`), or a second `cloudAutoSync()` call already in flight
+— gets treated as ordinary, non-conflicting server truth and silently
+merges the "deleted" task right back into local storage, regardless of
+the tombstone queue. Reproduced directly: a local delete followed by an
+unrelated pull that still returned the row brought it right back,
+confirmed with `console.log`-level tracing before writing any fix.
+
+**Why "Whole team"/multi-name-cloned tasks specifically surface this,
+even though the bug is general to any task delete:** creating one of
+these is a BATCH operation (`commitStagedTasks()`/`_taBuildEveryoneClones()`)
+that pushes N new clone rows in one `cloudAutoSync()` round trip — a
+push+pull sequence that takes measurably longer than a single-record
+edit, widening the window during which a SEPARATE concurrent pull (the
+live-sync timer, most commonly) can land with a stale, pre-delete view of
+`ops_tasks`. The realistic admin workflow this bug report describes —
+commit a "Whole team" assignment, immediately notice it went to the
+wrong scope, delete one of the just-created rows right away — lands
+squarely inside that widened window far more often than an isolated
+single-task delete would, which is why this surfaced here even though
+`_applyServerArray()`'s gap applies to every task delete equally.
+
+**Fix:** `_applyServerArray()` gained an optional 5th parameter,
+`tombstoneIds` — when given, ids in that Set are filtered out of
+`serverArr` before anything else runs (including the existing "don't
+wipe local on a genuinely empty pull" guard, re-checked after filtering
+so an all-tombstoned response still never wipes local data). Wired at
+the ONE call site that actually needs it — `'tasks'` in `cloudPullAll()`
+— passing `new Set(dbGet(DB_KEYS.deletedTaskIds)||[])`, the same
+tombstone queue `_taDeleteTask()` already maintains. No other
+`_applyServerArray()` call site needed this: `orgNodes`/`orgLinks`/`users`
+all use a SOFT `deleted_at` tombstone that `api/ops-state.js` already
+excludes server-side, so a tombstoned row there never even reaches
+`serverArr` in the first place — this function's existing dirty-
+preserving merge was never the vulnerable part for those tables.
+`ops_tasks` has no `deleted_at` column (a genuine hard SQL DELETE, see
+the 2026-08-20 undo-import entry above), so the client needed its own
+safeguard against a stale/concurrent pull specifically for this one
+table. Once an id is ever tombstoned, it's excluded from every future
+merge permanently (same "never shrinks" convention `deletedTaskIds`
+already had for its pre-existing "already sent" push-dedup purpose) —
+harmless at real-world scale, since task ids are high-entropy generated
+(`_taGenId()`) and never reused.
+
+Verified with a Node reproduction against the real, byte-identical
+`api/ops-sync.js` handler (no live DB access, rule #11) confirming the
+server-side delete path itself was never the problem — a realistic
+3-clone "Whole team" payload (one deleted, two re-sent as still-dirty in
+the same request) applies cleanly with `deletedTaskIds:1`, zero
+`rejected`, zero thrown exceptions. A new Playwright suite against the
+real `index.html` UI (10/10, run twice clean): the real × button on a
+"Whole team" list-row card deletes it end-to-end through the genuine
+`cloudAutoSync()` round trip, with the sync push carrying the real
+tombstone id and the server actually removing the row; the core
+root-cause reproduction — a task deleted locally, then an unrelated pull
+whose server response still has the row — no longer resurrects it, while
+a different, unrelated task in the same pull is correctly left alone
+(confirming this isn't an over-broad filter); and the fix holds across
+THREE repeated stale pulls in a row, not just the first one. Every
+pre-existing regression suite that exercises `cloudPullAll()`/Task
+Assignments re-run clean and unaffected: due-date-change request UI
+(27/27 — confirms the Reported-tab/notification-routing work from the
+same day isn't disturbed by this change) and admin manager assignment
+(11/11). `new Function()` syntax-check clean on every extracted
+`<script>` block; this PR's own diff added zero `<div>`s (pure JS
+change, confirmed via `git diff` div-count); `node --check` passed on
+`api/ops-sync.js` (untouched, confirmed via `git diff --stat` showing
+zero changes to it) — no server file needed editing for this fix.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

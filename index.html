@@ -7687,25 +7687,52 @@ function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(tabl
 // getFn reads the CURRENT local array for this table (the same store
 // saveFn writes) — optional only for backward compatibility with any call
 // site that doesn't pass one; every call site in this file does.
-function _applyServerArray(table, serverArr, saveFn, getFn){
+// tombstoneIds (2026-09-04, fixing "can't delete Whole team/cloned tasks"):
+// an optional Set of ids that must NEVER be merged back in from a pull,
+// regardless of what the server's response says. Needed only for tables
+// with a genuine HARD delete and no server-side deleted_at filter (today:
+// just 'tasks' — see the tombstoneIds argument at its one call site below).
+// orgNodes/orgLinks/users don't need this: their tombstones are soft
+// (deleted_at), so api/ops-state.js already excludes a tombstoned row from
+// serverArr itself, and this function's existing dirty-preserving merge
+// was never the vulnerable part for those.
+//
+// The actual bug this closes: _opsDirty() only flags records STILL PRESENT
+// locally that differ from the last-known snapshot — a task REMOVED from
+// local storage (a delete) has no representation there at all, so it was
+// never protected by the dirty-preserving merge below. Any pull whose
+// server-side response still has the row — the 30s live-sync timer, or a
+// second concurrent cloudAutoSync() call already in flight when the delete
+// fires (e.g. right after committing a multi-clone "Whole team"/multi-name
+// batch, whose own push+pull round trip can still be running when the
+// admin immediately deletes one of the just-created clones) — silently
+// resurrected it, since dirtyIds.has(id) was false and the server's (still
+// non-deleted) copy was kept as-is. Reproduced directly before this fix:
+// a local delete followed by an unrelated pull that still returned the
+// task brought it right back. Excluding every ever-tombstoned id here,
+// unconditionally, closes this regardless of server-side timing — once
+// deleted locally, a task can never be merged back in again by ANY pull.
+function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
+  if(!filtered.length) return; // everything present was tombstoned — same empty-guard, never wipe local
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
-  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); return; } // unchanged fast path
+  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
   // Keep the LOCAL copy of every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
-  const merged = serverArr.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
-  const serverIds = new Set(serverArr.map(r=>r.id));
+  const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
   // server's response.
   local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
   saveFn(merged);
-  // Snapshot to the SERVER array, not the merged one — this is what keeps a
-  // preserved edit "dirty" against the next _opsDirty() check, so its
-  // pending debounced push still fires and the edit actually persists
-  // instead of silently sitting local-only forever.
-  _opsSetSnapshot(table, serverArr);
+  // Snapshot to the (tombstone-filtered) SERVER array, not the merged one —
+  // this is what keeps a preserved edit "dirty" against the next
+  // _opsDirty() check, so its pending debounced push still fires and the
+  // edit actually persists instead of silently sitting local-only forever.
+  _opsSetSnapshot(table, filtered);
 }
 // Same principle for singleton settings — a value's key can be present in
 // the response with a null value (role-hidden for this caller, or simply no
@@ -8160,7 +8187,11 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
     _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
-    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[]);
+    // deletedTaskIds passed as the tombstone-exclusion set (2026-09-04) —
+    // see _applyServerArray()'s own comment on this parameter for why
+    // ops_tasks specifically needs it (a genuine hard delete, no server-
+    // side deleted_at filter, unlike orgNodes/orgLinks/users below).
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]));
     if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
