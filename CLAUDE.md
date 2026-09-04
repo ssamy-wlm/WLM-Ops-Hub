@@ -6866,6 +6866,72 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per this task's own instruction — a new write workflow and
 permission gate (request/approve/decline on `ops_tasks`).
 
+**A task's `assigneeName` now always resolves server-side, never saves
+blank (2026-09-04).** `api/ops-sync.js` only. Reported: a self-assigned
+task (and, more broadly, any task write that sets `assigneeId`) could end
+up with a blank `assigneeName` if the client didn't already resolve one —
+which made the task render person-less in the admin's assignee-grouped
+views. New `resolveAssigneeName(assigneeId, incomingName, {users,
+admins})`, added right after `personOf()`: a **fallback fill**, not a
+forced overwrite — if `incomingName` already has content it's returned
+untouched (so a client that already resolved the correct name, the
+normal case, is never second-guessed by a possibly-stale roster
+snapshot); only when it's blank does this look the id up fresh, checking
+the `primary-admin` login sentinel first (Sarah Samy has no real
+`ops_users`/`ops_admins` row — same special case every other notification
+resolver in this file already carries for her), then `ops_users`, then
+`ops_admins`. An id matching nobody in the live roster (a typo, or a
+stale local cache pointing at a removed record) falls back to whatever
+name the client sent rather than inventing one.
+
+Wired into all three places `ops_tasks` ever sets/changes `assigneeId`:
+the member new-task branch (both a true self-assign and a manager-tier
+member like Sherine creating a task for a direct report — see the
+2026-09-03 self-assigned-badge entry above for why those two cases are
+computed separately), the admin new-task branch, and the admin
+reassignment branch (an existing task's `assigneeId` changing via the
+inline dropdown or edit modal). The one directory fetch this needs
+(`getDirectory(supabase)`, already cached per-request via
+`_directoryCache`) was hoisted out of its previous `if (!isAdmin)` guard
+to run unconditionally — it was already being fetched for the
+member-scope `creatableAssigneeIds` computation, just not available to
+the admin branches that also needed it now.
+
+Investigated first whether either frontend's own rendering actually
+reads `ops_tasks.assigneeName` directly (rule #7, not assumed) — it
+doesn't: every current Task Assignments/Daily Tasks view in both
+`index.html` and `user.html` resolves a task's displayed assignee via a
+live roster lookup by `assigneeId` (`_taPersonName()`, `_dtPersonName()`,
+etc.), so this fix is a data-integrity guarantee for the stored record
+itself (and for anything that reads `ops_tasks` directly — a future
+report, an export, a notification body) rather than a fix to an actively
+broken render path in either portal today. No client-side change was
+needed or made.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `api/ops-sync.js` handler (no live DB access,
+rule #11) — 12/12: a member's true self-assign resolves a real name from
+`ops_users`; a manager-tier member's report-assignment task also
+resolves one; an admin-created task assigned to another admin resolves
+from `ops_admins`; reassigning an EXISTING task to a different person
+resolves the NEW assignee's real name, never the stale old one; the
+`primary-admin` sentinel resolves to "Sarah Samy"; an already-correct
+incoming name is preserved exactly as sent, confirming this is a
+fallback fill and not a forced overwrite; an assigneeId matching nobody
+in the roster never fabricates a name; and a genuinely unassigned task
+(no `assigneeId` at all) gets no `assigneeName` either. `node --check`
+passed. Every pre-existing `ops_tasks`-touching regression suite from
+this session re-run clean and unaffected: due-date-change request
+(28/28), weekend clamp (unaffected), task-delete notification cleanup
+(16/16), admin manager assignment (11/11) — confirming the directory-fetch
+hoist didn't change behavior for any existing consumer. One pre-existing,
+unrelated failure (`verify_assignment_emails_hierarchy.mjs`'s
+email-delivery assertions) reproduces identically against unmodified
+`main` — out of scope here.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per this task's own instruction.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

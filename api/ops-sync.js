@@ -712,6 +712,30 @@ export function personOf(id, kind, { users, admins }) {
   return kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
 }
 
+// A task's assigneeName resolved fresh from the live roster whenever the
+// incoming value is missing (2026-09-04) — self-assign, admin-assign, and
+// reassignment all route through this, so a task can never save with a
+// real assigneeId but a blank assigneeName: a blank name is what makes a
+// task render person-less and drop out of the admin's assignee-grouped
+// task list. This is a FALLBACK FILL, not a forced overwrite — a client
+// that already resolved the correct name (the normal case, since every
+// assignee picker in both portals already knows the name at selection
+// time) is left completely untouched, so a deliberate rename mid-flight
+// can never be silently clobbered by a stale roster snapshot. 'primary-
+// admin' is the one id with no real ops_users/ops_admins row to look up
+// (Sarah Samy's login sentinel — see api/ops-auth.js), special-cased the
+// same way every other notification resolver in this file already
+// treats her; an id matching nobody in the live roster (a typo, or a
+// stale local cache pointing at a removed record) falls back to whatever
+// name the client sent, never invented.
+function resolveAssigneeName(assigneeId, incomingName, { users, admins }) {
+  if (hasContent(incomingName)) return incomingName;
+  if (!assigneeId) return incomingName || '';
+  if (assigneeId === 'primary-admin') return 'Sarah Samy';
+  const person = users.find(u => u.id === assigneeId) || admins.find(a => a.id === assigneeId);
+  return person?.name || incomingName || '';
+}
+
 // Assignment emails go to the ASSIGNEE ONLY (2026-09-03) — no manager/
 // leader escalation on a routine assignment (that used to come from
 // resolveNotifyRecipients()'s own manager-fallback/broadcaster logic,
@@ -1932,9 +1956,12 @@ export default async function handler(req, res) {
       //
       // Computed once per request, fresh from the live directory — never
       // trusted from the client. null for an admin caller (unrestricted).
+      // Fetched unconditionally now (2026-09-04) — assigneeName resolution
+      // below needs the full roster on every write, not just the
+      // member-scope check that used to be the only consumer.
+      const { users: directoryUsers, admins: directoryAdmins } = await getDirectory(supabase);
       let creatableAssigneeIds = null;
       if (!isAdmin) {
-        const { users: directoryUsers } = await getDirectory(supabase);
         const reportIds = directoryUsers.filter(u => u.managerId === session.id).map(u => u.id);
         creatableAssigneeIds = new Set([session.id, ...reportIds]);
       }
@@ -1954,7 +1981,8 @@ export default async function handler(req, res) {
           // never honored.
           const assignedDate = inc.assignedDate || todayIsoUtc();
           if (isAdmin) {
-            row = { ...inc, assignedById: inc.assignedById || session.id, assignedDate, dueDateLocked: false };
+            const assigneeName = resolveAssigneeName(inc.assigneeId, inc.assigneeName, { users: directoryUsers, admins: directoryAdmins });
+            row = { ...inc, assigneeName, assignedById: inc.assignedById || session.id, assignedDate, dueDateLocked: false };
           } else {
             const assigneeId = creatableAssigneeIds.has(inc.assigneeId) ? inc.assigneeId : session.id;
             // Self-assigned = auto-daily (2026-09-02): a member putting a
@@ -1973,7 +2001,8 @@ export default async function handler(req, res) {
             // auto-daily due date still never lands on that weekend day —
             // clampToWeekday() snaps it to the adjacent weekday.
             const dueDate = assigneeId === session.id ? clampToWeekday(todayIsoUtc()) : inc.dueDate;
-            row = { ...inc, assigneeId, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false, dueDate };
+            const assigneeName = resolveAssigneeName(assigneeId, inc.assigneeName, { users: directoryUsers, admins: directoryAdmins });
+            row = { ...inc, assigneeId, assigneeName, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false, dueDate };
           }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
@@ -1999,8 +2028,15 @@ export default async function handler(req, res) {
             ? cur.dueDate
             : (typeof inc.dueDate === 'string' ? inc.dueDate : (cur.dueDate || ''));
           const dueDateJustLocked = !dueDateLocked && dueDate !== (cur.dueDate || '');
+          // assigneeName resolved fresh whenever a reassignment (or a
+          // resave with a stale/blank cached name) leaves it missing —
+          // see resolveAssigneeName()'s own comment for why this is a
+          // fallback fill, not a forced overwrite of an already-correct
+          // client-sent name.
+          const assigneeName = resolveAssigneeName(inc.assigneeId, inc.assigneeName, { users: directoryUsers, admins: directoryAdmins });
           row = {
             ...inc,
+            assigneeName,
             assignedById: inc.assignedById || cur.assignedById || null,
             assignedDate: cur.assignedDate || todayIsoUtc(),
             dueDate,
