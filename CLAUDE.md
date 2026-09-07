@@ -7720,6 +7720,286 @@ sweep of same-session Task Assignments suites
 Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 — touches real write logic in `api/ops-sync.js`.
 
+**Task Assignments: sort controls + By-Person default + cleaner filter bar
+(2026-09-08).** `index.html` only, display/navigation only — no server
+file touched, low-risk per rule #10.
+
+**1. By Person defaults to "All", via a dedicated variable, not by
+mutating the shared status tab.** Root-caused before building anything:
+the status PILLS themselves only ever render inside Assigned Tasks' own
+markup — By Person's detail view has no status-pill UI of its own at
+all — yet the underlying filtering (`_taFilteredTasks()`) still silently
+applied whatever the shared `_taStatusTab` happened to be, with zero
+visible indication of that from inside By Person. That's the actual
+mechanism behind the reported bug: David's 47 tasks are all in-progress/
+done, the shared tab was sitting on its default "Not Started," and
+opening his view rendered zero rows with no clue why. Fixed with a new,
+fully separate `_taPersonStatusTab`, always reset to `'all'` the instant
+`openPersonDailyView()` runs — deliberately NOT reusing/overwriting
+`_taStatusTab` itself, which would have "fixed" By Person at the cost of
+silently changing the main Assigned Tasks tab's own default the next
+time an admin switched back to it (a real, easy-to-miss regression this
+design avoids by construction, verified directly — see below).
+`_taFilteredTasks()` now picks whichever status tab is actually relevant
+(`_taPersonViewId ? _taPersonStatusTab : _taStatusTab`) before filtering.
+
+**2. Sort control** — `_taSortField`/`_taSortDir`, defaulting to
+`assignedDate`/`desc` (newest-assigned-first, per this task's own
+explicit ask) with a 4-option dropdown (Assigned date/Due date/Assignee/
+Assigned by) and an asc/desc button pair using the exact same
+`.btn-toggle-active` fixed-base-class toggle convention every other
+mutually-exclusive button pair in this file already uses (View toggle,
+quick filters, etc.). Replaces `_taSortActiveTasks()` (the old hardcoded
+"due date soonest-first" default) outright — its single call site is now
+`_taSortByField(tasks, _taSortField, _taSortDir)`, driven by
+`_taSortComparator()`. `dueDate` keeps the original sort's "undated
+always sorts last" rule regardless of direction (an undated task isn't
+more urgent just because the direction flipped); `assignedDate` needs no
+such handling since it's never blank (server-forced at creation, see the
+2026-09-08 `selfAssignedAt` entry above for the same guarantee already
+relied on elsewhere); `assignee`/`assignedBy` sort by the same display
+names (`_taPersonName()`/`_taAssignedByDisplay()`) already shown on the
+card, so the sort order can never disagree with what's printed.
+
+**Scope decision, confirmed by reading the code rather than guessed:**
+the Done tab keeps its own pre-existing, separate `_taSortDoneTasks()`
+(most-recently-completed-first via `completedAt`, a 2026-08-26 feature)
+completely untouched — the new Sort control's 4 fields don't include a
+"completed date" option at all, and forcing Assigned-date ordering onto
+Done would have been a real regression to a deliberately-designed,
+more-useful-for-that-tab default. Flagged here rather than silently
+applied everywhere or silently left ambiguous.
+
+**3. Filter bar tidy-up**, matching the mockup's row layout: status pills
++ Sort control share one `justify-content:space-between` row; the View
+toggle (List/Day/Week/Month) — not pictured in the mockup crop, but a
+real, still-needed capability nothing asked to remove — stays exactly
+where it was, between that row and the filter row, rather than being
+deleted or guessed into a new position; the filter row itself gained a
+plain 1px divider (`<span>` with `background:var(--border)`) between
+"All clients" and "Overdue," matching the mockup's visual `|` separator
+with no new component needed; category pills are unchanged, already
+their own row.
+
+**4. Color audit — every active state already used the app's real
+`--gold`/`--text-dark` variables, confirmed by reading the CSS, not
+assumed.** `.ta-status-pill.active`/`.ta-cat-pill.active` (both
+pre-existing) and `.btn-toggle-active` (used by the new sort-direction
+buttons, the View toggle, and the sub-tab bar) all resolve to
+`background:var(--gold)` (or `var(--btn)`, the identical `#F5B000` hex
+under a different variable name) with the inactive state's text already
+`var(--text-dark)`/`var(--text)` — none of them were ever hardcoded to
+black or a generic dark, and this matches `user.html`'s own PR #306
+"header declutter" convention byte-for-byte (`.dt-status-pill.active`/
+`.dt-cat-pill.active` use the identical `var(--gold)` rule). The
+mockup's own solid-black "selected" rendering was a wireframe placeholder
+color, not a literal design spec — read that way rather than copied
+literally, and the new Sort direction buttons were built from the start
+using the same real CSS variables as everything else here, never a new
+hardcoded color.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main`
+(delta -3, this diff's own opens/closes balanced). A new Playwright suite
+against the real UI (21/21) — opening David's By Person view (2 real
+tasks, both in-progress/done) is genuinely NOT empty and confirmed
+`_taPersonStatusTab==='all'`, while the shared `_taStatusTab` stays
+`'notstarted'` afterward (the explicit no-cross-leak regression check);
+the Sort dropdown offers exactly the 4 specified fields, defaults to
+Assigned date/descending; switching field+direction actually reorders
+the real rendered cards for all 4 fields (Assigned date desc, Due date
+asc, Assignee asc, Assigned by); the filter-bar row structure matches
+(Sort control sharing the status-pill row, a real divider before
+Overdue, the View toggle still present); and every active-state color
+(status pill, sort-direction button, category pill) resolves via
+`getComputedStyle()` to the exact real `--gold`/`--text-dark` hex values,
+not a hardcoded black — measured with the mouse moved off each button
+first and a transition-safe wait, since `.btn-toggle-active:hover`'s own
+darker `--btn-hover` shade (and a brief in-flight `transition:all .2s`
+alpha) would otherwise have been what got measured instead of the real
+resting color, a false-positive class caught and fixed during this
+task's own verification, not shipped blind. Regression sweep of
+same-session Task Assignments suites
+(`verify_task_views_colors_wholeteam.mjs` 22/22,
+`verify_ta_assignee_dropdown_fold.mjs` 17/17,
+`verify_self_assigned_at_ui.mjs` 9/9) — all clean.
+
+Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
+permission logic touched — eligible for direct merge once CI is green.
+
+**Recurring tasks (weekly/biweekly/monthly) as a distinct category
+(2026-09-08).** `api/ops-sync.js` + `api/cron-overdue-check.js` +
+`index.html` + `user.html` — no new `api/*.js` file, still 11.
+
+**Data shape and server-side regeneration.** `recurring:{frequency,
+nextDate}` stored directly on the task, `frequency` one of `weekly`/
+`biweekly`/`monthly` (`RECURRING_FREQUENCIES`). `recurring` is
+deliberately NOT added to `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` — a member
+needs to set/clear it on a task already theirs the same way `status`/
+`notes`/`reportedMisassigned` already are; the existing "not your task"
+ownership check is still the real gate on WHICH tasks a member can touch,
+this only widens which fields are touchable on one already theirs.
+`sanitizeRecurringField(recurring, dueDate)` (never trusts a client value
+blindly, same discipline `validDueDate()` in `api/process-transcript.js`
+already established for dates): an unrecognized `frequency` drops the
+whole field to `null`; a valid `frequency` with a missing/malformed
+`nextDate` falls back to the task's own `dueDate`, weekend-clamped either
+way via the existing shared `clampToWeekday()` — a recurring task's
+`nextDate` can never itself land on a Saturday/Sunday. Applied at BOTH
+write paths — a brand-new task (the client can already arrive with
+`recurring` pre-set, e.g. "Make recurring" applied before the very first
+save) and every existing-task update (`finalizeRecurring(cur, row)`,
+called last in both the admin and member update branches, after every
+other field resolution each branch already does) — so a directly-crafted
+invalid payload can never sneak an unsanitized `recurring` value into
+storage regardless of which path touched it.
+
+**"Regenerates for the next cycle" is implemented as in-place mutation of
+the SAME task row, not a clone — a real design decision, flagged per rule
+#7 rather than silently picked.** The task's own wording ("Store
+`recurring: {frequency, nextDate}`" — singular, on the one task) reads as
+one permanent row that reopens each cycle, and this is what was built:
+`finalizeRecurring()` detects the actual Done TRANSITION (`cur.status`
+wasn't Done, the incoming write makes it Done) — never a resave that
+leaves an already-Done recurring task alone, and never fired just because
+`recurring` happens to be present with no status change at all (verified
+directly, see below). On that transition: `dueDate` and
+`recurring.nextDate` both advance one cycle via `advanceRecurringDate()`
+from whichever of the two is currently LATER (nextDate can lag behind an
+admin-edited dueDate or vice versa — always advancing from the more
+current of the two avoids silently regressing), weekend-clamped; `status`
+resets to `'Not started'`; `completedAt` clears (the task is open again,
+not permanently closed). A plausible alternative — cloning into a NEW
+task row each cycle, preserving a real completion history — was
+considered and explicitly NOT built, since it wasn't what the task's own
+data-shape wording described and would have been a materially different,
+larger feature (a real "completion log" nobody asked for). Flagged here
+for Sarah to weigh in on if the in-place-reopen model turns out not to
+match what she actually wanted.
+
+**Metrics exclusion — "a recurring task due again shouldn't inflate
+someone's overdue burden."** A recurring task's own overdue-ness is NEVER
+hidden from the person actually doing the work — the task's own card
+badge (`_taDueBadgeHtml`/`_dtDueBadgeHtml`), the List view's literal
+Overdue quick-filter, and the calendar's own overdue-dot grouping all
+stay completely unchanged, still using the raw `_taIsOverdue()`/
+`taskIsOverdue()` — a recurring task that's genuinely late still needs to
+visibly say so to the one person who can act on it. Only AGGREGATE/
+escalation signals exclude it, via a new, narrower helper layered on top
+of the existing one — `_taCountsAsOverdueBurden(t)` (client,
+`index.html`) / `taskCountsAsOverdueBurden(t, today)` (server,
+`api/cron-overdue-check.js`, kept in sync deliberately, same "completely
+separate runtime" reason `taskIsOverdue()`/`taskIsDueToday()` already are
+there) = `_taIsOverdue(t) && !t.recurring`. Applied at:
+- **Needs Attention's Overdue bucket** (`_taNeedsAttentionBuckets()`) — a
+  recurring-and-overdue task no longer appears there, but is never
+  silently dropped from the view entirely: a new 5th section, "🔁
+  Recurring," lists EVERY currently-recurring task regardless of due
+  status — the literal "or show them in a distinct Recurring bucket"
+  alternative this task's own acceptance criteria named.
+- **The "By Person" roster's red/amber attention dot**
+  (`_personAttentionDot()`) — a person whose only overdue item is
+  recurring no longer paints red.
+- **Team Production Analytics' per-person Overdue count**
+  (`tasksOverdueItems`, feeds Overview's Tasks-by-Urgency donut, the
+  per-person Overdue/Blocked column, and the roster dot above) — a
+  recurring-and-overdue task is deliberately excluded from the urgency-
+  donut's forward-looking window buckets too (rather than force-fit into
+  one of the 4 due-date windows, which all assume a FUTURE due date) —
+  so this donut effectively reads as "non-recurring open task work by
+  urgency." A recurring task's own presence is never invisible on this
+  page as a result — it's visible via Needs Attention's Recurring
+  section and its own card's 🔁 badge, just not double-counted into this
+  specific donut.
+- **`api/cron-overdue-check.js`'s hierarchy-escalation counts** (tier-1
+  employee→manager rollup, tier-2 manager/admin→super-admin
+  escalation) — the exact "overdue-escalation counts" the task's own
+  wording named. Due-today/Blocked/Unassigned counts in the same file are
+  left completely literal (different, non-"neglected work" concepts a
+  recurring task can still legitimately be).
+- **The daily owner digest + employee self-reminder's own "Overdue"
+  tally** (`attentionDigest`/`taskReminder`, same file) — a team-wide
+  "burden" signal, same class as the hierarchy counts above; due-today/
+  blocked/unassigned in that same digest are untouched.
+
+**UI — "Make recurring" button + frequency picker + 🔁 badge, both
+portals, hand-duplicated per the zero-shared-code rule.** A small 🔁
+badge (`_taRecurringBadgeHtml()`/`_dtRecurringBadgeHtml()`) on the list-
+row card, next to the due badge, showing the frequency label (e.g. "🔁
+Weekly"). The task detail panel (admin `openTaDetailPanel()` / employee
+`openDtDetailPanel()`) gains a callout: a non-recurring task shows a
+"🔁 Make recurring" button that reveals a Weekly/Biweekly/Monthly
+`<select>` + Confirm; an already-recurring task shows "🔁 Recurring
+&lt;Frequency&gt; — regenerates automatically once marked Done" plus a
+"Stop recurring"/"Stop" button that clears the field back to `null` —
+this is a freely reversible convenience toggle, not a one-time
+irreversible action, so no rule #6 typed-confirmation gate applies to
+stopping it. `index.html`'s write follows the plain immediate
+`_taSaveTasks()`+`cloudAutoSync()` convention every other admin task edit
+in that file already uses (matching `_taDismissReport()`'s own pattern);
+`user.html`'s follows its own stricter server-confirmed-before-success
+`cloudPushData()` convention (matching `saveDtTaskUpdate()`'s own
+pattern) — same as every other write each of these two files already
+established for itself, not a new pattern invented for this feature.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (23/23) — a valid frequency is stored correctly
+at creation; an unrecognized frequency drops the whole field to `null`; a
+missing `nextDate` falls back to `dueDate`, weekend-clamped; the Done-
+transition regeneration correctly resets status, advances `dueDate`/
+`recurring.nextDate` by exactly one weekly/biweekly/monthly cycle, and
+clears `completedAt`; a regenerated date that would land on a Saturday is
+genuinely clamped to the Friday before (not just coincidentally always
+landing on a weekday); a resave that leaves an already-Done recurring
+task alone (unrelated field changed, status stays Done in both `cur` and
+`row`) never re-triggers a second regeneration; an admin can stop
+recurring on any task; a member can set/clear `recurring` on their OWN
+task; the "not your task" ownership gate is completely unaffected by
+`recurring` being member-writable (a member still cannot touch a task
+assigned to someone else, even just to set this one field); and a
+regenerated row correctly preserves every OTHER field the same write
+changed (e.g. a simultaneous reassignment), confirming `finalizeRecurring()`
+only ever overrides status/dueDate/recurring/completedAt. (2) Two new
+Playwright suites against the real UIs: `index.html` (22/22) — the shared
+burden helper excludes a recurring-overdue task while `_taIsOverdue()`
+itself still correctly says it's overdue; the by-person dot logic;
+Needs Attention's Overdue bucket excluding it while the new Recurring
+section lists both recurring tasks regardless of due-status and excludes
+the plain one-off; the card badge for an already-recurring vs. plain
+task; the full Make-recurring flow (button → picker → Confirm → real
+`ops-sync` push carrying the chosen frequency → card badge updates → Stop
+recurring pushes `recurring:null` → detail panel reverts). `user.html`
+(11/11) — the same badge/button/picker/Confirm/Stop flow through this
+file's own detail panel and stricter confirmed-before-success push
+(verified with a STATEFUL `/api/ops-state`+`/api/ops-sync` mock, since
+`cloudPushData()` always re-pulls state after a push and a static mock
+would have made the genuinely-working round trip look like it silently
+reverted — the same test-mock pitfall this codebase's history already
+documents repeatedly, caught and fixed here before trusting the result).
+`node --check` passed on both server files; `new Function()` syntax-check
+clean on every extracted `<script>` block in both HTML files; comment-
+stripped div-balance delta unchanged vs. `main` in both — `index.html`
+added 6 balanced `<div>`/`</div>` pairs (delta still -3, matching main),
+`user.html` added 3 (delta still -1, matching main); `ls api/*.js |
+wc -l` still 11 (no new server file). A regression sweep of this
+session's own Node suites touching `api/ops-sync.js`/
+`api/cron-overdue-check.js` (weekend clamp, self-assign auto-daily,
+self-assigned-at, due-date-change request, report dismiss/reassign,
+assignee-name resolution, cron hierarchy escalation, email team
+summaries, task-delete notification cleanup, email-skipped logging) all
+re-ran clean and unaffected — 11 files, no regressions. Three pre-existing
+Playwright UI suites (`verify_notif_task_deleted_filter.mjs`,
+`verify_self_assigned_badge_ui.mjs`, `verify_weekend_clamp_ui.mjs`/
+`verify_weekend_clamp_user_ui.mjs`) were confirmed via `git stash` to fail
+identically against this branch's own last-committed state — pre-existing
+test-fixture issues, not regressions from this task, out of scope here.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 — touches real write logic in `api/ops-sync.js` and
+the workload/overdue-escalation metrics in `api/cron-overdue-check.js`
+and `index.html`'s own dashboards.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

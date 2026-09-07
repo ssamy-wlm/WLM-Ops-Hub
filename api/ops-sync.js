@@ -311,6 +311,89 @@ const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'emailReceivedDate', 'emailThreadId', 'assignedDate', 'selfAssignedAt',
 ];
 
+// Recurring tasks (2026-09-08) — a task the assignee (or an admin) has
+// flagged as permanently repeating, stored as `recurring:{frequency,
+// nextDate}` right on the task itself, per this feature's own explicit
+// data shape. `recurring` is deliberately NOT in
+// TASK_KEYS_MEMBER_MAY_NOT_TOUCH above — a member needs to set/clear it
+// on their own task the same way they already can with `status`/`notes`/
+// `reportedMisassigned`; the existing "not your task" ownership check is
+// still the real gate on which TASKS a member can touch, this only
+// widens which fields are touchable on one already theirs.
+const RECURRING_FREQUENCIES = ['weekly', 'biweekly', 'monthly'];
+// Advances a YYYY-MM-DD date by one cycle of the given frequency, then
+// weekend-clamps the result (respecting the same rule every other due-
+// date computation in this file already applies via clampToWeekday()) —
+// "regenerates for the next cycle" never means landing back on a
+// Saturday/Sunday. An unrecognized frequency falls back to weekly rather
+// than silently not advancing at all, which would leave the task due
+// today forever.
+function advanceRecurringDate(dateStr, frequency) {
+  if (!dateStr) return dateStr;
+  const parts = String(dateStr).slice(0, 10).split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => Number.isNaN(n))) return dateStr;
+  const [y, m, d] = parts;
+  const dt = new Date(y, m - 1, d);
+  if (frequency === 'biweekly') dt.setDate(dt.getDate() + 14);
+  else if (frequency === 'monthly') dt.setMonth(dt.getMonth() + 1);
+  else dt.setDate(dt.getDate() + 7); // 'weekly' and any unrecognized value
+  const next = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  return clampToWeekday(next);
+}
+// Single entry point called from both the admin and member update
+// branches, right before each one's own `.update()` call — does two
+// things, in order:
+//
+// 1. Sanitizes `row.recurring` rather than trusting it blindly (same
+//    "never trust a malformed client value" discipline validDueDate() in
+//    api/process-transcript.js already established for dates): a
+//    `frequency` outside RECURRING_FREQUENCIES drops the whole field to
+//    null (never silently guessed at); a valid frequency with a missing/
+//    malformed `nextDate` falls back to the task's own dueDate, weekend-
+//    clamped either way — a recurring task's nextDate can never itself
+//    land on a Saturday/Sunday.
+// 2. Detects the actual Done TRANSITION on a (now-sanitized) recurring
+//    task — cur wasn't Done, the incoming write makes it Done — never a
+//    resave that leaves an already-Done recurring task alone, and never
+//    fired just because `recurring` happens to be present with no status
+//    change at all. On that transition, the row is regenerated for its
+//    next cycle IN PLACE (per this feature's own "permanent recurring
+//    task" framing — no new task row is created; the same one just
+//    reopens) rather than left sitting on Done forever: dueDate and
+//    recurring.nextDate both advance one cycle from whichever is
+//    currently later (nextDate can lag behind an admin-edited dueDate, or
+//    vice versa — always advancing from the more current of the two
+//    avoids silently regressing), status resets to 'Not started', and
+//    completedAt is cleared since the task is no longer actually finished
+//    going forward — a fresh cycle, not a permanently-closed one.
+//
+// Applied LAST in each branch, after every other field resolution that
+// branch already does, so a regenerated row still carries whatever else
+// this same write correctly changed — only status/dueDate/recurring/
+// completedAt are ever touched here.
+// Shared by both finalizeRecurring() below (existing-task updates) and the
+// brand-new-task insert branches — a directly-crafted invalid `recurring`
+// payload must never sneak into a task unfiltered regardless of which path
+// created/touched it. Returns null (never a malformed shape) or a clean
+// {frequency, nextDate} pair, nextDate always weekend-clamped.
+function sanitizeRecurringField(recurring, dueDate) {
+  if (!recurring || !RECURRING_FREQUENCIES.includes(recurring.frequency)) return null;
+  return { frequency: recurring.frequency, nextDate: clampToWeekday(recurring.nextDate || dueDate || '') };
+}
+function finalizeRecurring(cur, row) {
+  row = { ...row, recurring: sanitizeRecurringField(row.recurring, row.dueDate) };
+  if (!row.recurring || cur.status === 'Done' || row.status !== 'Done') return row;
+  const from = (row.recurring.nextDate && row.recurring.nextDate > (row.dueDate || '')) ? row.recurring.nextDate : (row.dueDate || row.recurring.nextDate);
+  const nextDate = advanceRecurringDate(from, row.recurring.frequency);
+  return {
+    ...row,
+    status: 'Not started',
+    dueDate: nextDate,
+    recurring: { frequency: row.recurring.frequency, nextDate },
+    completedAt: null,
+  };
+}
+
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
 export function checkMemberClientWrite(current, incoming, memberId, memberName) {
   for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
@@ -2057,6 +2140,12 @@ export default async function handler(req, res) {
           if (row.assignedById && row.assignedById === row.assigneeId) {
             row.selfAssignedAt = new Date().toISOString();
           }
+          // Recurring (2026-09-08) — sanitized the same way as an existing
+          // task's update path (see sanitizeRecurringField()'s own comment);
+          // a brand-new task can already arrive with `recurring` set (e.g.
+          // the "Make recurring" UI applied before the very first save), so
+          // this must not skip validation just because there's no `cur` yet.
+          row.recurring = sanitizeRecurringField(row.recurring, row.dueDate);
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else if (isAdmin) {
@@ -2155,6 +2244,13 @@ export default async function handler(req, res) {
             }
             row = { ...row, reportedMisassignedAt: null, reportedMisassignedByName: null, reportedMisassignedBy: null };
           }
+          // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
+          // own comment. Applied last, after every other admin-side field
+          // resolution above, so a regenerated row still carries whatever
+          // this same write correctly changed (assignee, notes, etc.) —
+          // only status/dueDate/recurring/completedAt are overridden, and
+          // only on the actual Done transition.
+          row = finalizeRecurring(cur, row);
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else {
@@ -2241,6 +2337,11 @@ export default async function handler(req, res) {
               requestedBy: session.id, requestedByName: session.name, clientId: row.clientId || null,
             });
           }
+          // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
+          // own comment; identical to the admin branch above, applied last
+          // so it can only ever override status/dueDate/recurring/
+          // completedAt, never anything else this write already resolved.
+          row = finalizeRecurring(cur, row);
           const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', inc.id);
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         }

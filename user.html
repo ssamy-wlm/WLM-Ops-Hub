@@ -1954,6 +1954,25 @@ function _dtDueChangePendingBadgeHtml(t){
   if(!t.dueDateChangeRequest) return '';
   return `<span title="Due-date change requested — waiting on your manager" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">⏳ Pending</span>`;
 }
+// Recurring tasks (2026-09-08) — {frequency, nextDate} stored directly on
+// the task (see api/ops-sync.js's finalizeRecurring()). weekly/biweekly/
+// monthly only, matching the server's own RECURRING_FREQUENCIES exactly
+// (hand-duplicated per the zero-shared-code rule — a mismatch here would
+// just mean this <select> never offers a value the server would reject,
+// since the server independently re-validates via sanitizeRecurringField()
+// regardless of what this list says).
+const DT_RECURRING_FREQUENCIES = [
+  {value:'weekly', label:'Weekly'},
+  {value:'biweekly', label:'Biweekly'},
+  {value:'monthly', label:'Monthly'},
+];
+function _dtRecurringFreqLabel(freq){ return (DT_RECURRING_FREQUENCIES.find(f=>f.value===freq)||{}).label || freq; }
+// Small at-a-glance badge for the list-row card — same placement/pattern
+// as _dtReportButtonHtml/_dtDueChangePendingBadgeHtml right above.
+function _dtRecurringBadgeHtml(t){
+  if(!t.recurring) return '';
+  return `<span title="Repeats ${_dtRecurringFreqLabel(t.recurring.frequency).toLowerCase()} — regenerates automatically once marked Done" style="font-size:11px;color:var(--accent,#2E5DA6);font-weight:700;margin-left:6px;white-space:nowrap;">🔁 ${escHtmlUser(_dtRecurringFreqLabel(t.recurring.frequency))}</span>`;
+}
 function _dtDueBadgeHtml(t){
   if(!t.dueDate) return '';
   if(_dtIsOverdue(t)) return `<span class="dt-due-badge overdue">⏱ Overdue</span>`;
@@ -2206,7 +2225,7 @@ function _renderDtListTable(tasks){
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${selfBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}${selfAssigned && t.selfAssignedAt ? ` · <span title="Server-recorded, tamper-proof — never editable">🕐 ${escHtmlUser(_dtFormatDateTime(t.selfAssignedAt))}</span>` : ''}</div>
         </div>
-        <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}${_dtDueChangePendingBadgeHtml(t)}</div>
+        <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtRecurringBadgeHtml(t)}${_dtReportButtonHtml(t)}${_dtDueChangePendingBadgeHtml(t)}</div>
       </div>
       <div class="dt-card-foot">
         <div class="dt-pill-row">
@@ -2317,6 +2336,7 @@ function openDtDetailPanel(id){
       ${t.assignedById && t.assignedById===t.assigneeId && t.selfAssignedAt ? `<div style="color:var(--text-light);">Self-assigned</div><div style="color:var(--accent,#2E5DA6);font-weight:600;" title="Server-recorded the instant this task was created — never editable, so a back-dated 'Assigned' date above is always distinguishable from this real timestamp">🕐 ${escHtmlUser(_dtFormatDateTime(t.selfAssignedAt))}</div>` : ''}
     </div>
     ${_dtDueChangeBlockHtml(t)}
+    ${_dtRecurringBlockHtml(t)}
     <label class="form-label">Status</label>
     <select class="form-input" id="dt-status-select" onchange="_dtToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
     <div id="dt-block-reason-wrap" style="display:none;margin-top:10px;">
@@ -2417,6 +2437,90 @@ async function submitDtDueDateChangeRequest(id){
     return;
   }
   showToast('Request sent ✓ — your manager will be notified');
+}
+
+// "Make recurring" (2026-09-08) — the detail-panel equivalent of
+// _dtDueChangeBlockHtml() right above (same show-a-form/toggle-it
+// pattern), but writes `recurring` directly rather than a pending
+// request: `recurring` is member-writable on a task already theirs (see
+// api/ops-sync.js's own comment — not in TASK_KEYS_MEMBER_MAY_NOT_TOUCH),
+// so there's nothing to approve. On the actual Done transition the server
+// regenerates the task in place for its next cycle (finalizeRecurring())
+// — nextDate seeded from the task's own current dueDate, weekend-clamped
+// server-side either way. A recurring task can be stopped just as freely
+// (clears the field back to null) — this is a convenience toggle on a
+// task's own recurring-ness, not a one-time irreversible action, so no
+// rule #6 typed-confirmation gate applies here.
+function _dtRecurringBlockHtml(t){
+  if(t.recurring){
+    return `<div style="margin-top:10px;padding:8px 10px;background:rgba(46,93,166,.08);border:1px solid rgba(46,93,166,.3);border-radius:8px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>🔁 Recurring <strong>${escHtmlUser(_dtRecurringFreqLabel(t.recurring.frequency))}</strong> — regenerates automatically once marked Done.</span>
+      <button type="button" class="btn btn-outline btn-sm" style="flex-shrink:0;" onclick="event.stopPropagation();stopDtRecurring('${t.id}')">Stop</button>
+    </div>`;
+  }
+  return `<div style="margin-top:10px;">
+    <button type="button" class="btn btn-outline btn-sm" onclick="_dtToggleRecurringForm()">🔁 Make recurring</button>
+    <div id="dt-recurring-form" style="display:none;margin-top:8px;">
+      <label class="form-label">Repeats</label>
+      <select class="form-input" id="dt-recurring-freq">
+        ${DT_RECURRING_FREQUENCIES.map(f=>`<option value="${f.value}">${f.label}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="submitDtMakeRecurring('${t.id}')">Confirm</button>
+    </div>
+  </div>`;
+}
+function _dtToggleRecurringForm(){
+  const el = document.getElementById('dt-recurring-form');
+  if(el) el.style.display = el.style.display==='none' ? '' : 'none';
+}
+// Same optimistic-then-rollback pattern reportDtTaskMisassigned() already
+// established — nextDate is seeded from the task's own current dueDate;
+// the server re-derives/clamps it independently regardless (see
+// sanitizeRecurringField() in api/ops-sync.js), so this is a reasonable
+// local starting point, never trusted as the final stored value.
+async function submitDtMakeRecurring(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.recurring) return;
+  const freq = document.getElementById('dt-recurring-freq')?.value || 'weekly';
+  const prevRecurring = t.recurring || null;
+  t.recurring = { frequency: freq, nextDate: t.dueDate || '' };
+  dbSet(DB_KEYS.tasks, tasks);
+  if(_dtDetailTaskId===id) openDtDetailPanel(id);
+  renderDailyTasks();
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    t.recurring = prevRecurring;
+    dbSet(DB_KEYS.tasks, tasks);
+    if(_dtDetailTaskId===id) openDtDetailPanel(id);
+    renderDailyTasks();
+    if(!rejectedThis) showToast('❌ Could not save — try again');
+    return;
+  }
+  showToast(`🔁 Set to recur ${_dtRecurringFreqLabel(freq).toLowerCase()} ✓`);
+}
+async function stopDtRecurring(id){
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || !t.recurring) return;
+  if(!confirm('Stop this task from recurring? It will no longer regenerate after being marked Done.')) return;
+  const prevRecurring = t.recurring;
+  t.recurring = null;
+  dbSet(DB_KEYS.tasks, tasks);
+  if(_dtDetailTaskId===id) openDtDetailPanel(id);
+  renderDailyTasks();
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    t.recurring = prevRecurring;
+    dbSet(DB_KEYS.tasks, tasks);
+    if(_dtDetailTaskId===id) openDtDetailPanel(id);
+    renderDailyTasks();
+    if(!rejectedThis) showToast('❌ Could not save — try again');
+    return;
+  }
+  showToast('Recurring stopped ✓');
 }
 
 // A member may only ever touch subject/status/notes/tags on a task already
