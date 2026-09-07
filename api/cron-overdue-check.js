@@ -43,6 +43,39 @@ import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
 import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
+import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
+
+// Weekday morning "log your tasks" reminder (2026-09-07) — v1 hardcoded
+// recipients, can become a per-user toggle later. Sent via the same Resend
+// setup every other notification email already uses (lib/resendClient.js),
+// NOT through insertNotifications()/ops_notifications, since this isn't tied
+// to a real event on a real record — it's a fixed daily nudge to 3 specific
+// people, so a plain direct send is the simpler, more literal fit.
+const DAILY_TASK_REMINDER_RECIPIENTS = [
+  { name: 'Rana Ayman', email: 'ranaa@weblightmedia.com' },
+  { name: 'Sherine Amin', email: 'sherinea@weblightmedia.com' },
+  { name: 'Assmaa Fouad', email: 'assmaaf@weblightmedia.com' },
+];
+
+// Vercel Hobby crons are fixed-UTC and don't shift for DST, but Cairo does
+// (UTC+2 in winter, UTC+3 in summer) — so vercel.json's single cron entry
+// fires this endpoint at BOTH 07:00 and 08:00 UTC (as well as its
+// pre-existing 22:00 UTC run, all three folded into one schedule string to
+// stay within the Hobby plan's per-project cron-entry limit — see the header
+// comment above on why the daily backup was folded in here for the same
+// reason). Whichever of the two morning invocations actually lands on the
+// real Cairo 10:00 hour is determined here, computed fresh from Africa/Cairo
+// wall-clock time — never assumed from which UTC hour triggered the request.
+function cairoLocalParts(now) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Cairo', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', weekday: 'short',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
+  let hour = parseInt(parts.hour, 10);
+  if (hour === 24) hour = 0; // some engines report midnight as "24" with hour12:false
+  return { dateStr: `${parts.year}-${parts.month}-${parts.day}`, hour, weekday: parts.weekday };
+}
 
 function isInactiveService(s) { return s.status === 'cancelled' || s.status === 'archived'; }
 // Same rule as client.html's _svcIsDoneThisCycle/_svcDueStatus — kept in sync
@@ -99,8 +132,69 @@ export default async function handler(req, res) {
 
   const warnings = [];
   const summary = { scanned: 0, overdueFound: 0, newlyStamped: 0, clientsUpdated: 0, notificationsSent: 0 };
+  const utcHour = new Date().getUTCHours();
+  let backup = null;
 
   try {
+    // ── Weekday morning "log your tasks" reminder — the 07:00/08:00 UTC
+    // invocations only (see the header comment on DAILY_TASK_REMINDER_RECIPIENTS
+    // above for why there are two). Entirely independent of the 22:00 UTC
+    // block below — runs in its own try/catch so a failure here can never
+    // affect the overdue/backup work, and vice versa.
+    if (utcHour === 7 || utcHour === 8) {
+      try {
+        const cairo = cairoLocalParts(new Date());
+        const isWeekday = cairo.weekday !== 'Sat' && cairo.weekday !== 'Sun';
+        if (cairo.hour === 10 && isWeekday) {
+          const { data: reminderState } = await supabase.from('ops_settings').select('data').eq('key', 'dailyTaskReminderState').maybeSingle();
+          if (reminderState?.data?.lastSentDate === cairo.dateStr) {
+            summary.dailyTaskReminder = 'already sent today';
+          } else {
+            // Stamp BEFORE sending, so this can never fire twice for the same
+            // Cairo calendar day — including if every send below fails, or if
+            // (in a DST-transition edge case) both the 07:00 and 08:00 UTC
+            // invocations somehow both resolve to the 10:00 Cairo hour.
+            const { error: stampErr } = await supabase.from('ops_settings')
+              .upsert({ key: 'dailyTaskReminderState', data: { lastSentDate: cairo.dateStr } }, { onConflict: 'key' });
+            if (stampErr) warnings.push(`dailyTaskReminderState stamp: ${stampErr.message}`);
+
+            let sent = 0;
+            for (const r of DAILY_TASK_REMINDER_RECIPIENTS) {
+              try {
+                const html = buildEmailHtml({
+                  name: r.name,
+                  title: 'Good morning — add your tasks for today.',
+                  body: "Quick reminder to log today's workload/tasks in the Ops Hub before the morning meeting.",
+                  link: process.env.APP_URL || 'https://opshub.weblightmedia.com/user',
+                });
+                await sendResendEmail({ to: r.email, subject: 'Good morning — add your tasks for today.', html });
+                sent++;
+              } catch (err) {
+                await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err, extra: { recipient: r.email } });
+                warnings.push(`dailyTaskReminder send (${r.email}): ${err.message}`);
+              }
+            }
+            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}`;
+          }
+        } else {
+          summary.dailyTaskReminder = 'not the Cairo 10am weekday window';
+        }
+      } catch (err) {
+        await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err });
+        warnings.push(`dailyTaskReminder: ${err.message}`);
+      }
+    }
+
+    // Everything below (overdue escalation, task attention, focus digest,
+    // hierarchy escalation, daily backup) is the ORIGINAL once-daily job —
+    // unchanged behavior, just now gated to its original 22:00 UTC slot so
+    // folding the new 07:00/08:00 UTC morning triggers into this same single
+    // cron entry (see the Hobby-plan cron-limit note above) doesn't triple
+    // any of it.
+    if (utcHour !== 22) {
+      return res.status(200).json({ ok: true, summary, warnings, backup, skipped: 'not the 22:00 UTC daily-job hour' });
+    }
+
     // Org-wide on/off toggle (Super Admin-visible in Settings, same as the
     // other notification types) — a direct read, not the memoized
     // getNotificationSettings() in ops-sync.js, since that cache is scoped to
@@ -526,7 +620,6 @@ export default async function handler(req, res) {
     // reported in the response but never turn this endpoint's own overdue
     // work into a failure — the two jobs are independent, just sharing a
     // schedule slot.
-    let backup;
     try {
       const { warnings: backupWarnings, snapshot } = await buildBackupSnapshot(supabase);
       const id = await insertBackupRow(supabase, 'daily-auto', snapshot);
