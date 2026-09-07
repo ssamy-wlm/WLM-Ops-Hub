@@ -7556,6 +7556,63 @@ touching either page this same session already produced — both re-run
 clean, confirming the shared-modal refactor didn't disturb Overview's own
 stat cards or the header controls sharing its row.
 
+**Task Assignments: fold Whole team + Unassigned into the assignee
+dropdown (2026-09-08).** `index.html` only, display-only — no server file
+touched, low-risk per rule #10.
+
+The standalone "👥 Whole team" and "Unassigned" quick-filter buttons
+(2026-08-25/2026-09-04) are removed; both are now options inside
+`#taFilterAssignee` itself, in the order the task specified: All
+assignees / Whole team / Unassigned / each person (still via
+`_taAllAssignablePeople()`, unchanged — admins included). A new
+`TA_UNASSIGNED_ID` sentinel (`'__UNASSIGNED__'`) is filter-only, paired
+with the existing `TA_EVERYONE_ID` (`'__ALL__'`, already a real
+assignable value in the New/Edit Task picker — reused here as the
+filter's own "Whole team" value too, since it's the identical concept).
+`_taTasksMatchingOtherFilters()`'s single `assignee` variable now branches
+three ways instead of one flat equality check: `TA_EVERYONE_ID` →
+`(t.assigneeIds||[]).length>1`, `TA_UNASSIGNED_ID` → `!t.assigneeId`,
+anything else (a real id, or `''` for no filter) → the original
+`t.assigneeId!==assignee` check. `toggleTaQuickFilter()`/`_taQuickFilter`
+lost their `'unassigned'`/`'wholeTeam'` cases entirely — only `'overdue'`/
+`'dueToday'` remain, per the task's own explicit "keep these two as
+separate quick filters that combine (amplify) with the selected
+assignee" instruction, i.e. a genuinely different relationship
+(intersect) than the three assignee-dropdown options (replace).
+
+Mutual exclusion between Whole team/Unassigned/a real person needed **no
+new code** — it's a structural consequence of moving them into one native
+`<select>`, which can only ever hold one value at a time; the previous
+two-independent-buttons design was what allowed the contradictory
+"Whole team AND a specific person AND Unassigned all active at once"
+states the task was asking to eliminate.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both — this diff removes 2 `<button>` elements and adds none). A
+new Playwright suite against the real UI (17/17): both standalone buttons
+are confirmed gone while Overdue/Due-today remain; the dropdown's option
+order matches exactly (All assignees / Whole team / Unassigned / people,
+admins included); selecting "Whole team" shows only genuine multi-
+assignee-clone tasks; selecting "Unassigned" shows only the unassigned
+task; selecting a real person (David) shows exactly his own tasks — the
+3rd one being his own individual clone of a "Whole team" assignment,
+confirmed correct since that clone's own `assigneeId` really is his,
+distinct from the sibling clone whose `assigneeId` is someone else's;
+the dropdown's `value` after that selection holds ONLY his id, confirming
+structural mutual exclusion; "David + Overdue" (toggling the Overdue
+quick filter while David is selected) correctly narrows to just his one
+overdue task, proving the amplify/layer relationship the task asked to
+preserve; clearing back to "All assignees" restores every task.
+`verify_task_views_colors_wholeteam.mjs` (a pre-existing suite whose own,
+unrelated color-coding coverage happened to also click the now-removed
+button to set up its "Whole team" test case) was updated to select the
+new dropdown option instead — not a regression in what it tests, just a
+different way of reaching the same filtered state — and re-runs clean,
+22/22. `verify_assignee_filter_admins.mjs` (13/13) and
+`verify_wholeteam_task_delete.mjs` (10/10), the other two pre-existing
+suites touching this same dropdown/filter area, re-run clean unmodified.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

@@ -1626,12 +1626,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
             <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
+            <!-- Whole team / Unassigned folded in as options (2026-09-08) —
+                 see TA_UNASSIGNED_ID's own comment above. Populated by
+                 loadTaskAssignments() as: All assignees / Whole team /
+                 Unassigned / each person. -->
             <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
             <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
-            <button class="btn btn-sm btn-outline" id="taFilterUnassignedBtn" onclick="toggleTaQuickFilter('unassigned')">Unassigned</button>
-            <button class="btn btn-sm btn-outline" id="taFilterWholeTeamBtn" onclick="toggleTaQuickFilter('wholeTeam')" title="Tasks assigned to more than one person at once (Everyone/multi-name)">👥 Whole team</button>
         </div>
         <div id="taCategoryPills" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;"></div>
 
@@ -9169,9 +9171,25 @@ const TA_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 // groupOwner-no-attendees mapping to land on an option this UI knows how
 // to render).
 const TA_EVERYONE_ID = '__ALL__';
+// Sentinel assignee-FILTER value for "Unassigned" (2026-09-08) — filter-only,
+// never written to a task (unlike TA_EVERYONE_ID, which both filters AND is a
+// real assignable value in the New/Edit Task picker). Folded into the same
+// #taFilterAssignee dropdown as TA_EVERYONE_ID so the two "special" options
+// and every real person are mutually exclusive by construction (a native
+// single-select can only ever hold one value) — see
+// _taTasksMatchingOtherFilters() below for how each of the three cases
+// (a real person id / TA_EVERYONE_ID / TA_UNASSIGNED_ID / '') is read.
+const TA_UNASSIGNED_ID = '__UNASSIGNED__';
 
 let _taView = 'list';
-let _taQuickFilter = null; // null | 'overdue' | 'dueToday' | 'unassigned' | 'wholeTeam'
+let _taQuickFilter = null; // null | 'overdue' | 'dueToday' — Unassigned/Whole
+// team used to live here too (2026-08-25/2026-09-04) until 2026-09-08 folded
+// them into the #taFilterAssignee dropdown itself (TA_UNASSIGNED_ID/
+// TA_EVERYONE_ID) — a single-select dropdown makes them mutually exclusive
+// with each other AND with a real person automatically, which two
+// independently-toggleable buttons never could. Overdue/Due-today stay
+// separate quick filters, since those are meant to LAYER on top of whichever
+// assignee is selected (e.g. "David + Overdue"), not replace it.
 // Status sub-tab (2026-08-26): 'notstarted' | 'inprogress' | 'done' | 'all'.
 // Defaults to 'notstarted' per this feature's own spec — a fresh session
 // (and a fresh page load) always lands there. Persists across the session
@@ -9272,7 +9290,14 @@ function loadTaskAssignments(){
   const roster = _taAllAssignablePeople();
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
-  if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>' + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+  // Whole team / Unassigned folded in as options, right after "All
+  // assignees" and before any real person (2026-09-08) — see
+  // TA_UNASSIGNED_ID's own comment above for why. A native single-select
+  // makes these, and every real person, mutually exclusive automatically.
+  if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>'
+    + `<option value="${TA_EVERYONE_ID}">👥 Whole team</option>`
+    + `<option value="${TA_UNASSIGNED_ID}">Unassigned</option>`
+    + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
   if(temAssigneeSel) temAssigneeSel.innerHTML = '<option value="">Unassigned</option>' + `<option value="${TA_EVERYONE_ID}">👥 Everyone (whole team)</option>` + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
 
   const clients = _taActiveClients();
@@ -9799,8 +9824,6 @@ function toggleTaQuickFilter(kind){
   // width:100% and made the active button balloon to fill the row).
   document.getElementById('taFilterOverdueBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='overdue'?' btn-toggle-active':'');
   document.getElementById('taFilterDueTodayBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='dueToday'?' btn-toggle-active':'');
-  document.getElementById('taFilterUnassignedBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='unassigned'?' btn-toggle-active':'');
-  document.getElementById('taFilterWholeTeamBtn').className = 'btn btn-sm btn-outline'+(_taQuickFilter==='wholeTeam'?' btn-toggle-active':'');
   renderTaskAssignments();
 }
 
@@ -9880,12 +9903,20 @@ function _taTasksMatchingOtherFilters(){
     // and from the status-tab badge counts, which read this same result.
     if(t.mergedIntoId) return false;
     if(_taActiveCategory && t.category!==_taActiveCategory) return false;
-    if(assignee && t.assigneeId!==assignee) return false;
+    // Whole team / Unassigned / a real person are mutually exclusive by
+    // construction now (2026-09-08) — #taFilterAssignee is a single-select,
+    // so `assignee` can only ever be exactly one of these three shapes at
+    // once, never combined.
+    if(assignee===TA_EVERYONE_ID){ if(!((t.assigneeIds||[]).length>1)) return false; }
+    else if(assignee===TA_UNASSIGNED_ID){ if(t.assigneeId) return false; }
+    else if(assignee){ if(t.assigneeId!==assignee) return false; }
     if(client && t.clientId!==client) return false;
+    // Overdue/Due-today stay independent quick filters that LAYER on top of
+    // whichever assignee is selected (e.g. "David + Overdue" = David's own
+    // overdue tasks) — deliberately not folded into the dropdown, since
+    // amplifying a selection is a different relationship than replacing it.
     if(_taQuickFilter==='overdue' && !_taIsOverdue(t)) return false;
     if(_taQuickFilter==='dueToday' && !_taIsDueToday(t)) return false;
-    if(_taQuickFilter==='unassigned' && t.assigneeId) return false;
-    if(_taQuickFilter==='wholeTeam' && !((t.assigneeIds||[]).length>1)) return false;
     if(search && !(`${t.subject||''} ${t.notes||''} ${t.clientName||''}`.toLowerCase().includes(search))) return false;
     return true;
   });
