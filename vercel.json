@@ -13,7 +13,11 @@
   "crons": [
     {
       "path": "/api/cron-overdue-check",
-      "schedule": "0 7,8,22 * * *"
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron-overdue-check",
+      "schedule": "0 7 * * 1-5"
     }
   ]
 }
