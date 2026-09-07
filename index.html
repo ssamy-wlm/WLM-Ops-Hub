@@ -9258,6 +9258,21 @@ function _taFormatShortDate(iso){
   const [y,m,d] = iso.split('-').map(Number);
   return new Date(y, m-1, d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
+// Full date+time formatter (2026-09-08, selfAssignedAt) — deliberately
+// DIFFERENT from _taFormatShortDate() above: that one parses a bare
+// 'YYYY-MM-DD' date into a LOCAL Date (the fix for the UTC-midnight-
+// misread bug this codebase has hit before), because a bare date has no
+// real time-of-day to preserve. selfAssignedAt is a genuine full ISO
+// timestamp (new Date().toISOString(), server-stamped) — `new Date(iso)`
+// is the CORRECT parse here, since the whole point is converting that
+// absolute UTC instant into the viewer's own local wall-clock time, e.g.
+// "Sep 8, 2:14 PM".
+function _taFormatDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
 // Whole days between a task's assignedDate and today — an old-transcript
 // task (assignedDate far in the past) ages correctly even when parsed
 // today, since this reads assignedDate, never the parse/creation moment.
@@ -10054,7 +10069,7 @@ function _renderTaListTable(tasks, bodyId, emptyId){
       <div class="ta-card-top">
         <div>
           <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${blockedBadge}${dupReportedBadge}${selfBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_taFormatShortDate(t.assignedDate)} · `:''}${escHtmlAdmin(_taAssignedByDisplay(t))}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_taFormatShortDate(t.assignedDate)} · `:''}${escHtmlAdmin(_taAssignedByDisplay(t))}${selfAssigned && t.selfAssignedAt ? ` · <span title="Server-recorded, tamper-proof — never editable">🕐 ${escHtmlAdmin(_taFormatDateTime(t.selfAssignedAt))}</span>` : ''}</div>
         </div>
         ${_taDueBadgeHtml(t)}
       </div>
@@ -10467,6 +10482,7 @@ function openTaDetailPanel(id){
       ${t.status==='Blocked' && t.blockReason ? `<div style="color:var(--text-light);">Blocked reason</div><div style="color:var(--red,#c94a4a);">${escHtmlAdmin(t.blockReason)}</div>` : ''}
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_taFormatShortDate(t.assignedDate)} · ${_taAgeLabel(_taDaysSinceAssigned(t))}` : '—'}</div>
+      ${_taIsSelfAssigned(t) && t.selfAssignedAt ? `<div style="color:var(--text-light);">Self-assigned</div><div style="color:var(--blue,#2D6BB6);font-weight:600;" title="Server-recorded the instant this task was created — never editable, so a back-dated 'Assigned' date above is always distinguishable from this real timestamp">🕐 ${escHtmlAdmin(_taFormatDateTime(t.selfAssignedAt))}</div>` : ''}
       <div style="color:var(--text-light);">Category</div><div>${TA_CATEGORY_LABELS[t.category]||t.category||''}</div>
     </div>
     ${_taDueDateRequestBlockHtml(t)}

@@ -308,7 +308,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
-  'emailReceivedDate', 'emailThreadId', 'assignedDate',
+  'emailReceivedDate', 'emailThreadId', 'assignedDate', 'selfAssignedAt',
 ];
 
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
@@ -2036,6 +2036,27 @@ export default async function handler(req, res) {
             const assigneeName = resolveAssigneeName(assigneeId, inc.assigneeName, { users: directoryUsers, admins: directoryAdmins });
             row = { ...inc, assigneeId, assigneeName, assignedById: session.id, origin: 'self', assignedDate, dueDateLocked: false, dueDate };
           }
+          // selfAssignedAt (2026-09-08) — a genuine self-assign, defined
+          // identically to every other "self-assigned" check already in
+          // this codebase (assignedById===assigneeId, not a tier/session
+          // proxy — see the 2026-09-02 self-assigned-badge feature), gets a
+          // server-stamped creation timestamp the caller never controls:
+          // `inc.selfAssignedAt` is never read here, only `new Date()` at
+          // the moment this request is actually processed. Applies to
+          // BOTH branches above — an admin who happens to assign a new
+          // task to themselves is just as much a genuine self-assign as a
+          // member's own "add to my own plate" path, and this check runs
+          // once, after both branches have already resolved their own
+          // final assigneeId/assignedById, rather than duplicating the
+          // condition inside each one. Immutable after creation — see the
+          // isAdmin UPDATE branch below, which only ever reads
+          // cur.selfAssignedAt, mirroring assignedDate's own convention;
+          // never retroactively stamped if a task merely BECOMES self-
+          // assigned later via a reassignment, since this field means "the
+          // real creation moment," not "currently self-assigned."
+          if (row.assignedById && row.assignedById === row.assigneeId) {
+            row.selfAssignedAt = new Date().toISOString();
+          }
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else if (isAdmin) {
@@ -2073,6 +2094,15 @@ export default async function handler(req, res) {
             assignedDate: cur.assignedDate || todayIsoUtc(),
             dueDate,
             dueDateLocked: dueDateLocked || dueDateJustLocked,
+            // Immutable after creation, same convention as assignedDate
+            // right above — only ever reads cur, never inc, so not even an
+            // admin hitting this endpoint directly can set/change/backdate
+            // it after the fact. Stays null/undefined for a task that
+            // wasn't self-assigned at creation, even if it's since been
+            // reassigned to be assigneeId===assignedById by coincidence —
+            // see the insert-path comment above for why this is
+            // deliberately never retroactive.
+            selfAssignedAt: cur.selfAssignedAt || null,
           };
           // Due-date-change request resolution (2026-09-03) — detected, not
           // trusted from a client-sent flag: a pending request existed on

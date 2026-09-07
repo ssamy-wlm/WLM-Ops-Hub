@@ -2046,6 +2046,21 @@ function _dtFormatShortDate(iso){
   const [y,m,d] = iso.split('-').map(Number);
   return new Date(y, m-1, d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
+// Full date+time formatter (2026-09-08, selfAssignedAt) — hand-duplicated
+// copy of index.html's own _taFormatDateTime() (zero-shared-code rule).
+// Deliberately DIFFERENT from _dtFormatShortDate() above: that one parses
+// a bare 'YYYY-MM-DD' date into a LOCAL Date (the fix for the UTC-
+// midnight-misread bug this codebase has hit before), since a bare date
+// has no real time-of-day to preserve. selfAssignedAt is a genuine full
+// ISO timestamp (new Date().toISOString(), server-stamped) — `new
+// Date(iso)` is the correct parse here, converting that absolute UTC
+// instant into the viewer's own local wall-clock time.
+function _dtFormatDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
 function _dtDaysSinceAssigned(t){
   if(!t.assignedDate) return null;
   const [y,m,d] = t.assignedDate.split('-').map(Number);
@@ -2189,7 +2204,7 @@ function _renderDtListTable(tasks){
       <div class="dt-card-top">
         <div>
           <div class="dt-card-title">${escHtmlUser(t.subject||'')}${blockedBadge}${selfBadge}${isNew?' <span class="dt-new-tag">New</span>':''}</div>
-          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_dtFormatShortDate(t.assignedDate)} · `:''}${escHtmlUser(_dtAssignedByDisplay(t))}${selfAssigned && t.selfAssignedAt ? ` · <span title="Server-recorded, tamper-proof — never editable">🕐 ${escHtmlUser(_dtFormatDateTime(t.selfAssignedAt))}</span>` : ''}</div>
         </div>
         <div style="display:flex;align-items:center;flex-shrink:0;">${_dtDueBadgeHtml(t)}${_dtReportButtonHtml(t)}${_dtDueChangePendingBadgeHtml(t)}</div>
       </div>
@@ -2299,6 +2314,7 @@ function openDtDetailPanel(id){
       <div style="color:var(--text-light);">Priority</div><div>${escHtmlUser(t.priority||'Normal')}</div>
       <div style="color:var(--text-light);">Due</div><div>${t.dueDate||'—'}${_dtReportButtonHtml(t)}</div>
       <div style="color:var(--text-light);">Assigned</div><div>${t.assignedDate ? `${_dtFormatShortDate(t.assignedDate)} · ${_dtAgeLabel(_dtDaysSinceAssigned(t))}` : '—'}</div>
+      ${t.assignedById && t.assignedById===t.assigneeId && t.selfAssignedAt ? `<div style="color:var(--text-light);">Self-assigned</div><div style="color:var(--accent,#2E5DA6);font-weight:600;" title="Server-recorded the instant this task was created — never editable, so a back-dated 'Assigned' date above is always distinguishable from this real timestamp">🕐 ${escHtmlUser(_dtFormatDateTime(t.selfAssignedAt))}</div>` : ''}
     </div>
     ${_dtDueChangeBlockHtml(t)}
     <label class="form-label">Status</label>

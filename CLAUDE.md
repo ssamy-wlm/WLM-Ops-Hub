@@ -7613,6 +7613,113 @@ different way of reaching the same filtered state — and re-runs clean,
 `verify_wholeteam_task_delete.mjs` (10/10), the other two pre-existing
 suites touching this same dropdown/filter area, re-run clean unmodified.
 
+**Self-assigned tasks: server-stamped tamper-proof "assigned at" time log
+(2026-09-08).** `api/ops-sync.js` (stamp) + `index.html`/`user.html`
+(display, both portals) — no new `api/*.js` file, still 11.
+
+**Server.** A genuine self-assign is the exact same field-equality check
+already established everywhere else in this codebase (the 2026-09-02
+self-assigned-badge feature: `assignedById===assigneeId`, never a
+tier/session-id proxy — an admin assigning a brand-new task to themselves
+counts too, not just a member). At task CREATION only, right before the
+shared `ops_tasks` insert call (after both the admin and member branches
+have already resolved their own final `assigneeId`/`assignedById`), a new
+`selfAssignedAt = new Date().toISOString()` is stamped whenever that
+check is true. `inc.selfAssignedAt` is never read at creation — the
+timestamp is always the literal moment this specific request is
+processed, never anything the client could supply or backdate.
+Permanently immutable after creation: the admin UPDATE branch's `row`
+build only ever reads `cur.selfAssignedAt`, mirroring `assignedDate`'s
+own already-established "only reads `cur`, never `inc`" convention
+exactly; `selfAssignedAt` was also added to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH`, so a member's own update path rejects
+the ENTIRE write outright if their payload's value ever disagrees with
+what's stored (same "flat-compare every disallowed key" mechanism every
+other locked field there already uses) — belt-and-suspenders alongside
+the admin path's own read-only handling, since there's no legitimate
+reason for either caller to ever change it.
+
+**Deliberately never retroactive** — a task that only later BECOMES
+coincidentally self-assigned via a reassignment (e.g. an admin reassigns
+an existing task back to themselves) is never stamped after the fact;
+this field means "the real creation moment," not "is currently
+self-assigned," which the existing `_taIsSelfAssigned()`/inline
+equivalent check on the CURRENT `assignedById`/`assigneeId` pair already
+answers independently, on every render, with no stored field needed for
+that separate question.
+
+**`created_at` vs. a new field, decided rather than guessed (per the
+task's own explicitly offered alternative):** `api/ops-state.js`'s
+`ops_tasks` query is `.select('id, data')` — `created_at` isn't selected
+at all, and `rows()` merges only `id` + the `data` jsonb blob into the
+flat object every task consumer reads, with no path for a sibling column
+to reach the client without either changing that query+merge (repo-wide,
+affecting every other `ops_tasks` consumer) or introducing an
+inconsistent "this one field lives outside `data`, unlike every other
+task field" shape. A plain new `data.selfAssignedAt` key needs neither —
+it's `assignedDate`'s own established pattern, verbatim.
+
+**Client (both portals).** A new `_taFormatDateTime()`/`_dtFormatDateTime()`
+pair (hand-duplicated, zero-shared-code rule) formats a full ISO
+timestamp into "Sep 8, 2:14 PM" — deliberately NOT reusing
+`_taFormatShortDate()`/`_dtFormatShortDate()`'s own local-y/m/d-parse
+technique (the fix for the bare-`YYYY-MM-DD`-misread-as-UTC-midnight bug
+this codebase has hit before): that fix applies specifically to a bare
+date with no real time-of-day to preserve, whereas `selfAssignedAt` is a
+genuine full timestamp where `new Date(iso)` is the CORRECT parse — the
+whole point is converting that server-recorded UTC instant into the
+viewer's own local wall-clock time. Shown in two places per portal,
+gated on the exact same self-assign check plus `t.selfAssignedAt` being
+present (an older task created before this feature shipped has none, and
+correctly shows nothing extra): (1) the task card's existing "Assigned
+{date} · {assignedBy}" subtitle line gains a third segment ("🕐 Sep 8,
+2:14 PM") rather than a new row/column, matching this codebase's
+established "extend the subtitle line, don't add a column nobody asked
+for" convention (see the 2026-08-28 card-redesign entry above); (2) the
+detail panel gains a dedicated "Self-assigned" row, right after the
+existing "Assigned" row, so the editable `assignedDate` and the
+tamper-proof `selfAssignedAt` sit next to each other for direct visual
+comparison — the literal "a back-dated assignedDate is distinguishable
+from the real creation time" acceptance criterion. `index.html`'s
+`_taIsSelfAssigned()` (already existed) is reused as-is; `user.html` has
+no equivalent named helper, so the identical inline check
+`_dtAssignedByDisplay()` already performs is repeated at each of the two
+new call sites, matching that file's own existing convention rather than
+introducing a new named function for a two-call-site check.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (18/18) — a member's true self-assign gets a
+real, server-set ISO timestamp within the actual request window; a
+member creating a task for a direct report (not a self-assign) gets
+none; an admin creating a task for someone else gets none; an ADMIN
+self-assigning a brand-new task to themselves also gets one (confirming
+the check is field-equality, not tier-based); reassigning an existing
+self-assigned task to someone else leaves the original stamp completely
+unchanged; a task that only becomes coincidentally self-assigned via a
+later reassignment is never retroactively stamped; a direct attempt to
+backdate the field via the admin update path is silently ignored,
+original stamp survives; a member's direct attempt to alter it is
+rejected outright with `members cannot edit tasks.selfAssignedAt`; and a
+member's normal, unrelated status update — echoing back their own
+already-cached value unchanged — still succeeds normally (the
+disallow-list only trips on an actual mismatch). (2) A new Playwright
+suite against both real portal UIs (9/9) — a self-assigned task's card
+AND detail panel show the real timestamp in both `index.html` and
+`user.html`, the deliberately back-dated `assignedDate` stays visible
+alongside it for direct comparison, and an admin-assigned task shows
+neither the timestamp nor the detail-panel row in either portal. `node
+--check` passed on `api/ops-sync.js`; syntax-checked (`new Function()`
+per extracted `<script>` block) both HTML files — clean; comment-stripped
+div-balance unchanged vs. `main` in both (`index.html` −3, `user.html`
+−1); `ls api/*.js | wc -l` still 11 (no new server file). Regression
+sweep of same-session Task Assignments suites
+(`verify_task_views_colors_wholeteam.mjs` 22/22,
+`verify_ta_assignee_dropdown_fold.mjs` 17/17) — both clean.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 — touches real write logic in `api/ops-sync.js`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
