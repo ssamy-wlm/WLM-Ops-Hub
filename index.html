@@ -7551,7 +7551,17 @@ function renderTeamProductionAnalytics(){
     const servicesForPerson=allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
     const tasksDoneItems=sum.tasksForPerson.filter(t=>t.status==='Done');
     const servicesDoneItems=servicesForPerson.filter(s=>s.workStatus==='done');
-    const tasksOverdueItems=sum.tasksForPerson.filter(_taIsOverdue);
+    // _taCountsAsOverdueBurden (2026-09-08), not the raw _taIsOverdue — a
+    // recurring task due again on schedule doesn't count toward this
+    // person's overdue "burden" here either, same reasoning as Needs
+    // Attention's own Overdue bucket above. It's deliberately excluded
+    // from the urgency-donut window buckets below too (rather than force-
+    // fit into one of the 4 forward-looking windows), so this donut reads
+    // as "non-recurring open task work by urgency" — a recurring task's
+    // own presence is already visible via Needs Attention's Recurring
+    // section and its card's own 🔁 badge, not silently dropped, just not
+    // double-counted here.
+    const tasksOverdueItems=sum.tasksForPerson.filter(_taCountsAsOverdueBurden);
     const tasksBlockedItems=sum.tasksForPerson.filter(t=>t.status==='Blocked');
     const servicesOverdueItems=servicesForPerson.filter(s=>_chSvcDueStatus(s)==='overdue');
     const servicesStuckItems=servicesForPerson.filter(s=>_svcStatus(s)==='stuck');
@@ -9173,6 +9183,24 @@ function _taDueBadgeHtml(t){
   if(days>7) return `<span class="ta-due-badge later">Due in ${days}d</span>`;
   return '';
 }
+// Recurring tasks (2026-09-08) — {frequency, nextDate} stored directly on
+// the task (see api/ops-sync.js's finalizeRecurring()). weekly/biweekly/
+// monthly only, matching the server's own RECURRING_FREQUENCIES exactly
+// (hand-duplicated per the zero-shared-code rule; user.html carries its
+// own copy of this same list). Overdue-ness of a recurring task is never
+// hidden from its OWN card badge above (_taDueBadgeHtml stays literal) —
+// only aggregate/escalation metrics exclude it, see
+// _taCountsAsOverdueBurden()'s own comment.
+const TA_RECURRING_FREQUENCIES = [
+  {value:'weekly', label:'Weekly'},
+  {value:'biweekly', label:'Biweekly'},
+  {value:'monthly', label:'Monthly'},
+];
+function _taRecurringFreqLabel(freq){ return (TA_RECURRING_FREQUENCIES.find(f=>f.value===freq)||{}).label || freq; }
+function _taRecurringBadgeHtml(t){
+  if(!t.recurring) return '';
+  return `<span title="Repeats ${_taRecurringFreqLabel(t.recurring.frequency).toLowerCase()} — regenerates automatically once marked Done" style="font-size:11px;color:var(--accent,#2E5DA6);font-weight:700;margin-left:6px;white-space:nowrap;">🔁 ${escHtmlAdmin(_taRecurringFreqLabel(t.recurring.frequency))}</span>`;
+}
 const TA_PRIORITIES = ['Urgent','High','Normal','Low'];
 // Ordered Not started -> In progress -> Blocked -> Done, matching the edit
 // modal's own <select> — shared here so the inline list-row dropdown can
@@ -9480,7 +9508,9 @@ function closePersonDailyView(){
 // is the more urgent signal.
 function _personAttentionDot(personId, allTasks){
   const tasksForPerson = allTasks.filter(t=>t.assigneeId===personId);
-  if(tasksForPerson.some(t=>_taIsOverdue(t))) return 'red';
+  // _taCountsAsOverdueBurden (2026-09-08) — a person whose only overdue
+  // items are recurring tasks due again on schedule shouldn't paint red.
+  if(tasksForPerson.some(t=>_taCountsAsOverdueBurden(t))) return 'red';
   if(tasksForPerson.some(t=>t.status==='Blocked')) return 'amber';
   return null;
 }
@@ -9540,10 +9570,15 @@ function _taNeedsAttentionBuckets(){
   // surface as a stray Overdue/Blocked/Unassigned item here.
   const tasks = _taTasks().filter(t=>!t.mergedIntoId);
   return {
-    overdue: tasks.filter(t=>_taIsOverdue(t)),
+    // _taCountsAsOverdueBurden (2026-09-08), not the raw _taIsOverdue — a
+    // recurring task due again on schedule isn't the "neglected one-off"
+    // this section exists to surface; it gets its own Recurring section
+    // below instead, so it's never entirely invisible from this view.
+    overdue: tasks.filter(t=>_taCountsAsOverdueBurden(t)),
     dueToday: tasks.filter(t=>_taIsDueToday(t)),
     blocked: tasks.filter(t=>t.status==='Blocked'),
     unassigned: tasks.filter(t=>!t.assigneeId),
+    recurring: tasks.filter(t=>!!t.recurring),
   };
 }
 const TA_ATTENTION_SECTIONS = [
@@ -9551,6 +9586,7 @@ const TA_ATTENTION_SECTIONS = [
   { key:'dueToday', label:'🟠 Due Today', color:'#d9822b' },
   { key:'blocked', label:'🚧 Blocked', color:'var(--red,#c94a4a)' },
   { key:'unassigned', label:'❔ Unassigned', color:'var(--text-light)' },
+  { key:'recurring', label:'🔁 Recurring', color:'var(--accent)' },
 ];
 function renderTaNeedsAttention(){
   const container = document.getElementById('ta-attention-body');
@@ -9922,6 +9958,16 @@ function _taRenderStatusTabBar(){
 
 function _taIsOverdue(t){ return !!t.dueDate && t.dueDate < _taToday() && t.status!=='Done'; }
 function _taIsDueToday(t){ return t.dueDate === _taToday() && t.status!=='Done'; }
+// Recurring tasks (2026-09-08) — a recurring task that's due again on
+// schedule isn't a neglected one-off; it should never inflate an
+// AGGREGATE "burden" signal (Needs Attention's Overdue bucket, Team
+// Production Analytics' per-person Overdue count/red-dot, the
+// hierarchy-escalation counts in api/cron-overdue-check.js). Deliberately
+// NOT applied to the task's own card badge (_taDueBadgeHtml) or the List
+// view's literal Overdue quick-filter/calendar grouping — those stay
+// honest per-task truth for the person actually doing the work; only
+// team-wide/escalation aggregates use this narrower definition.
+function _taCountsAsOverdueBurden(t){ return _taIsOverdue(t) && !t.recurring; }
 
 // Status sub-tabs (2026-08-26) — "Not Started / In Progress / Done / All",
 // a mutually-exclusive grouping layered on top of every other filter below.
@@ -10170,7 +10216,7 @@ function _renderTaListTable(tasks, bodyId, emptyId){
           <div class="ta-card-title">${escHtmlAdmin(t.subject||'')}${blockedBadge}${dupReportedBadge}${selfBadge}${isNew?' <span class="rm-new-tag">New</span>':''}</div>
           <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${t.assignedDate?`Assigned ${_taFormatShortDate(t.assignedDate)} · `:''}${escHtmlAdmin(_taAssignedByDisplay(t))}${selfAssigned && t.selfAssignedAt ? ` · <span title="Server-recorded, tamper-proof — never editable">🕐 ${escHtmlAdmin(_taFormatDateTime(t.selfAssignedAt))}</span>` : ''}</div>
         </div>
-        ${_taDueBadgeHtml(t)}
+        ${_taDueBadgeHtml(t)}${_taRecurringBadgeHtml(t)}
       </div>
       <div class="ta-card-foot">
         <div class="ta-pill-row">
@@ -10586,6 +10632,7 @@ function openTaDetailPanel(id){
     </div>
     ${_taDueDateRequestBlockHtml(t)}
     ${_taReportedBlockHtml(t)}
+    ${_taRecurringBlockHtml(t)}
     ${t.notes ? `<div style="margin-top:12px;"><div style="color:var(--text-light);font-size:12px;">Notes</div><div style="font-size:13px;white-space:pre-wrap;">${escHtmlAdmin(t.notes)}</div></div>` : ''}
     ${(t.tags||[]).length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">${t.tags.map(tag=>`<span style="font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:2px 8px;">${escHtmlAdmin(tag)}</span>`).join('')}</div>` : ''}
   `;
@@ -10710,6 +10757,64 @@ function _taReassignAndClearReport(id, newAssigneeId){
   renderTaskAssignments();
   _taRefreshReportedIfActive();
   showToast('Task reassigned ✓');
+}
+// "Make recurring" (2026-09-08) — same show-a-form/toggle-it pattern as
+// _taDueDateRequestBlockHtml()/_taReportedBlockHtml() above, but writes
+// `recurring` directly rather than a pending request/flag: `recurring` is
+// NOT in TASK_KEYS_MEMBER_MAY_NOT_TOUCH server-side (a member can already
+// set/clear it on a task already theirs), and every admin tier already
+// has uniform write authority over any task in this codebase, so there's
+// nothing here to approve. On the actual Done transition the server
+// regenerates the task in place for its next cycle (finalizeRecurring())
+// — nextDate seeded from the task's own current dueDate, weekend-clamped
+// server-side either way regardless of what's sent. Stopping is just as
+// freely reversible (clears the field back to null) — a convenience
+// toggle, not a one-time irreversible action, so no rule #6 typed-
+// confirmation gate applies.
+function _taRecurringBlockHtml(t){
+  if(t.recurring){
+    return `<div style="margin-top:12px;padding:10px 12px;background:rgba(46,93,166,.08);border:1px solid rgba(46,93,166,.3);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div style="font-size:13px;">🔁 Recurring <strong>${escHtmlAdmin(_taRecurringFreqLabel(t.recurring.frequency))}</strong> — regenerates automatically once marked Done.</div>
+      <button class="btn btn-sm btn-outline" onclick="_taStopRecurring('${t.id}')">Stop recurring</button>
+    </div>`;
+  }
+  return `<div style="margin-top:12px;">
+    <button type="button" class="btn btn-sm btn-outline" onclick="_taToggleRecurringForm()">🔁 Make recurring</button>
+    <div id="ta-recurring-form" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+      <select id="ta-recurring-freq" class="input" style="font-size:12px;padding:4px 8px;width:auto;">
+        ${TA_RECURRING_FREQUENCIES.map(f=>`<option value="${f.value}">${f.label}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="_taSubmitMakeRecurring('${t.id}')">Confirm</button>
+    </div>
+  </div>`;
+}
+function _taToggleRecurringForm(){
+  const el = document.getElementById('ta-recurring-form');
+  if(el) el.style.display = el.style.display==='none' ? 'flex' : 'none';
+}
+function _taSubmitMakeRecurring(id){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.recurring) return;
+  const freq = document.getElementById('ta-recurring-freq')?.value || 'weekly';
+  t.recurring = { frequency: freq, nextDate: t.dueDate || '' };
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  if(_taDetailTaskId===id) openTaDetailPanel(id);
+  renderTaskAssignments();
+  showToast(`🔁 Set to recur ${_taRecurringFreqLabel(freq).toLowerCase()} ✓`);
+}
+function _taStopRecurring(id){
+  const tasks = _taTasks();
+  const t = tasks.find(x=>x.id===id);
+  if(!t || !t.recurring) return;
+  if(!confirm('Stop this task from recurring? It will no longer regenerate after being marked Done.')) return;
+  t.recurring = null;
+  _taSaveTasks(tasks);
+  cloudAutoSync();
+  if(_taDetailTaskId===id) openTaDetailPanel(id);
+  renderTaskAssignments();
+  showToast('Recurring stopped ✓');
 }
 function closeTaDetailPanel(){
   document.getElementById('taDetailOverlay').classList.remove('open');

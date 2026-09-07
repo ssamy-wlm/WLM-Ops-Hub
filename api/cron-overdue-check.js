@@ -57,6 +57,15 @@ function isOverdue(svc, t) { return !isInactiveService(svc) && !isDoneThisCycle(
 // from the browser-side file.
 function taskIsOverdue(t, today) { return !!t.dueDate && t.dueDate < today && t.status !== 'Done'; }
 function taskIsDueToday(t, today) { return t.dueDate === today && t.status !== 'Done'; }
+// Recurring tasks (2026-09-08) — same predicate as index.html's own
+// _taCountsAsOverdueBurden(), kept in sync deliberately for the same
+// "completely separate runtime" reason as taskIsOverdue()/taskIsDueToday()
+// above. A recurring task due again on schedule shouldn't inflate the
+// owner digest's/self-reminder's overdue tally or the hierarchy-escalation
+// counts below — both are genuinely "burden"/escalation signals, unlike
+// the per-task dueToday/blocked/unassigned counts, which are left as
+// literal, unfiltered truth.
+function taskCountsAsOverdueBurden(t, today) { return taskIsOverdue(t, today) && !t.recurring; }
 
 // Notification hierarchy + escalation (2026-09-03) — "1 full working day" of
 // inactivity means since the START of the previous WEEKDAY, skipping back
@@ -199,7 +208,12 @@ export default async function handler(req, res) {
       } else {
         const today = new Date().toISOString().slice(0, 10);
         const tasks = (taskRows || []).map(r => ({ id: r.id, ...r.data }));
-        const overdueTasks = tasks.filter(t => taskIsOverdue(t, today));
+        // taskCountsAsOverdueBurden (2026-09-08), not the raw taskIsOverdue
+        // — a recurring task due again on schedule doesn't belong in the
+        // "Overdue" figure this digest/self-reminder treats as a burden
+        // signal. Due-today/Blocked/Unassigned are untouched — different,
+        // literal concepts a recurring task can still legitimately be.
+        const overdueTasks = tasks.filter(t => taskCountsAsOverdueBurden(t, today));
         const dueTodayTasks = tasks.filter(t => taskIsDueToday(t, today));
         const blockedTasks = tasks.filter(t => t.status === 'Blocked');
         const unassignedTasks = tasks.filter(t => !t.assigneeId);
@@ -232,7 +246,7 @@ export default async function handler(req, res) {
         [...overdueTasks, ...dueTodayTasks].forEach(t => {
           if (!t.assigneeId) return;
           const bucket = ownCounts.get(t.assigneeId) || { overdue: 0, dueToday: 0 };
-          if (taskIsOverdue(t, today)) bucket.overdue++;
+          if (taskCountsAsOverdueBurden(t, today)) bucket.overdue++;
           if (taskIsDueToday(t, today)) bucket.dueToday++;
           ownCounts.set(t.assigneeId, bucket);
         });
@@ -424,9 +438,13 @@ export default async function handler(req, res) {
       if (hClientErr) warnings.push(`hierarchyEscalation clients: ${hClientErr.message}`);
 
       // Per-person overdue counts, tasks + services, no same-day exclusion.
+      // taskCountsAsOverdueBurden (2026-09-08) — a recurring task due again
+      // on schedule never contributes to the escalation-threshold count
+      // this tier-1/tier-2 logic is built on; services have no recurring
+      // concept, unaffected.
       const overdueCounts = new Map();
       const bump = (id) => { if (id) overdueCounts.set(id, (overdueCounts.get(id) || 0) + 1); };
-      hTasks.forEach(t => { if (!t.mergedIntoId && taskIsOverdue(t, today2)) bump(t.assigneeId); });
+      hTasks.forEach(t => { if (!t.mergedIntoId && taskCountsAsOverdueBurden(t, today2)) bump(t.assigneeId); });
       const scanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, today2)) bump(s.assigneeId); });
       (hClientRows || []).forEach(row => {
         const client = row.data; if (!client) return;
