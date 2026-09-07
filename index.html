@@ -1610,12 +1610,27 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
              kept live by _taRenderStatusTabBar(), called on every
              renderTaskAssignments(), so they reflect every OTHER active
              filter (assignee/client/category/quick-filter/search) without
-             double-counting the currently-selected status tab itself. -->
-        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-          <button class="ta-status-pill active" id="taStatusTabNotStartedBtn" onclick="setTaStatusTab('notstarted')">Not Started <span class="ta-pill-count" id="taStatusCountNotStarted">0</span></button>
-          <button class="ta-status-pill" id="taStatusTabInProgressBtn" onclick="setTaStatusTab('inprogress')">In Progress <span class="ta-pill-count" id="taStatusCountInProgress">0</span></button>
-          <button class="ta-status-pill" id="taStatusTabDoneBtn" onclick="setTaStatusTab('done')">Done <span class="ta-pill-count" id="taStatusCountDone">0</span></button>
-          <button class="ta-status-pill" id="taStatusTabAllBtn" onclick="setTaStatusTab('all')">All <span class="ta-pill-count" id="taStatusCountAll">0</span></button>
+             double-counting the currently-selected status tab itself.
+             Sort control (2026-09-08) sits on the same row, right side —
+             see _taSortField/_taSortDir and _taRenderSortControls(). -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="ta-status-pill active" id="taStatusTabNotStartedBtn" onclick="setTaStatusTab('notstarted')">Not Started <span class="ta-pill-count" id="taStatusCountNotStarted">0</span></button>
+            <button class="ta-status-pill" id="taStatusTabInProgressBtn" onclick="setTaStatusTab('inprogress')">In Progress <span class="ta-pill-count" id="taStatusCountInProgress">0</span></button>
+            <button class="ta-status-pill" id="taStatusTabDoneBtn" onclick="setTaStatusTab('done')">Done <span class="ta-pill-count" id="taStatusCountDone">0</span></button>
+            <button class="ta-status-pill" id="taStatusTabAllBtn" onclick="setTaStatusTab('all')">All <span class="ta-pill-count" id="taStatusCountAll">0</span></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <span style="font-size:12px;color:var(--text-light);font-weight:600;">Sort:</span>
+            <select id="taSortField" onchange="_taSetSortField(this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;">
+              <option value="assignedDate">Assigned date</option>
+              <option value="dueDate">Due date</option>
+              <option value="assignee">Assignee</option>
+              <option value="assignedBy">Assigned by</option>
+            </select>
+            <button class="btn btn-xs btn-outline" id="taSortAscBtn" onclick="_taSetSortDir('asc')" title="Ascending">↑</button>
+            <button class="btn btn-xs btn-outline btn-toggle-active" id="taSortDescBtn" onclick="_taSetSortDir('desc')" title="Descending">↓</button>
+          </div>
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:10px;">
@@ -1624,6 +1639,9 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-sm btn-outline" id="taViewWeekBtn" onclick="setTaView('week')">Week</button>
           <button class="btn btn-sm btn-outline" id="taViewMonthBtn" onclick="setTaView('month')">📅 Month</button>
         </div>
+        <!-- Single filter row (2026-09-08 tidy-up): Search · All assignees ·
+             All clients · a divider · Overdue · Due today, matching the
+             mockup layout. -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
             <input type="text" id="taSearchInput" placeholder="Search…" oninput="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;width:150px;">
             <!-- Whole team / Unassigned folded in as options (2026-09-08) —
@@ -1632,6 +1650,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                  Unassigned / each person. -->
             <select id="taFilterAssignee" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All assignees</option></select>
             <select id="taFilterClient" onchange="renderTaskAssignments()" style="padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;"><option value="">All clients</option></select>
+            <span style="width:1px;height:20px;background:var(--border);flex-shrink:0;"></span>
             <button class="btn btn-sm btn-outline" id="taFilterOverdueBtn" onclick="toggleTaQuickFilter('overdue')">Overdue</button>
             <button class="btn btn-sm btn-outline" id="taFilterDueTodayBtn" onclick="toggleTaQuickFilter('dueToday')">Due today</button>
         </div>
@@ -9196,6 +9215,21 @@ let _taQuickFilter = null; // null | 'overdue' | 'dueToday' — Unassigned/Whole
 // once changed, same convention as _taQuickFilter/_taActiveCategory/_taView
 // above (no explicit reset-on-tab-open).
 let _taStatusTab = 'notstarted';
+// Sort control (2026-09-08) — replaces the old hardcoded "due date
+// soonest-first" default (_taSortActiveTasks, now removed) with a real
+// user choice: Assigned date / Due date / Assignee / Assigned by, each
+// with an independent asc/desc direction. Defaults to Assigned date,
+// descending (newest-assigned-first) per this feature's own explicit
+// spec. Persists across the session once changed, same convention as
+// _taStatusTab/_taQuickFilter/_taActiveCategory above. Deliberately does
+// NOT apply to the Done tab, which keeps its own separate, already-
+// established "most-recently-completed-first" default (_taSortDoneTasks,
+// via completedAt) — that's a materially different, more useful signal
+// for Done specifically (when it was FINISHED, not when it was assigned/
+// due), and the 4 fields this control offers don't include a Done-
+// specific "completed date" option at all.
+let _taSortField = 'assignedDate';
+let _taSortDir = 'desc';
 let _taCalDate = new Date();
 let _taDetailTaskId = null;
 let _taParseFileTexts = [];
@@ -9396,8 +9430,29 @@ function setTaSubtab(tab){
 // selecting a person now genuinely stays on By Person instead of "reverting"
 // to a different tab. ──
 let _taPersonViewId = null;
+// Deliberately SEPARATE from _taStatusTab (2026-09-08) rather than
+// reusing/mutating it — the status pills themselves only exist in Assigned
+// Tasks' own markup (ta-subtab-assigned), never rendered inside By
+// Person's detail view at all, so By Person was always silently scoped to
+// whatever status tab the main list last happened to be on, with zero
+// visible indication of that from within By Person itself — the real root
+// cause of the reported "opens on an empty list" bug (David's tasks were
+// all in-progress/done, but the shared status tab was quietly sitting on
+// "Not Started"). Keeping a separate variable that ALWAYS resets to 'all'
+// on open (see openPersonDailyView() above) fixes this without also
+// leaking a "now defaults to All" change back onto the main Assigned Tasks
+// tab the next time it's opened, which mutating the shared variable would
+// have done.
+let _taPersonStatusTab = 'all';
 function openPersonDailyView(personId){
   _taPersonViewId = personId;
+  // Always resets to "All" (2026-09-08, see _taPersonStatusTab's own
+  // comment below) — opening straight into "Not Started" (the shared
+  // Assigned Tasks status tab's own default) meant a person with zero
+  // not-started tasks — e.g. everything already in-progress or done —
+  // landed on a misleadingly empty list the instant their name was
+  // clicked, even though they clearly have real work.
+  _taPersonStatusTab = 'all';
   // Ensures the "By Person" sub-tab (and its container) is actually the
   // one visible, regardless of what was showing before — covers both the
   // normal case (already on By Person, clicking a roster row) and
@@ -9882,19 +9937,59 @@ function _taTasksForStatusTab(tasks, tab){
   return tasks; // 'all'
 }
 
-// Not Started / In Progress / All: due date soonest-first (undated last —
-// "nothing to act on yet" rather than implying urgency), then newest
-// assignedDate as the tie-break among tasks sharing a due date (or lacking
-// one) — this feature's own explicit sort spec, a different tie-break than
-// the priority-based one this replaced (single call site, see git history).
-function _taSortActiveTasks(tasks){
-  return tasks.slice().sort((a,b)=>{
-    const ad = a.dueDate||'', bd = b.dueDate||'';
-    if(ad && bd && ad!==bd) return ad<bd?-1:1;
-    if(ad && !bd) return -1;
-    if(!ad && bd) return 1;
-    return (b.assignedDate||'').localeCompare(a.assignedDate||'');
-  });
+// Not Started / In Progress / All: sorted by the user-selected field
+// (2026-09-08, replacing the old hardcoded "due date soonest-first, newest-
+// assignedDate tie-break" default) — see _taSortField/_taSortDir's own
+// comment above for why Done keeps its own separate sort instead of using
+// this. dueDate keeps the original "undated always last" rule regardless
+// of direction ("nothing to act on yet" isn't more or less urgent just
+// because the direction flipped); the other three fields have no such
+// special case since assignedDate is never blank (server-forced at
+// creation) and a blank assignee/assignedBy name just sorts naturally by
+// string comparison like any other value.
+function _taSortComparator(field, dir){
+  const mul = dir==='asc' ? 1 : -1;
+  const cmp = (av,bv) => av<bv ? -1 : av>bv ? 1 : 0;
+  if(field==='dueDate'){
+    return (a,b)=>{
+      const ad=a.dueDate||'', bd=b.dueDate||'';
+      if(!ad && !bd) return 0;
+      if(!ad) return 1;
+      if(!bd) return -1;
+      return cmp(ad,bd)*mul;
+    };
+  }
+  if(field==='assignee') return (a,b)=>cmp((_taPersonName(a.assigneeId)||'').toLowerCase(), (_taPersonName(b.assigneeId)||'').toLowerCase())*mul;
+  if(field==='assignedBy') return (a,b)=>cmp((_taAssignedByDisplay(a)||'').toLowerCase(), (_taAssignedByDisplay(b)||'').toLowerCase())*mul;
+  return (a,b)=>cmp(a.assignedDate||'', b.assignedDate||'')*mul; // 'assignedDate', the default
+}
+function _taSortByField(tasks, field, dir){
+  return tasks.slice().sort(_taSortComparator(field, dir));
+}
+function _taSetSortField(field){
+  _taSortField = field;
+  renderTaskAssignments();
+}
+function _taSetSortDir(dir){
+  _taSortDir = dir;
+  renderTaskAssignments();
+}
+// Keeps the sort dropdown/direction buttons in sync on every render (same
+// "re-derive on every call, not just on change" convention
+// _taRenderStatusTabBar() already established) — cheap, and means neither
+// control can ever silently drift from the actual _taSortField/_taSortDir
+// state driving the list. Direction buttons use the same fixed-base-class
+// .btn-toggle-active toggle every other pair of mutually-exclusive buttons
+// in this file already uses (gold background, matching CSS var, never a
+// hardcoded color) — see the View toggle right below this row for the
+// identical pattern.
+function _taRenderSortControls(){
+  const sel = document.getElementById('taSortField');
+  if(sel && sel.value!==_taSortField) sel.value = _taSortField;
+  const ascBtn = document.getElementById('taSortAscBtn');
+  const descBtn = document.getElementById('taSortDescBtn');
+  if(ascBtn) ascBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='asc'?' btn-toggle-active':'');
+  if(descBtn) descBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='desc'?' btn-toggle-active':'');
 }
 // Done: most-recently-completed first, via completedAt (see _taCompletedAt()).
 function _taSortDoneTasks(tasks){
@@ -9948,8 +10043,11 @@ function _taStatusTabCounts(){
 }
 
 function _taFilteredTasks(){
-  const byStatus = _taTasksForStatusTab(_taTasksMatchingOtherFilters(), _taStatusTab);
-  return _taStatusTab==='done' ? _taSortDoneTasks(byStatus) : _taSortActiveTasks(byStatus);
+  // By Person uses its own always-resets-to-'all' status tab, never the
+  // shared Assigned Tasks one — see _taPersonStatusTab's own comment.
+  const activeStatusTab = _taPersonViewId ? _taPersonStatusTab : _taStatusTab;
+  const byStatus = _taTasksForStatusTab(_taTasksMatchingOtherFilters(), activeStatusTab);
+  return activeStatusTab==='done' ? _taSortDoneTasks(byStatus) : _taSortByField(byStatus, _taSortField, _taSortDir);
 }
 
 function _taStatusColor(status){
@@ -9979,6 +10077,7 @@ function _taAssignedByDisplay(t){
 
 function renderTaskAssignments(){
   _taRenderStatusTabBar();
+  _taRenderSortControls();
   const tasks = _taFilteredTasks();
   // Person drill-in (2026-09-04) — when a specific person is selected from
   // By Person, render their tasks as a colored card list INTO that same

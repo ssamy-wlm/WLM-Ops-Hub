@@ -7720,6 +7720,113 @@ sweep of same-session Task Assignments suites
 Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 — touches real write logic in `api/ops-sync.js`.
 
+**Task Assignments: sort controls + By-Person default + cleaner filter bar
+(2026-09-08).** `index.html` only, display/navigation only — no server
+file touched, low-risk per rule #10.
+
+**1. By Person defaults to "All", via a dedicated variable, not by
+mutating the shared status tab.** Root-caused before building anything:
+the status PILLS themselves only ever render inside Assigned Tasks' own
+markup — By Person's detail view has no status-pill UI of its own at
+all — yet the underlying filtering (`_taFilteredTasks()`) still silently
+applied whatever the shared `_taStatusTab` happened to be, with zero
+visible indication of that from inside By Person. That's the actual
+mechanism behind the reported bug: David's 47 tasks are all in-progress/
+done, the shared tab was sitting on its default "Not Started," and
+opening his view rendered zero rows with no clue why. Fixed with a new,
+fully separate `_taPersonStatusTab`, always reset to `'all'` the instant
+`openPersonDailyView()` runs — deliberately NOT reusing/overwriting
+`_taStatusTab` itself, which would have "fixed" By Person at the cost of
+silently changing the main Assigned Tasks tab's own default the next
+time an admin switched back to it (a real, easy-to-miss regression this
+design avoids by construction, verified directly — see below).
+`_taFilteredTasks()` now picks whichever status tab is actually relevant
+(`_taPersonViewId ? _taPersonStatusTab : _taStatusTab`) before filtering.
+
+**2. Sort control** — `_taSortField`/`_taSortDir`, defaulting to
+`assignedDate`/`desc` (newest-assigned-first, per this task's own
+explicit ask) with a 4-option dropdown (Assigned date/Due date/Assignee/
+Assigned by) and an asc/desc button pair using the exact same
+`.btn-toggle-active` fixed-base-class toggle convention every other
+mutually-exclusive button pair in this file already uses (View toggle,
+quick filters, etc.). Replaces `_taSortActiveTasks()` (the old hardcoded
+"due date soonest-first" default) outright — its single call site is now
+`_taSortByField(tasks, _taSortField, _taSortDir)`, driven by
+`_taSortComparator()`. `dueDate` keeps the original sort's "undated
+always sorts last" rule regardless of direction (an undated task isn't
+more urgent just because the direction flipped); `assignedDate` needs no
+such handling since it's never blank (server-forced at creation, see the
+2026-09-08 `selfAssignedAt` entry above for the same guarantee already
+relied on elsewhere); `assignee`/`assignedBy` sort by the same display
+names (`_taPersonName()`/`_taAssignedByDisplay()`) already shown on the
+card, so the sort order can never disagree with what's printed.
+
+**Scope decision, confirmed by reading the code rather than guessed:**
+the Done tab keeps its own pre-existing, separate `_taSortDoneTasks()`
+(most-recently-completed-first via `completedAt`, a 2026-08-26 feature)
+completely untouched — the new Sort control's 4 fields don't include a
+"completed date" option at all, and forcing Assigned-date ordering onto
+Done would have been a real regression to a deliberately-designed,
+more-useful-for-that-tab default. Flagged here rather than silently
+applied everywhere or silently left ambiguous.
+
+**3. Filter bar tidy-up**, matching the mockup's row layout: status pills
++ Sort control share one `justify-content:space-between` row; the View
+toggle (List/Day/Week/Month) — not pictured in the mockup crop, but a
+real, still-needed capability nothing asked to remove — stays exactly
+where it was, between that row and the filter row, rather than being
+deleted or guessed into a new position; the filter row itself gained a
+plain 1px divider (`<span>` with `background:var(--border)`) between
+"All clients" and "Overdue," matching the mockup's visual `|` separator
+with no new component needed; category pills are unchanged, already
+their own row.
+
+**4. Color audit — every active state already used the app's real
+`--gold`/`--text-dark` variables, confirmed by reading the CSS, not
+assumed.** `.ta-status-pill.active`/`.ta-cat-pill.active` (both
+pre-existing) and `.btn-toggle-active` (used by the new sort-direction
+buttons, the View toggle, and the sub-tab bar) all resolve to
+`background:var(--gold)` (or `var(--btn)`, the identical `#F5B000` hex
+under a different variable name) with the inactive state's text already
+`var(--text-dark)`/`var(--text)` — none of them were ever hardcoded to
+black or a generic dark, and this matches `user.html`'s own PR #306
+"header declutter" convention byte-for-byte (`.dt-status-pill.active`/
+`.dt-cat-pill.active` use the identical `var(--gold)` rule). The
+mockup's own solid-black "selected" rendering was a wireframe placeholder
+color, not a literal design spec — read that way rather than copied
+literally, and the new Sort direction buttons were built from the start
+using the same real CSS variables as everything else here, never a new
+hardcoded color.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main`
+(delta -3, this diff's own opens/closes balanced). A new Playwright suite
+against the real UI (21/21) — opening David's By Person view (2 real
+tasks, both in-progress/done) is genuinely NOT empty and confirmed
+`_taPersonStatusTab==='all'`, while the shared `_taStatusTab` stays
+`'notstarted'` afterward (the explicit no-cross-leak regression check);
+the Sort dropdown offers exactly the 4 specified fields, defaults to
+Assigned date/descending; switching field+direction actually reorders
+the real rendered cards for all 4 fields (Assigned date desc, Due date
+asc, Assignee asc, Assigned by); the filter-bar row structure matches
+(Sort control sharing the status-pill row, a real divider before
+Overdue, the View toggle still present); and every active-state color
+(status pill, sort-direction button, category pill) resolves via
+`getComputedStyle()` to the exact real `--gold`/`--text-dark` hex values,
+not a hardcoded black — measured with the mouse moved off each button
+first and a transition-safe wait, since `.btn-toggle-active:hover`'s own
+darker `--btn-hover` shade (and a brief in-flight `transition:all .2s`
+alpha) would otherwise have been what got measured instead of the real
+resting color, a false-positive class caught and fixed during this
+task's own verification, not shipped blind. Regression sweep of
+same-session Task Assignments suites
+(`verify_task_views_colors_wholeteam.mjs` 22/22,
+`verify_ta_assignee_dropdown_fold.mjs` 17/17,
+`verify_self_assigned_at_ui.mjs` 9/9) — all clean.
+
+Low-risk per rule #10: `index.html` only, no data-write/sync/auth/
+permission logic touched — eligible for direct merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
