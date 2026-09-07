@@ -1730,8 +1730,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
              List view already has applies here for free, with zero
              duplicated markup. -->
         <div id="ta-person-detail" style="display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;">
             <div style="font-weight:700;font-size:13px;color:var(--text-dark);">👤 Viewing <span id="ta-person-detail-name"></span>'s tasks</div>
+            <!-- By-Person's own Sort control (2026-09-09 fix) — this view
+                 has no status pills of its own, but it DOES route through
+                 the same _taFilteredTasks()/_taSortByField() every other
+                 view does, so a working Sort control belongs here too; it
+                 was previously only reachable from the (now-hidden)
+                 Assigned Tasks sub-tab, leaving no way to sort while
+                 looking at one person's tasks. Same global _taSortField/
+                 _taSortDir state, same onchange handlers, kept in sync by
+                 _taRenderSortControls() alongside the Assigned Tasks copy
+                 — never a second, independent sort state. -->
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              <span style="font-size:12px;color:var(--text-light);font-weight:600;">Sort:</span>
+              <select id="taPersonSortField" onchange="_taSetSortField(this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:12px;">
+                <option value="assignedDate">Assigned date</option>
+                <option value="dueDate">Due date</option>
+                <option value="assignee">Assignee</option>
+                <option value="assignedBy">Assigned by</option>
+              </select>
+              <button class="btn btn-xs btn-outline" id="taPersonSortAscBtn" onclick="_taSetSortDir('asc')" title="Ascending">↑</button>
+              <button class="btn btn-xs btn-outline" id="taPersonSortDescBtn" onclick="_taSetSortDir('desc')" title="Descending">↓</button>
+            </div>
             <button class="btn btn-sm btn-outline" onclick="closePersonDailyView()">← Back to team</button>
           </div>
           <div id="taPersonTableBody" style="display:flex;flex-direction:column;gap:10px;"></div>
@@ -10029,13 +10050,55 @@ function _taSetSortDir(dir){
 // in this file already uses (gold background, matching CSS var, never a
 // hardcoded color) — see the View toggle right below this row for the
 // identical pattern.
+//
+// Two real bugs fixed here (2026-09-09), both found by reproducing the
+// report live rather than from reading the wiring alone (which looked
+// correct, and IS correct for every other status tab):
+// 1. On the Done tab, _taFilteredTasks() has always deliberately ignored
+//    _taSortField/_taSortDir (Done keeps its own separate "most recently
+//    completed" order — see that function's own comment) — but this
+//    control stayed fully visible and interactive there anyway, so
+//    changing it had zero visible effect, indistinguishable from a
+//    genuinely broken control. Now disabled (with an explanatory title)
+//    whenever the CURRENTLY RELEVANT status tab is 'done' — computed the
+//    same way _taFilteredTasks() itself picks which status tab applies
+//    (_taPersonViewId ? _taPersonStatusTab : _taStatusTab), so this can
+//    never disagree with what's actually driving the list.
+// 2. This control only ever existed inside the Assigned Tasks sub-tab's
+//    own markup — By Person had no Sort UI at all, even though
+//    _taFilteredTasks() applies the exact same sort there too. A second,
+//    identical control (#taPersonSortField/#taPersonSort{Asc,Desc}Btn)
+//    now lives in the By Person detail header; both sets share the same
+//    global _taSortField/_taSortDir state and the same onchange handlers,
+//    kept in sync together right here — never two independent sort states
+//    that could drift apart.
 function _taRenderSortControls(){
-  const sel = document.getElementById('taSortField');
-  if(sel && sel.value!==_taSortField) sel.value = _taSortField;
-  const ascBtn = document.getElementById('taSortAscBtn');
-  const descBtn = document.getElementById('taSortDescBtn');
-  if(ascBtn) ascBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='asc'?' btn-toggle-active':'');
-  if(descBtn) descBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='desc'?' btn-toggle-active':'');
+  // Same "which status tab actually governs the list right now" logic
+  // _taFilteredTasks() uses — kept in lockstep so the disabled state can
+  // never disagree with whether sorting the Sort control actually applies.
+  const activeStatusTab = _taPersonViewId ? _taPersonStatusTab : _taStatusTab;
+  const doneActive = activeStatusTab==='done';
+  const doneTitle = doneActive ? 'Done tasks are sorted by most recently completed, not by this control' : '';
+  [['taSortField','taSortAscBtn','taSortDescBtn'], ['taPersonSortField','taPersonSortAscBtn','taPersonSortDescBtn']].forEach(([selId,ascId,descId])=>{
+    const sel = document.getElementById(selId);
+    if(sel){
+      if(sel.value!==_taSortField) sel.value = _taSortField;
+      sel.disabled = doneActive;
+      sel.title = doneTitle;
+    }
+    const ascBtn = document.getElementById(ascId);
+    const descBtn = document.getElementById(descId);
+    if(ascBtn){
+      ascBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='asc'?' btn-toggle-active':'');
+      ascBtn.disabled = doneActive;
+      ascBtn.title = doneTitle || 'Ascending';
+    }
+    if(descBtn){
+      descBtn.className = 'btn btn-xs btn-outline'+(_taSortDir==='desc'?' btn-toggle-active':'');
+      descBtn.disabled = doneActive;
+      descBtn.title = doneTitle || 'Descending';
+    }
+  });
 }
 // Done: most-recently-completed first, via completedAt (see _taCompletedAt()).
 function _taSortDoneTasks(tasks){
