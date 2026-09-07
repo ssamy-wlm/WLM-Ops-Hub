@@ -1383,28 +1383,34 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-outline btn-sm" onclick="renderClientHealthDashboard()">↺ Refresh</button>
         </div>
       </div>
+      <!-- Every card here is clickable (2026-09-07), reusing the exact same
+           drill-down popup mechanism Overview's stat cards already
+           established — .ov-stat-card supplies cursor:pointer + hover
+           state, openChStatDrill() shares Overview's own #ovDrillModal and
+           row-rendering (_openDrillModal(), see openOvStatDrill()'s own
+           comment) so the two features can never visually drift apart. -->
       <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:18px;">
-        <div class="card" style="padding:14px 18px;">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('ok')" title="View the services behind this number">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">On Track</div>
           <div style="font-size:26px;font-weight:800;color:var(--green);" id="ch-total-ok">0</div>
         </div>
-        <div class="card" style="padding:14px 18px;">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('soon')" title="View the services behind this number">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Due Soon</div>
           <div style="font-size:26px;font-weight:800;color:var(--orange);" id="ch-total-soon">0</div>
         </div>
-        <div class="card" style="padding:14px 18px;">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('overdue')" title="View the services behind this number">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Overdue</div>
           <div style="font-size:26px;font-weight:800;color:var(--red);" id="ch-total-overdue">0</div>
         </div>
-        <div class="card" style="padding:14px 18px;" title="Due later this month — not yet within the 7-day Due Soon window">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('pending')" title="Due later this month — not yet within the 7-day Due Soon window. Click to view the services.">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Pending</div>
           <div style="font-size:26px;font-weight:800;color:var(--accent);" id="ch-total-pending">0</div>
         </div>
-        <div class="card" style="padding:14px 18px;" title="All work landing this calendar month — Pending + Due Soon + Overdue services that fall in this month">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('dueThisMonth')" title="All work landing this calendar month — Pending + Due Soon + Overdue services that fall in this month. Click to view the services.">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Due This Month</div>
           <div style="font-size:26px;font-weight:800;color:var(--accent);" id="ch-total-duemonth">0</div>
         </div>
-        <div class="card" style="padding:14px 18px;cursor:pointer;" onclick="openAdminTrackerToUnassigned()" title="Click to open the Tracker filtered to these services">
+        <div class="card ov-stat-card" style="padding:14px 18px;" onclick="openChStatDrill('unassigned')" title="View the services behind this number">
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Unassigned Services</div>
           <div style="font-size:26px;font-weight:800;color:var(--red);" id="ch-total-unassigned">0</div>
         </div>
@@ -2943,10 +2949,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
-<!-- Overview stat-card drill-down modal — clicking any of the 7 Team
-     Production Analytics stat cards opens this, populated from
-     _ovDrillData (see openOvStatDrill() above renderTeamProductionAnalytics()).
-     Each row is itself clickable and jumps to that item's real home view. -->
+<!-- Shared stat-card drill-down modal — clicking any of the 7 Overview/
+     Team Production Analytics stat cards (openOvStatDrill(), populated
+     from _ovDrillData) OR any of the 6 Client Health summary cards
+     (openChStatDrill(), populated from _chDrillData, 2026-09-07) opens
+     this same modal via the shared _openDrillModal() renderer. Each row is
+     itself clickable and jumps to that item's real home view. -->
 <div id="ovDrillModal" class="modal-overlay">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
@@ -5120,6 +5128,35 @@ function assignFromCatalogDefaults(){
   }
   showToast(`Assigned ${assigned} service${assigned===1?'':'s'}, skipped ${skipped} with no catalog default`);
 }
+// Client Health summary-card drill-down (2026-09-07) — reuses the exact
+// same #ovDrillModal + _openDrillModal() renderer Overview's stat cards
+// already established above; this file only supplies its OWN key->title
+// map and its own populated-during-the-same-pass item lists (_chDrillData,
+// filled inside renderClientHealthDashboard() below, never a separate
+// query — so a card's drill-down can never disagree with the number on
+// the card itself, the identical guarantee Overview's own _ovDrillData
+// comment already documents).
+const CH_DRILL_TITLES = { ok:'On Track', soon:'Due Soon', overdue:'Overdue', pending:'Pending', dueThisMonth:'Due This Month', unassigned:'Unassigned Services' };
+let _chDrillData = { ok:[], soon:[], overdue:[], pending:[], dueThisMonth:[], unassigned:[] };
+// Labeled/colored by the service's own due-status bucket (On Track/Due
+// Soon/Overdue/Pending, _chSvcDueStatus()'s own vocabulary) rather than
+// _svcStatusMeta()'s workStatus label (Not Started/In Progress/Stuck/
+// Done, what _ovServiceRow() shows on Overview) — this popup is drilling
+// into a due-date metric, so the status shown should be the one the card
+// itself is counting, not a different, unrelated field that could easily
+// disagree with why the item is even in this list.
+const CH_STATUS_META = {
+  ok:{label:'On Track', color:'var(--green)'}, soon:{label:'Due Soon', color:'var(--orange)'},
+  overdue:{label:'Overdue', color:'var(--red)'}, pending:{label:'Pending', color:'var(--accent)'},
+};
+function _chDrillRow(s, c){
+  const meta = CH_STATUS_META[_chSvcDueStatus(s)] || {label:'—', color:'var(--text-light)'};
+  const assignee = s.assigneeName || (Array.isArray(s.assigneeIds)&&s.assigneeIds.length>1 ? 'Multiple assignees' : '') || 'Unassigned';
+  return { type:'service', id:s.id, clientId:c.id, title:s.name||'(unnamed)', client:c.name||'(unnamed)', assignee, due:s.due||'—', statusLabel:meta.label, statusColor:meta.color };
+}
+function openChStatDrill(key){
+  _openDrillModal(CH_DRILL_TITLES[key]||'', _chDrillData[key]||[]);
+}
 function renderClientHealthDashboard(){
   const body=document.getElementById('clientHealthTableBody');
   const empty=document.getElementById('clientHealthEmpty');
@@ -5127,22 +5164,25 @@ function renderClientHealthDashboard(){
   const clients=_getClientDB().filter(c=>(c.status||'active')==='active');
   const t=new Date().toISOString().slice(0,10);
   let totalOk=0, totalSoon=0, totalOverdue=0, totalPending=0, totalDueThisMonth=0, totalUnassigned=0;
+  const drill = { ok:[], soon:[], overdue:[], pending:[], dueThisMonth:[], unassigned:[] };
   const rows=clients.map(c=>{
     const svcs=(c.services||[]).filter(s=>!_chIsInactiveService(s));
     let ok=0, soon=0, overdue=0, pending=0;
     svcs.forEach(s=>{
       const status=_chSvcDueStatus(s);
-      if(status==='ok') ok++;
-      else if(status==='soon') soon++;
-      else if(status==='pending') pending++;
-      else overdue++;
-      if(_chIsDueThisMonth(s,t)) totalDueThisMonth++;
-      if(_chSvcIsUnassigned(s)) totalUnassigned++;
+      const row=_chDrillRow(s,c);
+      if(status==='ok'){ ok++; drill.ok.push(row); }
+      else if(status==='soon'){ soon++; drill.soon.push(row); }
+      else if(status==='pending'){ pending++; drill.pending.push(row); }
+      else { overdue++; drill.overdue.push(row); }
+      if(_chIsDueThisMonth(s,t)){ totalDueThisMonth++; drill.dueThisMonth.push(row); }
+      if(_chSvcIsUnassigned(s)){ totalUnassigned++; drill.unassigned.push(row); }
     });
     totalOk+=ok; totalSoon+=soon; totalOverdue+=overdue; totalPending+=pending;
     return { id:c.id, name:c.name||'(unnamed)', ok, soon, overdue, pending, total:svcs.length };
   }).sort((a,b)=>(b.overdue-a.overdue)||(b.soon-a.soon)||a.name.localeCompare(b.name));
 
+  _chDrillData = drill;
   const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
   set('ch-total-ok',totalOk); set('ch-total-soon',totalSoon); set('ch-total-overdue',totalOverdue);
   set('ch-total-pending',totalPending); set('ch-total-duemonth',totalDueThisMonth);
@@ -5266,10 +5306,16 @@ function openAdminTrackerToClient(clientId, serviceId){
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
 }
-// Unassigned Services card click-through — same tab-switch-first ordering
-// as openAdminTrackerToClient() above, landing on the Service Schedule page
-// with the new "Unassigned" assignee filter pre-selected (see client.html's
-// _openDeepLinkFromUrl() for the read side of this query param).
+// Was the Unassigned Services card's own onclick until 2026-09-07, when
+// that card switched to the shared drill-down popup (openChStatDrill('un
+// assigned')) like every other Client Health card — kept, not deleted:
+// still a genuinely useful "jump straight to Service Schedule, pre-
+// filtered" shortcut, same tab-switch-first ordering as
+// openAdminTrackerToClient() above, landing on the Service Schedule page
+// with the "Unassigned" assignee filter pre-selected (see client.html's
+// _openDeepLinkFromUrl() for the read side of this query param) — just no
+// longer wired to a UI element, flagged here rather than left silently
+// orphaned with no explanation.
 function openAdminTrackerToUnassigned(){
   const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
   switchAdminTab(trackerNavEl, 'tracker');
@@ -7195,19 +7241,15 @@ function _ovServiceRow(s, personName, clientInfo){
   const info = clientInfo.get(s.id)||{};
   return { type:'service', id:s.id, clientId:info.clientId||null, title:s.name||'(unnamed)', client:info.clientName||'—', assignee:personName||'—', due:s.due||'—', statusLabel:meta.label, statusColor:meta.color };
 }
-// Card click entry point. Team % Done isn't a flat item list (it's a
-// percentage), so it drills into the existing Per-Person breakdown table
-// already on this page instead of opening the item panel — everything
-// else opens the modal populated from _ovDrillData.
-function openOvStatDrill(key){
-  if(key==='teamPct'){
-    const tbl = document.getElementById('tpa-person-table');
-    if(tbl && tbl.closest('table')) tbl.closest('table').scrollIntoView({behavior:'smooth', block:'center'});
-    if(tbl) { tbl.style.outline='2px solid var(--accent,#4a7fd6)'; tbl.style.outlineOffset='2px'; setTimeout(()=>{ tbl.style.outline=''; tbl.style.outlineOffset=''; }, 1500); }
-    return;
-  }
-  const items = _ovDrillData[key]||[];
-  document.getElementById('ovDrillModalTitle').textContent = `${OV_DRILL_TITLES[key]||''} (${items.length})`;
+// Shared modal renderer (2026-09-07, pulled out of what used to be
+// openOvStatDrill()'s own inline body so Client Health's summary cards
+// (openChStatDrill() below) can open the exact same modal with the exact
+// same row template — "reuse the same popup/drill-down mechanism," not a
+// visually-similar reimplementation. Pure render — each caller is
+// responsible for resolving its own key into a title + items array; this
+// function doesn't know or care which feature called it.
+function _openDrillModal(title, items){
+  document.getElementById('ovDrillModalTitle').textContent = `${title} (${items.length})`;
   const body = document.getElementById('ovDrillModalBody');
   if(!items.length){
     body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-light);font-size:13px;">Nothing here right now.</div>`;
@@ -7223,6 +7265,19 @@ function openOvStatDrill(key){
       </div>`).join('');
   }
   openModal('ovDrillModal');
+}
+// Card click entry point. Team % Done isn't a flat item list (it's a
+// percentage), so it drills into the existing Per-Person breakdown table
+// already on this page instead of opening the item panel — everything
+// else opens the shared modal populated from _ovDrillData.
+function openOvStatDrill(key){
+  if(key==='teamPct'){
+    const tbl = document.getElementById('tpa-person-table');
+    if(tbl && tbl.closest('table')) tbl.closest('table').scrollIntoView({behavior:'smooth', block:'center'});
+    if(tbl) { tbl.style.outline='2px solid var(--accent,#4a7fd6)'; tbl.style.outlineOffset='2px'; setTimeout(()=>{ tbl.style.outline=''; tbl.style.outlineOffset=''; }, 1500); }
+    return;
+  }
+  _openDrillModal(OV_DRILL_TITLES[key]||'', _ovDrillData[key]||[]);
 }
 // Jump from a drill-down row to the item's real home view — reusing the
 // exact same navigation this app already uses elsewhere for the same job

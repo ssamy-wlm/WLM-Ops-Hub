@@ -7475,6 +7475,87 @@ any product code. The one pre-existing suite that also touches this page
 next to Refresh) re-run clean, 9/9 — confirming this redesign didn't
 disturb that unrelated control sharing the same header row.
 
+**Make Client Health summary cards clickable, reusing Overview's own
+drill-down popup (2026-09-07).** `index.html` only, read-only/display —
+no server file touched, low-risk per rule #10.
+
+All 6 Client Health summary cards (On Track/Due Soon/Overdue/Pending/Due
+This Month/Unassigned Services) were previously either fully static or,
+for Unassigned Services, wired to a one-off "jump straight to the
+Tracker" shortcut — nothing showed WHICH services made up a number
+without leaving the page. Made every card genuinely clickable, opening a
+popup listing the exact services (with their client) behind that count —
+literally the same mechanism Overview's own 7 stat cards already
+established (2026-09-01), not a lookalike reimplementation.
+
+**Real reuse, not a copy.** `openOvStatDrill()`'s own inline modal-
+rendering body was pulled out into a new, generic `_openDrillModal(title,
+items)` — pure render, no knowledge of which feature called it. Both
+`openOvStatDrill()` (Overview) and the new `openChStatDrill()` (Client
+Health) now call this same function, so the two share one `#ovDrillModal`
+DOM instance, one row template, and one click-through path
+(`openOvDrillItem()`, already generic over `type`/`id`/`clientId` and
+unmodified). A future fix to the row template only ever needs to happen
+once. `.ov-stat-card` was added to the 6 Client Health cards too, for the
+identical cursor-pointer + hover-state affordance Overview's cards
+already have — "like the Overview cards do," matching the task's own
+wording literally, not just functionally.
+
+**Drill data populated during the same pass, never a separate query** —
+same discipline `_ovDrillData` already established: `_chDrillData` (`{ok,
+soon, overdue, pending, dueThisMonth, unassigned}`) is filled inside
+`renderClientHealthDashboard()`'s existing per-client/per-service loop,
+the identical loop that already computes the 6 header totals — so a
+card's popup can never disagree with the number printed on the card
+itself. Each row is built by a new `_chDrillRow(s, c)`, labeled/colored by
+the service's own `_chSvcDueStatus()` bucket (On Track/Due Soon/Overdue/
+Pending — a new `CH_STATUS_META` map) rather than reusing
+`_ovServiceRow()`'s workStatus label (Not Started/In Progress/Stuck/
+Done) — deliberate: this popup is drilling into a due-date metric, so the
+status shown should be the reason the item is IN this list, not an
+unrelated field that could disagree with it (e.g. a service could easily
+be `workStatus:'in progress'` while also being due-status `'overdue'` —
+showing "In Progress" on an Overdue-card drill row would be confusing,
+not wrong, but the wrong signal for what the admin clicked to see).
+Assignee display reuses the same `assigneeName` field
+`assignFromCatalogDefaults()` already writes when it fills a service's
+assignee, falling back to "Unassigned" — relevant context on every row,
+not just the Unassigned Services card's own.
+
+**Unassigned Services' old direct-navigate shortcut, kept but no longer
+wired to the card.** `openAdminTrackerToUnassigned()` (opens the Tracker
+straight to Service Schedule with the "Unassigned" filter pre-selected)
+is a genuinely different, still-useful capability from "list the specific
+unassigned services here" — not deleted, since it's not actually dead in
+spirit, just no longer the card's own click target now that the card
+opens the drill popup like every other one. Flagged in a comment rather
+than silently orphaned or silently deleted, per this codebase's own
+established practice for exactly this situation.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both — this diff adds zero new `<div>` elements, only changes
+classes/onclick/title attributes on 6 already-existing ones). A new
+Playwright suite against the real UI (28/28) — seeded 5 services across
+distinct due-status buckets (dates chosen so each of On Track/Due Soon/
+Overdue/Pending is unmistakably its own bucket, with "Due This Month"'s
+legitimately-overlapping expected count computed the same way the real
+`_chIsDueThisMonth()` does — a same-YYYY-MM comparison — rather than
+hardcoded, since that card's count genuinely depends on which day of the
+month the suite happens to run): all 6 header totals match; each card
+opens the modal with the correct title, count, and the exact real
+service(s) + client listed; a genuinely read-only check confirms opening
+a popup never fires an `/api/ops-sync` call; clicking a drill row
+switches to the Tracker and deep-links to the exact clicked client
++service; and Overview's own pre-existing Overdue card (a regression
+check on the `_openDrillModal()` extraction itself) still opens the
+shared modal correctly, unaffected by the refactor. The same-session
+`verify_overview_ratio_donuts.mjs` (26/26) and
+`verify_email_team_summaries_ui.mjs` (9/9) — the two pre-existing suites
+touching either page this same session already produced — both re-run
+clean, confirming the shared-modal refactor didn't disturb Overview's own
+stat cards or the header controls sharing its row.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
