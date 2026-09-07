@@ -58,14 +58,19 @@ const DAILY_TASK_REMINDER_RECIPIENTS = [
 ];
 
 // Vercel Hobby crons are fixed-UTC and don't shift for DST, but Cairo does
-// (UTC+2 in winter, UTC+3 in summer) — so vercel.json's single cron entry
-// fires this endpoint at BOTH 07:00 and 08:00 UTC (as well as its
-// pre-existing 22:00 UTC run, all three folded into one schedule string to
-// stay within the Hobby plan's per-project cron-entry limit — see the header
-// comment above on why the daily backup was folded in here for the same
-// reason). Whichever of the two morning invocations actually lands on the
-// real Cairo 10:00 hour is determined here, computed fresh from Africa/Cairo
-// wall-clock time — never assumed from which UTC hour triggered the request.
+// (UTC+2 in winter, UTC+3 in summer). The originally-preferred design —
+// firing this endpoint at BOTH 07:00 and 08:00 UTC so whichever one lands on
+// the real Cairo 10:00 hour sends — turned out not to work: Vercel's Hobby
+// plan rejects any SINGLE cron expression that fires more than once a day
+// (confirmed live: "0 7,8,22 * * *" failed the preview deploy with exactly
+// that error), even though two SEPARATE entries, each firing at most once a
+// day, deploy fine (also confirmed live). So vercel.json instead has two
+// entries: the pre-existing "0 22 * * *" (unchanged) and a new
+// "0 7 * * 1-5" (weekdays only) for this reminder — the single-trigger
+// fallback the original task spec explicitly authorized for exactly this
+// case, with the accepted tradeoff that in winter (Cairo UTC+2) this lands
+// at ~9:00am Cairo instead of 10:00am; in summer (Cairo UTC+3) it's exactly
+// 10:00am. Flagged to Sarah in the PR description — not silently absorbed.
 function cairoLocalParts(now) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Cairo', hour12: false,
@@ -136,24 +141,26 @@ export default async function handler(req, res) {
   let backup = null;
 
   try {
-    // ── Weekday morning "log your tasks" reminder — the 07:00/08:00 UTC
-    // invocations only (see the header comment on DAILY_TASK_REMINDER_RECIPIENTS
-    // above for why there are two). Entirely independent of the 22:00 UTC
-    // block below — runs in its own try/catch so a failure here can never
-    // affect the overdue/backup work, and vice versa.
-    if (utcHour === 7 || utcHour === 8) {
+    // ── Weekday morning "log your tasks" reminder — the 07:00 UTC weekday
+    // invocation only (vercel.json's own "0 7 * * 1-5" entry — see the header
+    // comment on cairoLocalParts() above for why this is a single trigger,
+    // not a 07:00/08:00 pair). Entirely independent of the 22:00 UTC block
+    // below — runs in its own try/catch so a failure here can never affect
+    // the overdue/backup work, and vice versa. The Cairo weekday check below
+    // is a defense-in-depth safety net (the cron's own "1-5" already
+    // restricts this), not the primary guard.
+    if (utcHour === 7) {
       try {
         const cairo = cairoLocalParts(new Date());
         const isWeekday = cairo.weekday !== 'Sat' && cairo.weekday !== 'Sun';
-        if (cairo.hour === 10 && isWeekday) {
+        if (isWeekday) {
           const { data: reminderState } = await supabase.from('ops_settings').select('data').eq('key', 'dailyTaskReminderState').maybeSingle();
           if (reminderState?.data?.lastSentDate === cairo.dateStr) {
             summary.dailyTaskReminder = 'already sent today';
           } else {
             // Stamp BEFORE sending, so this can never fire twice for the same
-            // Cairo calendar day — including if every send below fails, or if
-            // (in a DST-transition edge case) both the 07:00 and 08:00 UTC
-            // invocations somehow both resolve to the 10:00 Cairo hour.
+            // Cairo calendar day — including if every send below fails, or on
+            // any duplicate/retry invocation.
             const { error: stampErr } = await supabase.from('ops_settings')
               .upsert({ key: 'dailyTaskReminderState', data: { lastSentDate: cairo.dateStr } }, { onConflict: 'key' });
             if (stampErr) warnings.push(`dailyTaskReminderState stamp: ${stampErr.message}`);
@@ -177,7 +184,7 @@ export default async function handler(req, res) {
             summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}`;
           }
         } else {
-          summary.dailyTaskReminder = 'not the Cairo 10am weekday window';
+          summary.dailyTaskReminder = 'not a Cairo weekday (safety-net check — the cron schedule itself already restricts to weekdays)';
         }
       } catch (err) {
         await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err });
