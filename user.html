@@ -1066,9 +1066,21 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
              Purely a markup/CSS restructure — every element keeps its
              original id, so no JS behavior changed. -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;">
-          <div style="display:flex;gap:6px;">
+          <div style="display:flex;gap:6px;align-items:center;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
             <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
+            <!-- "+ New Task" (2026-09-09) — mirrors index.html's own "+ New
+                 Task" button placement (same row as the sub-tabs). Unlike
+                 the admin version, this opens a deliberately minimal modal
+                 with no assignee or due-date field at all: the task always
+                 self-assigns (assignedById===assigneeId) and the due date
+                 is always forced to today, weekend-clamped, by the
+                 existing self-assign write path in api/ops-sync.js's
+                 member insert branch — nothing new needed there. A member
+                 still can't freely push their own due date afterward; the
+                 existing "Request due-date change" flow is the only path
+                 for that, unchanged. -->
+            <button class="btn btn-sm btn-primary" style="margin-left:4px;" onclick="openNewDtTaskModal()">+ New Task</button>
           </div>
           <div style="display:flex;gap:6px;padding-bottom:6px;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
@@ -1264,6 +1276,41 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('serviceUpdatesModal')">Close</button>
       <button class="btn btn-primary" onclick="postServiceUpdate()">Post Update</button>
+    </div>
+  </div>
+</div>
+
+<!-- "+ New Task" modal (2026-09-09) — deliberately minimal: no assignee
+     (always self), no due-date field (always forced to today, weekend-
+     clamped, by the existing self-assign write path server-side). -->
+<div id="newDtTaskModal" class="modal-overlay" onclick="if(event.target===this)closeModal('newDtTaskModal')">
+  <div class="modal" style="max-width:440px;width:92%;">
+    <div class="modal-header">
+      <div><div class="modal-title">+ New Task</div><div class="modal-sub">Adds a task to your own list, due today</div></div>
+      <button class="modal-close" onclick="closeModal('newDtTaskModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label">Task</label>
+      <input class="form-input" id="ndtSubject" placeholder="What needs to get done?" style="margin-bottom:10px;">
+      <label class="form-label">Notes (optional)</label>
+      <textarea class="form-input" id="ndtNotes" rows="2" style="margin-bottom:10px;"></textarea>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div>
+          <label class="form-label">Category</label>
+          <select class="form-input" id="ndtCategory"></select>
+        </div>
+        <div>
+          <label class="form-label">Priority</label>
+          <select class="form-input" id="ndtPriority"></select>
+        </div>
+      </div>
+      <label class="form-label">Client (optional)</label>
+      <select class="form-input" id="ndtClient" style="margin-bottom:4px;"></select>
+      <div style="font-size:11px;color:var(--text-light);margin-top:8px;">Due today · assigned to you. To change the due date later, use "Request due-date change" on the task.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('newDtTaskModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewDtTask()">Add Task</button>
     </div>
   </div>
 </div>
@@ -2958,6 +3005,69 @@ function undoDtCommittedImportBatch(batchId){
   renderDtRecentImports();
   renderDailyTasks();
   showToast(`Removed ${batch.taskIds.length} task(s) from that import`);
+}
+
+// "+ New Task" (2026-09-09) — a deliberately minimal, direct-create path
+// (no staging/review step, unlike the parser) for adding a single task to
+// one's own list. No assignee field at all (always self) and no due-date
+// field at all (always today) — mirrors index.html's own "+ New Task"
+// placement, but a much narrower form: this file's own established rule
+// is "no assignee dropdown, no other people's tasks" (see DT_CATEGORIES'
+// own comment), and per this feature's explicit spec a member still can't
+// freely push their own due date — only "Request due-date change" can
+// move it, unchanged by this feature.
+//
+// assigneeId/assignedById are both set to the caller's own id here, but
+// that's only ever the LOCAL optimistic value — api/ops-sync.js's member
+// insert branch is the real authority: it independently resolves
+// assigneeId (falling back to session.id regardless of what's sent),
+// force-overrides dueDate to today (weekend-clamped) whenever the
+// resolved assigneeId===session.id, and stamps selfAssignedAt itself once
+// assignedById===assigneeId is true — nothing new needed there, this
+// button just exercises the same self-assign path _dtStagedTasks() rows
+// already use when parsing something for yourself.
+function openNewDtTaskModal(){
+  document.getElementById('ndtSubject').value = '';
+  document.getElementById('ndtNotes').value = '';
+  const catSel = document.getElementById('ndtCategory');
+  catSel.innerHTML = DT_CATEGORIES.map(c=>`<option value="${c}">${escHtmlUser(DT_CATEGORY_LABELS[c]||c)}</option>`).join('');
+  catSel.value = 'Other';
+  const priSel = document.getElementById('ndtPriority');
+  priSel.innerHTML = DT_PRIORITIES.map(p=>`<option value="${p}">${p}</option>`).join('');
+  priSel.value = 'Normal';
+  const clientSel = document.getElementById('ndtClient');
+  clientSel.innerHTML = '<option value="">No client</option>' + _dtActiveClients().map(c=>`<option value="${c.id}">${escHtmlUser(c.name)}</option>`).join('');
+  clientSel.value = '';
+  openModal('newDtTaskModal');
+}
+function saveNewDtTask(){
+  const subject = document.getElementById('ndtSubject').value.trim();
+  if(!subject){ showToast('Task is required'); return; }
+  const notes = document.getElementById('ndtNotes').value.trim();
+  const category = document.getElementById('ndtCategory').value;
+  const priority = document.getElementById('ndtPriority').value;
+  const clientId = document.getElementById('ndtClient').value || null;
+  const client = clientId ? _dtActiveClients().find(c=>c.id===clientId) : null;
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  // dueDate here is only the local, optimistic display value (matching
+  // what the server will independently force anyway — see the comment
+  // above) — clampToWeekday() so a Saturday/Sunday "today" never shows a
+  // weekend date even in the instant before the next pull confirms it.
+  tasks.push({
+    id: _dtGenId(),
+    subject, notes, tags: [],
+    clientId, clientName: client ? client.name : '',
+    assigneeId: currentUser?.id||null, assignedById: currentUser?.id||null,
+    category, priority,
+    status: 'Not started', dueDate: clampToWeekday(_dtToday()), dueDateLocked: false,
+    source: 'manual', origin: 'self',
+    assignedDate: _dtToday(),
+  });
+  dbSet(DB_KEYS.tasks, tasks);
+  _scheduleCloudPush();
+  closeModal('newDtTaskModal');
+  renderDailyTasks();
+  showToast('✅ Task added — due today');
 }
 
 // ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ───────────

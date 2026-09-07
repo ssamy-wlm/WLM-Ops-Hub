@@ -8000,6 +8000,141 @@ merge, per rule #10 — touches real write logic in `api/ops-sync.js` and
 the workload/overdue-escalation metrics in `api/cron-overdue-check.js`
 and `index.html`'s own dashboards.
 
+**Task Assignments: "Sort control doesn't reorder the list" — two real UI
+gaps found by reproducing live, the underlying sort logic itself was
+already correct (2026-09-09).** `index.html` only, display-only —
+low-risk per rule #10.
+
+**Investigated before touching anything, per rule #7 — the report's own
+premise ("the wiring reads correctly... but has no visible effect") could
+have meant the sort function itself was broken; it wasn't.** Built a
+real Playwright reproduction (not just re-reading the code) covering the
+List view with distinct dates, tied dates, undated tasks, an active
+assignee filter, and By Person, cycling every field/direction combination
+— in every one of those, `_taSortByField()`/`_taSortComparator()` already
+reorder the rendered DOM correctly; the actual card order genuinely
+flips exactly as the field/direction selects predict. So the shared sort
+logic itself needed no fix. Two real, narrower gaps were found instead,
+each independently reproducible and each matching a piece of the report:
+
+1. **The Done tab silently no-ops the Sort control.** `_taFilteredTasks()`
+   has always deliberately routed the Done status tab through its own
+   separate `_taSortDoneTasks()` (most-recently-completed first via
+   `completedAt`) rather than `_taSortField`/`_taSortDir` — a real,
+   already-documented design decision from the 2026-09-08 entry above, not
+   new. But the Sort dropdown/buttons stayed fully visible and enabled on
+   that tab regardless, so changing them had literally zero visible
+   effect — indistinguishable from a genuinely broken control if that's
+   the tab someone tested sorting from. Fixed by disabling the control
+   (both the `<select>` and both direction buttons) with an explanatory
+   `title` ("Done tasks are sorted by most recently completed, not by
+   this control") whenever the currently-relevant status tab
+   (`_taPersonViewId ? _taPersonStatusTab : _taStatusTab`, the exact same
+   expression `_taFilteredTasks()` itself uses to decide which sort
+   applies) is `'done'` — computed this way specifically so the disabled
+   state can never disagree with whether the control would actually do
+   anything.
+2. **By Person had no Sort control reachable at all.** The Sort dropdown/
+   buttons only ever existed inside the Assigned Tasks sub-tab's own
+   markup — By Person's detail view (`#ta-person-detail`) had none, even
+   though `_taFilteredTasks()` applies the exact same `_taSortField`/
+   `_taSortDir` there too (By Person just narrows the same funnel to one
+   person). A user viewing someone's tasks had no way to invoke sort at
+   all, which plausibly reads as "sorting doesn't work in By Person" even
+   though the underlying mechanism was fine. Fixed by adding a second,
+   identical control (`#taPersonSortField`/`#taPersonSort{Asc,Desc}Btn`)
+   to the "Viewing X's tasks" banner — both copies share the same global
+   `_taSortField`/`_taSortDir` state and the same `_taSetSortField()`/
+   `_taSetSortDir()` onchange handlers, kept in sync together by
+   `_taRenderSortControls()` (which now iterates both id-pairs rather
+   than one), never two independent sort states that could drift apart.
+
+Verified with a new Playwright suite against the real UI (13/13): a
+regression check that the List view's Due-date ascending/descending
+toggle still genuinely reorders the DOM (before vs. after are byte-
+different arrays, not just a class-name check); the Done tab's Sort
+`<select>` and both direction buttons are confirmed `disabled===true`
+with the explanatory title, and re-enable the instant a non-Done tab is
+selected; the new By-Person Sort control is confirmed present, visible
+(`offsetParent!==null`, not just existing somewhere in the DOM — the
+exact false-positive class this codebase's own verification standard
+calls out), and genuinely reorders that view's rows when changed. The
+pre-existing `verify_ta_sort_byperson_filterbar.mjs` suite (21/21) re-run
+clean and unaffected — confirming the new disabled/duplicate-control
+logic doesn't disturb the original feature's own default-state/color/
+layout assertions. Comment-stripped div-balance unchanged vs. `main`
+(delta -3, one balanced `<div>` pair added for the new By-Person control).
+
+**Employee "+ New Task" on My Tasks (2026-09-09).** `user.html` only — no
+server file touched; the existing member self-assign write path in
+`api/ops-sync.js` (built 2026-09-02/2026-09-08) already does everything
+this button needs with zero changes, confirmed by re-running its own
+pre-existing Node suite (`verify_self_assigned_at.mjs`, 18/18) unmodified
+against this change.
+
+A new "+ New Task" button sits next to the "My assigned tasks"/"Add /
+import tasks" sub-tabs (mirroring `index.html`'s own "+ New Task"
+placement in the equivalent row), opening a **deliberately minimal**
+modal — Subject (required), Notes, Category, Priority, Client — with NO
+assignee field (a member can already only ever act on their own
+task list here — "no assignee dropdown, no other people's tasks" is this
+file's own long-established rule) and, per this task's own explicit
+requirement, **no due-date field at all**: the due date is always forced
+to today server-side, and a member still can't freely push their own
+deadline afterward — only the existing "Request due-date change" flow can
+move it, completely unchanged by this feature.
+
+**Why no server change was needed, confirmed by reading the code rather
+than assumed:** `api/ops-sync.js`'s member new-task (insert) branch
+already resolves `assigneeId` to the caller's own id whenever the
+incoming value isn't in `creatableAssigneeIds` (which, for an individual
+contributor with no direct reports, is just `{self}` — see the 2026-08-19
+entry above), force-overrides `dueDate` to `clampToWeekday(todayIsoUtc())`
+whenever the resolved `assigneeId===session.id` (the 2026-09-02 self-
+assign-auto-daily feature), and stamps a real `selfAssignedAt` the
+instant `assignedById===assigneeId` is true (2026-09-08) — every piece of
+this feature's acceptance criteria was already fully built into that one
+write path; `saveNewDtTask()` just needed to push a plain new task row
+with `assigneeId`/`assignedById` set to the caller's own id (an
+INSERT, so there's no `cur` for any ownership check to even apply to) and
+let the server do the rest. The client's own `dueDate: clampToWeekday(_dtToday())`
+is only ever the local, OPTIMISTIC display value shown before the next
+pull confirms it — never trusted as final, matching how the parser's own
+staged self-assigned rows already work.
+
+Verified with a new Playwright suite against the real UI (26/26, two
+full scenarios — a real weekday and a real Saturday, the page's own
+`Date` frozen via `addInitScript` so `_dtToday()` resolves deterministically
+either way) using a STATEFUL `/api/ops-state`+`/api/ops-sync` mock that
+mirrors the real server's own self-assign business rules (never a static
+echo — this codebase's history documents that exact pitfall repeatedly,
+and `cloudPushData()` always re-pulls state after every push here too):
+the button exists in the right place; the modal genuinely has no
+assignee field and no `<input type="date">` anywhere in it; a blank
+subject is refused with nothing pushed; a real submission carries
+subject/notes/category/priority/client through correctly; the resulting
+row is self-assigned (`assignedById===assigneeId===`the caller's own id`),
+due exactly today (weekend-clamped — confirmed both for a weekday, where
+the due date equals "today," and for a Saturday, where it's correctly
+clamped back to the preceding Friday), and carries a real, server-set
+`selfAssignedAt`; the resulting card shows the blue "Self-assigned"
+badge/row treatment and the correct due badge (a genuine "Overdue" on the
+frozen-Saturday scenario is the honest, already-established tradeoff of
+the weekend clamp — the clamped Friday date is genuinely before a clock
+still reading Saturday, not a bug in this feature). `new Function()`
+syntax-check clean; comment-stripped div-balance unchanged vs. `main`
+(delta -1, 12 balanced `<div>` pairs added for the button + modal).
+Regression sweep: `verify_self_assigned_at_ui.mjs` (9/9) and the same-
+session recurring-tasks UI suites for both portals (22/22, 11/11) all
+re-run clean, confirming the new markup doesn't disturb the existing
+self-assigned display or the "Make recurring" feature sharing this same
+detail panel/card markup.
+
+Low-risk per rule #10 for both of the above: no data-write/sync/auth/
+permission logic touched in either change (the sort fix is pure display,
+and "+ New Task" only ever exercises an already-built, already-tested
+server write path) — both eligible for direct merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
