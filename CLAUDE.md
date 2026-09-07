@@ -7368,6 +7368,358 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 — touches real write/notification logic in
 `api/ops-sync.js`.
 
+**Overview redesign: ratio cards + split Tasks/Services urgency donuts
+(2026-09-07).** `index.html` only, display-only — no server file touched,
+low-risk per rule #10.
+
+**1. Ratio cards.** The four separate "Tasks Assigned"/"Tasks Done"/
+"Services Assigned"/"Services Done" stat cards are replaced with two ratio
+cards — "Tasks 201/390 · 52% done" and "Services 46/260 · 18% done" — via
+a new `ratioStatCard()` helper alongside the existing `statCard()`. Reuses
+the exact same `totals.tasksAssigned`/`tasksDone`/`servicesAssigned`/
+`servicesDone` those four cards already summed; nothing new computed for
+this part. Clicking a ratio card still drills into the existing
+`'tasksAssigned'`/`'servicesAssigned'` item lists (the fuller list — every
+assigned item, done ones included with their own status label — rather
+than inventing a third drill key for this).
+
+**2. Recolored by meaning, not by type.** The two ratio cards are neutral
+(`var(--text-dark)`, unstyled — a done/total count isn't itself an alarm);
+Overdue stays red; the new Due Today card and the existing Blocked/Stuck
+card are both amber (`var(--orange)`, distinguished from each other only
+by their own label, not color — both are "needs attention soon/now");
+Team % Done is now a FIXED accent-blue (`var(--accent)`) highlight,
+replacing `_pctDoneColor()`'s dynamic red/orange/green — a deliberate
+change per this task's own explicit spec, since this card's job here is
+"the team's one headline number," not a status alarm like the others.
+
+**3. Due Today card.** A genuinely new metric — no existing predicate
+covered it exactly. Tasks reuse the same `_taIsDueToday()`-equivalent
+inline check (`dueDate===today`, not Done/Blocked) Task Assignments' own
+Needs Attention view already uses. Services have no due-today concept
+anywhere in this file (`_chSvcDueStatus()` folds a due-today service into
+its wider "soon" window, per its own established CH_DUE_SOON_DAYS
+convention — not touched, since redefining a shared Client Health
+function wasn't in scope and risks disagreeing with what Client Health
+itself shows), so it's checked directly (`s.due===today`, not done/
+stuck) the same inline-comparison style `_ovDueWindowBucket()`'s own
+caller already used elsewhere in this function. A due-today item is
+excluded from the urgency-donut buckets below it (same "never
+double-counted" discipline this function's own pre-existing comments
+already establish for Overdue/Blocked/Done) — before this change, a
+due-today item silently fell into the old donut's "Due this week" bucket
+(since `_ovDueWindowBucket` only compared against `endOfWeek`, with no
+today-specific carve-out); now it's pulled into its own dedicated card
+instead, so the "Due this week" bucket total dropped by exactly the
+due-today count as a direct, intentional consequence.
+
+**4. Two donuts instead of one.** The single combined "Open Work by
+Urgency" donut (services + tasks summed into one set of 4 slices) is
+replaced with two independent cards — "Tasks by Urgency" and "Services by
+Urgency" — each with its own overdue/due-this-week/due-this-month/
+upcoming buckets and its own center "open N" label. The per-person loop
+in `renderTeamProductionAnalytics()` now tracks `tasksOverdue`/
+`servicesOverdue` (previously computed separately per-person already, just
+summed together into one `overdue` before reaching `totals`) and a full
+split of the donut buckets (`tasksDueThisWeek`/`tasksDueThisMonth`/
+`tasksUpcoming` and the `services` equivalents) instead of one shared
+`dueThisWeek`/`dueThisMonth`/`upcoming` trio — so a donut's slice can
+never disagree with what that SAME type's items actually are, the
+identical "never a coincidentally-matching separate calculation"
+guarantee this function's pre-existing comments already establish for
+every other number on this page.
+
+`_renderOverviewUrgencyDonut()` gained a `group` parameter (`'tasks'` or
+`'services'`), rendering into `#ov-<group>-urgency-donut-wrap`/
+`#ov-<group>-urgency-list` instead of one shared pair of ids, and every
+segment/row now carries `data-group="<group>"`. This was necessary, not
+cosmetic: the hover functions (`_ovUrgencyHover`/`_ovUrgencyUnhover`)
+previously used a bare `.ov-urgency-seg`/`.ov-urgency-row` class query —
+with two donuts sharing those same class names, hovering one would have
+thickened/highlighted the OTHER donut's slices too, since a bare
+`querySelectorAll` can't tell them apart. Both hover functions now take
+the group and scope their queries to `[data-group="${group}"]` — verified
+directly (not assumed), see below. The old shared "X done / Y blocked"
+context line under the single donut's list was dropped rather than
+duplicated per donut — that information already lives on the ratio cards
+and the Blocked/Stuck card now, and per-donut duplication of it wasn't
+asked for.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both, this diff adding exactly 9 opens/9 closes). A new Playwright
+suite against the real UI (26/26, dates computed relative to the real
+current date via the same Mon-Sun/calendar-month math
+`_ovWeekMonthBoundaries()` uses, never hardcoded) — both ratio cards show
+the correct done/total and %; the four old standalone cards are gone; all
+five colors resolve to the exact expected CSS values (computed style, not
+just a class-name check); the Due Today card shows the correct combined
+count and drills into both the due-today task AND the due-today service;
+both donuts show the correct 4-open-item center total and correct
+per-bucket counts; hovering the Tasks donut updates only the Tasks
+center/list and leaves every Services-donut segment's `stroke-width`
+completely untouched (the actual regression this data-group scoping
+exists to prevent); un-hovering restores the default. One test-data bug
+in an early draft of this same suite, caught and fixed before trusting
+the result: a "done" service seeded with an already-past `due` date was
+being separately (and correctly, per `_chSvcDueStatus()`'s own pre-
+existing `_chIsDoneThisCycle()` logic, untouched by this change) counted
+as `overdue` too, since `workStatus:'done'` and Client Health's own
+`lastDone`-based cycle heuristic are deliberately different signals — the
+same distinction the 2026-08-06 Sherine-97%-incident fix already
+established elsewhere on this page. Fixed by giving the test's "done"
+service a realistic future due date (a real recurring service's due date
+is already rolled forward by the time it's marked done), not by changing
+any product code. The one pre-existing suite that also touches this page
+(`verify_email_team_summaries_ui.mjs`, the "Email team summaries" button
+next to Refresh) re-run clean, 9/9 — confirming this redesign didn't
+disturb that unrelated control sharing the same header row.
+
+**Make Client Health summary cards clickable, reusing Overview's own
+drill-down popup (2026-09-07).** `index.html` only, read-only/display —
+no server file touched, low-risk per rule #10.
+
+All 6 Client Health summary cards (On Track/Due Soon/Overdue/Pending/Due
+This Month/Unassigned Services) were previously either fully static or,
+for Unassigned Services, wired to a one-off "jump straight to the
+Tracker" shortcut — nothing showed WHICH services made up a number
+without leaving the page. Made every card genuinely clickable, opening a
+popup listing the exact services (with their client) behind that count —
+literally the same mechanism Overview's own 7 stat cards already
+established (2026-09-01), not a lookalike reimplementation.
+
+**Real reuse, not a copy.** `openOvStatDrill()`'s own inline modal-
+rendering body was pulled out into a new, generic `_openDrillModal(title,
+items)` — pure render, no knowledge of which feature called it. Both
+`openOvStatDrill()` (Overview) and the new `openChStatDrill()` (Client
+Health) now call this same function, so the two share one `#ovDrillModal`
+DOM instance, one row template, and one click-through path
+(`openOvDrillItem()`, already generic over `type`/`id`/`clientId` and
+unmodified). A future fix to the row template only ever needs to happen
+once. `.ov-stat-card` was added to the 6 Client Health cards too, for the
+identical cursor-pointer + hover-state affordance Overview's cards
+already have — "like the Overview cards do," matching the task's own
+wording literally, not just functionally.
+
+**Drill data populated during the same pass, never a separate query** —
+same discipline `_ovDrillData` already established: `_chDrillData` (`{ok,
+soon, overdue, pending, dueThisMonth, unassigned}`) is filled inside
+`renderClientHealthDashboard()`'s existing per-client/per-service loop,
+the identical loop that already computes the 6 header totals — so a
+card's popup can never disagree with the number printed on the card
+itself. Each row is built by a new `_chDrillRow(s, c)`, labeled/colored by
+the service's own `_chSvcDueStatus()` bucket (On Track/Due Soon/Overdue/
+Pending — a new `CH_STATUS_META` map) rather than reusing
+`_ovServiceRow()`'s workStatus label (Not Started/In Progress/Stuck/
+Done) — deliberate: this popup is drilling into a due-date metric, so the
+status shown should be the reason the item is IN this list, not an
+unrelated field that could disagree with it (e.g. a service could easily
+be `workStatus:'in progress'` while also being due-status `'overdue'` —
+showing "In Progress" on an Overdue-card drill row would be confusing,
+not wrong, but the wrong signal for what the admin clicked to see).
+Assignee display reuses the same `assigneeName` field
+`assignFromCatalogDefaults()` already writes when it fills a service's
+assignee, falling back to "Unassigned" — relevant context on every row,
+not just the Unassigned Services card's own.
+
+**Unassigned Services' old direct-navigate shortcut, kept but no longer
+wired to the card.** `openAdminTrackerToUnassigned()` (opens the Tracker
+straight to Service Schedule with the "Unassigned" filter pre-selected)
+is a genuinely different, still-useful capability from "list the specific
+unassigned services here" — not deleted, since it's not actually dead in
+spirit, just no longer the card's own click target now that the card
+opens the drill popup like every other one. Flagged in a comment rather
+than silently orphaned or silently deleted, per this codebase's own
+established practice for exactly this situation.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both — this diff adds zero new `<div>` elements, only changes
+classes/onclick/title attributes on 6 already-existing ones). A new
+Playwright suite against the real UI (28/28) — seeded 5 services across
+distinct due-status buckets (dates chosen so each of On Track/Due Soon/
+Overdue/Pending is unmistakably its own bucket, with "Due This Month"'s
+legitimately-overlapping expected count computed the same way the real
+`_chIsDueThisMonth()` does — a same-YYYY-MM comparison — rather than
+hardcoded, since that card's count genuinely depends on which day of the
+month the suite happens to run): all 6 header totals match; each card
+opens the modal with the correct title, count, and the exact real
+service(s) + client listed; a genuinely read-only check confirms opening
+a popup never fires an `/api/ops-sync` call; clicking a drill row
+switches to the Tracker and deep-links to the exact clicked client
++service; and Overview's own pre-existing Overdue card (a regression
+check on the `_openDrillModal()` extraction itself) still opens the
+shared modal correctly, unaffected by the refactor. The same-session
+`verify_overview_ratio_donuts.mjs` (26/26) and
+`verify_email_team_summaries_ui.mjs` (9/9) — the two pre-existing suites
+touching either page this same session already produced — both re-run
+clean, confirming the shared-modal refactor didn't disturb Overview's own
+stat cards or the header controls sharing its row.
+
+**Task Assignments: fold Whole team + Unassigned into the assignee
+dropdown (2026-09-08).** `index.html` only, display-only — no server file
+touched, low-risk per rule #10.
+
+The standalone "👥 Whole team" and "Unassigned" quick-filter buttons
+(2026-08-25/2026-09-04) are removed; both are now options inside
+`#taFilterAssignee` itself, in the order the task specified: All
+assignees / Whole team / Unassigned / each person (still via
+`_taAllAssignablePeople()`, unchanged — admins included). A new
+`TA_UNASSIGNED_ID` sentinel (`'__UNASSIGNED__'`) is filter-only, paired
+with the existing `TA_EVERYONE_ID` (`'__ALL__'`, already a real
+assignable value in the New/Edit Task picker — reused here as the
+filter's own "Whole team" value too, since it's the identical concept).
+`_taTasksMatchingOtherFilters()`'s single `assignee` variable now branches
+three ways instead of one flat equality check: `TA_EVERYONE_ID` →
+`(t.assigneeIds||[]).length>1`, `TA_UNASSIGNED_ID` → `!t.assigneeId`,
+anything else (a real id, or `''` for no filter) → the original
+`t.assigneeId!==assignee` check. `toggleTaQuickFilter()`/`_taQuickFilter`
+lost their `'unassigned'`/`'wholeTeam'` cases entirely — only `'overdue'`/
+`'dueToday'` remain, per the task's own explicit "keep these two as
+separate quick filters that combine (amplify) with the selected
+assignee" instruction, i.e. a genuinely different relationship
+(intersect) than the three assignee-dropdown options (replace).
+
+Mutual exclusion between Whole team/Unassigned/a real person needed **no
+new code** — it's a structural consequence of moving them into one native
+`<select>`, which can only ever hold one value at a time; the previous
+two-independent-buttons design was what allowed the contradictory
+"Whole team AND a specific person AND Unassigned all active at once"
+states the task was asking to eliminate.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both — this diff removes 2 `<button>` elements and adds none). A
+new Playwright suite against the real UI (17/17): both standalone buttons
+are confirmed gone while Overdue/Due-today remain; the dropdown's option
+order matches exactly (All assignees / Whole team / Unassigned / people,
+admins included); selecting "Whole team" shows only genuine multi-
+assignee-clone tasks; selecting "Unassigned" shows only the unassigned
+task; selecting a real person (David) shows exactly his own tasks — the
+3rd one being his own individual clone of a "Whole team" assignment,
+confirmed correct since that clone's own `assigneeId` really is his,
+distinct from the sibling clone whose `assigneeId` is someone else's;
+the dropdown's `value` after that selection holds ONLY his id, confirming
+structural mutual exclusion; "David + Overdue" (toggling the Overdue
+quick filter while David is selected) correctly narrows to just his one
+overdue task, proving the amplify/layer relationship the task asked to
+preserve; clearing back to "All assignees" restores every task.
+`verify_task_views_colors_wholeteam.mjs` (a pre-existing suite whose own,
+unrelated color-coding coverage happened to also click the now-removed
+button to set up its "Whole team" test case) was updated to select the
+new dropdown option instead — not a regression in what it tests, just a
+different way of reaching the same filtered state — and re-runs clean,
+22/22. `verify_assignee_filter_admins.mjs` (13/13) and
+`verify_wholeteam_task_delete.mjs` (10/10), the other two pre-existing
+suites touching this same dropdown/filter area, re-run clean unmodified.
+
+**Self-assigned tasks: server-stamped tamper-proof "assigned at" time log
+(2026-09-08).** `api/ops-sync.js` (stamp) + `index.html`/`user.html`
+(display, both portals) — no new `api/*.js` file, still 11.
+
+**Server.** A genuine self-assign is the exact same field-equality check
+already established everywhere else in this codebase (the 2026-09-02
+self-assigned-badge feature: `assignedById===assigneeId`, never a
+tier/session-id proxy — an admin assigning a brand-new task to themselves
+counts too, not just a member). At task CREATION only, right before the
+shared `ops_tasks` insert call (after both the admin and member branches
+have already resolved their own final `assigneeId`/`assignedById`), a new
+`selfAssignedAt = new Date().toISOString()` is stamped whenever that
+check is true. `inc.selfAssignedAt` is never read at creation — the
+timestamp is always the literal moment this specific request is
+processed, never anything the client could supply or backdate.
+Permanently immutable after creation: the admin UPDATE branch's `row`
+build only ever reads `cur.selfAssignedAt`, mirroring `assignedDate`'s
+own already-established "only reads `cur`, never `inc`" convention
+exactly; `selfAssignedAt` was also added to
+`TASK_KEYS_MEMBER_MAY_NOT_TOUCH`, so a member's own update path rejects
+the ENTIRE write outright if their payload's value ever disagrees with
+what's stored (same "flat-compare every disallowed key" mechanism every
+other locked field there already uses) — belt-and-suspenders alongside
+the admin path's own read-only handling, since there's no legitimate
+reason for either caller to ever change it.
+
+**Deliberately never retroactive** — a task that only later BECOMES
+coincidentally self-assigned via a reassignment (e.g. an admin reassigns
+an existing task back to themselves) is never stamped after the fact;
+this field means "the real creation moment," not "is currently
+self-assigned," which the existing `_taIsSelfAssigned()`/inline
+equivalent check on the CURRENT `assignedById`/`assigneeId` pair already
+answers independently, on every render, with no stored field needed for
+that separate question.
+
+**`created_at` vs. a new field, decided rather than guessed (per the
+task's own explicitly offered alternative):** `api/ops-state.js`'s
+`ops_tasks` query is `.select('id, data')` — `created_at` isn't selected
+at all, and `rows()` merges only `id` + the `data` jsonb blob into the
+flat object every task consumer reads, with no path for a sibling column
+to reach the client without either changing that query+merge (repo-wide,
+affecting every other `ops_tasks` consumer) or introducing an
+inconsistent "this one field lives outside `data`, unlike every other
+task field" shape. A plain new `data.selfAssignedAt` key needs neither —
+it's `assignedDate`'s own established pattern, verbatim.
+
+**Client (both portals).** A new `_taFormatDateTime()`/`_dtFormatDateTime()`
+pair (hand-duplicated, zero-shared-code rule) formats a full ISO
+timestamp into "Sep 8, 2:14 PM" — deliberately NOT reusing
+`_taFormatShortDate()`/`_dtFormatShortDate()`'s own local-y/m/d-parse
+technique (the fix for the bare-`YYYY-MM-DD`-misread-as-UTC-midnight bug
+this codebase has hit before): that fix applies specifically to a bare
+date with no real time-of-day to preserve, whereas `selfAssignedAt` is a
+genuine full timestamp where `new Date(iso)` is the CORRECT parse — the
+whole point is converting that server-recorded UTC instant into the
+viewer's own local wall-clock time. Shown in two places per portal,
+gated on the exact same self-assign check plus `t.selfAssignedAt` being
+present (an older task created before this feature shipped has none, and
+correctly shows nothing extra): (1) the task card's existing "Assigned
+{date} · {assignedBy}" subtitle line gains a third segment ("🕐 Sep 8,
+2:14 PM") rather than a new row/column, matching this codebase's
+established "extend the subtitle line, don't add a column nobody asked
+for" convention (see the 2026-08-28 card-redesign entry above); (2) the
+detail panel gains a dedicated "Self-assigned" row, right after the
+existing "Assigned" row, so the editable `assignedDate` and the
+tamper-proof `selfAssignedAt` sit next to each other for direct visual
+comparison — the literal "a back-dated assignedDate is distinguishable
+from the real creation time" acceptance criterion. `index.html`'s
+`_taIsSelfAssigned()` (already existed) is reused as-is; `user.html` has
+no equivalent named helper, so the identical inline check
+`_dtAssignedByDisplay()` already performs is repeated at each of the two
+new call sites, matching that file's own existing convention rather than
+introducing a new named function for a two-call-site check.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (18/18) — a member's true self-assign gets a
+real, server-set ISO timestamp within the actual request window; a
+member creating a task for a direct report (not a self-assign) gets
+none; an admin creating a task for someone else gets none; an ADMIN
+self-assigning a brand-new task to themselves also gets one (confirming
+the check is field-equality, not tier-based); reassigning an existing
+self-assigned task to someone else leaves the original stamp completely
+unchanged; a task that only becomes coincidentally self-assigned via a
+later reassignment is never retroactively stamped; a direct attempt to
+backdate the field via the admin update path is silently ignored,
+original stamp survives; a member's direct attempt to alter it is
+rejected outright with `members cannot edit tasks.selfAssignedAt`; and a
+member's normal, unrelated status update — echoing back their own
+already-cached value unchanged — still succeeds normally (the
+disallow-list only trips on an actual mismatch). (2) A new Playwright
+suite against both real portal UIs (9/9) — a self-assigned task's card
+AND detail panel show the real timestamp in both `index.html` and
+`user.html`, the deliberately back-dated `assignedDate` stays visible
+alongside it for direct comparison, and an admin-assigned task shows
+neither the timestamp nor the detail-panel row in either portal. `node
+--check` passed on `api/ops-sync.js`; syntax-checked (`new Function()`
+per extracted `<script>` block) both HTML files — clean; comment-stripped
+div-balance unchanged vs. `main` in both (`index.html` −3, `user.html`
+−1); `ls api/*.js | wc -l` still 11 (no new server file). Regression
+sweep of same-session Task Assignments suites
+(`verify_task_views_colors_wholeteam.mjs` 22/22,
+`verify_ta_assignee_dropdown_fold.mjs` 17/17) — both clean.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 — touches real write logic in `api/ops-sync.js`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
