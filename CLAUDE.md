@@ -7368,6 +7368,113 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 — touches real write/notification logic in
 `api/ops-sync.js`.
 
+**Overview redesign: ratio cards + split Tasks/Services urgency donuts
+(2026-09-07).** `index.html` only, display-only — no server file touched,
+low-risk per rule #10.
+
+**1. Ratio cards.** The four separate "Tasks Assigned"/"Tasks Done"/
+"Services Assigned"/"Services Done" stat cards are replaced with two ratio
+cards — "Tasks 201/390 · 52% done" and "Services 46/260 · 18% done" — via
+a new `ratioStatCard()` helper alongside the existing `statCard()`. Reuses
+the exact same `totals.tasksAssigned`/`tasksDone`/`servicesAssigned`/
+`servicesDone` those four cards already summed; nothing new computed for
+this part. Clicking a ratio card still drills into the existing
+`'tasksAssigned'`/`'servicesAssigned'` item lists (the fuller list — every
+assigned item, done ones included with their own status label — rather
+than inventing a third drill key for this).
+
+**2. Recolored by meaning, not by type.** The two ratio cards are neutral
+(`var(--text-dark)`, unstyled — a done/total count isn't itself an alarm);
+Overdue stays red; the new Due Today card and the existing Blocked/Stuck
+card are both amber (`var(--orange)`, distinguished from each other only
+by their own label, not color — both are "needs attention soon/now");
+Team % Done is now a FIXED accent-blue (`var(--accent)`) highlight,
+replacing `_pctDoneColor()`'s dynamic red/orange/green — a deliberate
+change per this task's own explicit spec, since this card's job here is
+"the team's one headline number," not a status alarm like the others.
+
+**3. Due Today card.** A genuinely new metric — no existing predicate
+covered it exactly. Tasks reuse the same `_taIsDueToday()`-equivalent
+inline check (`dueDate===today`, not Done/Blocked) Task Assignments' own
+Needs Attention view already uses. Services have no due-today concept
+anywhere in this file (`_chSvcDueStatus()` folds a due-today service into
+its wider "soon" window, per its own established CH_DUE_SOON_DAYS
+convention — not touched, since redefining a shared Client Health
+function wasn't in scope and risks disagreeing with what Client Health
+itself shows), so it's checked directly (`s.due===today`, not done/
+stuck) the same inline-comparison style `_ovDueWindowBucket()`'s own
+caller already used elsewhere in this function. A due-today item is
+excluded from the urgency-donut buckets below it (same "never
+double-counted" discipline this function's own pre-existing comments
+already establish for Overdue/Blocked/Done) — before this change, a
+due-today item silently fell into the old donut's "Due this week" bucket
+(since `_ovDueWindowBucket` only compared against `endOfWeek`, with no
+today-specific carve-out); now it's pulled into its own dedicated card
+instead, so the "Due this week" bucket total dropped by exactly the
+due-today count as a direct, intentional consequence.
+
+**4. Two donuts instead of one.** The single combined "Open Work by
+Urgency" donut (services + tasks summed into one set of 4 slices) is
+replaced with two independent cards — "Tasks by Urgency" and "Services by
+Urgency" — each with its own overdue/due-this-week/due-this-month/
+upcoming buckets and its own center "open N" label. The per-person loop
+in `renderTeamProductionAnalytics()` now tracks `tasksOverdue`/
+`servicesOverdue` (previously computed separately per-person already, just
+summed together into one `overdue` before reaching `totals`) and a full
+split of the donut buckets (`tasksDueThisWeek`/`tasksDueThisMonth`/
+`tasksUpcoming` and the `services` equivalents) instead of one shared
+`dueThisWeek`/`dueThisMonth`/`upcoming` trio — so a donut's slice can
+never disagree with what that SAME type's items actually are, the
+identical "never a coincidentally-matching separate calculation"
+guarantee this function's pre-existing comments already establish for
+every other number on this page.
+
+`_renderOverviewUrgencyDonut()` gained a `group` parameter (`'tasks'` or
+`'services'`), rendering into `#ov-<group>-urgency-donut-wrap`/
+`#ov-<group>-urgency-list` instead of one shared pair of ids, and every
+segment/row now carries `data-group="<group>"`. This was necessary, not
+cosmetic: the hover functions (`_ovUrgencyHover`/`_ovUrgencyUnhover`)
+previously used a bare `.ov-urgency-seg`/`.ov-urgency-row` class query —
+with two donuts sharing those same class names, hovering one would have
+thickened/highlighted the OTHER donut's slices too, since a bare
+`querySelectorAll` can't tell them apart. Both hover functions now take
+the group and scope their queries to `[data-group="${group}"]` — verified
+directly (not assumed), see below. The old shared "X done / Y blocked"
+context line under the single donut's list was dropped rather than
+duplicated per donut — that information already lives on the ratio cards
+and the Blocked/Stuck card now, and per-donut duplication of it wasn't
+asked for.
+
+Verified: syntax-checked (`new Function()` per extracted `<script>`
+block) — clean; comment-stripped div-balance unchanged vs. `main` (delta
+-3 in both, this diff adding exactly 9 opens/9 closes). A new Playwright
+suite against the real UI (26/26, dates computed relative to the real
+current date via the same Mon-Sun/calendar-month math
+`_ovWeekMonthBoundaries()` uses, never hardcoded) — both ratio cards show
+the correct done/total and %; the four old standalone cards are gone; all
+five colors resolve to the exact expected CSS values (computed style, not
+just a class-name check); the Due Today card shows the correct combined
+count and drills into both the due-today task AND the due-today service;
+both donuts show the correct 4-open-item center total and correct
+per-bucket counts; hovering the Tasks donut updates only the Tasks
+center/list and leaves every Services-donut segment's `stroke-width`
+completely untouched (the actual regression this data-group scoping
+exists to prevent); un-hovering restores the default. One test-data bug
+in an early draft of this same suite, caught and fixed before trusting
+the result: a "done" service seeded with an already-past `due` date was
+being separately (and correctly, per `_chSvcDueStatus()`'s own pre-
+existing `_chIsDoneThisCycle()` logic, untouched by this change) counted
+as `overdue` too, since `workStatus:'done'` and Client Health's own
+`lastDone`-based cycle heuristic are deliberately different signals — the
+same distinction the 2026-08-06 Sherine-97%-incident fix already
+established elsewhere on this page. Fixed by giving the test's "done"
+service a realistic future due date (a real recurring service's due date
+is already rolled forward by the time it's marked done), not by changing
+any product code. The one pre-existing suite that also touches this page
+(`verify_email_team_summaries_ui.mjs`, the "Email team summaries" button
+next to Refresh) re-run clean, 9/9 — confirming this redesign didn't
+disturb that unrelated control sharing the same header row.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

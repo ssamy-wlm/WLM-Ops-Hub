@@ -1294,18 +1294,35 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            renderTeamProductionAnalytics() already is. -->
       <div class="roadmap-section" id="admin-my-roadmap-section" style="margin-bottom:20px;"></div>
 
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Open Work by Urgency</div>
-            <div class="card-sub">Team-wide, services + tasks combined — hover a slice or row for the count</div>
+      <!-- Split into two donuts, one per work type (2026-09-07) — was a
+           single combined "Open Work by Urgency" donut; see
+           _renderOverviewUrgencyDonut()'s own comment for why a shared
+           group/data-key scheme was needed once there are two of these on
+           the same page (hover must never cross-highlight the other
+           donut). -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+        <div class="card" style="margin:0;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Tasks by Urgency</div>
+              <div class="card-sub">Open (not done) tasks — hover a slice or row for the count</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+            <div style="position:relative;width:150px;height:150px;flex-shrink:0;" id="ov-tasks-urgency-donut-wrap"></div>
+            <div style="flex:1;min-width:180px;" id="ov-tasks-urgency-list"></div>
           </div>
         </div>
-        <div class="card-body" style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
-          <div style="position:relative;width:180px;height:180px;flex-shrink:0;" id="ov-urgency-donut-wrap"></div>
-          <div style="flex:1;min-width:220px;">
-            <div id="ov-urgency-list"></div>
-            <div id="ov-urgency-context" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;"></div>
+        <div class="card" style="margin:0;">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Services by Urgency</div>
+              <div class="card-sub">Open (not done) services — hover a slice or row for the count</div>
+            </div>
+          </div>
+          <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+            <div style="position:relative;width:150px;height:150px;flex-shrink:0;" id="ov-services-urgency-donut-wrap"></div>
+            <div style="flex:1;min-width:180px;" id="ov-services-urgency-list"></div>
           </div>
         </div>
       </div>
@@ -7152,7 +7169,7 @@ let _ovDrillData = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servic
 const OV_DRILL_TITLES = {
   tasksAssigned:'Tasks Assigned', tasksDone:'Tasks Done',
   servicesAssigned:'Services Assigned', servicesDone:'Services Done',
-  overdue:'Overdue', blocked:'Blocked / Stuck',
+  overdue:'Overdue', blocked:'Blocked / Stuck', dueToday:'Due Today',
 };
 // Service objects (client.services[]/location.services[]) carry no back-
 // reference to their owning client — this builds an id->{clientId,clientName}
@@ -7229,24 +7246,35 @@ const OV_URGENCY_BUCKETS=[
   {key:'upcoming', label:'Upcoming', color:'#0ca30c'},
 ];
 
-// Replaces the old "Services Completed — Last 8 Weeks" bar chart. Pure
-// render from already-computed totals (passed in by
-// renderTeamProductionAnalytics(), which itself only reads data — this
-// function writes nothing, no sync, no cloud call). SVG donut built by
-// stacking one <circle> per slice with stroke-dasharray/dashoffset, rotated
-// -90deg so slices start at 12 o'clock and proceed clockwise, matching the
-// mockup.
-function _renderOverviewUrgencyDonut(totals){
-  const wrap=document.getElementById('ov-urgency-donut-wrap');
-  const listEl=document.getElementById('ov-urgency-list');
-  const ctxEl=document.getElementById('ov-urgency-context');
-  if(!wrap||!listEl||!ctxEl) return;
+// Renders ONE donut into its own group's elements — group is 'tasks' or
+// 'services', matching the #ov-<group>-urgency-* ids in the HTML (split
+// 2026-09-07 from a single combined "Open Work by Urgency" donut into two,
+// one per work type, so the Overdue/Due-this-week/etc. mix for tasks can't
+// be lost inside a services-heavy team's numbers or vice versa).
+// bucketTotals is JUST that group's own already-summed {overdue,
+// dueThisWeek, dueThisMonth, upcoming} — the caller
+// (renderTeamProductionAnalytics()) is responsible for handing each donut
+// its own type-scoped totals; this function only draws. Pure render, no
+// sync/cloud call. SVG donut built by stacking one <circle> per slice with
+// stroke-dasharray/dashoffset, rotated -90deg so slices start at 12
+// o'clock and proceed clockwise, matching the original mockup.
+//
+// Every element/class this function touches carries data-group="<group>"
+// so the two donuts' hover states (_ovUrgencyHover/_ovUrgencyUnhover below)
+// can never cross-highlight each other — a bare class-name query (the
+// single-donut original's own approach) would otherwise thicken a slice on
+// BOTH donuts at once whenever either one is hovered, since they'd share
+// the exact same .ov-urgency-seg/.ov-urgency-row class names.
+function _renderOverviewUrgencyDonut(group, bucketTotals){
+  const wrap=document.getElementById(`ov-${group}-urgency-donut-wrap`);
+  const listEl=document.getElementById(`ov-${group}-urgency-list`);
+  if(!wrap||!listEl) return;
 
-  const total=OV_URGENCY_BUCKETS.reduce((s,b)=>s+(totals[b.key]||0),0);
-  const size=180, stroke=22, r=(size-stroke)/2, c=2*Math.PI*r;
+  const total=OV_URGENCY_BUCKETS.reduce((s,b)=>s+(bucketTotals[b.key]||0),0);
+  const size=150, stroke=20, r=(size-stroke)/2, c=2*Math.PI*r;
   let offset=0;
   const segs=OV_URGENCY_BUCKETS.map(b=>{
-    const val=totals[b.key]||0;
+    const val=bucketTotals[b.key]||0;
     const pct=total?val/total:0;
     const arc=pct*c;
     const seg={...b, val, pct, arc, offset};
@@ -7256,61 +7284,57 @@ function _renderOverviewUrgencyDonut(totals){
 
   const circles=segs.map(s=>{
     const dash=`${s.arc} ${c-s.arc}`;
-    return `<circle class="ov-urgency-seg" data-key="${s.key}" cx="${size/2}" cy="${size/2}" r="${r}"
+    return `<circle class="ov-urgency-seg" data-group="${group}" data-key="${s.key}" cx="${size/2}" cy="${size/2}" r="${r}"
       fill="none" stroke="${s.color}" stroke-width="${stroke}"
       stroke-dasharray="${dash}" stroke-dashoffset="${-s.offset}"
       style="transition:stroke-width .15s;cursor:pointer;"
-      onmouseenter="_ovUrgencyHover('${s.key}','${escHtmlAdmin(s.label)}',${s.val})"
-      onmouseleave="_ovUrgencyUnhover()"><title>${s.val} · ${escHtmlAdmin(s.label)}</title></circle>`;
+      onmouseenter="_ovUrgencyHover('${group}','${s.key}','${escHtmlAdmin(s.label)}',${s.val})"
+      onmouseleave="_ovUrgencyUnhover('${group}')"><title>${s.val} · ${escHtmlAdmin(s.label)}</title></circle>`;
   }).join('');
 
   wrap.innerHTML=`
     <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="transform:rotate(-90deg);">
       ${total?circles:`<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}"></circle>`}
     </svg>
-    <div id="ov-urgency-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none;">
-      <div id="ov-urgency-center-val" style="font-size:28px;font-weight:800;color:var(--text-dark);">${total}</div>
-      <div id="ov-urgency-center-label" style="font-size:11px;color:var(--text-light);font-weight:600;">open items</div>
+    <div id="ov-${group}-urgency-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none;">
+      <div id="ov-${group}-urgency-center-val" style="font-size:24px;font-weight:800;color:var(--text-dark);">${total}</div>
+      <div id="ov-${group}-urgency-center-label" style="font-size:10px;color:var(--text-light);font-weight:600;">open ${group}</div>
     </div>`;
   // Stashed so _ovUrgencyUnhover() can restore the exact default text on
   // mouseleave without re-deriving it from rendered DOM (fragile — arc
   // lengths are floats, not reliably round-trippable back to the integer
   // count).
   wrap._ovDefaultVal=total;
-  wrap._ovDefaultLabel='open items';
+  wrap._ovDefaultLabel=`open ${group}`;
 
   listEl.innerHTML=segs.map(s=>`
-    <div class="ov-urgency-row" data-key="${s.key}" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;"
-      onmouseenter="_ovUrgencyHover('${s.key}','${escHtmlAdmin(s.label)}',${s.val})" onmouseleave="_ovUrgencyUnhover()">
+    <div class="ov-urgency-row" data-group="${group}" data-key="${s.key}" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;"
+      onmouseenter="_ovUrgencyHover('${group}','${s.key}','${escHtmlAdmin(s.label)}',${s.val})" onmouseleave="_ovUrgencyUnhover('${group}')">
       <span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
-      <span style="flex:1;font-size:12.5px;color:var(--text-dark);">${escHtmlAdmin(s.label)}</span>
-      <span style="font-size:12.5px;font-weight:700;color:var(--text-dark);">${s.val}</span>
-      <span style="font-size:11px;color:var(--text-light);width:34px;text-align:right;">${total?Math.round(s.pct*100):0}%</span>
+      <span style="flex:1;font-size:12px;color:var(--text-dark);">${escHtmlAdmin(s.label)}</span>
+      <span style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.val}</span>
+      <span style="font-size:10.5px;color:var(--text-light);width:32px;text-align:right;">${total?Math.round(s.pct*100):0}%</span>
     </div>`).join('');
-
-  ctxEl.innerHTML=`
-    <div style="font-size:12px;color:var(--text-light);"><span style="font-weight:700;color:var(--text-dark);">${totals.tasksDone+totals.servicesDone}</span> done</div>
-    <div style="font-size:12px;color:var(--text-light);"><span style="font-weight:700;color:${totals.blocked?'var(--orange)':'var(--text-dark)'};">${totals.blocked}</span> blocked/stuck</div>`;
 }
 
-function _ovUrgencyHover(key,label,val){
-  const centerVal=document.getElementById('ov-urgency-center-val');
-  const centerLabel=document.getElementById('ov-urgency-center-label');
+function _ovUrgencyHover(group,key,label,val){
+  const centerVal=document.getElementById(`ov-${group}-urgency-center-val`);
+  const centerLabel=document.getElementById(`ov-${group}-urgency-center-label`);
   if(centerVal) centerVal.textContent=val;
   if(centerLabel) centerLabel.textContent=label;
-  document.querySelectorAll('.ov-urgency-seg').forEach(el=>{
-    el.setAttribute('stroke-width', el.getAttribute('data-key')===key ? 26 : 22);
+  document.querySelectorAll(`.ov-urgency-seg[data-group="${group}"]`).forEach(el=>{
+    el.setAttribute('stroke-width', el.getAttribute('data-key')===key ? 24 : 20);
   });
-  document.querySelectorAll('.ov-urgency-row').forEach(el=>{
+  document.querySelectorAll(`.ov-urgency-row[data-group="${group}"]`).forEach(el=>{
     el.style.background = el.getAttribute('data-key')===key ? 'var(--bg-light,#f5f5f5)' : '';
   });
 }
-function _ovUrgencyUnhover(){
-  const wrap=document.getElementById('ov-urgency-donut-wrap');
-  const centerVal=document.getElementById('ov-urgency-center-val');
-  const centerLabel=document.getElementById('ov-urgency-center-label');
-  document.querySelectorAll('.ov-urgency-seg').forEach(el=>el.setAttribute('stroke-width', 22));
-  document.querySelectorAll('.ov-urgency-row').forEach(el=>{ el.style.background=''; });
+function _ovUrgencyUnhover(group){
+  const wrap=document.getElementById(`ov-${group}-urgency-donut-wrap`);
+  const centerVal=document.getElementById(`ov-${group}-urgency-center-val`);
+  const centerLabel=document.getElementById(`ov-${group}-urgency-center-label`);
+  document.querySelectorAll(`.ov-urgency-seg[data-group="${group}"]`).forEach(el=>el.setAttribute('stroke-width', 20));
+  document.querySelectorAll(`.ov-urgency-row[data-group="${group}"]`).forEach(el=>{ el.style.background=''; });
   if(wrap && centerVal && centerLabel){
     centerVal.textContent=wrap._ovDefaultVal;
     centerLabel.textContent=wrap._ovDefaultLabel;
@@ -7428,11 +7452,13 @@ function renderTeamProductionAnalytics(){
   const allTasks=dbGet(DB_KEYS.tasks)||[];
   const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
   const svcClientInfo=_ovServiceClientInfo();
-  // Drill-down item lists for the 7 stat cards (2026-09-01) — populated
-  // DURING the same per-person filter passes below that produce each
-  // tile's count, never from a separate query, so a card's drill-down can
-  // never show a different count than the number on the card itself.
-  const drill = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[] };
+  // Drill-down item lists for the stat cards (2026-09-01, gained dueToday
+  // 2026-09-07) — populated DURING the same per-person filter passes below
+  // that produce each tile's count, never from a separate query, so a
+  // card's drill-down can never show a different count than the number on
+  // the card itself.
+  const drill = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[], dueToday:[] };
+  const todayStr=_taToday();
 
   const rows=_timeOffRoster().map(person=>{
     const sum=_personWorkSummary(person, allTasks, allServices);
@@ -7458,6 +7484,19 @@ function renderTeamProductionAnalytics(){
     const overdue=tasksOverdue+servicesOverdue;
     const blocked=tasksBlocked+servicesStuck;
 
+    // Due Today (2026-09-07) — tasks via the same _taIsDueToday() predicate
+    // Task Assignments' own Needs Attention view already uses (dueDate===
+    // today, not Done). Services have no equivalent anywhere in this file
+    // (_chSvcDueStatus() folds a due-today service into its wider 'soon'
+    // window), so it's checked directly here, the same inline-comparison
+    // style _ovDueWindowBucket()'s own caller already uses. Never overlaps
+    // Overdue (strictly BEFORE today) or Blocked/Done (both excluded), and
+    // is itself excluded from the urgency-donut buckets below — so a
+    // due-today item is counted in exactly one place on this page.
+    const tasksDueTodayItems=sum.tasksForPerson.filter(t=>t.status!=='Done'&&t.status!=='Blocked'&&t.dueDate===todayStr);
+    const servicesDueTodayItems=servicesForPerson.filter(s=>_svcStatus(s)!=='done'&&_svcStatus(s)!=='stuck'&&s.due===todayStr);
+    const dueToday=tasksDueTodayItems.length+servicesDueTodayItems.length;
+
     sum.tasksForPerson.forEach(t=>drill.tasksAssigned.push(_ovTaskRow(t, person.name)));
     tasksDoneItems.forEach(t=>drill.tasksDone.push(_ovTaskRow(t, person.name)));
     servicesForPerson.forEach(s=>drill.servicesAssigned.push(_ovServiceRow(s, person.name, svcClientInfo)));
@@ -7466,27 +7505,36 @@ function renderTeamProductionAnalytics(){
     servicesOverdueItems.forEach(s=>drill.overdue.push(_ovServiceRow(s, person.name, svcClientInfo)));
     tasksBlockedItems.forEach(t=>drill.blocked.push(_ovTaskRow(t, person.name)));
     servicesStuckItems.forEach(s=>drill.blocked.push(_ovServiceRow(s, person.name, svcClientInfo)));
-    // Urgency-donut due-window buckets (2026-08-28) — every task/service
-    // already counted as overdue OR done above is excluded here first, so
-    // an item is classified into exactly one of the 4 donut buckets, never
-    // double-counted against "overdue" and never silently dropped. Reuses
-    // the exact same per-person, roster-scoped item sets (sum.tasksForPerson/
-    // servicesForPerson) the Overdue/Blocked/Done totals above already sum
-    // from — this is what guarantees the donut's Overdue slice can never
-    // disagree with the Overdue stat tile (both are sums over the identical
-    // rows), not just a coincidentally-matching separate calculation.
-    let dueThisWeek=0, dueThisMonth=0, upcoming=0;
+    tasksDueTodayItems.forEach(t=>drill.dueToday.push(_ovTaskRow(t, person.name)));
+    servicesDueTodayItems.forEach(s=>drill.dueToday.push(_ovServiceRow(s, person.name, svcClientInfo)));
+
+    // Urgency-donut due-window buckets (2026-08-28; split into separate
+    // tasks/services buckets 2026-09-07 so Overview can show two donuts —
+    // one per work type — instead of one combined one). Every task/service
+    // already counted as overdue, Blocked/stuck, done, OR due-today above
+    // is excluded here first, so an item is classified into exactly one of
+    // the 4 buckets on its OWN type's donut, never double-counted and never
+    // silently dropped. Reuses the exact same per-person, roster-scoped
+    // item sets (sum.tasksForPerson/servicesForPerson) the Overdue/Blocked/
+    // Done/Due-Today totals above already sum from — this is what
+    // guarantees a donut's Overdue slice can never disagree with the
+    // Overdue stat tile's own tasks-or-services share, not just a
+    // coincidentally-matching separate calculation.
+    let tasksDueThisWeek=0, tasksDueThisMonth=0, tasksUpcoming=0;
     sum.tasksForPerson.forEach(t=>{
-      if(t.status==='Done'||t.status==='Blocked'||_taIsOverdue(t)) return;
+      if(t.status==='Done'||t.status==='Blocked'||_taIsOverdue(t)||t.dueDate===todayStr) return;
       const bucket=_ovDueWindowBucket(t.dueDate, endOfWeek, endOfMonth);
-      if(bucket==='dueThisWeek') dueThisWeek++; else if(bucket==='dueThisMonth') dueThisMonth++; else upcoming++;
+      if(bucket==='dueThisWeek') tasksDueThisWeek++; else if(bucket==='dueThisMonth') tasksDueThisMonth++; else tasksUpcoming++;
     });
+    let servicesDueThisWeek=0, servicesDueThisMonth=0, servicesUpcoming=0;
     servicesForPerson.forEach(s=>{
-      if(_svcStatus(s)==='done'||_svcStatus(s)==='stuck'||_chSvcDueStatus(s)==='overdue') return;
+      if(_svcStatus(s)==='done'||_svcStatus(s)==='stuck'||_chSvcDueStatus(s)==='overdue'||s.due===todayStr) return;
       const bucket=_ovDueWindowBucket(s.due, endOfWeek, endOfMonth);
-      if(bucket==='dueThisWeek') dueThisWeek++; else if(bucket==='dueThisMonth') dueThisMonth++; else upcoming++;
+      if(bucket==='dueThisWeek') servicesDueThisWeek++; else if(bucket==='dueThisMonth') servicesDueThisMonth++; else servicesUpcoming++;
     });
-    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked, dueThisWeek, dueThisMonth, upcoming };
+    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked, dueToday,
+      tasksOverdue, servicesOverdue, tasksDueThisWeek, tasksDueThisMonth, tasksUpcoming,
+      servicesDueThisWeek, servicesDueThisMonth, servicesUpcoming };
   }).sort((a,b)=>a.name.localeCompare(b.name));
 
   // Team totals — plain sums over the same per-person rows the table below
@@ -7494,34 +7542,61 @@ function renderTeamProductionAnalytics(){
   const totals=rows.reduce((acc,r)=>{
     acc.tasksAssigned+=r.tasksAssigned; acc.tasksDone+=r.tasksDone;
     acc.servicesAssigned+=r.servicesAssigned; acc.servicesDone+=r.servicesDone;
-    acc.overdue+=r.overdue; acc.blocked+=r.blocked;
-    acc.dueThisWeek+=r.dueThisWeek; acc.dueThisMonth+=r.dueThisMonth; acc.upcoming+=r.upcoming;
+    acc.overdue+=r.overdue; acc.blocked+=r.blocked; acc.dueToday+=r.dueToday;
+    acc.tasksOverdue+=r.tasksOverdue; acc.servicesOverdue+=r.servicesOverdue;
+    acc.tasksDueThisWeek+=r.tasksDueThisWeek; acc.tasksDueThisMonth+=r.tasksDueThisMonth; acc.tasksUpcoming+=r.tasksUpcoming;
+    acc.servicesDueThisWeek+=r.servicesDueThisWeek; acc.servicesDueThisMonth+=r.servicesDueThisMonth; acc.servicesUpcoming+=r.servicesUpcoming;
     return acc;
-  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueThisWeek:0,dueThisMonth:0,upcoming:0});
+  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueToday:0,
+      tasksOverdue:0,servicesOverdue:0,tasksDueThisWeek:0,tasksDueThisMonth:0,tasksUpcoming:0,
+      servicesDueThisWeek:0,servicesDueThisMonth:0,servicesUpcoming:0});
   const totalAssigned=totals.tasksAssigned+totals.servicesAssigned;
   const totalDone=totals.tasksDone+totals.servicesDone;
   const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
+  const tasksPct=totals.tasksAssigned?Math.round(totals.tasksDone/totals.tasksAssigned*100):null;
+  const servicesPct=totals.servicesAssigned?Math.round(totals.servicesDone/totals.servicesAssigned*100):null;
 
   // Every card is clickable — see openOvStatDrill()/openOvStatDrillKey
   // above. .ov-stat-card supplies cursor:pointer + a visible hover state;
   // drillKey maps the card to _ovDrillData (or 'teamPct', the one card
   // that drills into the Per-Person table below instead of an item list).
+  // Colored by MEANING, not by type (2026-09-07 redesign): the two ratio
+  // cards are neutral (a done/total count isn't itself an alarm), Overdue
+  // is red, Due Today and Blocked/Stuck are both amber (both are "needs
+  // attention soon/now," distinguished by their own label, not color),
+  // and Team % Done is a fixed accent-blue highlight — deliberately NOT
+  // _pctDoneColor()'s dynamic red/orange/green any more, since this card's
+  // job here is "the team's one headline number," not a status alarm.
   const statCard=(label,val,color,drillKey)=>`<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" onclick="openOvStatDrill('${drillKey}')" title="View the items behind this number">
     <div style="font-size:20px;font-weight:800;color:${color||'var(--text-dark)'};">${val}</div>
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
   </div>`;
+  // Ratio cards ("Tasks 201/390 · 52% done") replace the old separate
+  // Assigned/Done pair — reuses the exact same totals.tasksAssigned/
+  // tasksDone (and services equivalents) those two cards already summed,
+  // just displayed as one card instead of two. Drills into the same
+  // 'tasksAssigned'/'servicesAssigned' item lists those cards already
+  // opened (the fuller list — every assigned item, done ones included,
+  // shows its own status label — rather than inventing a third drill key).
+  const ratioStatCard=(label,done,total,pct,drillKey)=>`<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" onclick="openOvStatDrill('${drillKey}')" title="View the items behind this number">
+    <div style="font-size:20px;font-weight:800;color:var(--text-dark);">${done}/${total}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
+    <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">${pct==null?'—':pct+'% done'}</div>
+  </div>`;
   statsEl.innerHTML=[
-    statCard('Tasks Assigned', totals.tasksAssigned, null, 'tasksAssigned'),
-    statCard('Tasks Done', totals.tasksDone, null, 'tasksDone'),
-    statCard('Services Assigned', totals.servicesAssigned, null, 'servicesAssigned'),
-    statCard('Services Done', totals.servicesDone, null, 'servicesDone'),
+    ratioStatCard('Tasks', totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
+    ratioStatCard('Services', totals.servicesDone, totals.servicesAssigned, servicesPct, 'servicesAssigned'),
     statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null, 'overdue'),
+    statCard('Due Today', totals.dueToday, totals.dueToday?'var(--orange)':null, 'dueToday'),
     statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
-    statCard('Team % Done', teamPct==null?'—':teamPct+'%', _pctDoneColor(teamPct), 'teamPct'),
+    statCard('Team % Done', teamPct==null?'—':teamPct+'%', 'var(--accent)', 'teamPct'),
   ].join('');
   _ovDrillData = drill;
 
-  if(typeof _renderOverviewUrgencyDonut==='function') _renderOverviewUrgencyDonut(totals);
+  if(typeof _renderOverviewUrgencyDonut==='function'){
+    _renderOverviewUrgencyDonut('tasks', {overdue:totals.tasksOverdue, dueThisWeek:totals.tasksDueThisWeek, dueThisMonth:totals.tasksDueThisMonth, upcoming:totals.tasksUpcoming});
+    _renderOverviewUrgencyDonut('services', {overdue:totals.servicesOverdue, dueThisWeek:totals.servicesDueThisWeek, dueThisMonth:totals.servicesDueThisMonth, upcoming:totals.servicesUpcoming});
+  }
 
   // Per-person table — no totalAssigned>0 filter, same acceptance criterion
   // Team Assessment already established: a person with zero assigned work
@@ -11135,14 +11210,16 @@ function refreshAdminOverview(){
   }
   // Team Assessment (the old per-person numbers table) is retired as of
   // 2026-08-24 — Team Production Analytics supersedes it and now lives
-  // directly on this page (the tpa-team-stats/ov-urgency-donut-wrap/
-  // tpa-person-table elements moved/added here from the old standalone
-  // "Team analytics" tab/page; the "Services Completed — Last 8 Weeks" bar
-  // chart that used to live at tpa-weekly-trend was replaced outright by
-  // the urgency donut on 2026-08-28 — see renderTeamProductionAnalytics()'s
-  // own comments for why). renderTeamProductionAnalytics() is fully self-
-  // contained (reads its own DOM targets, guards on their absence) so
-  // calling it here is the whole integration — no computation duplicated.
+  // directly on this page (the tpa-team-stats/tpa-person-table elements
+  // moved/added here from the old standalone "Team analytics" tab/page;
+  // the "Services Completed — Last 8 Weeks" bar chart that used to live at
+  // tpa-weekly-trend was replaced outright by a single combined urgency
+  // donut on 2026-08-28, then split into the two type-scoped donuts
+  // (ov-tasks-urgency-donut-wrap/ov-services-urgency-donut-wrap) on
+  // 2026-09-07 — see renderTeamProductionAnalytics()'s own comments for
+  // why). renderTeamProductionAnalytics() is fully self-contained (reads
+  // its own DOM targets, guards on their absence) so calling it here is
+  // the whole integration — no computation duplicated.
   if(typeof renderTeamProductionAnalytics==='function') renderTeamProductionAnalytics();
   if(typeof renderMyRoadmapAdmin==='function') renderMyRoadmapAdmin();
 
