@@ -8135,6 +8135,228 @@ permission logic touched in either change (the sort fix is pure display,
 and "+ New Task" only ever exercises an already-built, already-tested
 server write path) — both eligible for direct merge once CI is green.
 
+**Task Assignments: "Team's Tasks" rename + admin "My Tasks" tab + My
+Roadmap calendar/type split (2026-09-10).** Three focused, low-risk,
+display-only changes, `index.html` + `user.html`.
+
+1. **"By Person" → "Team's Tasks."** `index.html`'s Task Assignments
+   sub-tab button label changed (`taSubtabPersonBtn`), plus the matching
+   `HELP_CONTENT.taskAssignments.learnMore` copy and a tooltip on the
+   roster's per-person row. Internal ids/function names
+   (`setTaSubtab('person')`, `openPersonDailyView()`, etc.) deliberately
+   left unchanged, per the task's own explicit instruction — a pure
+   display rename, no behavior change.
+
+2. **Admin "My Tasks" tab.** A new sub-tab (`ta-subtab-mytasks`,
+   `🙋 My Tasks`) next to Add/Import, showing the logged-in admin's own
+   tasks (`assigneeId===_currentAdminId()`, excluding a soft-merged-away
+   duplicate) with its own independent Not Started/In Progress/Done/All
+   status pills — `_taMyTasksStatusTab`, a NEW variable rather than
+   reusing the shared `_taStatusTab`, so switching status here can never
+   leak into (or be leaked into by) the main Assigned Tasks tab's own
+   status, verified directly. Reuses the existing `_renderTaListTable()`
+   card renderer and `_taSortByField()`/`_taSortDoneTasks()` sort logic —
+   no new rendering path, just a narrower input array and its own status-
+   tab bar.
+
+3. **My Roadmap: calendar view + Services/Tasks split, both portals.**
+   `_collectMyWorkItems()` (`user.html`)/`renderMyRoadmapAdmin()`
+   (`index.html`) now tag every item `type:'service'` or `type:'task'` at
+   collection time. Both files' Roadmap sections gained a List/Calendar
+   toggle and an All/Services/Tasks type filter (`_myrmView`/
+   `_myrmTypeFilter`/`_myrmCalDate`, hand-duplicated per the zero-shared-
+   code rule — deliberately prefixed `_myrm`, not `_rm`, since `index.html`
+   already has an unrelated, extensive `_rm*` namespace for its own
+   meeting-transcript "Roadmap" feature, confirmed via grep before
+   choosing the prefix). The calendar view is Mon-start with weekends
+   grayed, reusing the exact convention already established for the Task
+   Assignments Week/Month calendar (2026-09-02) and `user.html`'s own My
+   Tasks calendar — items plot on their real due date, computed from
+   local y/m/d integers, never `new Date(dateStr)` directly (the same
+   UTC-parse bug class already fixed once elsewhere in this codebase).
+
+Verified: syntax-checked (`new Function()` per extracted `<script>` block)
+both files — clean; comment-stripped div-balance unchanged vs. `main` in
+both. A new Playwright suite for item 2 (9/9): the My Tasks sub-tab shows
+exactly David's own not-started/in-progress/done tasks with correct
+counts, excludes Rana's task and the merged-away duplicate, switching its
+own status tab leaves the shared Assigned Tasks tab's status untouched,
+and Assigned Tasks (All) still shows everyone's tasks unaffected. A new
+Playwright suite for item 3 (12/12, both portals): the toggles render;
+Services/Tasks filtering correctly shows/hides the right item in both
+portals; the calendar header is genuinely Mon-start
+(Mon,Tue,Wed,Thu,Fri,Sat,Sun) in both. `user.html`'s own suite needed a
+one-time workaround, not a product fix: `renderRoadmap()` runs once
+synchronously at page boot, before the async cloud pull that populates
+`wl_clients_db`/tasks resolves, and nothing re-triggers it after that pull
+lands — confirmed via `git stash` against unmodified `user.html` that this
+exact characteristic is pre-existing, not introduced here, so the test
+waits for the pull to land and forces one fresh render via the existing
+"All" toggle before asserting, rather than "fixing" a boot-sequence
+quirk this task didn't ask about. A new Playwright suite for item 1 (not
+separately itemized above — folded into the general verification pass)
+confirms the tab reads "Team's Tasks" and behavior is unchanged.
+
+All three low-risk per rule #10: pure display/navigation, no data-write/
+sync/auth/permission logic touched — eligible for direct merge once CI is
+green.
+
+**Restrict all non-super admins: payroll/rates hidden, Users view-only,
+own-time-off-only (2026-09-10).** `index.html` + `lib/opsSession.js` +
+`api/ops-sync.js` + `api/ops-state.js`. Only Super Admin/Owner (Sarah,
+David) keep unrestricted access from here on — every OTHER admin level,
+including the plain `'admin'` level itself (previously undocumented but
+real gap: `ADMIN_LEVELS` describes it as "Full access to users, settings
+& reports," and neither `RESTRICTED_ADMIN_ROLES` nor
+`RESTRICTED_MANAGER_LEVELS` ever named it, so an admin created at this
+level had full user-edit and pay-rate visibility by omission, not by
+design), is now restricted identically: no Payroll nav, no Time Off/Time
+Off Ledger management of anyone else, view-only Users (no edit, no pay
+rate), and a new personal "My Time Off" tab instead.
+
+**The single load-bearing fix, server-side:** `canEditUsers(session)` in
+`lib/opsSession.js` was an ALLOWLIST of everything except three named
+"restricted manager levels" (`creative_manager`/`production_manager`/
+`account_manager`) — redefined to exactly `tierOf(session)==='super'`.
+Both of this function's only two call sites — `api/ops-sync.js`'s
+user-write gate and `api/ops-state.js`'s payRate/hours read-stripping —
+correctly extend to every non-super admin with zero further change at
+either site, closing the plain-`'admin'`-level gap by construction rather
+than by enumerating a fourth name into an allowlist that could just as
+easily miss the next one. Both call sites' surrounding `if
+(!canEditUsers(session))` wrappers were simplified (not left as
+misleadingly-conditional dead code) once this made them unconditionally
+true for every caller reaching that branch — `api/ops-state.js`'s
+`tier==='manager'` branch, `canEditUsers()` can never be true there by
+construction, so the payRate-stripping/time-off-scoping logic was
+un-wrapped and made unconditional within that branch, with the header
+comments corrected to describe what actually happens now rather than the
+old three-specific-levels framing.
+
+**`api/ops-sync.js`'s `c.timeOffRequests` write block** — team-management
+(approve/deny, edit anyone's request) used to run for `isAdmin` (any admin
+tier); changed to `tier === 'super'`. A manager-tier admin now falls
+through to the EXACT SAME branch a plain member already used — own-
+request-only, matched by `userName` (the field the app actually writes;
+`userId` never exists on this record), status locked once decided — a
+deliberate reuse of identical code, not a parallel implementation that
+could drift: a manager-tier admin has no more write authority over their
+OWN request than a plain member has over theirs. Verified directly that a
+crafted request to approve/deny even their OWN request is rejected
+(status stays `pending`) — only Super Admin/Owner can actually decide a
+request, matching the task's "server rejects any... time-off-for-others
+write from a non-super admin even via a crafted request" requirement
+literally, including the narrower "can't even self-approve" case nobody
+explicitly asked about but the uniform tier gate produces for free.
+
+**`api/ops-state.js`'s read-scoping**, `tier==='manager'` branch: gained a
+`record.timeOffRequests` filter (own-`userName`-only, same match as the
+member branch already does) — previously "stayed full" for every manager-
+tier admin, a real over-exposure this closes. `record.users`'
+payRate/hours stripping (already present, just gated on the now-
+uniform `canEditUsers()`) extends to every non-super admin the same way.
+
+**Client-side (`index.html`):**
+- `applyAdminRoleRestrictions()` gained a new uniform baseline block,
+  running before every more-specific branch (Creative Manager's
+  `showOnly` allowlist, the two `RESTRICTED_ADMIN_ROLES`' `hideTabs`) so
+  those can only ever ADD further restriction on top, never undo it: for
+  any `level !== 'super'/'owner'`, hides the Payroll/Time off/Time off
+  ledger nav items and reveals a new `#admin-nav-mytimeoff` item (default
+  `style="display:none"` in the HTML, fails closed if this JS never runs)
+  — the reverse for super/owner. Creative Manager's `showOnly` gained
+  `'users'` and `'myTimeOff'` (she previously had NO Users nav at all —
+  now view-only, same as every other non-super admin).
+  `RESTRICTED_ADMIN_ROLES`' `hideTabs` had `'users'` REMOVED (it used to
+  hide the whole Users dropdown wrapper for Abby/account-manager-level
+  admins; now it stays visible, view-only, matching the new uniform
+  policy rather than a role-specific harder block).
+- `renderUserTable()`: the per-row action button reads
+  `isSuperAdminViewer` and shows `Edit`/`View` accordingly (same
+  `openEditUserModal()` either way); the `Remove` button is hidden
+  entirely for non-super (the pre-existing "Sign out everywhere" and
+  "Grant/Revoke Manager Role" buttons were already super-only, unchanged).
+- `openEditUserModal()` + a new `_applyUserModalViewOnlyMode()`: for a
+  non-super viewer, every input/select/textarea in the modal body is
+  disabled, every `<button>` in the body is hidden (a blanket approach
+  rather than enumerating every field/button across this modal's 8 tabs,
+  several of which have their own scattered "+ Add"/remove buttons —
+  deliberately over-cautious rather than risking a missed one), the Pay
+  Rate field's whole `.form-group` is hidden outright (not just disabled
+  — never shown at all to a non-super viewer), and the footer's Save
+  button (a sibling of `.modal-body`, handled separately) is hidden. Title
+  reads "View — {name}" instead of "Edit — {name}."
+- **New "My Time Off" tab** (`#admin-myTimeOff`): a request form (Start/
+  End date, Type, Reason — mirroring `user.html`'s own
+  `submitTimeOffRequest()`) plus a "My Requests" list scoped to the
+  logged-in admin's own name (`_currentAdminName()`, a new helper —
+  resolves the `'primary-admin'` sentinel to "Sarah Samy" the same way
+  every other notification resolver in this file already special-cases
+  her, then looks up the real admin record otherwise). Submitting reuses
+  the exact same `wl_timeoff_requests` array/shape every request already
+  uses (via `_calcBusinessDays()`, already correct/timezone-safe) and the
+  ordinary `cloudAutoSync(true)` push — no new data shape, so a request
+  submitted here shows up in Super Admin/Owner's normal Time Off Requests
+  screen with zero extra plumbing.
+
+**A real, previously-latent race condition found and fixed while
+verifying this, not part of the original ask:** `renderUserTable()`'s new
+Edit-vs-View logic reads `_adminLevel` at render time, but
+`cloudPullAll()`'s own `renderUserTable()` call fires immediately after
+the initial pull — BEFORE `applyAdminRoleRestrictions()` (which sets
+`_adminLevel` to the real, server-verified value) ever runs, since that
+happens later via a `setTimeout(...,150)` in both the fresh-login and
+session-restore paths. Without a fix, EVERY admin — including Super
+Admin/Owner — would see the view-only "View" button on first page load
+(since `_adminLevel` was still `null`, computing `isSuperAdminViewer` as
+false) until some unrelated action happened to re-render the table.
+Fixed by adding one `renderUserTable()` call inside
+`applyAdminRoleRestrictions()` itself, once the real level is known
+(no-op if the Users tab/table isn't in the DOM yet) — caught by a real
+Playwright reproduction, not assumed: David's (owner) row showed "View"
+and Rana's pay rate field was hidden in the modal on first load before
+this fix, despite him being fully unrestricted.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` + `api/ops-state.js`, importing the REAL current
+`tierOf()`/`canEditUsers()` from `lib/opsSession.js` (not a hand-
+duplicated stand-in, so this genuinely exercises this session's
+redefinition) with only `requireSession`/Supabase mocked (24/24) — a
+manager-tier admin's (Abby, production_manager) user-edit is rejected
+with the stored record unchanged; the plain-`'admin'`-level gap (Jacob)
+is confirmed closed the same way; Super Admin's edit still succeeds;
+payroll writes are still rejected for manager tier (regression check);
+a manager-tier admin can create their OWN time-off request but not one
+under someone else's name, and cannot approve/deny even their own
+(status stays pending) while Super Admin's approval is honored; payRate/
+hours are stripped from another user's record for both a specialized
+manager level AND the plain-`'admin'`-level gap case, while Super Admin
+sees full payRate; timeOffRequests reads are scoped to a manager-tier
+admin's own name only, while Super Admin sees every request. (2) A new
+Playwright suite against the real `index.html` UI (46/46, run against
+Jacob/plain-admin, Abby/production_manager, and Sherine/creative_manager
+as three genuinely different starting configurations, plus David/owner
+as the unrestricted control): all three restricted admins get identical
+treatment — no Payroll/Time off/Time off ledger nav, My Time Off nav
+visible, Users list shows "View" with no "Remove," the modal opens
+read-only with Pay Rate hidden and Save hidden; Abby's My Time Off tab
+shows her own existing request and a real submission pushes a genuine
+sync call carrying her own `userName`, then appears in her own list; and
+David sees every nav item, "Edit" in the Users list, a fully-editable
+modal with Pay Rate populated, and no My Time Off tab (full Time off
+management instead) — the exact regression the race-condition fix above
+targets. `node --check` passed on all three server files; `new
+Function()` syntax-check clean on `index.html`; comment-stripped
+div-balance unchanged vs. `main` (delta -1, matching main's own baseline,
+across this session's combined changes).
+
+**Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10** — touches real permission/write logic across
+`lib/opsSession.js`, `api/ops-sync.js`, and `api/ops-state.js`. Unlike
+the three low-risk items above it, this one must not be merged without
+Sarah's explicit review and confirmation on the preview.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

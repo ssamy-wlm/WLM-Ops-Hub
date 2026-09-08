@@ -3699,6 +3699,12 @@ function _findServiceById(c, svcId){
 // Gathers the same kinds of items loadMyAssignments() shows in My Work (tracker
 // services, index.html recurring services, ad-hoc projects, and their tasks/
 // sub-project tasks), but flattened to {name, client, due} for bucketing.
+// type (2026-09-10): 'service' for everything from the tracker/client-
+// services world (services, recurring services, ad-hoc projects and their
+// tasks) vs 'task' for the separate ops_tasks/Task Assignments model below
+// — the same "Services" vs "Tasks" split Team Production Analytics'
+// columns already draw, reused here for the calendar view's own view
+// toggle rather than inventing a third vocabulary.
 function _collectMyWorkItems(){
   if(!currentUser) return [];
   const myId=currentUser.id, myName=currentUser.name;
@@ -3706,19 +3712,19 @@ function _collectMyWorkItems(){
   const items = [];
   clients.forEach(c=>{
     _allServicesForClient(c).forEach(s=>{
-      if(_svcAssignedToMe(s,myId,myName)) items.push({name:s.name, client:c.name, due:s.due||''});
+      if(_svcAssignedToMe(s,myId,myName)) items.push({name:s.name, client:c.name, due:s.due||'', type:'service'});
     });
     (c.recurringServices||[]).forEach(s=>{
-      if((s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName)) items.push({name:s.name, client:c.name, due:s.nextDueDate||''});
+      if((s.assignedUserIds||[]).some(uid=>uid===myId||uid===myName)) items.push({name:s.name, client:c.name, due:s.nextDueDate||'', type:'service'});
     });
     (c.projects||[]).forEach(p=>{
       if(p.isRecurringService) return;
       const onProject=(p.users||[]).some(u=>u===myId||u===myName);
       const myTasks=(p.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done);
       const mySubTasks=(p.subprojects||[]).flatMap(sp=>(sp.tasks||[]).filter(t=>(t.assigneeId===myId||t.assigneeName===myName)&&!t.done));
-      if(onProject) items.push({name:p.name, client:c.name, due:p.due||''});
-      myTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||''}));
-      mySubTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||''}));
+      if(onProject) items.push({name:p.name, client:c.name, due:p.due||'', type:'service'});
+      myTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||'', type:'service'}));
+      mySubTasks.forEach(t=>items.push({name:t.name, client:c.name+' · '+p.name, due:t.due||'', type:'service'}));
     });
   });
   // Task Assignments / My Tasks (ops_tasks, 2026-08-28) — a completely
@@ -3733,15 +3739,72 @@ function _collectMyWorkItems(){
   // bucket below for free, exactly like an undated service/project already
   // does (a real due-date estimate for these is Part 2, not this change).
   _dtMyTasks().filter(t=>t.status!=='Done').forEach(t=>{
-    items.push({name:t.subject||'', client:t.clientName||'', due:t.dueDate||''});
+    items.push({name:t.subject||'', client:t.clientName||'', due:t.dueDate||'', type:'task'});
   });
   return items;
 }
 
+// View/type toggles (2026-09-10) — "_myrm" prefix (My Roadmap), not "_rm"
+// (already a different, unrelated feature's namespace in index.html —
+// N/A here, but kept consistent across both files regardless). List is the
+// default, unchanged bucketed view; Calendar plots items on their actual
+// due dates instead. Type filter narrows to just services-assigned or
+// just tasks-assigned (see _collectMyWorkItems()'s new `type` field) —
+// "All" (default) preserves today's combined behavior.
+let _myrmView = 'list';
+let _myrmTypeFilter = 'all';
+let _myrmCalDate = new Date();
+function setMyRoadmapView(v){ _myrmView = v; renderRoadmap(); }
+function setMyRoadmapTypeFilter(f){ _myrmTypeFilter = f; renderRoadmap(); }
+function shiftMyRoadmapCalMonth(delta){ _myrmCalDate = new Date(_myrmCalDate.getFullYear(), _myrmCalDate.getMonth()+delta, 1); renderRoadmap(); }
+function _myrmToggleBtn(active, onclick, label){
+  return `<button type="button" class="btn btn-xs btn-outline${active?' btn-toggle-active':''}" onclick="${onclick}">${label}</button>`;
+}
+// Calendar view (2026-09-10) — Mon-start, weekends grayed, mirroring the
+// exact convention index.html's own Task Assignments calendar already
+// established (_renderTaCalendar/_taStartOfWeek) — that's the "task-
+// calendar rendering" this feature reuses the STYLE of; the literal
+// function can't be reused since ops_tasks-shaped rows and these generic
+// {name,client,due,type} roadmap items are different shapes, and this file
+// shares no JS with index.html regardless (zero-shared-code rule).
+function _myRoadmapCalendarHtml(items){
+  const y = _myrmCalDate.getFullYear(), m = _myrmCalDate.getMonth();
+  const label = _myrmCalDate.toLocaleString('en-US',{month:'long',year:'numeric'});
+  const firstDow = new Date(y,m,1).getDay();
+  const leadingBlanks = (firstDow+6)%7; // Mon-start: Mon->0 ... Sun->6
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const byDate = {};
+  let undatedCount = 0;
+  items.forEach(i=>{ if(i.due) (byDate[i.due]=byDate[i.due]||[]).push(i); else undatedCount++; });
+  let grid = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>`<div style="font-size:11px;font-weight:700;color:var(--text-light);text-align:center;padding:4px;min-width:0;${i>=5?'opacity:.55;':''}">${d}</div>`).join('');
+  for(let i=0;i<leadingBlanks;i++) grid += '<div></div>';
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayItems = byDate[dateStr]||[];
+    const isToday = dateStr===todayStr;
+    const dow = new Date(y,m,d).getDay();
+    const isWeekend = dow===0 || dow===6;
+    const cellBg = isToday ? 'background:rgba(45,107,182,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
+    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid var(--cream-dark);border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}${isToday?' · Today':''}</div>
+      ${dayItems.map(i=>`<div style="font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${dateStr<todayStr?'rgba(201,74,74,.12)':'rgba(45,107,182,.08)'};color:${dateStr<todayStr?'var(--red,#c94a4a)':'var(--text-dark)'};white-space:normal;overflow-wrap:anywhere;">${escHtmlUser(i.name)}</div>`).join('')}
+    </div>`;
+  }
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button type="button" class="btn btn-xs btn-outline" onclick="shiftMyRoadmapCalMonth(-1)">←</button>
+      <div style="font-weight:700;font-size:13px;color:var(--text-dark);">${label}</div>
+      <button type="button" class="btn btn-xs btn-outline" onclick="shiftMyRoadmapCalMonth(1)">→</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;overflow-x:auto;">${grid}</div>
+    ${undatedCount>0?`<div style="font-size:11px;color:var(--text-light);margin-top:8px;">📋 ${undatedCount} item${undatedCount===1?'':'s'} with no due date aren't shown on the calendar — see List view.</div>`:''}`;
+}
 function renderRoadmap(){
   const el = document.getElementById('roadmap-section');
   if(!el || !currentUser) return;
-  const items = _collectMyWorkItems();
+  const allItems = _collectMyWorkItems();
+  const items = _myrmTypeFilter==='all' ? allItems : allItems.filter(i=>i.type===(_myrmTypeFilter==='services'?'service':'task'));
   const todayStr = new Date().toISOString().slice(0,10);
   const horizon = d=>{ const dt=new Date(); dt.setDate(dt.getDate()+d); return dt.toISOString().slice(0,10); };
   const in7s=horizon(7), in30s=horizon(30), in60s=horizon(60);
@@ -3773,9 +3836,7 @@ function renderRoadmap(){
       ? `You're on track — ${totalOpen} open item${totalOpen===1?'':'s'}, none overdue.`
       : `${overdue.length} overdue item${overdue.length===1?'':'s'} out of ${totalOpen} — may be worth revisiting your scheduling and prioritization.`;
 
-  el.innerHTML = `
-    <div class="roadmap-title">📍 My Roadmap</div>
-    <div class="roadmap-subtitle">Your assigned work, grouped by how soon it's due</div>
+  const listHtml = `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;">
       <div class="roadmap-phase${overdue.length?' active-phase':''}">
         <div class="roadmap-phase-title">NEXT 7 DAYS</div>
@@ -3796,6 +3857,26 @@ function renderRoadmap(){
         <div style="font-size:11px;color:var(--text-mid);margin-top:10px;padding-top:8px;border-top:1px solid var(--cream-dark);">${insight}</div>
       </div>
     </div>`;
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+      <div>
+        <div class="roadmap-title">📍 My Roadmap</div>
+        <div class="roadmap-subtitle">Your assigned work, grouped by how soon it's due</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;gap:4px;">
+          ${_myrmToggleBtn(_myrmTypeFilter==='all','setMyRoadmapTypeFilter(\'all\')','All')}
+          ${_myrmToggleBtn(_myrmTypeFilter==='services','setMyRoadmapTypeFilter(\'services\')','Services')}
+          ${_myrmToggleBtn(_myrmTypeFilter==='tasks','setMyRoadmapTypeFilter(\'tasks\')','Tasks')}
+        </div>
+        <div style="display:flex;gap:4px;">
+          ${_myrmToggleBtn(_myrmView==='list','setMyRoadmapView(\'list\')','☰ List')}
+          ${_myrmToggleBtn(_myrmView==='calendar','setMyRoadmapView(\'calendar\')','📅 Calendar')}
+        </div>
+      </div>
+    </div>
+    ${_myrmView==='calendar' ? _myRoadmapCalendarHtml(items) : listHtml}`;
 }
 
 // ── My Service Schedule (shown on Operations page) ──────────────────────────
