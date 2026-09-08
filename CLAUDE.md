@@ -8357,6 +8357,56 @@ merge, per rule #10** — touches real permission/write logic across
 the three low-risk items above it, this one must not be merged without
 Sarah's explicit review and confirmation on the preview.
 
+**My Roadmap toggle buttons rendering at full-button size instead of a
+small chip (2026-09-10, follow-up fix).** `index.html` + `user.html`,
+display-only. Reported: the All/Services/Tasks/List/Calendar toggle
+buttons on the My Roadmap card looked oversized next to the rest of the
+app's controls. Root-caused before touching any CSS, not assumed:
+`_myrmToggleBtn()` (both files) rendered `class="btn btn-xs btn-outline"`
+— but **`.btn-xs` has no CSS rule anywhere in either stylesheet**, so
+those buttons (and the calendar view's `←`/`→` month-nav arrows, same
+function family) silently fell back to the base `.btn` size (`padding:
+11px 22px;font-size:14px`), the same dimensions as a full primary action
+button like "Save" — not a deliberately-sized small class that was merely
+too big.
+
+This is a pre-existing, file-wide bug, not unique to My Roadmap: `btn-xs`
+is used the same (broken) way in ~18 more places in `index.html` and ~10
+more in `user.html` (the notification "Mark all read" button, Task
+Assignments' sort ↑/↓ arrows, backup Download/Restore, task delete ✕,
+undo-merge, undo-import, etc.) — all of those are equally oversized today.
+Flagged this to the user before fixing anything, since defining `.btn-xs`
+for real would have visibly resized every one of those other buttons too,
+none of which were reported or reviewed. **Confirmed with the user:
+scope the fix to My Roadmap only.** Added a new, dedicated
+`.myrm-toggle-btn` class (`padding:7px 14px;font-size:12px;border-radius:
+8px` — identical to `.btn-sm`, the size every other toggle/chip in the
+app actually uses) and swapped `_myrmToggleBtn()`'s `btn-xs` for it in
+both files, plus the two calendar month-nav arrow buttons that share the
+same card (not separately named by the user, but visually part of the
+same control cluster — left oversized right next to the newly-shrunk
+buttons would have looked worse, not better). The other ~28 unrelated
+`btn-xs` usages elsewhere in both files are completely untouched — still
+rendering exactly as before, confirmed directly (see below), not just
+assumed safe.
+
+Verified: `new Function()` syntax-check clean on both files; comment-
+stripped div-balance unchanged vs. `main` in both (pure CSS/class-name
+change, zero new `<div>` elements). A new Playwright suite against the
+real `index.html` UI (17/17) — all 5 toggle buttons and both calendar
+arrows now measure `font-size:12px`/`padding:7px 14px` via real
+`getComputedStyle()` (not just a class-name check); and a direct check
+that the unrelated "Mark all read" button (still using the untouched
+`btn-xs` class) still measures the OLD fallback size (`14px`/`11px 22px`)
+— the literal "confirm nothing else using the same class shrinks
+unintentionally" requirement. The pre-existing My Roadmap
+calendar/type-split Playwright suite (12/12, both portals) re-run clean,
+confirming the class swap didn't disturb the toggle/filter functionality
+itself. Before/after screenshots sent to the user directly.
+
+Low-risk per rule #10: pure CSS/display change, no data-write/sync/auth/
+permission logic touched — eligible for direct merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
