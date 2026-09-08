@@ -1773,12 +1773,17 @@ export default async function handler(req, res) {
     }
 
     if (isAdmin) {
-      // users: 'admin' level and super/owner manage the team, but the three
-      // specialized manager levels (creative/production/account manager) are
-      // hard-blocked from ops_users entirely — see CLAUDE.md's permission
-      // project Step 1. Payroll/pay-rate fields stay Super Admin/CEO
-      // exclusive for whoever CAN write users — stripped (not rejected) so
-      // an unrelated title/role edit isn't blocked by a stale field.
+      // users: view-only for every non-super admin — restriction project
+      // (see CLAUDE.md): canEditUsers() is now defined as exactly
+      // tier==='super' (lib/opsSession.js), so `!canEditUsers(session)` is
+      // ALWAYS true for a manager-tier caller here — this used to only
+      // hard-block the three specialized manager levels (creative/
+      // production/account manager), leaving the plain 'admin' level able
+      // to edit ops_users by omission; that gap is closed by canEditUsers()'s
+      // own redefinition, not by changing this condition's shape. Payroll/
+      // pay-rate fields stay Super Admin/CEO exclusive for the one caller
+      // who CAN write users — stripped (not rejected) so an unrelated
+      // title/role edit isn't blocked by a stale field.
       const usersIncoming = (c.users || []).filter(validUserOrAdmin);
       if (usersIncoming.length) {
         if (tier === 'manager' && !canEditUsers(session)) {
@@ -2444,10 +2449,19 @@ export default async function handler(req, res) {
       applied.feed = await insertNewOnly(supabase, 'ops_feed', c.feed.filter(validGeneric), warnings);
     }
 
-    // ── time off requests: team management for both admin tiers (approve/
-    // deny included). Members may only create/edit their OWN pending
-    // request, matched by userName — the field the app actually writes (see
-    // user.html submitTimeOffRequest()); userId never exists on this record. ──
+    // ── time off requests: team management for SUPER ADMIN/OWNER ONLY
+    // (approve/deny included) — restriction project (see CLAUDE.md): a
+    // manager-tier admin used to get the same unrestricted team-management
+    // access here as super, which let a non-super admin approve/deny anyone
+    // else's request via a crafted call even with the nav item hidden. A
+    // manager-tier admin now falls through to the EXACT SAME branch a plain
+    // member already uses below — own-request-only, matched by userName
+    // (the field the app actually writes, see user.html's
+    // submitTimeOffRequest() and index.html's submitAdminMyTimeOffRequest();
+    // userId never exists on this record), status locked once decided. This
+    // is intentionally the identical code path for both roles — a
+    // manager-tier admin has no more write authority over their OWN request
+    // than a plain member does over theirs. ──
     if (Array.isArray(c.timeOffRequests) && c.timeOffRequests.length) {
       const incoming = c.timeOffRequests.filter(validGeneric);
       const ids = incoming.map(r => r.id);
@@ -2458,7 +2472,7 @@ export default async function handler(req, res) {
       let n = 0;
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
-        if (isAdmin) {
+        if (tier === 'super') {
           const { error } = await supabase.from('ops_time_off_requests').upsert({ id: inc.id, data: inc }, { onConflict: 'id' });
           if (error) { warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); continue; }
           n++;

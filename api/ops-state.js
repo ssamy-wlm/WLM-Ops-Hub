@@ -7,20 +7,19 @@
 //   - 'super' (Super Admin/CEO — super/owner levels): sees everything,
 //     including payroll/pay rates, admin accounts, business settings, org
 //     chart, and roadmap.
-//   - 'manager' (every other admin level): team + client management — full
-//     user records, all time-off requests, summaries, archive/tombstones —
-//     but NOT the payroll ledger, NOT business settings/org chart/roadmap.
-//     Within this tier, the three specialized manager levels (creative/
-//     production/account manager — see canEditUsers()) additionally get
-//     other people's payRate/hours stripped from user records, and lose
+//   - 'manager' (every other admin level, restriction project — see
+//     CLAUDE.md): client/tracker management, full user records for display,
+//     summaries, archive/tombstones — but NOT the payroll ledger/pay rates,
+//     NOT other people's time-off requests (own only), NOT business
+//     settings/org chart/roadmap, and view-only (no edit) on user/admin
+//     records — see api/ops-sync.js's canEditUsers() write gate. Also loses
 //     payroll-save/time-off events from the Live Feed (see
-//     stripSensitiveFeed()); plain 'admin' keeps the full access it
-//     always had.
+//     stripSensitiveFeed()).
 //   - 'member': clients (read-only visibility), own time-off only, minimal
 //     user/admin fields for display, Live Feed with the same
 //     payroll/time-off events stripped, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
+import { requireSession, tierOf } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 import { isHashed } from '../lib/passwordHash.js';
 
@@ -395,10 +394,16 @@ export default async function handler(req, res) {
       record.feed = stripSensitiveFeed(record.feed);
       // announcement, goals, messages, clients, notifications stay visible to everyone.
     } else if (tier === 'manager') {
-      // Every other admin level: team + client management (full user records,
-      // all time-off requests, summaries, archive), but NOT the payroll
-      // ledger and NOT business settings/org chart/roadmap — those stay
-      // Super Admin/CEO exclusive.
+      // Every other admin level: client/tracker management, but — per the
+      // restriction project (see CLAUDE.md) — NOT payroll/pay rates, NOT
+      // other people's time-off requests/ledger, and NOT edit access to user
+      // records (view-only; see api/ops-sync.js's canEditUsers() gate).
+      // Business settings/org chart/roadmap stay Super Admin/CEO exclusive
+      // as before. Since canEditUsers(session) is now defined as exactly
+      // tier==='super' (lib/opsSession.js), it is ALWAYS false for every
+      // caller reaching this branch — the payRate/hours/time-off scoping
+      // below applies unconditionally to every manager-tier admin, not just
+      // the three specialized levels this used to single out.
       // managedUserIds is exposed ONLY on the caller's own row here (not
       // every other admin's) — "My Team's Work" needs to know who ITS OWN
       // viewer manages; a manager-tier admin has no legitimate reason to see
@@ -427,26 +432,33 @@ export default async function handler(req, res) {
       // primaryAdminPw already stripped unconditionally above, for every tier.
       record.notificationSettings = null;
       record.passwordMigrationStatus = null;
-      // Creative/Production/Account Manager (canEditUsers()===false) also
-      // lose visibility into OTHER people's payRate/hours — 'admin' keeps
-      // the full read access it always had. The caller's own record is left
-      // intact, same carve-out already used for member tier above. This is a
-      // read-only transform of the in-memory response array — it never
-      // writes anything back to ops_users, on purpose: an earlier stripping
-      // pass here that also touched writes is what caused a real incident
-      // where a user's payRate got silently zeroed (see saveEditUser() in
+      // Every non-super admin loses visibility into OTHER people's
+      // payRate/hours — the caller's own record is left intact, same
+      // carve-out already used for member tier above. This is a read-only
+      // transform of the in-memory response array — it never writes
+      // anything back to ops_users, on purpose: an earlier stripping pass
+      // here that also touched writes is what caused a real incident where
+      // a user's payRate got silently zeroed (see saveEditUser() in
       // index.html) — this strips on OUTPUT only, every request, fresh.
-      if (!canEditUsers(session)) {
-        record.users = record.users.map(u => {
-          if (u.id === session.id) return u;
-          const { payRate, hours, ...rest } = u;
-          return rest;
-        });
-        // Same Live Feed leak as member tier above — payroll saves and
-        // time-off decisions dropped entirely for these three levels too.
-        record.feed = stripSensitiveFeed(record.feed);
-      }
-      // deletedUserIds, timeOffRequests, summaries stay full — team/client management.
+      record.users = record.users.map(u => {
+        if (u.id === session.id) return u;
+        const { payRate, hours, ...rest } = u;
+        return rest;
+      });
+      // Same Live Feed leak as member tier above — payroll saves and
+      // time-off decisions dropped entirely for non-super admins too.
+      record.feed = stripSensitiveFeed(record.feed);
+      // Restriction project (see CLAUDE.md): a non-super admin no longer
+      // sees or manages anyone ELSE's time-off requests here — scoped to
+      // their own, matched by userName exactly like the member branch above
+      // (same field the app writes; userId never exists on this record).
+      // api/ops-sync.js's own write-side gate (tier==='super' for the
+      // team-management branch) is the real enforcement — this read scoping
+      // just keeps the UI from ever rendering data a crafted write would
+      // already be rejected for.
+      const myName = String(session.name || '').toLowerCase();
+      record.timeOffRequests = record.timeOffRequests.filter(r => String(r.userName || '').toLowerCase() === myName);
+      // deletedUserIds, summaries stay full — team/client management.
     }
     // tier === 'super': record is returned exactly as assembled above.
 
