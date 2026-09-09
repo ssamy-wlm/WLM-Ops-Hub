@@ -373,7 +373,12 @@ tbody tr:last-child{border-bottom:none;}
 tbody tr:hover{background:var(--bg);}
 td{padding:12px 16px;font-size:13px;color:var(--text-dark);}
 td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
-.td-actions{display:flex;gap:6px;}
+.td-actions{display:flex;gap:6px;flex-wrap:wrap;}
+/* Uniform action-row buttons (View/Edit/Sign out/Deactivate-Activate/Remove)
+   so they read as one set regardless of label length — same height via a
+   fixed line-height-driven box, same minimum width, text centered. Scoped
+   to .td-actions only — doesn't touch .btn-sm elsewhere in the app. */
+.td-actions .btn{height:34px;min-width:84px;justify-content:center;box-sizing:border-box;}
 
 /* ── MODAL ── */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.35);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
@@ -1881,7 +1886,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">Super Admin</span></td>
                 <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
                 <td style="padding:14px 18px;">
-                  <div style="display:flex;gap:8px;align-items:center;">
+                  <div class="td-actions" style="align-items:center;">
+                    <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__',true)">View</button>
                     <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__')">Edit</button>
                     <span style="font-size:11px;color:var(--text-light);font-style:italic;">Primary — protected</span>
                   </div>
@@ -3119,7 +3125,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
       <div>
-        <div class="modal-title">Edit Admin Account</div>
+        <div class="modal-title" id="editAdminModalTitle">Edit Admin Account</div>
         <div class="modal-sub" id="editAdminSubtitle">Update account details and access level</div>
       </div>
       <button class="modal-close" onclick="closeModal('editAdminModal')">✕</button>
@@ -3866,7 +3872,7 @@ function _applyUserModalViewOnlyMode(isSuperAdminViewer){
 }
 
 // ── EDIT USER MODAL — load from DB ──
-function openEditUserModal(userIdOrName){
+function openEditUserModal(userIdOrName, forceView){
   const allUsers = dbGet(DB_KEYS.users)||[];
   let u = allUsers.find(u=>u.id===userIdOrName) || allUsers.find(u=>u.name===userIdOrName);
   // fallback to static list
@@ -3884,7 +3890,11 @@ function openEditUserModal(userIdOrName){
   // server-side (canEditUsers() in lib/opsSession.js, now tier==='super'
   // only) — this only keeps the UI from claiming an edit capability that
   // would just be rejected anyway.
-  const isSuperAdminViewer = _adminLevel==='super' || _adminLevel==='owner';
+  // "View" (2026-09-10) is always fully read-only regardless of viewer tier;
+  // "Edit" is still gated to a super-tier viewer exactly as before — a
+  // non-super viewer's row only ever renders the View button in the first
+  // place, so forceView is really only ever false for a super-tier viewer.
+  const isSuperAdminViewer = (_adminLevel==='super' || _adminLevel==='owner') && !forceView;
   document.getElementById('editUserTitle').textContent=(isSuperAdminViewer?'Edit — ':'View — ')+u.name;
   _applyUserModalViewOnlyMode(isSuperAdminViewer);
   document.getElementById('editName').value=u.name||'';
@@ -4243,9 +4253,10 @@ function renderUserTable(){
       </td>
       <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">${isSuperAdminViewer?'Edit':'View'}</button>
+        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}',true)">View</button>
+        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>`:''}
         ${managerRoleBtn}
-        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
+        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>`:''}
       </div></td>
     </tr>`;
@@ -14076,8 +14087,9 @@ window._renderAdminTableImpl = function(){
       <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
       <td style="padding:14px 18px;">
         <div class="td-actions">
+          <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}',true)">View</button>
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
-          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
+          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
           <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
         </div>
       </td>`;
@@ -14222,8 +14234,25 @@ window._removeAdminImpl = function(btn, adminId){
   logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
 
+// ── View-only mode (2026-09-10 pattern, applied here for admins too) ──
+// Mirrors _applyUserModalViewOnlyMode(): blanket-disable every input/select
+// in the body and hide every body button + the footer Save button, rather
+// than enumerating fields one at a time — safer against a future field added
+// to this modal without remembering to also gate it here.
+function _applyAdminModalViewOnlyMode(canEdit){
+  const modal = document.getElementById('editAdminModal');
+  if(!modal) return;
+  modal.querySelectorAll('.modal-body input, .modal-body select, .modal-body textarea').forEach(el=>{ el.disabled = !canEdit; });
+  modal.querySelectorAll('.modal-body button').forEach(btn=>{ btn.style.display = canEdit ? '' : 'none'; });
+  const saveBtn = modal.querySelector('.modal-footer .btn-primary');
+  if(saveBtn) saveBtn.style.display = canEdit ? '' : 'none';
+  const titleEl = document.getElementById('editAdminModalTitle');
+  if(titleEl) titleEl.textContent = canEdit ? 'Edit Admin Account' : 'View Admin Account';
+}
+
 // ── Open Edit Admin Modal ──
-function openEditAdminModal(adminId){
+function openEditAdminModal(adminId, forceView){
+  const canEdit = !forceView;
   // Special case: primary hardcoded admin
   if(adminId === '__primary__'){
     document.getElementById('editAdminId').value    = '__primary__';
@@ -14234,9 +14263,7 @@ function openEditAdminModal(adminId){
     document.getElementById('editAdminLevel').value = 'super';
     document.getElementById('editAdminPass').value  = '';
     document.getElementById('editAdminPass2').value = '';
-    document.getElementById('editAdminSubtitle').textContent = 'Primary admin — email & level are protected';
-    document.getElementById('editAdminEmail').disabled = true;
-    document.getElementById('editAdminLevel').disabled = true;
+    document.getElementById('editAdminSubtitle').textContent = canEdit ? 'Primary admin — email & level are protected' : 'Primary admin — read-only view';
     _updateEditLevelBadge();
     // The primary admin has no real ops_admins row — managedUserIds has
     // nowhere to be stored for her (see saveEditAdmin()'s early return
@@ -14247,6 +14274,12 @@ function openEditAdminModal(adminId){
     // on for the primary-admin sentinel.
     const primaryManagerWrap = document.getElementById('editAdminManagerWrap');
     if(primaryManagerWrap) primaryManagerWrap.style.display = 'none';
+    // Apply the blanket view/edit toggle FIRST, then re-assert the
+    // email/level protection on top — the primary admin's email & level
+    // stay disabled even in "Edit" mode, unlike every other admin's.
+    _applyAdminModalViewOnlyMode(canEdit);
+    document.getElementById('editAdminEmail').disabled = true;
+    document.getElementById('editAdminLevel').disabled = true;
     openModal('editAdminModal');
     return;
   }
@@ -14272,12 +14305,17 @@ function openEditAdminModal(adminId){
   document.getElementById('editAdminLevel').value = a.level||'admin';
   document.getElementById('editAdminPass').value  = '';
   document.getElementById('editAdminPass2').value = '';
-  document.getElementById('editAdminSubtitle').textContent = 'Update details and access level for '+a.name;
+  document.getElementById('editAdminSubtitle').textContent = canEdit ? ('Update details and access level for '+a.name) : ('Viewing details for '+a.name+' — read-only');
   document.getElementById('editAdminEmail').disabled = false;
   document.getElementById('editAdminLevel').disabled = false;
   _updateEditLevelBadge();
   // Populate assigned users panel with existing chips
   _toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips', a.assignedUsers||[]);
+  // Applied LAST, after every dynamic sub-panel above (managed-users grid,
+  // assigned-users select/chips) has finished (re)building its own input
+  // elements — those are freshly created each call and wouldn't otherwise
+  // inherit the disabled state from an earlier pass over the static markup.
+  _applyAdminModalViewOnlyMode(canEdit);
   openModal('editAdminModal');
 }
 
