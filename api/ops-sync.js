@@ -305,6 +305,14 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // existing "not your task" ownership check just above this list's use
 // site is still the actual gate — this only widens which FIELDS are
 // touchable on a task already theirs, never whose tasks they can touch.
+// "Report task" required reason (2026-09-11) — the employee-facing report
+// button (user.html) now requires picking exactly one of these two before
+// it can submit; validated here too (never trust the client-side guard
+// alone, rule #7) — a genuine transition into reportedMisassigned with
+// anything else (missing, free text, a stale/mismatched value) is
+// rejected outright rather than silently accepted with a blank reason.
+const REPORT_REASONS = ['Duplicated', 'Not my task'];
+
 const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
@@ -1057,7 +1065,14 @@ async function fireTaskReportedNotifications(supabase, events, warnings) {
         recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
         recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
         title: `Task reported: ${ev.subject}`,
-        body: `${ev.reportedByName || 'Someone'} flagged "${ev.subject}" as possibly not theirs.`,
+        // Reason (2026-09-11) — the employee's own required pick
+        // ("Duplicated"/"Not my task"), appended when present. Not itself
+        // part of this feature's acceptance criteria (only the Reported
+        // tab's own Reason column and the dismiss-notification text were
+        // asked for), but the identical data was already flowing through
+        // this same event object, so surfacing it here too costs nothing
+        // and gives the admin the reason before they even open the task.
+        body: `${ev.reportedByName || 'Someone'} flagged "${ev.subject}" as possibly not theirs${ev.reason ? ` (${ev.reason})` : ''}.`,
         link: '',
         context: { taskId: ev.taskId, clientId: ev.clientId || null },
       });
@@ -1066,16 +1081,19 @@ async function fireTaskReportedNotifications(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
-// Reported/dismiss (2026-09-04) — "optionally notify the reporter it was
-// kept," per this feature's own spec: fired only for a genuine DISMISS
-// (the isAdmin update branch below only ever pushes an event here when
-// assigneeId did NOT also change in the same write — a reassignment
-// already gets its own real notification via
-// fireOpsTaskAssignmentNotifications, so this never double-notifies for
-// that case). Recipient is the ORIGINAL REPORTER only — never the admin
-// who dismissed it, who obviously already knows. Same
-// user-or-admin-lookup shape fireDueDateChangeResolvedNotification()
+// Reported/dismiss (2026-09-04, given a required admin's-reason
+// 2026-09-11) — "optionally notify the reporter it was kept," per this
+// feature's own spec: fired only for a genuine DISMISS (the isAdmin
+// update branch below only ever pushes an event here when assigneeId did
+// NOT also change in the same write — a reassignment already gets its own
+// real notification via fireOpsTaskAssignmentNotifications, so this never
+// double-notifies for that case). Recipient is the ORIGINAL REPORTER
+// only — never the admin who dismissed it, who obviously already knows.
+// Same user-or-admin-lookup shape fireDueDateChangeResolvedNotification()
 // below already uses, since reportedMisassignedBy can be either kind.
+// dismissReason (2026-09-11) is optional — the admin may leave it blank —
+// so the body always states the revoke plainly and only appends a
+// "Reason:" clause when one was actually given.
 async function fireTaskReportDismissedNotification(supabase, events, warnings) {
   if (!events.length) return;
   const { users, admins } = await getDirectory(supabase);
@@ -1085,11 +1103,13 @@ async function fireTaskReportDismissedNotification(supabase, events, warnings) {
     const kind = users.find(u => u.id === ev.reportedBy) ? 'user' : 'admin';
     const person = personOf(ev.reportedBy, kind, { users, admins });
     if (!person) return;
+    const who = ev.dismissedByName || 'An admin';
+    const reasonClause = ev.dismissReason ? ` Reason: ${ev.dismissReason}` : '';
     rows.push({
       type: 'taskReportDismissed', recipientId: ev.reportedBy, recipientKind: kind,
       recipientName: person.name || '', recipientEmail: person.email || '',
-      title: `Report reviewed: ${ev.subject}`,
-      body: `Your report on "${ev.subject}" was reviewed — the task was kept as-is.`,
+      title: `Report revoked: ${ev.subject}`,
+      body: `${who} revoked your report on "${ev.subject}".${reasonClause}`,
       link: '',
       context: { taskId: ev.taskId, clientId: ev.clientId || null },
     });
@@ -2242,12 +2262,22 @@ export default async function handler(req, res) {
           // original reporter.
           if (cur.reportedMisassigned && row.reportedMisassigned === false) {
             if (row.assigneeId === cur.assigneeId) {
+              // dismissReason (2026-09-11) — an OPTIONAL note the admin can
+              // attach to a plain "Keep assigned" dismissal, from a new
+              // transient `inc.dismissReason` the client sends ONLY for
+              // this one write. Never persisted on the task itself — read
+              // once here for the reporter's own "your report was revoked"
+              // notification, then stripped from `row` below (delete, not
+              // just left null) so it can never linger in ops_tasks.data.
+              const dismissReason = String(inc.dismissReason || '').trim().slice(0, 500);
               reportDismissedEvents.push({
                 taskId: inc.id, subject: row.subject,
                 reportedBy: cur.reportedMisassignedBy, clientId: row.clientId || null,
+                dismissedByName: session.name, dismissReason,
               });
             }
-            row = { ...row, reportedMisassignedAt: null, reportedMisassignedByName: null, reportedMisassignedBy: null };
+            row = { ...row, reportedMisassignedAt: null, reportedMisassignedByName: null, reportedMisassignedBy: null, reportedMisassignedReason: null };
+            delete row.dismissReason;
           }
           // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
           // own comment. Applied last, after every other admin-side field
@@ -2285,6 +2315,17 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'members cannot edit tasks.dueDate' });
             continue;
           }
+          // Required reason (2026-09-11) — a genuine transition into
+          // reportedMisassigned must always carry one of the two allowed
+          // values; user.html's own reason modal already blocks submission
+          // without one, this is the real server-side guard behind it (see
+          // REPORT_REASONS' own comment). A resave that leaves
+          // reportedMisassigned already true (or doesn't touch it at all)
+          // is unaffected — this only gates the actual transition.
+          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && !REPORT_REASONS.includes(inc.reportedMisassignedReason)) {
+            rejected.push({ table: 'tasks', id: inc.id, reason: 'a task report requires a valid reportedMisassignedReason' });
+            continue;
+          }
           // "Report task" (2026-09-01) — who reported it is always taken
           // from the caller's own session, never trusted from the client,
           // matching reviewedBy/reviewedByName's convention elsewhere in
@@ -2308,6 +2349,12 @@ export default async function handler(req, res) {
             reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
             reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
             reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+            // reportedMisassignedReason (2026-09-11) — same "never let an
+            // absent field blank a real value" fallback as the three
+            // fields right above; the required-reason guard above already
+            // ensures this is one of REPORT_REASONS whenever it's actually
+            // the transition into a report.
+            reportedMisassignedReason: inc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
             // Due-date-change request (Item C, 2026-09-03) — a member can
             // only ever CREATE one, never clear/edit it (there's no self-
             // cancel here, out of this feature's stated scope); an
@@ -2322,6 +2369,7 @@ export default async function handler(req, res) {
             reportEvents.push({
               taskId: inc.id, subject: row.subject, assignedById: cur.assignedById || null,
               clientId: row.clientId || null, reportedByName: session.name,
+              reason: row.reportedMisassignedReason || '',
             });
           }
           // Only fires on the actual transition into a pending request

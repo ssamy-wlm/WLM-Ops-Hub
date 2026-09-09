@@ -9860,6 +9860,7 @@ function _taReportedItems(){
     taskId:t.id, kind:'reported', assigneeId:t.assigneeId||null,
     submitterName:t.reportedMisassignedByName||'—',
     itemLabel:t.subject||'(untitled task)',
+    reason:t.reportedMisassignedReason||'',
     clientName:t.clientName||'—',
     date:t.reportedMisassignedAt||'',
   }));
@@ -9867,6 +9868,7 @@ function _taReportedItems(){
     taskId:t.id, kind:'dueDateChange',
     submitterName:t.dueDateChangeRequest.requestedByName||'—',
     itemLabel:t.subject||'(untitled task)',
+    reason:'',
     clientName:t.clientName||'—',
     date:t.dueDateChangeRequest.requestedAt||'',
   }));
@@ -9918,6 +9920,7 @@ function renderTaReported(){
         <thead><tr>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Submitter</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Task</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reason</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reported</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Actions</th>
@@ -9926,6 +9929,7 @@ function renderTaReported(){
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
             <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
             <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
+            <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.reason||'—')}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
             <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
             <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">${it.kind==='reported' ? `
@@ -11025,7 +11029,7 @@ function _taReportedBlockHtml(t){
   const candidates = _taAllAssignablePeople().filter(p=>p.id!==t.assigneeId);
   return `<div style="margin-top:12px;padding:10px 12px;background:rgba(201,74,74,.08);border:1px solid rgba(201,74,74,.3);border-radius:8px;">
     <div style="font-size:12px;font-weight:700;color:var(--red,#c94a4a);margin-bottom:4px;">🚩 Reported as possibly not theirs</div>
-    <div style="font-size:13px;">${escHtmlAdmin(t.reportedMisassignedByName||'Someone')} flagged this task${t.reportedMisassignedAt?` on ${new Date(t.reportedMisassignedAt).toLocaleString()}`:''}.</div>
+    <div style="font-size:13px;">${escHtmlAdmin(t.reportedMisassignedByName||'Someone')} flagged this task${t.reportedMisassignedAt?` on ${new Date(t.reportedMisassignedAt).toLocaleString()}`:''}${t.reportedMisassignedReason?` — reason: <strong>${escHtmlAdmin(t.reportedMisassignedReason)}</strong>`:''}.</div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-sm btn-primary" onclick="_taDismissReport('${t.id}')">✓ Dismiss report / Keep assigned</button>
       <select id="ta-report-reassign-${t.id}" class="input" style="font-size:12px;padding:4px 8px;width:auto;">
@@ -11037,14 +11041,35 @@ function _taReportedBlockHtml(t){
   </div>`;
 }
 // "Dismiss report / Keep assigned" — clears the flag only, assignee and
-// everything else on the task is untouched.
+// everything else on the task is untouched. One real implementation, two
+// entry points (the Reported-tab row's own inline button and the detail-
+// panel callout above), so both get the exact same optional-reason
+// behavior below rather than two copies that could drift.
+//
+// Optional dismiss reason (2026-09-11) — prompt(), same "standing in for
+// a real form field since there's no second input available inline"
+// convention already used for the Blocked-status reason elsewhere in this
+// file, except this field is OPTIONAL: leaving it blank (OK with nothing
+// typed) still dismisses with no reason; Cancel aborts the dismiss
+// entirely rather than proceeding silently, matching the Blocked-reason
+// prompt's own cancel behavior. The typed text is sent to
+// api/ops-sync.js as a one-time, transient `dismissReason` field — it's
+// never stored on the task itself (the server reads it once, to build the
+// reporter's "your report was revoked" notification, then strips it
+// before saving — see the comment there); deleted from this local copy
+// too right after the push is fired, so it never lingers in this browser's
+// cache either.
 function _taDismissReport(id){
   const tasks = _taTasks();
   const t = tasks.find(x=>x.id===id);
   if(!t || !t.reportedMisassigned) return;
+  const reason = prompt(`Optional: reason for revoking this report on "${t.subject||'(untitled task)'}" (shown to ${t.reportedMisassignedByName||'the reporter'} — leave blank to skip)`);
+  if(reason===null) return; // Cancelled — abort the dismiss entirely.
   t.reportedMisassigned = false;
+  t.dismissReason = reason.trim().slice(0,500);
   _taSaveTasks(tasks);
   cloudAutoSync();
+  delete t.dismissReason;
   if(_taDetailTaskId===id) openTaDetailPanel(id);
   renderTaskAssignments();
   _taRefreshReportedIfActive();
