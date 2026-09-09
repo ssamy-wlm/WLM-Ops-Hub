@@ -1663,7 +1663,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <option value="assignedDate">Assigned date</option>
               <option value="dueDate">Due date</option>
               <option value="assignee">Assignee</option>
-              <option value="assignedBy">Assigned by</option>
+              <option value="progress">Progress</option>
             </select>
             <button class="btn btn-xs btn-outline" id="taSortAscBtn" onclick="_taSetSortDir('asc')" title="Ascending">↑</button>
             <button class="btn btn-xs btn-outline btn-toggle-active" id="taSortDescBtn" onclick="_taSetSortDir('desc')" title="Descending">↓</button>
@@ -1785,7 +1785,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <option value="assignedDate">Assigned date</option>
                 <option value="dueDate">Due date</option>
                 <option value="assignee">Assignee</option>
-                <option value="assignedBy">Assigned by</option>
+                <option value="progress">Progress</option>
               </select>
               <button class="btn btn-xs btn-outline" id="taPersonSortAscBtn" onclick="_taSetSortDir('asc')" title="Ascending">↑</button>
               <button class="btn btn-xs btn-outline" id="taPersonSortDescBtn" onclick="_taSetSortDir('desc')" title="Descending">↓</button>
@@ -10281,7 +10281,11 @@ function _taSortComparator(field, dir){
     };
   }
   if(field==='assignee') return (a,b)=>cmp((_taPersonName(a.assigneeId)||'').toLowerCase(), (_taPersonName(b.assigneeId)||'').toLowerCase())*mul;
-  if(field==='assignedBy') return (a,b)=>cmp((_taAssignedByDisplay(a)||'').toLowerCase(), (_taAssignedByDisplay(b)||'').toLowerCase())*mul;
+  if(field==='progress'){
+    const rank = {'Not started':0,'Blocked':1,'In progress':2,'Done':3};
+    const r = s => (rank[s] ?? 99);   // unknown/missing status sorts last (ascending)
+    return (a,b)=>cmp(r(a.status), r(b.status))*mul;
+  }
   return (a,b)=>cmp(a.assignedDate||'', b.assignedDate||'')*mul; // 'assignedDate', the default
 }
 function _taSortByField(tasks, field, dir){
