@@ -254,6 +254,9 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .tracker-embed-wrap{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);height:calc(100vh - 170px);min-height:520px;}
 .tracker-embed-frame{display:block;width:100%;height:100%;border:none;}
 .roadmap-section{background:var(--cream);border:1px solid var(--cream-dark);border-radius:14px;padding:20px;}
+/* My Roadmap panel (2026-09-11) — softer yellow than the shared .roadmap-section
+   default above, scoped by id (own copy, zero-shared-code rule with index.html). */
+#roadmap-section{background:#FDF3D3;}
 .roadmap-title{font-family:'Poppins',sans-serif;font-size:15px;color:var(--text-dark);margin-bottom:4px;}
 .roadmap-subtitle{font-size:11px;color:var(--text-light);margin-bottom:14px;}
 .roadmap-phase{margin-bottom:14px;}
@@ -3858,10 +3861,17 @@ function _myRoadmapCalendarHtml(items){
     const isToday = dateStr===todayStr;
     const dow = new Date(y,m,d).getDay();
     const isWeekend = dow===0 || dow===6;
-    const cellBg = isToday ? 'background:rgba(45,107,182,.06);' : (isWeekend ? 'background:var(--bg2);' : '');
-    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid var(--cream-dark);border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
-      <div style="font-size:11px;color:var(--text-light);margin-bottom:2px;">${d}${isToday?' · Today':''}</div>
-      ${dayItems.map(i=>`<div style="font-size:10px;padding:2px 4px;margin-bottom:2px;border-radius:3px;background:${dateStr<todayStr?'rgba(201,74,74,.12)':'rgba(45,107,182,.08)'};color:${dateStr<todayStr?'var(--red,#c94a4a)':'var(--text-dark)'};white-space:normal;overflow-wrap:anywhere;">${escHtmlUser(i.name)}</div>`).join('')}
+    // Cell/chip tokens (Option A, 2026-09-11) — pure restyle, own copy of
+    // index.html's identical change (zero-shared-code rule); the isToday/
+    // isWeekend/overdue classification above is untouched. Weekend cells
+    // deliberately keep their pre-existing var(--cream-dark) border and
+    // var(--bg2) background, per instruction to leave them as-is.
+    const cellBg     = isToday ? 'background:#FFFBE9;' : (isWeekend ? 'background:var(--bg2);' : 'background:#FFFEF8;');
+    const cellBorder = isToday ? '#F0D98A' : (isWeekend ? 'var(--cream-dark)' : '#EFE3BA');
+    const dateColor  = isToday ? 'color:#C98A12;font-weight:700;' : 'color:var(--text-light);';
+    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid ${cellBorder};border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+      <div style="font-size:11px;margin-bottom:2px;${dateColor}">${d}${isToday?' · Today':''}</div>
+      ${dayItems.map(i=>`<div style="background:#FFFFFF;border-radius:4px;font-size:11px;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:4px 6px;margin-bottom:2px;border-left:3px solid ${dateStr<todayStr?'#E5484D':'#3667B0'};color:${dateStr<todayStr?'#B23036':'#22344A'};white-space:normal;overflow-wrap:anywhere;">${escHtmlUser(i.name)}</div>`).join('')}
     </div>`;
   }
   return `
