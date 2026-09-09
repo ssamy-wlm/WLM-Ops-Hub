@@ -1074,25 +1074,38 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
              Purely a markup/CSS restructure — every element keeps its
              original id, so no JS behavior changed. -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;">
-          <div style="display:flex;gap:6px;align-items:center;">
-            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;">My assigned tasks</button>
-            <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;">Add / import tasks</button>
-            <!-- "+ New Task" (2026-09-09) — mirrors index.html's own "+ New
-                 Task" button placement (same row as the sub-tabs). Unlike
-                 the admin version, this opens a deliberately minimal modal
-                 with no assignee or due-date field at all: the task always
-                 self-assigns (assignedById===assigneeId) and the due date
-                 is always forced to today, weekend-clamped, by the
-                 existing self-assign write path in api/ops-sync.js's
-                 member insert branch — nothing new needed there. A member
-                 still can't freely push their own due date afterward; the
-                 existing "Request due-date change" flow is the only path
-                 for that, unchanged. -->
-            <button class="btn btn-sm btn-primary" style="margin-left:4px;" onclick="openNewDtTaskModal()">+ New Task</button>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;white-space:nowrap;">My assigned tasks</button>
+            <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;white-space:nowrap;">Add / import tasks</button>
           </div>
-          <div style="display:flex;gap:6px;padding-bottom:6px;">
+          <div style="display:flex;gap:6px;padding-bottom:6px;align-items:center;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
             <button class="btn btn-sm btn-outline" id="dtViewCalBtn" onclick="setDtView('calendar')">📅 Calendar</button>
+            <!-- "+ New Task" (2026-09-09) — moved to the right side next to
+                 List/Calendar (2026-09-10 layout fix): sharing the left
+                 group with the two sub-tab buttons crowded that group at
+                 realistic widths, wrapping tab labels mid-text. Root cause,
+                 found while fixing this: .btn-primary sets width:100% +
+                 margin-top:8px (its default "full-width primary action"
+                 styling) — this button was rendering full-width inside the
+                 flex row the whole time, squeezing the sub-tab group into a
+                 sliver of remaining space, the same "full-width gold bar"
+                 bug index.html's own "+ New Task" button already documents
+                 fixing this exact way. width:auto + flex-shrink:0 + margin:0
+                 neutralize both; white-space:nowrap keeps its own label on
+                 one line; if the row is still too tight for everything, the
+                 whole button drops to the next line via this container's
+                 flex-wrap, never the label wrapping inside it. Unlike the
+                 admin version, this opens a deliberately minimal modal with
+                 no assignee or due-date field at all: the task always
+                 self-assigns (assignedById===assigneeId) and the due date
+                 is always forced to today, weekend-clamped, by the existing
+                 self-assign write path in api/ops-sync.js's member insert
+                 branch — nothing new needed there. A member still can't
+                 freely push their own due date afterward; the existing
+                 "Request due-date change" flow is the only path for that,
+                 unchanged. -->
+            <button class="btn btn-sm btn-primary" style="width:auto;flex-shrink:0;margin:0;white-space:nowrap;" onclick="openNewDtTaskModal()">+ New Task</button>
           </div>
         </div>
 

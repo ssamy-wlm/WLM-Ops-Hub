@@ -8407,6 +8407,56 @@ itself. Before/after screenshots sent to the user directly.
 Low-risk per rule #10: pure CSS/display change, no data-write/sync/auth/
 permission logic touched — eligible for direct merge once CI is green.
 
+**Fix employee My Tasks tab-row layout — wrapping tabs (2026-09-10).**
+`user.html` only, display-only. The "My assigned tasks"/"Add / import
+tasks" sub-tab labels were wrapping mid-text, with "+ New Task" crowding
+them. Root cause found while fixing, not just the two things named in the
+report: `.btn-primary` sets `width:100%;margin-top:8px` (this codebase's
+own "full-width primary action" default, already documented and fixed
+once for `index.html`'s own "+ New Task" button) — the employee-side
+"+ New Task" button (added 2026-09-09) used `btn btn-sm btn-primary` with
+no width override at all, so it was rendering full-width inside the flex
+row the whole time, squeezing the two sub-tab buttons into a sliver of
+remaining space and forcing their labels to wrap.
+
+Fixed by moving "+ New Task" out of the crowded left-side group entirely,
+next to the List/Calendar view toggle on the right side of the same row
+(mirroring the intent of `index.html`'s own separated placement, though
+that file's own row has a different structure — no combined view toggle
+— so this is the same spirit, not a literal copy), and neutralizing the
+`.btn-primary` width bug with an explicit `width:auto;flex-shrink:0;
+margin:0`, the identical fix pattern `index.html`'s own comment already
+documents for this exact class. `white-space:nowrap` added to both
+sub-tab buttons and "+ New Task" itself so a label can never wrap inside
+its own button regardless of available width; `flex-wrap:wrap` added to
+both inner button groups (left: the 2 tabs; right: List/Calendar/+New
+Task) so if a group genuinely doesn't fit, a whole button drops to the
+next line rather than any label wrapping mid-text.
+
+Verified: `new Function()` syntax-check clean; comment-stripped
+div-balance unchanged vs. `main` (delta −1, same as before — no divs
+added, this is a pure attribute/class/placement edit). A new Playwright
+suite against the real UI (16/16, run at both 1400px and 900px
+viewports): both sub-tab labels render as exactly ONE text line (checked
+via `Range.getClientRects()` on the actual text node — a genuine wrap
+produces 2+ rects, never guessed from a height threshold, which a first
+draft of this test got wrong and had to fix before trusting the result);
+`white-space:nowrap` confirmed present on all three buttons; "+ New Task"
+confirmed NOT full-width (its real rendered width is well under half the
+row's width, at both viewports) and sits on the same visual row as List/
+Calendar; the "Add / import tasks" tab and "+ New Task" no longer overlap
+at either width. Before/after screenshots sent to the user directly, at
+both viewport widths, per this task's own explicit instruction that a
+layout bug can pass logic tests while still looking broken. Two
+pre-existing suites that also touch this row
+(`verify_dt_new_task_button.mjs`, the "+ New Task" feature's own 26/26
+suite from 2026-09-09; `verify_self_assigned_at_ui.mjs`, 9/9) were
+re-run to confirm the move/restyle didn't disturb the underlying feature.
+
+Low-risk per rule #10: `user.html` only, pure CSS/markup restructure, no
+data-write/sync/auth/permission logic touched — eligible for direct
+merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
