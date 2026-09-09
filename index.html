@@ -2850,6 +2850,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="form-group"><label class="form-label">Email Address</label><input class="form-input" type="email" placeholder="name@weblightmedia.com" id="newAdminEmail"></div>
       <div class="form-group"><label class="form-label">Job Title / Role</label><input class="form-input" placeholder="e.g. Director of Operations" id="newAdminTitle"></div>
+      <div class="form-group">
+        <label class="form-label">Team</label>
+        <select class="form-select" id="newAdminTeam">
+          <option value="US">US</option>
+          <option value="Egypt" selected>Egyptian</option>
+        </select>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Password</label>
@@ -3139,6 +3146,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="form-group"><label class="form-label">Email Address</label><input class="form-input" type="email" id="editAdminEmail" placeholder="name@weblightmedia.com"></div>
       <div class="form-group"><label class="form-label">Job Title / Role</label><input class="form-input" id="editAdminTitle" placeholder="e.g. Director of Operations"></div>
       <div class="form-group">
+        <label class="form-label">Team</label>
+        <select class="form-select" id="editAdminTeam">
+          <option value="US">US</option>
+          <option value="Egypt">Egyptian</option>
+        </select>
+      </div>
+      <div class="form-group">
         <label class="form-label">Admin Access Level</label>
         <select class="form-select" id="editAdminLevel" onchange="_updateEditLevelBadge();_toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips')">
           <option value="account_manager">Account Manager</option>
@@ -3251,6 +3265,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </select>
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Team</label>
+          <select class="form-select" id="newUserTeam">
+            <option value="US">US</option>
+            <option value="Egypt" selected>Egyptian</option>
+          </select>
+        </div>
+      </div>
       <div class="section-divider">Organisation & Pay</div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Reports To (Manager / Director)</label>
@@ -3320,6 +3342,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="form-group"><label class="form-label">Job Title</label><input class="form-input" id="editJobTitle" placeholder="e.g. Web Designer"></div>
           <div class="form-group"><label class="form-label">Account Type</label>
             <select class="form-select" id="editRole"><option>Contractor</option><option>Employee</option><option>Manager</option><option>Admin</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Team</label>
+            <select class="form-select" id="editUserTeam">
+              <option value="US">US</option>
+              <option value="Egypt">Egyptian</option>
+            </select>
           </div>
         </div>
         <div class="form-group"><label class="form-label">Responsibilities</label><textarea class="form-textarea" id="editResp" rows="3" placeholder="Core responsibilities for this user…"></textarea></div>
@@ -3902,6 +3932,9 @@ function openEditUserModal(userIdOrName, forceView){
   document.getElementById('editJobTitle').value=u.title||'';
   document.getElementById('editResp').value=u.resp||'';
   document.getElementById('editRole').value=u.role||'Contractor';
+  // Missing/blank team reads as Egypt (existing records are never backfilled —
+  // see CLAUDE.md rule #8/non-retroactivity; this is a read-time default only).
+  document.getElementById('editUserTeam').value=u.team||'Egypt';
   document.getElementById('editPass').value='';
   document.getElementById('editPass2').value='';
   // Personal info fields
@@ -3968,6 +4001,7 @@ async function saveEditUser(){
   const title = document.getElementById('editJobTitle').value.trim();
   const resp  = document.getElementById('editResp').value.trim();
   const role  = document.getElementById('editRole').value;
+  const team  = document.getElementById('editUserTeam').value;
   const pass  = document.getElementById('editPass').value;
   const pass2 = document.getElementById('editPass2').value;
   if(!name||!email){showToast('Name and Email are required');return;}
@@ -4011,7 +4045,7 @@ async function saveEditUser(){
   };
 
   const updated = {
-    ...current, name, email, title, resp, role,
+    ...current, name, email, title, resp, role, team,
     phone:            fromField('editPhone', current.phone),
     payRate:          fromNumberField('editPayRate', current.payRate),
     personalEmail:    fromField('editPersonalEmail', current.personalEmail),
@@ -4099,6 +4133,7 @@ async function addUser(){
   const title=document.getElementById('newUserTitle').value.trim();
   const resp=document.getElementById('newUserResp').value.trim();
   const role=document.getElementById('newUserRole').value;
+  const team=document.getElementById('newUserTeam')?.value||'Egypt';
   const hours=document.getElementById('newUserHours').value;
   const payRate=parseFloat(document.getElementById('newUserPayRate')?.value)||0;
   const managerId=document.getElementById('newUserManager')?.value||'';
@@ -4137,6 +4172,7 @@ async function addUser(){
     title,
     resp,
     role,
+    team,
     hours,
     payRate,
     managerId,
@@ -14162,6 +14198,7 @@ window._addAdminImpl = function(){
   const pass  = document.getElementById('newAdminPass').value;
   const pass2 = document.getElementById('newAdminPass2').value;
   const level = document.getElementById('newAdminLevel').value;
+  const team  = document.getElementById('newAdminTeam')?.value||'Egypt';
 
   if(!first||!last){ showToast('Please enter first and last name'); return; }
   if(!email){        showToast('Please enter an email address');      return; }
@@ -14183,6 +14220,7 @@ window._addAdminImpl = function(){
     // left standing indefinitely.
     mustChangePassword: true,
     level,
+    team,
     assignedUsers: RESTRICTED_ADMIN_ROLES.includes(level)
       ? _getAssignedFromChips('newAdminChips')
       : [],
@@ -14260,6 +14298,7 @@ function openEditAdminModal(adminId, forceView){
     document.getElementById('editAdminLast').value  = 'Samy';
     document.getElementById('editAdminEmail').value = 'ssamy@weblightmedia.com';
     document.getElementById('editAdminTitle').value = 'Director of Systems & Operations';
+    document.getElementById('editAdminTeam').value  = 'Egypt';
     document.getElementById('editAdminLevel').value = 'super';
     document.getElementById('editAdminPass').value  = '';
     document.getElementById('editAdminPass2').value = '';
@@ -14302,6 +14341,9 @@ function openEditAdminModal(adminId, forceView){
   document.getElementById('editAdminLast').value  = nameParts.slice(1).join(' ')||'';
   document.getElementById('editAdminEmail').value = a.email;
   document.getElementById('editAdminTitle').value = a.title||'';
+  // Missing/blank team reads as Egypt (existing records are never backfilled —
+  // see CLAUDE.md rule #8/non-retroactivity; this is a read-time default only).
+  document.getElementById('editAdminTeam').value  = a.team||'Egypt';
   document.getElementById('editAdminLevel').value = a.level||'admin';
   document.getElementById('editAdminPass').value  = '';
   document.getElementById('editAdminPass2').value = '';
@@ -14338,6 +14380,7 @@ function saveEditAdmin(){
   const email   = document.getElementById('editAdminEmail').value.trim().toLowerCase();
   const title   = document.getElementById('editAdminTitle').value.trim();
   const level   = document.getElementById('editAdminLevel').value;
+  const team    = document.getElementById('editAdminTeam').value;
   const pass    = document.getElementById('editAdminPass').value;
   const pass2   = document.getElementById('editAdminPass2').value;
 
@@ -14368,6 +14411,7 @@ function saveEditAdmin(){
   admins[idx].initials      = initials;
   admins[idx].email         = email;
   admins[idx].title         = title;
+  admins[idx].team          = team;
   admins[idx].level         = level;
   // Reports-to manager (2026-09-03) — same field/id-space the escalation
   // logic (resolveNotifyRecipients() in api/ops-sync.js) already reads for
