@@ -13263,6 +13263,13 @@ function _isOnProbation(u){
 // — there is intentionally no edit or delete path for ledger entries anywhere.
 // ═══════════════════════════════════════════════════════════
 const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
+// US-team leave allowance (2026-09-09) — additive only, Egyptian numbers
+// above are unchanged. A missing/blank team reads as Egyptian, matching
+// every other team-aware read site added in the team-field PR (#345).
+const TIME_OFF_ENTITLEMENT_US = { sick: 5, vacation: 9 };
+function _timeOffEntitlementFor(person){
+  return (person && person.team==='US') ? TIME_OFF_ENTITLEMENT_US : TIME_OFF_ENTITLEMENT;
+}
 
 // Every admin AND every regular user automatically gets entitlement tracking —
 // no per-person setup. Accounts with no probationEnd set (e.g. admin-only
@@ -13371,8 +13378,9 @@ function getTimeOffBalance(employeeId, year){
   const sum = type => ledger.filter(e=>e.type===type).reduce((s,e)=>s+(Number(e.days)||0),0);
   const usedSickRaw     = sum('sick');
   const usedVacationRaw = sum('vacation');
-  const entSick     = onProbation ? 0 : TIME_OFF_ENTITLEMENT.sick;
-  const entVacation = onProbation ? 0 : TIME_OFF_ENTITLEMENT.vacation;
+  const entitlement = _timeOffEntitlementFor(person);
+  const entSick     = onProbation ? 0 : entitlement.sick;
+  const entVacation = onProbation ? 0 : entitlement.vacation;
   const { usedSick, usedVacation } = _applySickSpill(usedSickRaw, usedVacationRaw, entSick, entVacation);
   return {
     onProbation,

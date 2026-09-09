@@ -5355,6 +5355,13 @@ setInterval(()=>{
 // or deletes anything — balance is always derived live from the permanent ledger.
 // ═══════════════════════════════════════════════════════════
 const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
+// US-team leave allowance (2026-09-09) — additive only, Egyptian numbers
+// above are unchanged. A missing/blank team reads as Egyptian, matching
+// every other team-aware read site added in the team-field PR (#345).
+const TIME_OFF_ENTITLEMENT_US = { sick: 5, vacation: 9 };
+function _timeOffEntitlementFor(person){
+  return (person && person.team==='US') ? TIME_OFF_ENTITLEMENT_US : TIME_OFF_ENTITLEMENT;
+}
 
 function _isOnProbation(u){
   if(!u || !u.probationEnd) return false;
@@ -5382,8 +5389,9 @@ function getMyTimeOffBalance(year){
   const thisYear = allMine.filter(e=>e.startDate && new Date(e.startDate).getFullYear()===year);
   const sum = type => thisYear.filter(e=>e.type===type).reduce((s,e)=>s+(Number(e.days)||0),0);
   const usedSickRaw = sum('sick'), usedVacationRaw = sum('vacation');
-  const entSick     = onProbation ? 0 : TIME_OFF_ENTITLEMENT.sick;
-  const entVacation = onProbation ? 0 : TIME_OFF_ENTITLEMENT.vacation;
+  const entitlement = _timeOffEntitlementFor(currentUser);
+  const entSick     = onProbation ? 0 : entitlement.sick;
+  const entVacation = onProbation ? 0 : entitlement.vacation;
   const { usedSick, usedVacation } = _applySickSpill(usedSickRaw, usedVacationRaw, entSick, entVacation);
   return {
     onProbation,
