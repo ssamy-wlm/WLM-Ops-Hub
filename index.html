@@ -85,6 +85,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .ta-cat-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
+/* Activate button (status toggle, 2026-09) — same soft-pill treatment as
+   .btn-danger's Deactivate, in green instead of red. */
+.btn-success{background:#e8f8f0;color:var(--green);border:1px solid rgba(34,160,107,.25);}
+.btn-success:hover{background:#d4f3e4;}
 .btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
 /* My Roadmap's All/Services/Tasks/List/Calendar toggle buttons
    (_myrmToggleBtn()) were shipped with class="btn-xs" — a class with no
@@ -4214,8 +4218,9 @@ function renderUserTable(){
   tbody.innerHTML = allUsers.map((u,i)=>{
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const color=colorPalette[i%colorPalette.length];
-    const statusClass = u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending');
-    const statusLabel = u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending');
+    const isInactive  = u.status==='inactive';
+    const statusClass = isInactive?'cred-notset':(u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending'));
+    const statusLabel = isInactive?'Inactive':(u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending'));
     const badgeClass  = u.role==='Employee'?'badge-working':'badge-blue';
     const probation   = _isOnProbation(u);
     const probEnd     = u.probationEnd ? new Date(u.probationEnd).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
@@ -4231,7 +4236,7 @@ function renderUserTable(){
       ? `<button class="btn btn-sm btn-outline" onclick="revokeManagerRole('${u.id}')">Revoke Manager Role</button>`
       : `<button class="btn btn-sm btn-outline" onclick="openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
     return `<tr>
-      <td><div style="display:flex;align-items:center;gap:10px;">
+      <td style="${isInactive?'opacity:.6;':''}"><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${escHtml(initials)}</div>
         <div><div>${escHtml(u.name)}</div><div class="td-sub">${escHtml(u.email)}</div></div>
       </div></td>
@@ -4246,7 +4251,11 @@ function renderUserTable(){
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">${isSuperAdminViewer?'Edit':'View'}</button>
         ${managerRoleBtn}
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
-        ${isSuperAdminViewer?`<button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>`:''}
+        ${isSuperAdminViewer
+          ? (isInactive
+              ? `<button class="btn btn-sm btn-success" onclick="activateUser(null,'${u.id}')">Activate</button>`
+              : `<button class="btn btn-sm btn-danger" onclick="deactivateUser(null,'${u.id}')">Deactivate</button>`)
+          : ''}
       </div></td>
     </tr>`;
   }).join('');
@@ -4459,6 +4468,47 @@ function addAdmin(){ if(window._addAdminImpl) window._addAdminImpl(); else alert
 function removeAdmin(btn, adminId){ if(window._removeAdminImpl) window._removeAdminImpl(btn, adminId); }
 function renderAdminTable(){ if(window._renderAdminTableImpl) window._renderAdminTableImpl(); }
 
+// ── Deactivate / Activate a user ── status-flip status toggle (2026-09),
+// same active/inactive pattern now used for admins above — never a hard
+// delete, never the ops_deleted_user_ids tombstone. Replaces the row's old
+// "Remove" button, which called removeUser() below.
+function deactivateUser(btn, userId){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const u = allUsers.find(x=>x.id===userId||x.name===userId);
+  if(!u) return;
+  if(!confirm(`Set ${u.name} to inactive?`)) return;
+  u.status = 'inactive';
+  dbSet(DB_KEYS.users, allUsers);
+  renderUserTable();
+  cloudAutoSync(true);
+  showToast(`${u.name} set to inactive`);
+  logActivity('admin','Admin','Deactivated user: '+u.name,'');
+}
+function activateUser(btn, userId){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const u = allUsers.find(x=>x.id===userId||x.name===userId);
+  if(!u) return;
+  if(!confirm(`Set ${u.name} to active?`)) return;
+  u.status = 'active';
+  dbSet(DB_KEYS.users, allUsers);
+  renderUserTable();
+  cloudAutoSync(true);
+  showToast(`${u.name} set to active`);
+  logActivity('admin','Admin','Reactivated user: '+u.name,'');
+}
+
+// ── DEAD CODE, kept but unreferenced (2026-09) ── this used to be the row's
+// "Remove" action: hard-removed the user from the live ops_users list and
+// wrote an ops_deleted_user_ids tombstone (see api/ops-sync.js
+// tombstones.users) so cloud pulls never restored them, plus a LOCAL-ONLY
+// (never synced — confirmed absent from api/ops-state.js/ops-sync.js)
+// archive copy under 'wl_archived_users'. No row in this file calls this
+// anymore — replaced by deactivateUser()/activateUser() above, which never
+// delete or tombstone anything, per explicit instruction. Left in place
+// rather than deleted since the Archive/Restore UI elsewhere in this file
+// (search 'wl_archived_users') still reads/writes the same local key this
+// function populated — removing this function outright without first
+// deciding what happens to that Archive feature is a separate cleanup.
 function removeUser(btn, userId){
   const allUsers = dbGet(DB_KEYS.users)||[];
   // Support both id-based and name-based removal
@@ -14048,17 +14098,21 @@ window._renderAdminTableImpl = function(){
   // Remove previously injected dynamic rows only
   tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
 
-  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status!=='inactive');
+  // Inactive admins stay listed (2026-09 status-toggle change) — they used
+  // to be filtered out here entirely with no way back; see the
+  // Deactivate/Activate handlers above.
+  const admins = dbGet(DB_KEYS.admins)||[];
   admins.forEach((a, i)=>{
     const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
     const info  = _getLevelInfo(a.level);
+    const isInactive = a.status==='inactive';
     // Auto-compute initials from name if not stored — takes first letter of each word (max 2)
     const initials = a.initials ||
       (a.name||'').split(' ').filter(Boolean).map(w=>w[0]).join('').substring(0,2).toUpperCase() || '?';
     const tr = document.createElement('tr');
     tr.dataset.adminId = a.id;
     tr.innerHTML = `
-      <td style="padding:14px 18px;">
+      <td style="padding:14px 18px;${isInactive?'opacity:.6;':''}">
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(initials)}</div>
           <div>
@@ -14073,12 +14127,14 @@ window._renderAdminTableImpl = function(){
           ${escHtml(info.label)}
         </span>
       </td>
-      <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
+      <td style="padding:14px 18px;"><span class="cred-status ${isInactive?'cred-notset':'cred-set'}">${isInactive?'Inactive':'Active'}</span></td>
       <td style="padding:14px 18px;">
         <div class="td-actions">
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
           ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
-          <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
+          ${isInactive
+            ? `<button class="btn btn-sm btn-success" onclick="activateAdmin(null,'${escHtml(a.id)}')">Activate</button>`
+            : `<button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Deactivate</button>`}
         </div>
       </td>`;
     tbody.appendChild(tr);
@@ -14205,22 +14261,40 @@ window._addAdminImpl = function(){
   setTimeout(()=>{ _sendAdminWelcomeEmail({ name:_n, email:_e, title:_t, password:_p, level:_l }); }, 600);
 };
 
-// ── Deactivate an admin ── admins are never hard-deleted, same as clients —
-// active/inactive only (the server also has no delete-admin code path at
-// all, fail-closed — see api/ops-sync.js).
+// ── Deactivate / Activate an admin ── admins are never hard-deleted, same
+// as clients — active/inactive only (the server also has no delete-admin
+// code path at all, fail-closed — see api/ops-sync.js: no `.delete()` call
+// against ops_admins anywhere). This was already true before this change;
+// the fix here is that an inactive admin used to vanish from the table
+// entirely (_renderAdminTableImpl filtered them out) with no way back —
+// they now stay listed, shown Inactive, with an Activate button.
 window._removeAdminImpl = function(btn, adminId){
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
   if(!a) return;
   const displayName = a.name;
-  if(!confirm(`Deactivate admin access for ${displayName}?\nThey can be reactivated later — this does not delete their account.`)) return;
+  if(!confirm(`Set ${displayName} to inactive?\nThey can be reactivated later — this does not delete their account.`)) return;
   a.status = 'inactive';
   dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
   cloudAutoSync(true);
-  showToast(`${displayName} deactivated`);
+  showToast(`${displayName} set to inactive`);
   logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
+window._activateAdminImpl = function(btn, adminId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===adminId);
+  if(!a) return;
+  const displayName = a.name;
+  if(!confirm(`Set ${displayName} to active?`)) return;
+  a.status = 'active';
+  dbSet(DB_KEYS.admins, admins);
+  window._renderAdminTableImpl();
+  cloudAutoSync(true);
+  showToast(`${displayName} set to active`);
+  logActivity('admin','Admin','Reactivated admin: '+displayName,'');
+};
+function activateAdmin(btn, adminId){ if(window._activateAdminImpl) window._activateAdminImpl(btn, adminId); }
 
 // ── Open Edit Admin Modal ──
 function openEditAdminModal(adminId){
