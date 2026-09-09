@@ -85,6 +85,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .ta-cat-pill.active{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:700;}
 .btn-danger{background:#fde8e8;color:var(--red);border:1px solid rgba(224,85,85,.2);}
 .btn-danger:hover{background:#fcd4d4;}
+/* Activate button (status toggle, 2026-09) — same soft-pill treatment as
+   .btn-danger's Deactivate, in green instead of red. */
+.btn-success{background:#e8f8f0;color:var(--green);border:1px solid rgba(34,160,107,.25);}
+.btn-success:hover{background:#d4f3e4;}
 .btn-sm{padding:7px 14px;font-size:12px;border-radius:8px;}
 /* My Roadmap's All/Services/Tasks/List/Calendar toggle buttons
    (_myrmToggleBtn()) were shipped with class="btn-xs" — a class with no
@@ -373,7 +377,12 @@ tbody tr:last-child{border-bottom:none;}
 tbody tr:hover{background:var(--bg);}
 td{padding:12px 16px;font-size:13px;color:var(--text-dark);}
 td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
-.td-actions{display:flex;gap:6px;}
+.td-actions{display:flex;gap:6px;flex-wrap:wrap;}
+/* Uniform action-row buttons (View/Edit/Sign out/Deactivate-Activate/Remove)
+   so they read as one set regardless of label length — same height via a
+   fixed line-height-driven box, same minimum width, text centered. Scoped
+   to .td-actions only — doesn't touch .btn-sm elsewhere in the app. */
+.td-actions .btn{height:34px;min-width:84px;justify-content:center;box-sizing:border-box;}
 
 /* ── MODAL ── */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.35);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
@@ -1881,7 +1890,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                 <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">Super Admin</span></td>
                 <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
                 <td style="padding:14px 18px;">
-                  <div style="display:flex;gap:8px;align-items:center;">
+                  <div class="td-actions" style="align-items:center;">
+                    <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__',true)">View</button>
                     <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__')">Edit</button>
                     <span style="font-size:11px;color:var(--text-light);font-style:italic;">Primary — protected</span>
                   </div>
@@ -3126,7 +3136,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
       <div>
-        <div class="modal-title">Edit Admin Account</div>
+        <div class="modal-title" id="editAdminModalTitle">Edit Admin Account</div>
         <div class="modal-sub" id="editAdminSubtitle">Update account details and access level</div>
       </div>
       <button class="modal-close" onclick="closeModal('editAdminModal')">✕</button>
@@ -3896,7 +3906,7 @@ function _applyUserModalViewOnlyMode(isSuperAdminViewer){
 }
 
 // ── EDIT USER MODAL — load from DB ──
-function openEditUserModal(userIdOrName){
+function openEditUserModal(userIdOrName, forceView){
   const allUsers = dbGet(DB_KEYS.users)||[];
   let u = allUsers.find(u=>u.id===userIdOrName) || allUsers.find(u=>u.name===userIdOrName);
   // fallback to static list
@@ -3914,7 +3924,11 @@ function openEditUserModal(userIdOrName){
   // server-side (canEditUsers() in lib/opsSession.js, now tier==='super'
   // only) — this only keeps the UI from claiming an edit capability that
   // would just be rejected anyway.
-  const isSuperAdminViewer = _adminLevel==='super' || _adminLevel==='owner';
+  // "View" (2026-09-10) is always fully read-only regardless of viewer tier;
+  // "Edit" is still gated to a super-tier viewer exactly as before — a
+  // non-super viewer's row only ever renders the View button in the first
+  // place, so forceView is really only ever false for a super-tier viewer.
+  const isSuperAdminViewer = (_adminLevel==='super' || _adminLevel==='owner') && !forceView;
   document.getElementById('editUserTitle').textContent=(isSuperAdminViewer?'Edit — ':'View — ')+u.name;
   _applyUserModalViewOnlyMode(isSuperAdminViewer);
   document.getElementById('editName').value=u.name||'';
@@ -4250,8 +4264,9 @@ function renderUserTable(){
   tbody.innerHTML = allUsers.map((u,i)=>{
     const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
     const color=colorPalette[i%colorPalette.length];
-    const statusClass = u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending');
-    const statusLabel = u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending');
+    const isInactive  = u.status==='inactive';
+    const statusClass = isInactive?'cred-notset':(u.status==='active'?'cred-set':(u.mustChangePassword?'cred-notset':'cred-pending'));
+    const statusLabel = isInactive?'Inactive':(u.mustChangePassword ? '⚠ Awaiting First Login' : (u.status==='active'?'Active':'Pending'));
     const badgeClass  = u.role==='Employee'?'badge-working':'badge-blue';
     const probation   = _isOnProbation(u);
     const probEnd     = u.probationEnd ? new Date(u.probationEnd).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
@@ -4267,7 +4282,7 @@ function renderUserTable(){
       ? `<button class="btn btn-sm btn-outline" onclick="revokeManagerRole('${u.id}')">Revoke Manager Role</button>`
       : `<button class="btn btn-sm btn-outline" onclick="openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
     return `<tr>
-      <td><div style="display:flex;align-items:center;gap:10px;">
+      <td style="${isInactive?'opacity:.6;':''}"><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${escHtml(initials)}</div>
         <div><div>${escHtml(u.name)}</div><div class="td-sub">${escHtml(u.email)}</div></div>
       </div></td>
@@ -4279,9 +4294,16 @@ function renderUserTable(){
       </td>
       <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">${isSuperAdminViewer?'Edit':'View'}</button>
+        <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}',true)">View</button>
+        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>`:''}
         ${managerRoleBtn}
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
+        ${isSuperAdminViewer
+          ? (isInactive
+              ? `<button class="btn btn-sm btn-success" onclick="activateUser(null,'${u.id}')">Activate</button>`
+              : `<button class="btn btn-sm btn-danger" onclick="deactivateUser(null,'${u.id}')">Deactivate</button>`)
+          : ''}
+        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>`:''}
       </div></td>
     </tr>`;
@@ -4495,6 +4517,47 @@ function addAdmin(){ if(window._addAdminImpl) window._addAdminImpl(); else alert
 function removeAdmin(btn, adminId){ if(window._removeAdminImpl) window._removeAdminImpl(btn, adminId); }
 function renderAdminTable(){ if(window._renderAdminTableImpl) window._renderAdminTableImpl(); }
 
+// ── Deactivate / Activate a user ── status-flip status toggle (2026-09),
+// same active/inactive pattern now used for admins above — never a hard
+// delete, never the ops_deleted_user_ids tombstone. Replaces the row's old
+// "Remove" button, which called removeUser() below.
+function deactivateUser(btn, userId){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const u = allUsers.find(x=>x.id===userId||x.name===userId);
+  if(!u) return;
+  if(!confirm(`Set ${u.name} to inactive?`)) return;
+  u.status = 'inactive';
+  dbSet(DB_KEYS.users, allUsers);
+  renderUserTable();
+  cloudAutoSync(true);
+  showToast(`${u.name} set to inactive`);
+  logActivity('admin','Admin','Deactivated user: '+u.name,'');
+}
+function activateUser(btn, userId){
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const u = allUsers.find(x=>x.id===userId||x.name===userId);
+  if(!u) return;
+  if(!confirm(`Set ${u.name} to active?`)) return;
+  u.status = 'active';
+  dbSet(DB_KEYS.users, allUsers);
+  renderUserTable();
+  cloudAutoSync(true);
+  showToast(`${u.name} set to active`);
+  logActivity('admin','Admin','Reactivated user: '+u.name,'');
+}
+
+// ── DEAD CODE, kept but unreferenced (2026-09) ── this used to be the row's
+// "Remove" action: hard-removed the user from the live ops_users list and
+// wrote an ops_deleted_user_ids tombstone (see api/ops-sync.js
+// tombstones.users) so cloud pulls never restored them, plus a LOCAL-ONLY
+// (never synced — confirmed absent from api/ops-state.js/ops-sync.js)
+// archive copy under 'wl_archived_users'. No row in this file calls this
+// anymore — replaced by deactivateUser()/activateUser() above, which never
+// delete or tombstone anything, per explicit instruction. Left in place
+// rather than deleted since the Archive/Restore UI elsewhere in this file
+// (search 'wl_archived_users') still reads/writes the same local key this
+// function populated — removing this function outright without first
+// deciding what happens to that Archive feature is a separate cleanup.
 function removeUser(btn, userId){
   const allUsers = dbGet(DB_KEYS.users)||[];
   // Support both id-based and name-based removal
@@ -9896,6 +9959,7 @@ function _taReportedItems(){
     taskId:t.id, kind:'reported', assigneeId:t.assigneeId||null,
     submitterName:t.reportedMisassignedByName||'—',
     itemLabel:t.subject||'(untitled task)',
+    reason:t.reportedMisassignedReason||'',
     clientName:t.clientName||'—',
     date:t.reportedMisassignedAt||'',
   }));
@@ -9903,6 +9967,7 @@ function _taReportedItems(){
     taskId:t.id, kind:'dueDateChange',
     submitterName:t.dueDateChangeRequest.requestedByName||'—',
     itemLabel:t.subject||'(untitled task)',
+    reason:'',
     clientName:t.clientName||'—',
     date:t.dueDateChangeRequest.requestedAt||'',
   }));
@@ -9954,6 +10019,7 @@ function renderTaReported(){
         <thead><tr>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Submitter</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Task</th>
+          <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reason</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Reported</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Actions</th>
@@ -9962,6 +10028,7 @@ function renderTaReported(){
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
             <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
             <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
+            <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.reason||'—')}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
             <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
             <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">${it.kind==='reported' ? `
@@ -11065,7 +11132,7 @@ function _taReportedBlockHtml(t){
   const candidates = _taAllAssignablePeople().filter(p=>p.id!==t.assigneeId);
   return `<div style="margin-top:12px;padding:10px 12px;background:rgba(201,74,74,.08);border:1px solid rgba(201,74,74,.3);border-radius:8px;">
     <div style="font-size:12px;font-weight:700;color:var(--red,#c94a4a);margin-bottom:4px;">🚩 Reported as possibly not theirs</div>
-    <div style="font-size:13px;">${escHtmlAdmin(t.reportedMisassignedByName||'Someone')} flagged this task${t.reportedMisassignedAt?` on ${new Date(t.reportedMisassignedAt).toLocaleString()}`:''}.</div>
+    <div style="font-size:13px;">${escHtmlAdmin(t.reportedMisassignedByName||'Someone')} flagged this task${t.reportedMisassignedAt?` on ${new Date(t.reportedMisassignedAt).toLocaleString()}`:''}${t.reportedMisassignedReason?` — reason: <strong>${escHtmlAdmin(t.reportedMisassignedReason)}</strong>`:''}.</div>
     <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-sm btn-primary" onclick="_taDismissReport('${t.id}')">✓ Dismiss report / Keep assigned</button>
       <select id="ta-report-reassign-${t.id}" class="input" style="font-size:12px;padding:4px 8px;width:auto;">
@@ -11077,14 +11144,35 @@ function _taReportedBlockHtml(t){
   </div>`;
 }
 // "Dismiss report / Keep assigned" — clears the flag only, assignee and
-// everything else on the task is untouched.
+// everything else on the task is untouched. One real implementation, two
+// entry points (the Reported-tab row's own inline button and the detail-
+// panel callout above), so both get the exact same optional-reason
+// behavior below rather than two copies that could drift.
+//
+// Optional dismiss reason (2026-09-11) — prompt(), same "standing in for
+// a real form field since there's no second input available inline"
+// convention already used for the Blocked-status reason elsewhere in this
+// file, except this field is OPTIONAL: leaving it blank (OK with nothing
+// typed) still dismisses with no reason; Cancel aborts the dismiss
+// entirely rather than proceeding silently, matching the Blocked-reason
+// prompt's own cancel behavior. The typed text is sent to
+// api/ops-sync.js as a one-time, transient `dismissReason` field — it's
+// never stored on the task itself (the server reads it once, to build the
+// reporter's "your report was revoked" notification, then strips it
+// before saving — see the comment there); deleted from this local copy
+// too right after the push is fired, so it never lingers in this browser's
+// cache either.
 function _taDismissReport(id){
   const tasks = _taTasks();
   const t = tasks.find(x=>x.id===id);
   if(!t || !t.reportedMisassigned) return;
+  const reason = prompt(`Optional: reason for revoking this report on "${t.subject||'(untitled task)'}" (shown to ${t.reportedMisassignedByName||'the reporter'} — leave blank to skip)`);
+  if(reason===null) return; // Cancelled — abort the dismiss entirely.
   t.reportedMisassigned = false;
+  t.dismissReason = reason.trim().slice(0,500);
   _taSaveTasks(tasks);
   cloudAutoSync();
+  delete t.dismissReason;
   if(_taDetailTaskId===id) openTaDetailPanel(id);
   renderTaskAssignments();
   _taRefreshReportedIfActive();
@@ -14092,17 +14180,21 @@ window._renderAdminTableImpl = function(){
   // Remove previously injected dynamic rows only
   tbody.querySelectorAll('tr[data-admin-id]').forEach(r=>r.remove());
 
-  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>a.status!=='inactive');
+  // Inactive admins stay listed (2026-09 status-toggle change) — they used
+  // to be filtered out here entirely with no way back; see the
+  // Deactivate/Activate handlers above.
+  const admins = dbGet(DB_KEYS.admins)||[];
   admins.forEach((a, i)=>{
     const color = ADMIN_COLORS[i % ADMIN_COLORS.length];
     const info  = _getLevelInfo(a.level);
+    const isInactive = a.status==='inactive';
     // Auto-compute initials from name if not stored — takes first letter of each word (max 2)
     const initials = a.initials ||
       (a.name||'').split(' ').filter(Boolean).map(w=>w[0]).join('').substring(0,2).toUpperCase() || '?';
     const tr = document.createElement('tr');
     tr.dataset.adminId = a.id;
     tr.innerHTML = `
-      <td style="padding:14px 18px;">
+      <td style="padding:14px 18px;${isInactive?'opacity:.6;':''}">
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(initials)}</div>
           <div>
@@ -14117,11 +14209,16 @@ window._renderAdminTableImpl = function(){
           ${escHtml(info.label)}
         </span>
       </td>
-      <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
+      <td style="padding:14px 18px;"><span class="cred-status ${isInactive?'cred-notset':'cred-set'}">${isInactive?'Inactive':'Active'}</span></td>
       <td style="padding:14px 18px;">
         <div class="td-actions">
+          <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}',true)">View</button>
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
           ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
+          ${isInactive
+            ? `<button class="btn btn-sm btn-success" onclick="activateAdmin(null,'${escHtml(a.id)}')">Activate</button>`
+            : `<button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Deactivate</button>`}
+          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
           <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
         </div>
       </td>`;
@@ -14251,25 +14348,60 @@ window._addAdminImpl = function(){
   setTimeout(()=>{ _sendAdminWelcomeEmail({ name:_n, email:_e, title:_t, password:_p, level:_l }); }, 600);
 };
 
-// ── Deactivate an admin ── admins are never hard-deleted, same as clients —
-// active/inactive only (the server also has no delete-admin code path at
-// all, fail-closed — see api/ops-sync.js).
+// ── Deactivate / Activate an admin ── admins are never hard-deleted, same
+// as clients — active/inactive only (the server also has no delete-admin
+// code path at all, fail-closed — see api/ops-sync.js: no `.delete()` call
+// against ops_admins anywhere). This was already true before this change;
+// the fix here is that an inactive admin used to vanish from the table
+// entirely (_renderAdminTableImpl filtered them out) with no way back —
+// they now stay listed, shown Inactive, with an Activate button.
 window._removeAdminImpl = function(btn, adminId){
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
   if(!a) return;
   const displayName = a.name;
-  if(!confirm(`Deactivate admin access for ${displayName}?\nThey can be reactivated later — this does not delete their account.`)) return;
+  if(!confirm(`Set ${displayName} to inactive?\nThey can be reactivated later — this does not delete their account.`)) return;
   a.status = 'inactive';
   dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
   cloudAutoSync(true);
-  showToast(`${displayName} deactivated`);
+  showToast(`${displayName} set to inactive`);
   logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
+window._activateAdminImpl = function(btn, adminId){
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const a = admins.find(x=>x.id===adminId);
+  if(!a) return;
+  const displayName = a.name;
+  if(!confirm(`Set ${displayName} to active?`)) return;
+  a.status = 'active';
+  dbSet(DB_KEYS.admins, admins);
+  window._renderAdminTableImpl();
+  cloudAutoSync(true);
+  showToast(`${displayName} set to active`);
+  logActivity('admin','Admin','Reactivated admin: '+displayName,'');
+};
+function activateAdmin(btn, adminId){ if(window._activateAdminImpl) window._activateAdminImpl(btn, adminId); }
+
+// ── View-only mode (2026-09-10 pattern, applied here for admins too) ──
+// Mirrors _applyUserModalViewOnlyMode(): blanket-disable every input/select
+// in the body and hide every body button + the footer Save button, rather
+// than enumerating fields one at a time — safer against a future field added
+// to this modal without remembering to also gate it here.
+function _applyAdminModalViewOnlyMode(canEdit){
+  const modal = document.getElementById('editAdminModal');
+  if(!modal) return;
+  modal.querySelectorAll('.modal-body input, .modal-body select, .modal-body textarea').forEach(el=>{ el.disabled = !canEdit; });
+  modal.querySelectorAll('.modal-body button').forEach(btn=>{ btn.style.display = canEdit ? '' : 'none'; });
+  const saveBtn = modal.querySelector('.modal-footer .btn-primary');
+  if(saveBtn) saveBtn.style.display = canEdit ? '' : 'none';
+  const titleEl = document.getElementById('editAdminModalTitle');
+  if(titleEl) titleEl.textContent = canEdit ? 'Edit Admin Account' : 'View Admin Account';
+}
 
 // ── Open Edit Admin Modal ──
-function openEditAdminModal(adminId){
+function openEditAdminModal(adminId, forceView){
+  const canEdit = !forceView;
   // Special case: primary hardcoded admin
   if(adminId === '__primary__'){
     document.getElementById('editAdminId').value    = '__primary__';
@@ -14281,9 +14413,7 @@ function openEditAdminModal(adminId){
     document.getElementById('editAdminLevel').value = 'super';
     document.getElementById('editAdminPass').value  = '';
     document.getElementById('editAdminPass2').value = '';
-    document.getElementById('editAdminSubtitle').textContent = 'Primary admin — email & level are protected';
-    document.getElementById('editAdminEmail').disabled = true;
-    document.getElementById('editAdminLevel').disabled = true;
+    document.getElementById('editAdminSubtitle').textContent = canEdit ? 'Primary admin — email & level are protected' : 'Primary admin — read-only view';
     _updateEditLevelBadge();
     // The primary admin has no real ops_admins row — managedUserIds has
     // nowhere to be stored for her (see saveEditAdmin()'s early return
@@ -14294,6 +14424,12 @@ function openEditAdminModal(adminId){
     // on for the primary-admin sentinel.
     const primaryManagerWrap = document.getElementById('editAdminManagerWrap');
     if(primaryManagerWrap) primaryManagerWrap.style.display = 'none';
+    // Apply the blanket view/edit toggle FIRST, then re-assert the
+    // email/level protection on top — the primary admin's email & level
+    // stay disabled even in "Edit" mode, unlike every other admin's.
+    _applyAdminModalViewOnlyMode(canEdit);
+    document.getElementById('editAdminEmail').disabled = true;
+    document.getElementById('editAdminLevel').disabled = true;
     openModal('editAdminModal');
     return;
   }
@@ -14322,12 +14458,17 @@ function openEditAdminModal(adminId){
   document.getElementById('editAdminLevel').value = a.level||'admin';
   document.getElementById('editAdminPass').value  = '';
   document.getElementById('editAdminPass2').value = '';
-  document.getElementById('editAdminSubtitle').textContent = 'Update details and access level for '+a.name;
+  document.getElementById('editAdminSubtitle').textContent = canEdit ? ('Update details and access level for '+a.name) : ('Viewing details for '+a.name+' — read-only');
   document.getElementById('editAdminEmail').disabled = false;
   document.getElementById('editAdminLevel').disabled = false;
   _updateEditLevelBadge();
   // Populate assigned users panel with existing chips
   _toggleAssignedUsersPanel('editAdminLevel','editAdminAssignedUsersWrap','editAdminAssignedUsers','editAdminChips', a.assignedUsers||[]);
+  // Applied LAST, after every dynamic sub-panel above (managed-users grid,
+  // assigned-users select/chips) has finished (re)building its own input
+  // elements — those are freshly created each call and wouldn't otherwise
+  // inherit the disabled state from an earlier pass over the static markup.
+  _applyAdminModalViewOnlyMode(canEdit);
   openModal('editAdminModal');
 }
 

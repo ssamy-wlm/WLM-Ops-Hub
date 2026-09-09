@@ -8457,6 +8457,137 @@ Low-risk per rule #10: `user.html` only, pure CSS/markup restructure, no
 data-write/sync/auth/permission logic touched — eligible for direct
 merge once CI is green.
 
+**Task reports: require a reason; revoke notifies reporter with admin's
+reason (2026-09-11).** `api/ops-sync.js` + `user.html` + `index.html` —
+extends the existing "Report task" feature (2026-09-01, given real
+dismiss/reassign resolution 2026-09-04).
+
+**Employee side — required reason, no more free-form confirm().**
+`user.html`'s old ⚠️ Report button drove a bare `confirm()` with no way to
+collect anything beyond a yes/no — replaced with a real modal
+(`#reportTaskModal`, `openReportTaskModal()`/`submitReportTask()`) whose
+`<select id="rtReason">` offers exactly two real options ("Duplicated"/
+"Not my task") plus an empty placeholder; Submit is blocked with a toast
+and nothing pushed when no reason is selected, the same guard style
+`saveNewDtTask()`'s own subject-required check already uses. The chosen
+value is stored as a new `reportedMisassignedReason` field, alongside the
+existing `reportedMisassigned`/`reportedMisassignedBy`/`ByName`/`At`
+quartet. The card's own "🚩 Reported" static indicator (shown once a
+report exists) now includes the reason in its tooltip too, for the
+reporter's own reference.
+
+**Server-side validation, never trusting the client-side guard alone
+(rule #7).** A new `REPORT_REASONS = ['Duplicated', 'Not my task']` in
+`api/ops-sync.js`; a genuine transition into `reportedMisassigned` (never
+a resave that leaves it already true) now REJECTS the whole write outright
+if `reportedMisassignedReason` isn't one of those two exact values —
+missing, blank, or free text. `reportedMisassignedReason` itself follows
+the identical "never let an absent field blank a real value" fallback
+convention the other three reporter-metadata fields already use, so a
+stale-cache resave that omits it (echoing back status/notes only) can't
+wipe the real reason. Not added to `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` — same
+reasoning as `reportedMisassigned` itself, a member must be able to write
+it on their own task.
+
+**Admin side — optional reason on Dismiss, revoke notification carries
+it.** `_taDismissReport(id)` in `index.html` — the ONE shared
+implementation both the Reported tab's inline "✓ Keep assigned" button and
+the detail-panel callout's "✓ Dismiss report / Keep assigned" button
+already call — now `prompt()`s for an OPTIONAL reason before dismissing
+(same "standing in for a real form field, no room for a second input"
+convention already used for the Blocked-status reason elsewhere in this
+file, except this one is genuinely optional: leaving it blank still
+dismisses with no reason, only an explicit Cancel aborts the dismiss
+entirely). The typed text is sent to `api/ops-sync.js` as a one-time,
+transient `dismissReason` field on the incoming write — never a real task
+field: the server reads it once, inside the existing cur-vs-row dismiss-
+detection block, to build the reporter's revoke notification, then
+`delete row.dismissReason` before the row is ever saved, so it can never
+linger in `ops_tasks.data` either via the reassign path or the dismiss
+path. The client mirrors this — `delete t.dismissReason` right after the
+push is fired — though this is pure tidiness, not load-bearing: `dbSet()`
+already wrote the field to localStorage synchronously before
+`cloudAutoSync()` re-reads it fresh via its own `dbGet()` call, so the
+push always carries the reason regardless of the later in-memory delete.
+
+`fireTaskReportDismissedNotification()`'s body changed from "was
+reviewed — the task was kept as-is" to the task's own requested wording:
+`"{admin name} revoked your report on \"{task}\"."`, with a `" Reason:
+{text}"` clause appended only when the admin actually typed one — matches
+the example verbatim ("Sarah Samy revoked your report on '[task]'.
+Reason: [admin's note]."). Reuses the exact same `insertNotifications()`/
+Resend email path every other notification type in this file already
+uses — no new send mechanism. The notification/email still fires only for
+a genuine same-assignee DISMISS (never a reassign, which already gets the
+new assignee's own real assignment notice — unaffected by this change).
+
+**Extended, not strictly required by the acceptance criteria, but the
+identical data was already flowing through the same event object:** the
+INITIAL "task reported" admin notification (`fireTaskReportedNotifications`)
+now also appends the employee's chosen reason in parentheses — "Rana Ayman
+flagged \"Fix homepage copy\" as possibly not theirs (Duplicated)." —
+giving an admin the reason before they even open the task, at zero extra
+cost.
+
+**Reported tab column, matching the task's exact requested order.**
+`renderTaReported()`'s table gained a Reason column between Task and
+Client (Submitter · Task · Reason · Client · Reported · Actions) —
+`_taReportedItems()` carries `reason:t.reportedMisassignedReason||''` for
+a `kind:'reported'` row, and an empty string (rendered as "—") for a
+`kind:'dueDateChange'` row, which has no report reason at all — the two
+kinds share this one list (see the 2026-09-03 entry above for why), so
+the Reason column only ever means something for one of them. The
+detail-panel callout also surfaces the reason inline
+("... flagged this task on ... — reason: **Duplicated**.") for the same
+reason the admin notification does — cheap, and directly useful at the
+one place an admin actually decides what to do about a report.
+
+Verified two ways, no live DB access (rule #11): (1) a `node:test
+--experimental-test-module-mocks` run against the real, byte-identical
+`api/ops-sync.js` handler (24/24, new suite) — missing/invalid reason
+rejected on a genuine report-creation transition, both valid reasons
+accepted and stored verbatim, the initial notification's body includes
+the reason, a resave that leaves the report already set survives without
+the reason ever being resent (fallback-to-cur), a dismiss with no admin
+reason produces the plain "revoked" wording with no "Reason:" clause, a
+dismiss WITH a reason produces the exact requested wording end-to-end
+(including a real email sent), `dismissReason` never persists on the
+stored task in either case, and a reassign also clears
+`reportedMisassignedReason` (same reset spread as dismiss) without
+double-notifying. The pre-existing `verify_report_dismiss_reassign.mjs`
+suite (21/21) re-run clean after updating its one report-creation test
+case to include a valid reason (not a regression — that test's own
+premise predates this requirement). (2) Two new Playwright suites: admin
+side (`index.html`, 14/14) — column order/values, the detail-panel
+callout showing the reason, a typed dismiss reason reaching the sync push
+as `dismissReason`, cancelling the prompt sending NO push at all (the
+dismiss aborts entirely), and an empty-but-not-cancelled reason still
+dismissing with no `dismissReason` field on the wire; employee side
+(`user.html`, 15/15) — the Report button only appears on an admin-
+assigned task (never a self-added one, unaffected regression check), the
+modal offers exactly the two real options, submitting with nothing
+selected is blocked with zero network calls, and a real submission pushes
+the chosen reason end-to-end through a stateful mock, with the resulting
+"Reported" indicator's tooltip reflecting it. Re-ran
+`verify_report_dismiss_reassign_ui.mjs` (21/21, updated with a page-wide
+`dialog` handler accepting an empty reason — not a regression, that
+suite's own premise predates the new optional prompt) and both pre-
+existing user.html suites available this session
+(`verify_dt_new_task_button.mjs` 26/26, `verify_dt_tabrow_layout.mjs`
+16/16) — unaffected. `node --check` passed on `api/ops-sync.js`;
+`new Function()` syntax-check clean on every extracted `<script>` block
+in both HTML files; comment-stripped div-balance unchanged vs. `main` in
+`index.html` (delta -3) and shifted by exactly the new modal's own +9/+9
+balanced open/close pairs in `user.html` (delta -1, unchanged, confirming
+genuine structural balance, not a defect). One pre-existing, unrelated
+failure (`verify_assignment_emails_hierarchy.mjs`'s email-delivery
+assertions) was confirmed to fail identically against unmodified `main`
+via `git stash` — out of scope here, already documented above.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 — touches real write/notification logic in
+`api/ops-sync.js`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

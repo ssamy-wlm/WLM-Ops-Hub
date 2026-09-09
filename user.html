@@ -1336,6 +1336,34 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
   </div>
 </div>
 
+<!-- "Report task" reason modal (2026-09-11) — a required reason, exactly
+     "Duplicated" or "Not my task", picked from a real <select>, never
+     free text. Submit is blocked without a value the same way
+     saveNewDtTask()'s subject-required guard blocks an empty submission
+     above (see submitReportTask()) — replaces the old bare confirm()
+     dialog, which had no way to collect a reason at all. -->
+<div id="reportTaskModal" class="modal-overlay" onclick="if(event.target===this)closeModal('reportTaskModal')">
+  <div class="modal" style="max-width:400px;width:92%;">
+    <div class="modal-header">
+      <div><div class="modal-title">Report task</div><div class="modal-sub">Flags this for the admin team to review</div></div>
+      <button class="modal-close" onclick="closeModal('reportTaskModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="rtTaskSubject" style="font-size:13px;font-weight:600;margin-bottom:12px;"></div>
+      <label class="form-label">Reason</label>
+      <select class="form-input" id="rtReason">
+        <option value="">Select a reason…</option>
+        <option value="Duplicated">Duplicated</option>
+        <option value="Not my task">Not my task</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('reportTaskModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitReportTask()">Submit report</button>
+    </div>
+  </div>
+</div>
+
 <!-- Service Sub-items / Checklist Modal (Monday feature pack #2) -->
 <div id="serviceSubitemsModal" class="modal-overlay">
   <div class="modal">
@@ -2010,8 +2038,8 @@ function _dtDaysUntil(iso){
 // the one transition, never a resend.
 function _dtReportButtonHtml(t){
   if(t.origin!=='admin') return '';
-  if(t.reportedMisassigned) return `<span title="You flagged this as possibly not yours" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">🚩 Reported</span>`;
-  return `<button type="button" class="dt-report-btn" title="Flag this task as possibly not yours" aria-label="Report task as possibly not yours" onclick="event.stopPropagation();reportDtTaskMisassigned('${t.id}')">⚠️</button>`;
+  if(t.reportedMisassigned) return `<span title="${escHtmlUser('You flagged this as possibly not yours'+(t.reportedMisassignedReason?` (${t.reportedMisassignedReason})`:''))}" style="font-size:11px;color:var(--text-light);margin-left:6px;white-space:nowrap;">🚩 Reported</span>`;
+  return `<button type="button" class="dt-report-btn" title="Flag this task as possibly not yours" aria-label="Report task as possibly not yours" onclick="event.stopPropagation();openReportTaskModal('${t.id}')">⚠️</button>`;
 }
 // Due-date-change request (Item C, 2026-09-03) — a small "pending" badge
 // for the list-row card, matching _dtReportButtonHtml's own established
@@ -2476,7 +2504,7 @@ function _dtToggleDueChangeForm(){
   const el = document.getElementById('dt-due-change-form');
   if(el) el.style.display = el.style.display==='none' ? '' : 'none';
 }
-// Same optimistic-then-rollback pattern reportDtTaskMisassigned() already
+// Same optimistic-then-rollback pattern submitReportTask() already
 // established for this file's other "flag something for admin attention"
 // action — not the fully server-confirmed-before-render pattern
 // saveDtTaskUpdate() uses, since that one's stricter rule was specific to
@@ -2541,7 +2569,7 @@ function _dtToggleRecurringForm(){
   const el = document.getElementById('dt-recurring-form');
   if(el) el.style.display = el.style.display==='none' ? '' : 'none';
 }
-// Same optimistic-then-rollback pattern reportDtTaskMisassigned() already
+// Same optimistic-then-rollback pattern submitReportTask() already
 // established — nextDate is seeded from the task's own current dueDate;
 // the server re-derives/clamps it independently regardless (see
 // sanitizeRecurringField() in api/ops-sync.js), so this is a reasonable
@@ -2657,23 +2685,46 @@ async function saveDtTaskUpdate(id){
   showToast('Task updated ✓');
 }
 
-// "Report task" (2026-09-01) — flags an admin-assigned task the employee
-// thinks isn't theirs. Never deletes anything (members can't delete admin-
-// assigned tasks at all — see the delete-removal comment above); the task
-// stays exactly where it is, just marked. Same "server-confirmed before
-// showing success" data-safety rule saveDtTaskUpdate() above already
-// established for this file's other writing actions: pushes immediately
-// via cloudPushData() and only shows success once the server has actually
-// accepted it, reverting the local flag on a rejection/failure rather than
-// leaving the UI showing a report that didn't really land. reportedMisassigned*
-// (who/when) is entirely server-derived from the caller's own session — see
-// api/ops-sync.js — this only ever sends the boolean flag itself.
-async function reportDtTaskMisassigned(id){
+// "Report task" (2026-09-01, required-reason 2026-09-11) — flags an
+// admin-assigned task the employee thinks isn't theirs. A reason is now
+// REQUIRED — exactly "Duplicated" or "Not my task", picked from a real
+// <select> in a real modal, never free text and never optional: replaces
+// the old bare confirm() dialog, which had no way to collect a reason at
+// all and (being a single-button confirm) couldn't express "blocked until
+// something is chosen" the way a modal's own guarded Submit button can.
+// Never deletes anything (members can't delete admin-assigned tasks at
+// all — see the delete-removal comment above); the task stays exactly
+// where it is, just marked. Same "server-confirmed before showing
+// success" data-safety rule saveDtTaskUpdate() above already established
+// for this file's other writing actions: pushes immediately via
+// cloudPushData() and only shows success once the server has actually
+// accepted it, reverting the local flag+reason on a rejection/failure
+// rather than leaving the UI showing a report that didn't really land.
+// reportedMisassignedBy/ByName/At (who/when) stay entirely server-derived
+// from the caller's own session — see api/ops-sync.js — this only ever
+// sends the boolean flag plus the picked reason string.
+let _rtTaskId = null;
+function openReportTaskModal(id){
   const tasks = dbGet(DB_KEYS.tasks)||[];
   const t = tasks.find(x=>x.id===id);
   if(!t || t.origin!=='admin' || t.reportedMisassigned) return;
-  if(!confirm('Flag this task as possibly not yours? This notifies the admin team.')) return;
+  _rtTaskId = id;
+  document.getElementById('rtTaskSubject').textContent = t.subject||'(untitled task)';
+  document.getElementById('rtReason').value = '';
+  openModal('reportTaskModal');
+}
+async function submitReportTask(){
+  const id = _rtTaskId;
+  const reason = document.getElementById('rtReason').value;
+  // Blocking guard (2026-09-11) — matches saveNewDtTask()'s own
+  // subject-required guard above: no value, no submission, just a toast.
+  if(!reason){ showToast('Pick a reason first'); return; }
+  const tasks = dbGet(DB_KEYS.tasks)||[];
+  const t = tasks.find(x=>x.id===id);
+  if(!t || t.origin!=='admin' || t.reportedMisassigned){ closeModal('reportTaskModal'); return; }
+  closeModal('reportTaskModal');
   t.reportedMisassigned = true;
+  t.reportedMisassignedReason = reason;
   dbSet(DB_KEYS.tasks, tasks);
   renderDailyTasks();
   if(_dtDetailTaskId===id) openDtDetailPanel(id);
@@ -2681,6 +2732,7 @@ async function reportDtTaskMisassigned(id){
   const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
   if(!result.ok || rejectedThis){
     t.reportedMisassigned = false;
+    t.reportedMisassignedReason = null;
     dbSet(DB_KEYS.tasks, tasks);
     renderDailyTasks();
     if(_dtDetailTaskId===id) openDtDetailPanel(id);
