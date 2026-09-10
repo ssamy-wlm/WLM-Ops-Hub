@@ -98,23 +98,41 @@ function validCommissionRow(row) {
   return row && typeof row === 'object' && hasContent(row.id) && hasContent(row.recipientId)
     && (row.recipientType === 'user' || row.recipientType === 'admin') && hasContent(row.month);
 }
-// net and the tiered commission are ALWAYS recomputed here from entries[],
-// never trusted from the client — same "server owns the math" discipline
-// CLAUDE.md's rule #4 already applies to role/tier, applied here to the
-// dollar figures themselves. Whole-month net (sum of every entry's net)
-// decides the tier: >= $20,000 -> 10%, otherwise 5%, applied to the whole
-// month's net, not per client line.
+// commissionPercent is a separate, explicit guard from the shape check
+// above (own clear rejection reason, CLAUDE.md rule #4's "reject the whole
+// record with a clear reason, never a silent partial merge" convention) —
+// the client auto-fills a default (month net >= $20,000 -> 10, else 5) but
+// the admin can override to either value; anything else is rejected
+// outright, never coerced to the nearest valid value.
+function validCommissionPercent(row) {
+  return row.commissionPercent === 5 || row.commissionPercent === 10;
+}
+// net and the commission total are ALWAYS recomputed here from entries[]/
+// commissionPercent, never trusted from the client — same "server owns the
+// math" discipline CLAUDE.md's rule #4 already applies to role/tier,
+// applied here to the dollar figures themselves. Contractor was removed
+// entirely (2026-09-11 rework) — entries are just {client, gross, adSpend,
+// net}. Each entry's net defaults to (gross - adSpend); a client-supplied
+// override is honored only when it's a real number, >= 0, and <= gross —
+// anything else (missing, NaN, negative, or greater than gross) falls back
+// to the default rather than rejecting the whole row, since a single bad
+// entry shouldn't block every other client's line on the same month.
+// commissionPercent itself is validated separately (validCommissionPercent,
+// above) BEFORE this ever runs — by the time recomputeCommission sees a
+// row, commissionPercent is already known to be exactly 5 or 10.
 function recomputeCommission(row) {
   const entries = Array.isArray(row.entries) ? row.entries.map(e => {
     const gross = Number(e?.gross) || 0;
     const adSpend = Number(e?.adSpend) || 0;
-    const contractor = Number(e?.contractor) || 0;
-    return { ...e, gross, adSpend, contractor, net: gross - adSpend - contractor };
+    const defaultNet = gross - adSpend;
+    const overrideNet = Number(e?.net);
+    const net = (Number.isFinite(overrideNet) && overrideNet >= 0 && overrideNet <= gross) ? overrideNet : defaultNet;
+    return { client: e?.client || '', gross, adSpend, net };
   }) : [];
   const monthNet = entries.reduce((s, e) => s + e.net, 0);
-  const tier = monthNet >= 20000 ? '10%' : '5%';
-  const computedCommission = monthNet * (tier === '10%' ? 0.10 : 0.05);
-  return { ...row, entries, computedCommission, tier };
+  const commissionPercent = row.commissionPercent;
+  const computedCommission = monthNet * (commissionPercent / 100);
+  return { ...row, entries, computedCommission, commissionPercent };
 }
 
 // A NEW incoming ops_users/ops_admins row may carry a plaintext password
@@ -1906,7 +1924,12 @@ export default async function handler(req, res) {
         // rows added/changed before payout), not an append-only audit log.
         // Super Admin/Owner exclusive, same tier gate as payroll/settings.
         if (Array.isArray(c.commissions) && c.commissions.length) {
-          applied.commissions = await upsertRows(supabase, 'ops_commissions', c.commissions.filter(validCommissionRow).map(recomputeCommission), warnings);
+          const shaped = c.commissions.filter(validCommissionRow);
+          const validRows = shaped.filter(validCommissionPercent);
+          shaped.filter(row => !validCommissionPercent(row)).forEach(row => {
+            warnings.push(`commissions.${row.id}: dropped — commissionPercent must be exactly 5 or 10 (got ${JSON.stringify(row.commissionPercent)})`);
+          });
+          applied.commissions = await upsertRows(supabase, 'ops_commissions', validRows.map(recomputeCommission), warnings);
         }
         if (c.settings && typeof c.settings === 'object') {
           const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
