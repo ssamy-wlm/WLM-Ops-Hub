@@ -13329,13 +13329,21 @@ async function _commSetEarns(kind, id, earns){
       renderCommissionRecipientsPanel();
       return;
     }
-    // Optimistic local update, same as setSalesFunnelLevel().
+    // Optimistic local update, same as setSalesFunnelLevel() — applied only
+    // after the server has actually confirmed the write above (res.ok, no
+    // commissionGrants warning), matching this codebase's confirmed-write
+    // discipline: never flip the UI ahead of a round trip that could fail.
     const key = kind==='admin' ? DB_KEYS.admins : DB_KEYS.users;
     const arr = dbGet(key)||[];
     const idx = arr.findIndex(p=>p.id===id);
     if(idx>=0){ arr[idx].earnsCommission = earns; dbSet(key, arr); }
     renderCommissionRecipientsPanel();
-    _commPopulateRecipientSelect();
+    // Re-render the recipients section from the just-updated data, driven by
+    // the live earnsCommission count — not just the recipient <select>'s own
+    // options (_commPopulateRecipientSelect() alone never re-evaluates
+    // commEmptyState/commEditorCard's visibility, which is what left the
+    // empty state stuck showing after a grant until a full page reload).
+    _commRefreshRecipientAvailability();
     showToast(earns ? 'Commission eligibility granted ✓' : 'Commission eligibility revoked ✓');
   }catch(e){
     showToast('❌ Request failed: '+e.message, 'error');
@@ -13351,11 +13359,27 @@ function _commPopulateRecipientSelect(){
   return recipients;
 }
 function loadCommissionsMonth(){
+  _commRefreshRecipientAvailability(true);
+}
+// Single source of truth for the empty-state vs. recipient-editor switch —
+// always computed from the LIVE earnsCommission count
+// (_commPopulateRecipientSelect() -> _commGrantedRecipients()), never a
+// snapshot taken when the tab/panel was first opened. Called both on tab
+// load (forceEditorRender=true — nothing unsaved to protect yet) and after
+// a confirmed grant/revoke (forceEditorRender omitted): the entry editor is
+// only re-rendered from stored data when the selected recipient actually
+// needs to change (a first recipient just granted, or the previously
+// selected one was just revoked) — a grant/revoke for someone OTHER than
+// the currently-open recipient must never discard in-progress unsaved
+// entry-row edits sitting in that open editor.
+function _commRefreshRecipientAvailability(forceEditorRender){
+  const sel = document.getElementById('comm-recipient');
+  const prevValue = sel ? sel.value : '';
   const recipients = _commPopulateRecipientSelect();
   const hasAny = recipients && recipients.length;
   document.getElementById('commEmptyState').style.display = hasAny ? 'none' : 'block';
   document.getElementById('commEditorCard').style.display = hasAny ? 'block' : 'none';
-  if(hasAny) renderCommissionEditor();
+  if(hasAny && (forceEditorRender || (sel && sel.value !== prevValue))) renderCommissionEditor();
 }
 function _commRecordId(recipientId, month){ return 'comm_'+recipientId+'_'+month; }
 function _commFindRecord(recipientId, month){
