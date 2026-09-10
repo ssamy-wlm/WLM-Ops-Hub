@@ -8782,6 +8782,104 @@ targeted (an entire periodic pull unconditionally overwriting/losing
 data with no user action involved at all) — and would each be their own,
 separately-scoped decision if ever tightened further.
 
+**Production Tracker: clickable summary cards + alphabetical service
+dropdown (2026-09-11).** `client.html` only, display-only — no server
+change, low-risk per rule #10.
+
+**1. Clickable summary cards.** The four Tracker header stat-cards
+(`.stat-card`, "Total Clients"/"Active"/"Inactive / Paused"/"Services Due
+Soon") gained a `.stat-card-clickable` class (cursor:pointer, matching
+the cursor-pointer affordance Overview/Client Health's own drill-down
+cards already establish in `index.html` — a separate file, so only the
+visual convention is shared, not any code) and an `onclick`. Total/
+Active/Inactive-Paused drill into the client grid ALREADY on this same
+page — `_clDrillStatCard(status)` clears every OTHER filter first
+(search text, service, project type/status, manager, assignee, svc-
+status, category — reusing the same id list `clearClientFilters()`
+already resets) before setting `#filter-status` and calling
+`filterClients()`, so the resulting list can never disagree with the
+card's own count because of some unrelated filter left active from an
+earlier search — verified directly (a leftover text search is confirmed
+cleared by a card click). "Inactive / Paused" needed a small, real
+extension: the existing `#filter-status` `<select>` only ever offered
+`active`/`inactive`/`paused` individually, with no single value matching
+`status!=='active'` (the exact grouping `updateStats()`'s own
+`st-inactive` count already uses) — added a new `not-active` option
+(labeled "Inactive / Paused," so it's also a real, manually-selectable
+filter now, not just a card-click side effect) and extended
+`filterClients()`'s status match to treat it as `status!=='active'`.
+
+**"Services Due Soon" — a small self-contained modal, not a deep-link to
+the existing Service Schedule page, per a real discrepancy found while
+investigating (rule #7).** The Service Schedule page already has a "Due
+Soon (7d)" filter (`schedule-filter=soon`) — considered reusing it, but
+its own `_scheduleDueBucket()` deliberately EXCLUDES an already-overdue
+service from "soon" (overdue is its own separate bucket), while
+`updateStats()`'s `st-due` card counts every service with `s.due<=in7s`
+regardless of whether it's also overdue — a materially different
+definition. Deep-linking there would have shown a DIFFERENT count than
+what's printed on the card, exactly the kind of "the numbers must never
+disagree" mismatch this session's own established discipline (Overview's
+ratio cards, Client Health's drill modals, etc.) exists to prevent.
+Built a small, genuinely self-contained modal instead
+(`openDueSoonDrillModal()`/`renderDueSoonDrillModal()`, reusing this
+file's own `.modal-overlay`/`openModal()`/`closeModal()` — including the
+z-index-stacking fix from the PR immediately above, which composes for
+free if this modal is ever opened over another one) — populated from a
+new `_dueSoonDrillItems` array built inside `updateStats()`'s OWN loop,
+the exact same one that sets the `st-due` card's number, so the drilled
+list can never show a different count than the card itself; verified
+directly (2 seeded services, both the card and the modal's row count
+show exactly 2). Each row deep-links via the existing
+`_navigateToServiceInTracker(clientId, serviceId)` (already built for
+notification click-through) straight to that client's Services tab with
+the exact service row highlighted.
+
+**2. Alphabetical service dropdown.** `populateServiceOptionsForBundle()`
+(builds the Add Service modal's "Service *" dropdown, `#svc-name`) and
+`populateServiceDropdown()` (the single function that ALSO builds
+"Bundle *" `#svc-bundle`, plus the page-toolbar's `#filter-service`/
+`#filter-category` — "any other service/category list dropdowns in that
+flow," per the task's own wording, since this is the one choke point
+serving all four) now sort every option list alphabetically A→Z via a
+new shared `_sortNamesAZ()` helper (case-insensitive `localeCompare`,
+`sensitivity:'base'` — the identical convention Task Assignments' own
+client-dropdown sort already established, 2026-08-27). Only the rendered
+`<option>` order changed — `getBundleNames()`/`getCategoryNames()`/
+`getCatalog()` themselves are untouched, so any other caller relying on
+their original (catalog-storage) order is unaffected. Narrowing "Service
+*" to one bundle still correctly filters AND sorts what's left.
+
+Verified: `node --check`-equivalent syntax check (`new Function()` on the
+extracted `<script>` block) — clean; comment-stripped div-balance
+unchanged vs. `main` (delta 0, matching `main`'s own baseline exactly). A
+new Playwright suite against the real UI (33/33, run against a seeded set
+of 4 clients across active/inactive/paused and 3 out-of-order catalog
+bundles/services/categories): all four cards show the right counts and a
+real computed `cursor:pointer`; Active/Inactive-Paused/Total each
+correctly filter the visible grid (including the paused-client case,
+confirming the combined `not-active` value actually includes both
+inactive AND paused, not just one); a leftover search filter is cleared
+by a card click; the Services Due Soon modal lists exactly the 2 real
+due-soon services (client + service name + due date) and excludes the
+far-future one, with its row count matching the card's own number
+exactly; clicking a row closes the modal and opens the correct client's
+detail panel; and all four dropdowns (Bundle, Service Name — both
+unfiltered and narrowed to one bundle — Category filter, Service filter)
+render in genuine alphabetical order. Re-ran `verify_modal_stacking_fix.mjs`
+(13/13, from the PR immediately above — exercises `populateServiceDropdown()`/
+`populateServiceOptionsForBundle()` end-to-end through the real "+ Add
+Service" flow) to confirm the alphabetization didn't disturb that
+feature — clean. One pre-existing, unrelated failure
+(`verify_client_service_review_badge.mjs`, `openClientDetail is not
+defined`) was confirmed to fail identically against unmodified `main` —
+out of scope here.
+
+Low-risk per rule #10: `client.html` only, display-only (client-side
+filtering + a read-only modal + dropdown sort order), no data-write/
+sync/auth/permission logic touched — eligible for direct merge once CI
+is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
