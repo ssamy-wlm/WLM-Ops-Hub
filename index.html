@@ -1202,12 +1202,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            ever revealed there, never for Super Admin/Owner. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'myTimeOff')" id="admin-nav-mytimeoff" style="display:none;"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>My Time Off</div>
 
-      <div class="admin-nav-group-label">Sales</div>
+      <div class="admin-nav-group-label" id="admin-nav-group-sales">Sales</div>
       <!-- No standalone "Sales Funnel" nav item exists to reuse — Sales
            Funnel Access lives as a card inside the Admin Controls tab (see
            CLAUDE.md's Admin Controls entry), not its own nav item. Per the
            task's own explicit fallback ("if a Sales category doesn't exist
-           yet, create it"), this group is new. -->
+           yet, create it"), this group is new. Header visibility is
+           computed in _updateSalesGroupVisibility() (see
+           applyAdminRoleRestrictions()) — never shown with nothing visible
+           underneath it for this viewer. -->
       <!-- Commissions (Phase 1) — Super Admin/Owner exclusive, hidden for
            every non-super admin the same way Payroll itself is (see the
            uniform baseline in applyAdminRoleRestrictions()). -->
@@ -14490,6 +14493,28 @@ function applyAdminRoleRestrictions(level, adminObj){
   const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
   if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner' || _mySalesFunnelLevel==='owner') ? 'block' : 'none';
 
+  // Sales nav-group header ("Sales" label above Commissions/My
+  // Commissions) — must never render with nothing visible underneath it.
+  // Checked against the REAL current visibility of its two known items
+  // (never a duplicate/guessed condition) so it can't drift from whatever
+  // each role branch below actually leaves shown; also true whenever this
+  // viewer has ANY resolved Sales Funnel access level (viewer/editor/
+  // owner) — that grant currently has no nav item of its own to check
+  // (see the Sales Funnel Access card's own comment above), so this is
+  // the only signal for it. Called again at the end of every branch below
+  // that can further hide (or, for a role gaining it, never grants)
+  // Commissions/My Commissions, since those branches run AFTER this.
+  function _updateSalesGroupVisibility(){
+    const header = document.getElementById('admin-nav-group-sales');
+    if(!header) return;
+    const commissionsNav = document.querySelector(`.admin-nav-item[onclick*="'commissions'"]`);
+    const myCommissionsNav = document.getElementById('admin-nav-mycommissions');
+    const commissionsVisible = !!commissionsNav && commissionsNav.style.display !== 'none';
+    const myCommissionsVisible = !!myCommissionsNav && myCommissionsNav.style.display !== 'none';
+    const hasSalesFunnelAccess = !!_mySalesFunnelLevel;
+    header.style.display = (commissionsVisible || myCommissionsVisible || hasSalesFunnelAccess) ? '' : 'none';
+  }
+
   // ── Admin restriction project baseline (see CLAUDE.md): every non-super
   //    admin — Creative/Production/Account Manager AND the plain 'admin'
   //    level, which previously fell straight through this whole function
@@ -14554,13 +14579,16 @@ function applyAdminRoleRestrictions(level, adminObj){
       const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
       if(trackerNavEl && typeof switchAdminTab==='function') switchAdminTab(trackerNavEl,'tracker');
     }, 80);
+    _updateSalesGroupVisibility();
     return;
   }
 
   // Plain 'admin' level: already restricted by the uniform baseline above
   // (no Payroll/Time off/Time off ledger, view-only Users, My Time Off) —
-  // nothing further to hide, so return here.
-  if(!RESTRICTED_ADMIN_ROLES.includes(level)) return;
+  // nothing further to hide, so return here. Covers Super Admin/Owner too
+  // (neither is in RESTRICTED_ADMIN_ROLES), so this single call also
+  // handles the unrestricted case.
+  if(!RESTRICTED_ADMIN_ROLES.includes(level)){ _updateSalesGroupVisibility(); return; }
   // Hide forbidden nav tabs. Production Manager (Abby) runs production day-to-day,
   // so she keeps Business Setup; Account Manager stays clients-only. Both now
   // keep Team Production Analytics/Live Feed (both fully read-only for
@@ -14592,6 +14620,7 @@ function applyAdminRoleRestrictions(level, adminObj){
   });
   // Disable add/edit/delete actions in UI (hide action buttons)
   document.querySelectorAll('.su-btn').forEach(b=>b.style.display='none');
+  _updateSalesGroupVisibility();
 }
 
 function _populateAssignedUsersSelect(selectId, chipsId, currentAssigned){
