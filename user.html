@@ -1517,10 +1517,62 @@ function _opsDirty(table, localArr){
 // (this is exactly what happened when Supabase was empty right after the
 // Phase 4 cutover). Only adopt a table's server copy when it actually
 // returned at least one row.
-function _applyServerArray(table, arr, saveFn){
-  if(!Array.isArray(arr) || !arr.length) return;
-  saveFn(arr);
-  _opsSetSnapshot(table, arr);
+//
+// Never let a pull clobber a locally-dirty record either (2026-09-11) — this
+// function used to unconditionally adopt the server's array on EVERY pull,
+// with no check for a local edit still sitting in the 2s debounced
+// _scheduleCloudPush() window (or longer, if a save happened to still be
+// mid-flight). This file's own several periodic pulls — the 20s stats-
+// refresh interval, the 15s message-poll interval, or any of the direct
+// cloudFetchUsers() calls elsewhere — could land inside that window and
+// silently revert a just-made local edit back to its pre-edit server value,
+// AND reset the snapshot to match that stale value in the same call — so
+// the edit no longer even looked dirty by the time the debounced push
+// fired, and was lost with no error surfaced anywhere. The same gap also
+// applied to the shared `wl_clients_db` key: index.html and client.html
+// each maintain their OWN already-correct dirty-preserving copy of this
+// exact mechanism against that same localStorage key (see their own
+// copies of this function), but this file's PARENT frame runs its own
+// independent pull cycle against the identical key from a separate script
+// context — so even a perfectly safe edit made inside the embedded
+// client.html Tracker iframe could still get clobbered by this file's own
+// broken pull. Fixed to match index.html's/client.html's own pattern
+// exactly: a record still locally "dirty" (differs from the last-known
+// server snapshot — see _opsDirty above) is preserved as-is instead of
+// being overwritten by the server's (necessarily older, since the edit
+// hasn't reached it yet) copy; everything else adopts the server's value
+// as before. getFn reads the CURRENT local array for this table (the same
+// store saveFn writes) — every call site below now passes one.
+//
+// tombstoneIds (optional) — the same fix index.html already applied for
+// its own 'tasks' table (2026-09-04, "can't delete Whole team/cloned
+// tasks"): ops_tasks has no deleted_at column (a genuine hard SQL
+// DELETE), so a pull landing after a local delete but before the
+// tombstone reaches the server would otherwise resurrect the "deleted"
+// task here the same way — this file has its own equivalent tombstone
+// queue (DB_KEYS.deletedTaskIds, used by the Undo Import feature), so it
+// needs the identical protection.
+function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
+  if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
+  if(!filtered.length) return; // everything present was tombstoned — same empty-guard, never wipe local
+  const local = typeof getFn==='function' ? (getFn()||[]) : [];
+  const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
+  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
+  // Keep the LOCAL copy of every still-dirty record instead of the server's
+  // (stale, pre-edit) one; take everything else from the server as normal.
+  const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const serverIds = new Set(filtered.map(r=>r.id));
+  // A dirty record the server doesn't have at all yet (e.g. brand new,
+  // not-yet-pushed) must not be dropped just because it's missing from the
+  // server's response.
+  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
+  saveFn(merged);
+  // Snapshot to the (tombstone-filtered) SERVER array, not the merged one —
+  // this is what keeps a preserved edit "dirty" against the next
+  // _opsDirty() check, so its pending debounced push still fires and the
+  // edit actually persists instead of silently sitting local-only forever.
+  _opsSetSnapshot(table, filtered);
 }
 function _applyServerValue(saveFn, value){
   if(value === null || value === undefined) return;
@@ -1538,7 +1590,7 @@ async function cloudFetchUsers(){
     const data = await res.json();
     const r = data?.record || {};
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
-    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr));
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
     // Redacted {id,name,title,funnelLevel} shape for a member session (see
     // api/ops-state.js) — added 2026-09-01 so _dtPersonName() can resolve
     // a task's assignedById to a real admin's name (was previously only
@@ -1547,28 +1599,30 @@ async function cloudFetchUsers(){
     // _getContactList() has referenced since it was written but that was
     // never actually populated — DB_KEYS had no 'admins' entry at all
     // before this, a separate pre-existing bug not touched here.
-    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr));
-    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr));
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[]);
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
     _applyServerValue(v=>dbSet(DB_KEYS.coc, v), r.coc);
-    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr));
-    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr));
-    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr));
-    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr));
-    _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)));
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[]);
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[]);
+    _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)), ()=>{ try{ return JSON.parse(localStorage.getItem('wl_clients_db')||'[]'); }catch(e){ return []; } });
     // Same guard/reasoning as index.html's own Client Directory refresh
     // hook — a pull landing while this tab is open re-reads the live data
     // WITHOUT resetting the search box (see _cdReloadData() below).
     if(document.getElementById('sec-clientDirectory')?.classList.contains('active') && typeof _cdReloadData==='function') _cdReloadData();
-    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr));
-    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr));
+    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
+    // tombstoneIds: this file's own Undo Import delete queue — see this
+    // function's own header comment for why 'tasks' specifically needs it.
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]));
     if(document.getElementById('sec-dailyTasks')?.classList.contains('active') && typeof renderDailyTasks==='function') renderDailyTasks();
     // Read-only Company Overview chart — same ops_org_nodes/ops_org_links
     // data the admin chart renders from (api/ops-state.js no longer strips
     // these for member tier; see there for why it's safe: no sensitive
     // fields, and there is still no write path for members either way).
-    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr));
-    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr));
+    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[]);
+    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
     _applyServerValue(v=>dbSet(DB_KEYS.tourFlags, v), r.tourFlags);
     if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
     if(document.getElementById('sec-companyOverview')?.classList.contains('active') && typeof renderCompanyOverviewChart==='function') renderCompanyOverviewChart();
