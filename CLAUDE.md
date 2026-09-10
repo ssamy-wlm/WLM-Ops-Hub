@@ -8588,6 +8588,77 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 — touches real write/notification logic in
 `api/ops-sync.js`.
 
+**Fix: Add Service modal opens behind Manage Bundles modal — z-index
+(2026-09-10).** `client.html` only, display-only (CSS/stacking) —
+low-risk per rule #10.
+
+**Root cause, confirmed by reading the code rather than trusting the
+task's own file-id reference (rule #7):** "+ Add Service" inside "Manage
+Bundles" (`bundleManagerModal`) doesn't actually open `#addServiceModal`
+at all — it calls `openServiceCatalogModal(null, bundleId)`, which opens
+`serviceCatalogModal`. That modal's own on-screen title literally reads
+"Add Service" when adding a new one (`_el('sc-modal-title').textContent
+= id?'Edit Service':'Add Service'`), which is almost certainly what the
+report's `#addServiceModal` reference actually meant — going by the
+words on screen, not the DOM id. `openServiceCatalogModal()` never
+closes `bundleManagerModal`, so both stay `.open` at once, matching the
+codebase's own `.modal-overlay{z-index:1000}` rule shared by every
+modal in this file. With equal z-index, plain DOM order decides the
+stack, and `bundleManagerModal` (~line 1214) sits AFTER
+`serviceCatalogModal` (~line 1167) in the markup — so it painted on top
+of the very modal it had just opened, blocking all interaction with it.
+Reproduced directly against unmodified `main`, not just reasoned about:
+a real Playwright click into `#sc-name` failed with Playwright's own
+diagnostic naming the exact cause — `bundleManagerModal subtree
+intercepts pointer events` — and a before-screenshot sent to the user
+shows the Add Service form fully hidden underneath.
+
+**Fix — a general rule, not a one-off z-index override on this one
+pair, per the task's own explicitly offered alternative.** `openModal()`
+now bumps the newly-opened modal's own `z-index` one above whatever
+`.modal-overlay.open` element(s) already exist (via the real computed
+z-index of the current highest, not a hardcoded guess), so any
+modal-from-modal nesting anywhere in this large file stacks correctly
+regardless of DOM order — not just this specific pair. `closeModal()`
+clears the inline override back off on close, so a later, non-nested
+open of that same modal never carries a stale bumped value forward. A
+completely generic, backward-compatible change: when only one modal is
+ever open (the overwhelming majority of this file's ~20 modals, almost
+none of which nest), `openModal()`'s `openOverlays.length` check is
+`0` and the z-index resets to `''` (falls back to the CSS default),
+identical to today's behavior.
+
+Verified: `new Function()` syntax-check on the extracted `<script>`
+block — clean; comment-stripped div-balance unchanged vs. `main` (delta
+0, pure JS change, zero `<div>`s touched). A new Playwright suite
+(13/13, run against the real UI, real user flow — not a function-call
+shortcut): opening Manage Bundles, expanding a real bundle, and clicking
+its own "+ Add Service" button opens `serviceCatalogModal` on top while
+`bundleManagerModal` stays open underneath (per this feature's own
+explicit requirement); the modal title is confirmed to genuinely read
+"Add Service"; `serviceCatalogModal`'s real computed z-index is
+confirmed higher than `bundleManagerModal`'s; the decisive check per
+this codebase's own verification standard —
+`document.elementFromPoint()` at the exact pixel of the `#sc-name`
+input confirms a click there actually lands on that input, not merely
+that both modals carry an `.open` class; filling the field via a real
+click+type and saving closes Add Service, leaves Manage Bundles open,
+and the new service genuinely lands in the catalog under the right
+bundle (confirmed both in `getFullCatalog()` directly and in the
+re-rendered bundle list), with the debounced `_scheduleCloudPush()`
+write confirmed to actually fire; and a regression check that a
+standalone, non-nested modal open still resolves to the plain CSS
+default z-index (`1000`) with no stale override carried over from an
+earlier nested open. Before/after screenshots sent to the user directly
+— the before shot (captured by temporarily stashing this fix and
+reproducing against unmodified `main`) shows the real, live bug; the
+after shot shows the same flow fully interactive with Manage Bundles
+still visible behind it.
+
+Low-risk per rule #10: `client.html` only, pure CSS/stacking-order
+logic, no data-write/sync/auth/permission logic touched — eligible for
+direct merge once CI is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
