@@ -2436,6 +2436,7 @@ function openDtDetailPanel(id){
     </div>
     ${_dtDueChangeBlockHtml(t)}
     ${_dtRecurringBlockHtml(t)}
+    ${_dtSopLinksBlockHtml(t)}
     <label class="form-label">Status</label>
     <select class="form-input" id="dt-status-select" onchange="_dtToggleBlockReasonField()"><option>Not started</option><option>In progress</option><option>Blocked</option><option>Done</option></select>
     <div id="dt-block-reason-wrap" style="display:none;margin-top:10px;">
@@ -2462,6 +2463,30 @@ function openDtDetailPanel(id){
   _dtToggleBlockReasonField();
   document.getElementById('dt-notes-input').value = t.notes || '';
   document.getElementById('dtDetailOverlay').classList.add('open');
+}
+// SOP links (attach-only, 2026-09-11) — READ-ONLY here, deliberately NOT
+// the "identical" editable add/remove UI index.html's task edit modal got.
+// sopLinks is admin-editable only (TASK_KEYS_MEMBER_MAY_NOT_TOUCH in
+// api/ops-sync.js) — that check does a flat JSON.stringify compare against
+// what's already stored, and any genuine attempted CHANGE to it rejects
+// the caller's ENTIRE task write (not just the sopLinks field), the same
+// way every other admin-only task field already behaves. Since
+// saveDtTaskUpdate() never reads/mutates t.sopLinks itself, the value it
+// pushes always matches what's already stored — safe by construction —
+// but a real add/remove UI here would let a member innocently break their
+// own unrelated status/notes save the moment they touched it. Flagged as
+// a deliberate deviation from "identical UI," not silently done: this
+// just lists whatever links the admin already set, with an Open button.
+function _dtSopLinksBlockHtml(t){
+  const links = Array.isArray(t.sopLinks) ? t.sopLinks : [];
+  if(!links.length) return '';
+  return `<div style="margin-top:10px;">
+    <div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">SOP Links</div>
+    ${links.map(l=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg2,#f4f6f9);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+      <div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlUser(l.title)}</div>
+      <a href="${escHtmlUser(l.url)}" target="_blank" rel="noopener" class="btn btn-outline btn-xs" style="flex-shrink:0;">Open ↗</a>
+    </div>`).join('')}
+  </div>`;
 }
 // Same Blocked-reason toggle as index.html's _taToggleBlockReasonField().
 function _dtToggleBlockReasonField(){

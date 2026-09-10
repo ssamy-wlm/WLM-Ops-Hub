@@ -1202,6 +1202,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
           <button type="button" class="btn btn-outline btn-sm" onclick="addCatalogPlatformOption()">+ Add</button>
         </div>
       </div>
+      <div class="form-group">
+        <label class="form-label">SOP Links</label>
+        <div style="font-size:10.5px;color:var(--text-light);margin-bottom:6px;">Linked procedures from the Weblight Media Library. New tasks created from this service copy these links at creation time (a frozen snapshot, not a live link back to the catalog).</div>
+        <div id="sc-sop-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input class="form-input" id="sc-sop-title" placeholder="SOP title" style="flex:1;">
+          <input class="form-input" id="sc-sop-url" placeholder="Paste URL" style="flex:1;">
+          <button type="button" class="btn btn-outline btn-sm" onclick="addCatalogSopLink()">+ Add</button>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('serviceCatalogModal')">Cancel</button>
@@ -5769,6 +5779,33 @@ function moveCatalogPlatformOption(i,dir){
   [_scPlatformOptions[i],_scPlatformOptions[j]]=[_scPlatformOptions[j],_scPlatformOptions[i]];
   _renderCatalogPlatformChips();
 }
+
+// SOP links (attach-only, 2026-09-11) — {title,url} pairs on a catalog
+// service entry, same in-memory-array-then-save-on-submit pattern as
+// _scPlatformOptions right above. No gate/enforcement logic here — this
+// PR is attach + copy-on-create only (see saveTaskEdit() in index.html).
+let _scSopLinks=[];
+function _renderCatalogSopLinks(){
+  const wrap=_el('sc-sop-list'); if(!wrap) return;
+  wrap.innerHTML=_scSopLinks.length ? _scSopLinks.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg,#f4f6f9);border:1px solid var(--border);border-radius:8px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(l.title)}</div>
+        <div style="font-size:10px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(l.url)}</div>
+      </div>
+      <button type="button" onclick="removeCatalogSopLink(${i})" title="Remove" style="border:none;background:none;cursor:pointer;color:var(--red);font-weight:700;font-size:13px;flex-shrink:0;">✕</button>
+    </div>`).join('') : `<div style="font-size:11px;color:var(--text-light);">No SOP links yet.</div>`;
+}
+function addCatalogSopLink(){
+  const titleEl=_el('sc-sop-title'), urlEl=_el('sc-sop-url');
+  const title=(titleEl?.value||'').trim(), url=(urlEl?.value||'').trim();
+  if(!title || !url){ showToast('Enter both a title and a URL','warn'); return; }
+  _scSopLinks.push({title,url});
+  if(titleEl) titleEl.value='';
+  if(urlEl) urlEl.value='';
+  _renderCatalogSopLinks();
+}
+function removeCatalogSopLink(i){ _scSopLinks.splice(i,1); _renderCatalogSopLinks(); }
 function openServiceCatalogModal(id, presetBundleId){
   _el('sc-modal-title').textContent=id?'Edit Service':'Add Service';
   _el('sc-id').value=id||'';
@@ -5783,14 +5820,19 @@ function openServiceCatalogModal(id, presetBundleId){
     const s=getCatalog().find(x=>x.id===id); if(!s) return;
     _el('sc-name').value=s.name; _el('sc-freq').value=s.freq; _el('sc-desc').value=s.desc||''; daEl.value=s.defaultAssignee||''; bundleEl.value=s.bundle||''; catEl.value=s.category||'';
     _scPlatformOptions=Array.isArray(s.platformOptions)?s.platformOptions.slice():[];
+    _scSopLinks=Array.isArray(s.sopLinks)?s.sopLinks.slice():[];
   } else {
     _el('sc-name').value=''; _el('sc-freq').value='monthly'; _el('sc-desc').value=''; catEl.value='';
     const presetBundle = presetBundleId ? getCatalogBundles().find(b=>b.id===presetBundleId) : null;
     bundleEl.value = presetBundle ? presetBundle.name : '';
     _scPlatformOptions=[];
+    _scSopLinks=[];
   }
   if(_el('sc-platform-new')) _el('sc-platform-new').value='';
+  if(_el('sc-sop-title')) _el('sc-sop-title').value='';
+  if(_el('sc-sop-url')) _el('sc-sop-url').value='';
   _renderCatalogPlatformChips();
+  _renderCatalogSopLinks();
   openModal('serviceCatalogModal');
 }
 function editServiceCatalog(id){ openServiceCatalogModal(id); }
@@ -5799,7 +5841,7 @@ function saveServiceCatalog(){
   if(!name){ showToast('Service name required','warn'); return; }
   const id=_el('sc-id').value;
   const {bundles, services}=getFullCatalog();
-  const data={name,bundle:_el('sc-bundle').value||null,category:_el('sc-category').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value,platformOptions:_scPlatformOptions.slice()};
+  const data={name,bundle:_el('sc-bundle').value||null,category:_el('sc-category').value||null,freq:_el('sc-freq').value,desc:_el('sc-desc').value,defaultAssignee:_el('sc-default-assignee').value,platformOptions:_scPlatformOptions.slice(),sopLinks:_scSopLinks.slice()};
   if(id){ const s=services.find(x=>x.id===id); if(s) Object.assign(s,data); }
   else services.push({id:'svc'+uid(),...data});
   saveFullCatalog(bundles, services);
