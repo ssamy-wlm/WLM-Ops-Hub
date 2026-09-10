@@ -1154,6 +1154,28 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
         <input class="form-input" id="svc-hostingprovider-other" placeholder="Type hosting provider…" style="display:none;margin-top:6px;">
       </div>
       <div class="form-group"><label class="form-label">Notes</label><textarea class="form-input" id="svc-notes" rows="2" placeholder="Optional…" style="resize:vertical;"></textarea></div>
+      <!-- SOP Links (attach + display only, 2026-09-11) — client.services[i].sopLinks.
+           Admin-editable (mirrors the Service Catalog modal's sc-sop-* UI byte-
+           for-byte, see _renderCatalogSopLinks()/addCatalogSopLink() above);
+           read-only for a member who reached this modal via their own assigned
+           service (svcCanEdit in _serviceRow() lets an assignee open this
+           same modal too, not just an admin) — mirrors user.html's
+           _dtSopLinksBlockHtml() read-only treatment exactly. No gate, no
+           copy-to-tasks here — see saveClientService()'s own comment on the
+           clean hook this leaves for a future feature to read from. -->
+      <div class="form-group" id="svc-sop-editable-group">
+        <label class="form-label">SOP Links</label>
+        <div id="svc-sop-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:6px;">
+          <input class="form-input" id="svc-sop-title" placeholder="SOP title" style="flex:1;">
+          <input class="form-input" id="svc-sop-url" placeholder="Paste URL" style="flex:1;">
+          <button type="button" class="btn btn-outline btn-sm" onclick="addSvcSopLink()">+ Add</button>
+        </div>
+      </div>
+      <div class="form-group" id="svc-sop-readonly-group" style="display:none;">
+        <label class="form-label">SOP Links</label>
+        <div id="svc-sop-readonly-list"></div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('addServiceModal')">Cancel</button>
@@ -4967,6 +4989,7 @@ function openAddServiceModal(clientId,entryId,locationId){
     _updateDueHint(svc.due||'');
     _updateSvcPlatformsVisibility(_resolvePlatformOptions(catEntry, svc.name), svc.platforms);
     _updateSvcHostingVisibility(svc.name, svc);
+    _svcSopLinks=Array.isArray(svc.sopLinks)?svc.sopLinks.slice():[];
   } else {
     const loc=locationId?(c.locations||[]).find(l=>l.id===locationId):null;
     _el('svc-modal-title').textContent='Add Bundle Service';
@@ -4982,11 +5005,69 @@ function openAddServiceModal(clientId,entryId,locationId){
     _updateDueHint(_el('svc-due').value);
     _updateSvcPlatformsVisibility([], []);
     _updateSvcHostingVisibility('', null);
+    _svcSopLinks=[];
   }
+  if(_el('svc-sop-title')) _el('svc-sop-title').value='';
+  if(_el('svc-sop-url')) _el('svc-sop-url').value='';
+  // Admin-editable, read-only for a member who reached this modal via their
+  // own assigned service (svcCanEdit) — see the modal HTML's own comment.
+  const svcSopEditableGroup=_el('svc-sop-editable-group'), svcSopReadonlyGroup=_el('svc-sop-readonly-group');
+  if(svcSopEditableGroup) svcSopEditableGroup.style.display=SESSION.isAdmin?'':'none';
+  if(svcSopReadonlyGroup) svcSopReadonlyGroup.style.display=SESSION.isAdmin?'none':'';
+  _renderSvcSopLinks();
+  _renderSvcSopLinksReadonly();
   openModal('addServiceModal');
   if(!entryId) setTimeout(()=>_maybeShowTip('clientAddService','#svc-modal-title','Pick from the Service Catalog, or type a new name to add it on the fly.'),50);
 }
 function editClientService(clientId,entryId,locationId){ openAddServiceModal(clientId,entryId,locationId); }
+
+// SOP Links on a CLIENT's assigned service (client.services[i].sopLinks) —
+// attach + display only, 2026-09-11. Reuses the exact {title,url} UI/logic
+// from the Service Catalog modal's _renderCatalogSopLinks()/
+// addCatalogSopLink()/removeCatalogSopLink() (PR #351) — same shape, same
+// list-with-remove-then-title/url/Add layout — just targeting svc-sop-*
+// element ids and _svcSopLinks instead of sc-sop-*/_scSopLinks, since this
+// edits a DIFFERENT object (a client's assigned service, not the shared
+// catalog definition). No gate/enforcement logic here, and no copy-to-tasks
+// on this path — a future feature can read client.services[i].sopLinks
+// directly off the saved service record; nothing here needs to change for
+// that to work.
+let _svcSopLinks=[];
+function _renderSvcSopLinks(){
+  const wrap=_el('svc-sop-list'); if(!wrap) return;
+  wrap.innerHTML=_svcSopLinks.length ? _svcSopLinks.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg,#f4f6f9);border:1px solid var(--border);border-radius:8px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(l.title)}</div>
+        <div style="font-size:10px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(l.url)}</div>
+      </div>
+      <button type="button" onclick="removeSvcSopLink(${i})" title="Remove" style="border:none;background:none;cursor:pointer;color:var(--red);font-weight:700;font-size:13px;flex-shrink:0;">✕</button>
+    </div>`).join('') : `<div style="font-size:11px;color:var(--text-light);">No SOP links yet.</div>`;
+}
+function addSvcSopLink(){
+  const titleEl=_el('svc-sop-title'), urlEl=_el('svc-sop-url');
+  const title=(titleEl?.value||'').trim(), url=(urlEl?.value||'').trim();
+  if(!title || !url){ showToast('Enter both a title and a URL','warn'); return; }
+  _svcSopLinks.push({title,url});
+  if(titleEl) titleEl.value='';
+  if(urlEl) urlEl.value='';
+  _renderSvcSopLinks();
+}
+function removeSvcSopLink(i){ _svcSopLinks.splice(i,1); _renderSvcSopLinks(); }
+// Read-only reflection for a member who reached this modal via their own
+// assigned service — mirrors user.html's _dtSopLinksBlockHtml() exactly,
+// including hiding the whole block when there's nothing to show.
+function _renderSvcSopLinksReadonly(){
+  const wrap=_el('svc-sop-readonly-list'); if(!wrap) return;
+  const group=_el('svc-sop-readonly-group');
+  if(!_svcSopLinks.length){ if(group) group.style.display='none'; wrap.innerHTML=''; return; }
+  if(group && !SESSION.isAdmin) group.style.display='';
+  wrap.innerHTML=_svcSopLinks.map(l=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg,#f4f6f9);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+      <div style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(l.title)}</div>
+      <a href="${escHtmlClient(l.url)}" target="_blank" rel="noopener" class="btn btn-outline btn-xs" style="flex-shrink:0;">Open ↗</a>
+    </div>`).join('');
+}
 
 // Pure, reusable service-record builder — the ONE place name/catalogId/
 // bundle resolution and assignee-array mirroring (assigneeIds[] is the
@@ -5087,6 +5168,14 @@ function saveClientService(){
     if(_el('svc-registrar')) data.registrar=(_el('svc-registrar').value||'').trim();
     if(_el('svc-hostingprovider')) data.hostingProvider=_collectHostingDropdownValue('svc-hostingprovider','svc-hostingprovider-other');
   }
+  // SOP Links: read from _svcSopLinks, not the DOM — this modal only shows
+  // an EDIT UI for it when SESSION.isAdmin (see openAddServiceModal()), so a
+  // member's save always writes back the exact same array the modal was
+  // opened with, never touching it. Safe by construction, same reasoning
+  // user.html's _dtSopLinksBlockHtml() documents for the identical situation
+  // on tasks: nothing in this save path reads/mutates it except the Add/
+  // Remove buttons a member never sees.
+  data.sopLinks=_svcSopLinks.slice();
   if(entryId){
     if(idx>=0){
       Object.assign(targetList[idx], data);
