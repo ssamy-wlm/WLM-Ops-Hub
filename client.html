@@ -6665,8 +6665,27 @@ function archiveFunnelProspect(id){
 // ═══════════════════════════════════════════════════════
 //  MODAL HELPERS
 // ═══════════════════════════════════════════════════════
-function openModal(id){ const el=_el(id); if(el){ el.classList.add('open'); el.scrollTop=0; } }
-function closeModal(id){ _el(id)?.classList.remove('open'); }
+// Modal-over-modal stacking (2026-09-10) — every .modal-overlay shares the
+// same base z-index (1000, see the CSS rule above), which is fine when
+// only one is ever open at a time, but a modal opened FROM WITHIN an
+// already-open one (e.g. "+ Add Service" inside "Manage Bundles" —
+// bundleManagerModal stays open underneath on purpose, so the new
+// service lands back in that bundle) then stacked purely by DOM order,
+// which happened to put the wrong one on top. Rather than hand-picking a
+// higher z-index for just this one pair (a whack-a-mole fix that would
+// need repeating for every other modal-from-modal flow in this file),
+// openModal() now bumps the newly-opened modal's own z-index one above
+// whatever's already open, so nesting to any depth always stacks
+// correctly regardless of DOM order. closeModal() clears the inline
+// override back off so a later, non-nested open of the same modal never
+// carries a stale bumped value.
+function openModal(id){
+  const el=_el(id); if(!el) return;
+  const openOverlays=[...document.querySelectorAll('.modal-overlay.open')].filter(o=>o!==el);
+  el.style.zIndex = openOverlays.length ? Math.max(...openOverlays.map(o=>parseInt(getComputedStyle(o).zIndex,10)||1000))+10 : '';
+  el.classList.add('open'); el.scrollTop=0;
+}
+function closeModal(id){ const el=_el(id); if(!el) return; el.classList.remove('open'); el.style.zIndex=''; }
 document.querySelectorAll('.modal-overlay').forEach(ov=>{
   ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
 });
