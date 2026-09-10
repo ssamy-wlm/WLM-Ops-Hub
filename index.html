@@ -1203,14 +1203,24 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-nav-item" onclick="switchAdminTab(this,'myTimeOff')" id="admin-nav-mytimeoff" style="display:none;"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>My Time Off</div>
 
       <div class="admin-nav-group-label" id="admin-nav-group-sales">Sales</div>
-      <!-- No standalone "Sales Funnel" nav item exists to reuse — Sales
-           Funnel Access lives as a card inside the Admin Controls tab (see
-           CLAUDE.md's Admin Controls entry), not its own nav item. Per the
-           task's own explicit fallback ("if a Sales category doesn't exist
-           yet, create it"), this group is new. Header visibility is
-           computed in _updateSalesGroupVisibility() (see
-           applyAdminRoleRestrictions()) — never shown with nothing visible
-           underneath it for this viewer. -->
+      <!-- Group header visibility is computed in
+           _updateSalesGroupVisibility() (see applyAdminRoleRestrictions())
+           — never shown with nothing visible underneath it for this
+           viewer. -->
+      <!-- Sales Funnel — a real, already-working feature that lives inside
+           the embedded Tracker (client.html's own topbar nav item
+           #nav-sales-funnel), server-gated there on SESSION.funnelLevel
+           (any of viewer/editor/owner — see client.html's
+           _applyFunnelAccess()), orthogonal to admin tier by design. This
+           sidebar item is purely a convenience shortcut into that same
+           existing feature — it does not move, duplicate, or change the
+           Tracker's own access control in any way. Shown whenever this
+           viewer is Super Admin/Owner OR has any resolved
+           _mySalesFunnelLevel (independent of earnsCommission — a person
+           with funnel access but no commission flag must not lose their
+           only nav path to a feature they already have real, working
+           access to). Default hidden; set in applyAdminRoleRestrictions(). -->
+      <div class="admin-nav-item" id="admin-nav-salesfunnel" onclick="openAdminTrackerToSalesFunnel()" style="display:none;"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span>Sales Funnel</div>
       <!-- Commissions (Phase 1) — Super Admin/Owner exclusive, hidden for
            every non-super admin the same way Payroll itself is (see the
            uniform baseline in applyAdminRoleRestrictions()). -->
@@ -5736,6 +5746,25 @@ function openAdminTrackerToClient(clientId, serviceId){
   const params = new URLSearchParams();
   params.set('openClient', clientId);
   if(serviceId) params.set('openService', serviceId);
+  params.set('v', Date.now());
+  const frame = document.getElementById('adminTrackerFrame');
+  if(frame) frame.src = 'client.html?' + params.toString();
+}
+// Sales Funnel sidebar shortcut — same tab-switch-first ordering as
+// openAdminTrackerToClient() above (switchAdminTab('tracker') can reset
+// frame.src via loadAdminTrackerFrame(), so the deep-link src must be set
+// AFTER the tab switch to win). Uses the ?page= deep-link convention
+// client.html's own _openDeepLinkFromUrl() already reads
+// (showPage(page, _el('nav-'+page))) rather than ?openClient=, since this
+// isn't a client-specific deep link — it just opens the Sales Funnel page,
+// which re-checks SESSION.funnelLevel itself on load (see client.html's
+// showPage()) as its own, real, unchanged access boundary regardless of
+// what this sidebar item shows.
+function openAdminTrackerToSalesFunnel(){
+  const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
+  switchAdminTab(trackerNavEl, 'tracker');
+  const params = new URLSearchParams();
+  params.set('page', 'sales-funnel');
   params.set('v', Date.now());
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
@@ -14435,6 +14464,20 @@ function applyAdminRoleRestrictions(level, adminObj){
   // server-enforced by its own endpoint regardless of whether this nav item
   // is visible.
   const isSuperAdmin = (level==='super' || level==='owner');
+
+  // Sales Funnel nav item (Sales group) — gated per-item, independent of
+  // earnsCommission: visible to Super Admin/Owner OR anyone with a real
+  // resolved _mySalesFunnelLevel (viewer/editor/owner), regardless of
+  // whether they also earn commission. A funnel-granted person must never
+  // lose their only nav path to a feature they already have real, working
+  // access to just because they don't earn commission. Set once here,
+  // unconditionally — this item's onclick isn't a switchAdminTab(...) call,
+  // so none of the branch-specific hiding loops below (which only match
+  // .admin-nav-item[onclick*="switchAdminTab(this,'(\w+)')"]) can touch it,
+  // and it needs no further re-assertion at any branch's exit point.
+  const salesFunnelNavItem = document.getElementById('admin-nav-salesfunnel');
+  if(salesFunnelNavItem) salesFunnelNavItem.style.display = (isSuperAdmin || !!_mySalesFunnelLevel) ? '' : 'none';
+
   const adminControlsNav = document.getElementById('admin-nav-admincontrols');
   if(adminControlsNav) adminControlsNav.style.display = (isSuperAdmin || _mySalesFunnelLevel==='owner') ? '' : 'none';
 
