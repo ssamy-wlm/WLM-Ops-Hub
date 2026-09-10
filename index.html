@@ -1196,6 +1196,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
+      <!-- Commissions (Phase 1) — Super Admin/Owner exclusive, hidden for
+           every non-super admin the same way Payroll itself is (see the
+           uniform baseline in applyAdminRoleRestrictions()). -->
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'commissions')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 2.5-1.5h.5a2 2 0 1 1 0 4h-1a2 2 0 1 0 0 4h.5a2.5 2.5 0 0 0 2.5-1.5"/></svg></span>Commissions</div>
+      <!-- My Commissions: a non-super recipient's own read-only reflection —
+           same "appears only if flagged" mechanism as admin-nav-mytimeoff
+           below, gated on _viewerEarnsCommission instead of admin level.
+           Default hidden; only ever revealed in cloudPullAll(). -->
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'mycommissions')" id="admin-nav-mycommissions" style="display:none;"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 2.5-1.5h.5a2 2 0 1 1 0 4h-1a2 2 0 1 0 0 4h.5a2.5 2.5 0 0 0 2.5-1.5"/></svg></span>My Commissions</div>
       <!-- My Time Off: a non-super admin's own request tab, shown instead of
            full Time off management/ledger — see applyAdminRoleRestrictions()
            and CLAUDE.md's admin-restriction project. Default hidden; only
@@ -2089,6 +2098,91 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="card">
         <div class="card-header"><div class="card-title">Saved Weekly Payrolls</div></div>
         <div class="card-body" id="savedPayrollList"><div style="font-size:13px;color:var(--text-light);">No saved payrolls yet.</div></div>
+      </div>
+    </div>
+
+    <!-- ══ COMMISSIONS (Phase 1) — Super Admin/Owner exclusive ══ -->
+    <div id="admin-commissions" class="page-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--text-dark);">💰 Commissions
+            <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(217,119,6,.12);color:#d97706;margin-left:6px;vertical-align:middle;">SUPER ADMIN ONLY</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Net-based tiered commission — 5% under $20,000 month net, 10% at/above, applied to the whole month</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="month" class="form-select" id="comm-month" style="font-size:13px;width:150px;" onchange="loadCommissionsMonth()">
+          <select class="form-select" id="comm-recipient" style="font-size:13px;width:220px;" onchange="renderCommissionEditor()"></select>
+          <button class="btn btn-outline btn-sm" onclick="toggleCommissionRecipientsPanel()">Manage recipients</button>
+        </div>
+      </div>
+
+      <div id="commRecipientsPanel" class="card" style="margin-bottom:18px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Manage recipients</div>
+            <div class="card-sub">Grant or revoke commission eligibility — only a flagged person can be selected above</div>
+          </div>
+        </div>
+        <div class="card-body" id="commRecipientsList"></div>
+      </div>
+
+      <div id="commEmptyState" class="card" style="display:none;text-align:center;padding:44px 20px;">
+        <div style="font-size:30px;margin-bottom:10px;">💰</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">No commission recipients yet</div>
+        <div style="font-size:13px;color:var(--text-light);margin-bottom:18px;">Grant commission eligibility to a user or admin to get started.</div>
+        <button class="btn btn-primary btn-sm" onclick="toggleCommissionRecipientsPanel()">+ Add recipient</button>
+      </div>
+
+      <div id="commEditorCard" class="card" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" id="comm-editor-title">—</div>
+            <div class="card-sub" id="comm-editor-sub">—</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="exportCommissionCSV()">Export CSV</button>
+            <button class="btn btn-primary btn-sm" id="commSaveBtn" onclick="saveCommissionMonth()">Save</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;">One row per client this recipient earned commission on this month. Net and the tiered commission total are calculated automatically and re-verified server-side on save.</div>
+          <div id="commEntriesRows" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="addCommissionEntryRow()">+ Add client</button>
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;">
+              <div>
+                <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Payout date</div>
+                <input type="date" class="form-select" id="comm-payout-date" style="font-size:13px;" onchange="_commMarkDirtyPreview()">
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Status</div>
+                <select class="form-select" id="comm-status" style="font-size:13px;" onchange="_commMarkDirtyPreview()">
+                  <option value="pending">Pending</option>
+                  <option value="client_paid">Client Paid</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:11px;color:var(--text-light);" id="comm-tier-label">Tier —</div>
+              <div style="font-size:22px;font-weight:800;font-family:'Poppins',sans-serif;color:var(--text-dark);" id="comm-total">$0.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MY COMMISSIONS (non-super recipient's own read-only reflection —
+         appears only when _viewerEarnsCommission is set, same pattern as
+         My Time Off appearing only for a non-super admin) ══ -->
+    <div id="admin-mycommissions" class="page-section">
+      <div style="margin-bottom:18px;">
+        <div style="font-size:20px;font-weight:800;color:var(--text-dark);">💰 My Commissions</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">A read-only view of what a Super Admin/Owner has logged for you — you cannot edit this.</div>
+      </div>
+      <div class="card">
+        <div class="card-body" id="myCommissionsList"><div style="font-size:13px;color:var(--text-light);">No commissions logged yet.</div></div>
       </div>
     </div>
 
@@ -3808,6 +3902,8 @@ function switchAdminTab(el, tab){
   }
   if(tab==='myTeamsWork') renderMyTeamsWork();
   if(tab==='taskAssignments') loadTaskAssignments();
+  if(tab==='commissions') initCommissions();
+  if(tab==='mycommissions') renderMyCommissionsAdmin();
 }
 
 function loadAdminTrackerFrame(){
@@ -6576,6 +6672,7 @@ const DB_KEYS = {
   notifications: 'wl_ops_notifications',
   notificationSettings: 'wl_notification_settings',
   tasks: 'wl_ops_tasks',
+  commissions: 'wl_commissions_db',
   passwordMigrationStatus: 'wl_password_migration_status',
   // Onboarding tour/tips flags — same localStorage key name client.html/
   // user.html use (same-origin shared storage, see client.html's CL_KEYS
@@ -8143,6 +8240,7 @@ let _lastPullOk = false;
 // Funnel Access card's visibility to a non-super-level admin who's been
 // granted funnel-Owner specifically (see applyAdminRoleRestrictions()).
 let _mySalesFunnelLevel = null;
+let _viewerEarnsCommission = false;
 
 function setCloudStatus(msg, type='idle'){
   const el = document.getElementById('cloudSyncStatus');
@@ -8551,6 +8649,12 @@ async function cloudPushAll(silent=false){
     if(notifsDirty.length) changes.notifications = notifsDirty.map(n=>({id:n.id, read:!!n.read}));
     const tasksDirty = _opsDirty('tasks', dbGet(DB_KEYS.tasks)||[]);
     if(tasksDirty.length) changes.tasks = tasksDirty;
+    // Commissions (Phase 1): mutable, same batched dirty-diff push as tasks
+    // above — never routed through the salesFunnelGrants-style one-off
+    // fetch, since a commission-month row's entries[] are edited as a
+    // normal record, not a single targeted field.
+    const commissionsDirty = _opsDirty('commissions', dbGet(DB_KEYS.commissions)||[]);
+    if(commissionsDirty.length) changes.commissions = commissionsDirty;
 
     const settings = {};
     const ann = dbGet('wl_announcement'); if(ann!==null && ann!==undefined) settings.announcement = ann;
@@ -8671,6 +8775,13 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     _lastViewerTier = r.viewerTier ?? null;
     _lastViewerLevel = r.viewerLevel ?? null;
     _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
+    // Commissions (Phase 1) — same "server-verified own flag" pattern as
+    // _mySalesFunnelLevel above, drives whether the "My Commissions" nav
+    // item shows for THIS caller (a non-super recipient); the Super Admin
+    // management tab itself is gated purely on isSuperAdmin, unaffected.
+    _viewerEarnsCommission = !!r.viewerEarnsCommission;
+    const myCommNav = document.getElementById('admin-nav-mycommissions');
+    if(myCommNav) myCommNav.style.display = _viewerEarnsCommission ? '' : 'none';
     _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
@@ -8702,6 +8813,11 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
     if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
     if(typeof _taRefreshReportedIfActive==='function') _taRefreshReportedIfActive();
+    // Commissions (Phase 1): mutable, same _applyServerArray dirty-preserving
+    // pull as tasks above (no tombstone set — Phase 1 has no delete path).
+    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[]);
+    if(typeof renderCommissionEditor==='function' && document.getElementById('admin-commissions')?.classList.contains('active')) renderCommissionEditor();
+    if(typeof renderMyCommissionsAdmin==='function' && document.getElementById('admin-mycommissions')?.classList.contains('active')) renderMyCommissionsAdmin();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
     _applyServerValue(v=>dbSet(DB_KEYS.passwordMigrationStatus, v), r.passwordMigrationStatus);
@@ -13138,6 +13254,262 @@ function emailPayrollReport(){
 }
 
 // ═══════════════════════════════════════════════════════════
+// COMMISSIONS (Phase 1) — Super Admin/Owner only. Recipients are chosen
+// from existing users/admins via an earnsCommission grant (mirrors
+// salesFunnelLevel/setSalesFunnelLevel exactly, see _commSetEarns()
+// below); entries are per-recipient/per-month, net-based tiered commission
+// recomputed server-side on every save (never trusted from this preview).
+// ═══════════════════════════════════════════════════════════
+function _commActivePeople(){
+  const users = (dbGet(DB_KEYS.users)||[]).filter(u=>(u.status||'active')==='active').map(u=>({id:u.id, kind:'user', name:u.name||'(unnamed)', title:u.title||u.role||'Team member', earnsCommission:!!u.earnsCommission}));
+  const admins = (dbGet(DB_KEYS.admins)||[]).filter(a=>(a.status||'active')==='active').map(a=>({id:a.id, kind:'admin', name:a.name||'(unnamed)', title:a.title||'Admin', earnsCommission:!!a.earnsCommission}));
+  return [...admins, ...users];
+}
+function _commGrantedRecipients(){
+  return _commActivePeople().filter(p=>p.earnsCommission);
+}
+function _commCurrentMonth(){
+  const el = document.getElementById('comm-month');
+  if(el && el.value) return el.value;
+  const now = new Date();
+  return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+}
+function initCommissions(){
+  const monthEl = document.getElementById('comm-month');
+  if(monthEl && !monthEl.value) monthEl.value = _commCurrentMonth();
+  document.getElementById('commRecipientsPanel').style.display = 'none';
+  loadCommissionsMonth();
+}
+function toggleCommissionRecipientsPanel(){
+  const panel = document.getElementById('commRecipientsPanel');
+  const showing = panel.style.display !== 'none';
+  panel.style.display = showing ? 'none' : 'block';
+  if(!showing) renderCommissionRecipientsPanel();
+}
+// Same shape as renderSalesFunnelAccessList()/_resolveFunnelLevel() —
+// every active person, a picker (here just a checkbox, only two states)
+// per row, writes immediately via commissionGrants (see _commSetEarns()).
+function renderCommissionRecipientsPanel(){
+  const list = document.getElementById('commRecipientsList');
+  if(!list) return;
+  const people = _commActivePeople();
+  if(!people.length){ list.innerHTML = '<div style="padding:16px 4px;color:var(--text-light);font-size:13px;">No active users or admins yet.</div>'; return; }
+  list.innerHTML = people.map(p=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
+      <div style="min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-dark);">${escHtml(p.name)}</div>
+        <div style="font-size:11px;color:var(--text-light);">${escHtml(p.title)}${p.kind==='admin'?' · Admin':''}</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);white-space:nowrap;">
+        <input type="checkbox" ${p.earnsCommission?'checked':''} onchange="_commSetEarns('${p.kind}','${p.id}',this.checked)"> Earns commission
+      </label>
+    </div>`).join('');
+}
+// Direct one-off fetch to /api/ops-sync's commissionGrants path — NOT the
+// generic _opsDirty/cloudAutoSync() diffing, same reasoning
+// setSalesFunnelLevel() documents for its own identical pattern: this is a
+// single explicit action on one field, not a batched record edit.
+async function _commSetEarns(kind, id, earns){
+  const token = _opsToken();
+  if(!token){ showToast('❌ Not signed in — please log in again and retry.'); renderCommissionRecipientsPanel(); return; }
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+      body: JSON.stringify({ changes: { commissionGrants: [{ id, kind, earnsCommission: earns }] } })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || (Array.isArray(data.warnings) && data.warnings.some(w=>w.includes('commissionGrants')))){
+      const reason = (data.warnings||[]).find(w=>w.includes('commissionGrants')) || (data.error||('HTTP '+res.status));
+      showToast(`❌ Not saved: ${reason}`, 'error');
+      renderCommissionRecipientsPanel();
+      return;
+    }
+    // Optimistic local update, same as setSalesFunnelLevel().
+    const key = kind==='admin' ? DB_KEYS.admins : DB_KEYS.users;
+    const arr = dbGet(key)||[];
+    const idx = arr.findIndex(p=>p.id===id);
+    if(idx>=0){ arr[idx].earnsCommission = earns; dbSet(key, arr); }
+    renderCommissionRecipientsPanel();
+    _commPopulateRecipientSelect();
+    showToast(earns ? 'Commission eligibility granted ✓' : 'Commission eligibility revoked ✓');
+  }catch(e){
+    showToast('❌ Request failed: '+e.message, 'error');
+  }
+}
+function _commPopulateRecipientSelect(){
+  const sel = document.getElementById('comm-recipient');
+  if(!sel) return;
+  const prev = sel.value;
+  const recipients = _commGrantedRecipients();
+  sel.innerHTML = recipients.map(p=>`<option value="${p.kind}:${p.id}">${escHtml(p.name)}${p.kind==='admin'?' (Admin)':''}</option>`).join('');
+  if(recipients.some(p=>`${p.kind}:${p.id}`===prev)) sel.value = prev;
+  return recipients;
+}
+function loadCommissionsMonth(){
+  const recipients = _commPopulateRecipientSelect();
+  const hasAny = recipients && recipients.length;
+  document.getElementById('commEmptyState').style.display = hasAny ? 'none' : 'block';
+  document.getElementById('commEditorCard').style.display = hasAny ? 'block' : 'none';
+  if(hasAny) renderCommissionEditor();
+}
+function _commRecordId(recipientId, month){ return 'comm_'+recipientId+'_'+month; }
+function _commFindRecord(recipientId, month){
+  return (dbGet(DB_KEYS.commissions)||[]).find(r=>r.id===_commRecordId(recipientId, month)) || null;
+}
+function _commEmptyEntry(){ return { client:'', gross:0, adSpend:0, contractor:0 }; }
+function renderCommissionEditor(){
+  const sel = document.getElementById('comm-recipient');
+  const card = document.getElementById('commEditorCard');
+  if(!sel || !sel.value || !card) return;
+  const [kind, id] = sel.value.split(':');
+  const month = _commCurrentMonth();
+  const person = _commActivePeople().find(p=>p.kind===kind && p.id===id);
+  const existing = _commFindRecord(id, month);
+  card.dataset.recipientId = id;
+  card.dataset.recipientKind = kind;
+  card.dataset.recipientName = person?.name || existing?.recipientName || '';
+  card.dataset.month = month;
+  document.getElementById('comm-editor-title').textContent = (person?.name || existing?.recipientName || 'Recipient');
+  document.getElementById('comm-editor-sub').textContent = month;
+  document.getElementById('comm-payout-date').value = existing?.payoutDate || '';
+  document.getElementById('comm-status').value = existing?.status || 'pending';
+  const entries = (existing?.entries && existing.entries.length) ? existing.entries : [_commEmptyEntry()];
+  document.getElementById('commEntriesRows').innerHTML = entries.map((e,i)=>_commEntryRowHtml(e,i)).join('');
+  _commRecalcTotals();
+}
+function _commEntryRowHtml(e, i){
+  return `<div class="comm-entry-row" data-idx="${i}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <input type="text" class="form-select" placeholder="Client" value="${escHtml(e.client||'')}" style="flex:2;min-width:140px;font-size:13px;" oninput="_commRecalcTotals()">
+    <input type="number" class="form-select" placeholder="Gross" value="${e.gross||0}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commRecalcTotals()">
+    <input type="number" class="form-select" placeholder="Ad spend" value="${e.adSpend||0}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commRecalcTotals()">
+    <input type="number" class="form-select" placeholder="Contractor" value="${e.contractor||0}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commRecalcTotals()">
+    <div style="flex:1;min-width:90px;font-size:13px;font-weight:700;color:var(--text-dark);text-align:right;" class="comm-net-display">$0.00</div>
+    <button class="btn btn-sm btn-danger" onclick="removeCommissionEntryRow(${i})" title="Remove" style="font-size:11px;padding:4px 10px;">✕</button>
+  </div>`;
+}
+function addCommissionEntryRow(){
+  const rows = _commReadEntriesFromDOM();
+  rows.push(_commEmptyEntry());
+  document.getElementById('commEntriesRows').innerHTML = rows.map((e,i)=>_commEntryRowHtml(e,i)).join('');
+  _commRecalcTotals();
+}
+function removeCommissionEntryRow(idx){
+  const rows = _commReadEntriesFromDOM();
+  rows.splice(idx,1);
+  if(!rows.length) rows.push(_commEmptyEntry());
+  document.getElementById('commEntriesRows').innerHTML = rows.map((e,i)=>_commEntryRowHtml(e,i)).join('');
+  _commRecalcTotals();
+}
+function _commReadEntriesFromDOM(){
+  return Array.from(document.querySelectorAll('.comm-entry-row')).map(row=>{
+    const inputs = row.querySelectorAll('input');
+    return { client: inputs[0].value, gross: Number(inputs[1].value)||0, adSpend: Number(inputs[2].value)||0, contractor: Number(inputs[3].value)||0 };
+  });
+}
+// Client-side preview ONLY — identical math to recomputeCommission() in
+// api/ops-sync.js, but this is never what actually gets stored; the server
+// recomputes net/computedCommission/tier itself from entries[] on every
+// save and that recomputed value is what's saved back locally afterward.
+function _commRecalcTotals(){
+  const rows = document.querySelectorAll('.comm-entry-row');
+  let monthNet = 0;
+  rows.forEach(row=>{
+    const inputs = row.querySelectorAll('input');
+    const gross = Number(inputs[1].value)||0, adSpend = Number(inputs[2].value)||0, contractor = Number(inputs[3].value)||0;
+    const net = gross - adSpend - contractor;
+    monthNet += net;
+    row.querySelector('.comm-net-display').textContent = '$'+net.toFixed(2);
+  });
+  const tier = monthNet >= 20000 ? '10%' : '5%';
+  const commission = monthNet * (tier==='10%' ? 0.10 : 0.05);
+  document.getElementById('comm-tier-label').textContent = `Tier ${tier} · Month net $${monthNet.toFixed(2)}`;
+  document.getElementById('comm-total').textContent = '$'+commission.toFixed(2);
+}
+function _commMarkDirtyPreview(){ /* payout date/status don't affect totals — placeholder hook kept for symmetry with the entry-row oninput handlers */ }
+// Confirmed-write discipline, same as savePayrollWeek(): write local
+// immediately, disable/relabel Save, only toast success once cloudAutoSync()
+// genuinely confirms the push — an explicit error toast on failure, never a
+// false success.
+async function saveCommissionMonth(){
+  const card = document.getElementById('commEditorCard');
+  const recipientId = card.dataset.recipientId, recipientKind = card.dataset.recipientKind;
+  const recipientName = card.dataset.recipientName, month = card.dataset.month;
+  if(!recipientId || !month) return;
+  const entries = _commReadEntriesFromDOM().filter(e=>e.client || e.gross || e.adSpend || e.contractor);
+  const record = {
+    id: _commRecordId(recipientId, month),
+    recipientId, recipientType: recipientKind, recipientName, month,
+    entries,
+    payoutDate: document.getElementById('comm-payout-date').value || null,
+    status: document.getElementById('comm-status').value || 'pending',
+    updatedBy: _currentAdminName() || 'Admin',
+    updatedAt: new Date().toISOString(),
+  };
+  let all = dbGet(DB_KEYS.commissions)||[];
+  const idx = all.findIndex(r=>r.id===record.id);
+  if(idx>=0) all[idx] = record; else all.push(record);
+  dbSet(DB_KEYS.commissions, all);
+
+  const btn = document.getElementById('commSaveBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+  const ok = await cloudAutoSync();
+  if(btn){ btn.disabled = false; btn.textContent = 'Save'; }
+  if(ok === false){
+    showToast('❌ Commission entry saved locally but the cloud sync failed — it will retry automatically, or click Sync now.');
+  } else {
+    showToast('Commission entry saved ✓');
+    renderCommissionEditor(); // re-render from the (now server-confirmed) stored copy
+    logActivity('admin', _currentAdminName()||'Admin', `Saved commissions for ${recipientName} — ${month}`, '');
+  }
+}
+function exportCommissionCSV(){
+  const card = document.getElementById('commEditorCard');
+  const recipientName = card.dataset.recipientName||'recipient', month = card.dataset.month||'';
+  let csv = 'Client,Gross,Ad Spend,Contractor,Net\n';
+  _commReadEntriesFromDOM().forEach(e=>{
+    const net = e.gross - e.adSpend - e.contractor;
+    csv += `"${e.client}","${e.gross}","${e.adSpend}","${e.contractor}","${net.toFixed(2)}"\n`;
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `commissions-${recipientName.replace(/\s+/g,'_')}-${month}.csv`;
+  a.click();
+  showToast('Commissions CSV downloaded ✓');
+}
+// Read-only reflection for a non-super (or any) recipient's OWN rows —
+// api/ops-state.js already scopes DB_KEYS.commissions to this caller's own
+// recipientId for every tier below super, mirroring the timeOffLedger
+// reflection exactly; filtered here too (belt-and-suspenders, matches
+// _dtMyTasks()'s own convention of never trusting the server scoping alone).
+function renderMyCommissionsAdmin(){
+  const list = document.getElementById('myCommissionsList');
+  if(!list) return;
+  const myId = _currentAdminId();
+  const mine = (dbGet(DB_KEYS.commissions)||[]).filter(r=>r.recipientId===myId).sort((a,b)=>b.month.localeCompare(a.month));
+  if(!mine.length){ list.innerHTML = '<div style="font-size:13px;color:var(--text-light);">No commissions logged yet.</div>'; return; }
+  const STATUS_META = { pending:['var(--orange)','rgba(245,185,66,.1)'], client_paid:['var(--btn)','rgba(45,107,182,.1)'], paid:['var(--green)','rgba(46,158,110,.1)'] };
+  list.innerHTML = mine.map(r=>{
+    const [color,bg] = STATUS_META[r.status] || STATUS_META.pending;
+    const monthNet = (r.entries||[]).reduce((s,e)=>s+(Number(e.net)||0),0);
+    const rows = (r.entries||[]).map(e=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${escHtml(e.client||'(unnamed client)')}</span><span>net $${(Number(e.net)||0).toFixed(2)}</span></div>`).join('');
+    return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.month}
+            <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${bg};color:${color};margin-left:6px;">${(r.status||'pending').replace('_',' ').toUpperCase()}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-light);">Tier ${r.tier||'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${(Number(r.computedCommission)||0).toFixed(2)}</div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No client entries</span>'}</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════
 // BROWSER-LOCAL DATA RECOVERY — read-only scan of local-only stores that
 // were never synced to Supabase (see CLAUDE.md's 2026-08-18 payroll
 // data-loss investigation). Zero writes: only localStorage.getItem() calls
@@ -13721,7 +14093,7 @@ const ADMIN_TAB_TITLES = {
   tracker:'Production Tracker', payroll:'Payroll', bizSettings:'Business setup',
   messages:'Messages', timeoff:'Time off', ptoLedger:'Time off ledger', archive:'Archive',
   clientHealth:'Client Health', clientDirectory:'Client Directory', myTeamsWork:"My Team's Work",
-  myTimeOff:'My Time Off',
+  myTimeOff:'My Time Off', commissions:'Commissions', mycommissions:'My Commissions',
 };
 (function patchSwitchAdminTabForTitle(){
   const _origSwitch = window.switchAdminTab;
@@ -13906,7 +14278,7 @@ function applyAdminRoleRestrictions(level, adminObj){
   //    (canEditUsers()/lib/opsSession.js) regardless of what this shows. ──
   const myTimeOffNav = document.getElementById('admin-nav-mytimeoff');
   if(!isSuperAdmin){
-    ['payroll','timeoff','ptoLedger'].forEach(tab=>{
+    ['payroll','commissions','timeoff','ptoLedger'].forEach(tab=>{
       const navEl = document.querySelector(`.admin-nav-item[onclick*="'${tab}'"]`);
       if(navEl) navEl.style.display = 'none';
     });
