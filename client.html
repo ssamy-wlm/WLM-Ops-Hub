@@ -155,6 +155,15 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
 .stat-row{display:grid;gap:12px;margin-bottom:18px;}
 .stat-card{background:var(--card);border-radius:12px;border:0.5px solid var(--border);padding:16px 18px;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s;flex:1;}
 .stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
+/* Clickable Tracker header cards (2026-09-11) — drill into the client list/
+   Services Due Soon behind the number, matching the Overview/Client Health
+   drill-down cards' own cursor-pointer affordance (a separate file, hand-
+   duplicated per the zero-shared-code rule — only the visual convention is
+   shared, not any code). Scoped to its own class rather than every
+   .stat-card everywhere in this file (e.g. the Roadmap tile row further
+   down reuses this same class for a purely static display, never meant to
+   be clickable). */
+.stat-card-clickable{cursor:pointer;}
 .stat-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
 .stat-value{font-family:'Poppins',sans-serif;font-size:24px;color:var(--text-dark);}
 .stat-sub{font-size:10px;color:var(--text-light);margin-top:2px;}
@@ -461,10 +470,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     <!-- ═══ PAGE: ALL CLIENTS ═══ -->
     <div id="page-clients" class="page-section active">
       <div class="stat-row" style="display:flex;">
-        <div class="stat-card"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
-        <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
-        <div class="stat-card admin-only"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
-        <div class="stat-card"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
+        <div class="stat-card stat-card-clickable" onclick="_clDrillStatCard('')" title="Show all clients"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
+        <div class="stat-card stat-card-clickable" onclick="_clDrillStatCard('active')" title="Filter to active clients"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
+        <div class="stat-card stat-card-clickable admin-only" onclick="_clDrillStatCard('not-active')" title="Filter to inactive/paused clients"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
+        <div class="stat-card stat-card-clickable" onclick="openDueSoonDrillModal()" title="Show services due within 7 days"><div class="stat-label">Services Due Soon</div><div class="stat-value" id="st-due" style="color:var(--orange);">0</div></div>
       </div>
 
       <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:0;">
@@ -487,6 +496,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
             <option value="paused">Paused</option>
+            <option value="not-active">Inactive / Paused</option>
           </select>
           <select class="form-select" id="filter-service" onchange="filterClients()" style="flex:1;min-width:130px;max-width:170px;font-size:11px;padding:7px 10px;">
             <option value="">All Services</option>
@@ -1180,6 +1190,24 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('addServiceModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveClientService()">💾 Save Service</button>
+    </div>
+  </div>
+</div>
+
+<!-- SERVICES DUE SOON DRILL MODAL (2026-09-11) — clicking the Tracker
+     header's "Services Due Soon" summary card opens this; see
+     openDueSoonDrillModal()/renderDueSoonDrillModal(). -->
+<div id="dueSoonDrillModal" class="modal-overlay">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div><div class="modal-title">Services Due Soon</div><div class="modal-sub">Due within the next 7 days</div></div>
+      <button class="modal-close" onclick="closeModal('dueSoonDrillModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="dueSoonDrillBody"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('dueSoonDrillModal')">Close</button>
     </div>
   </div>
 </div>
@@ -2947,26 +2975,33 @@ function populateUserChecks(containerId, roster, checked){
       ${u.name}
     </label>`).join('');
 }
+// A→Z string sort helper (2026-09-11) — case-insensitive, used everywhere
+// below that builds a plain name-list dropdown (bundles/services/
+// categories) so they're easy to find, matching the same
+// localeCompare/sensitivity:'base' convention Task Assignments' own client
+// dropdown sort already established (2026-08-27).
+function _sortNamesAZ(names){ return (names||[]).slice().sort((a,b)=>(a||'').localeCompare(b||'',undefined,{sensitivity:'base'})); }
 function populateServiceDropdown(){
   const cat=getCatalog();
   const bSel=_el('svc-bundle');
   if(bSel){
     const cur=bSel.value;
-    bSel.innerHTML=`<option value="">— Select bundle —</option>`+getBundleNames().map(b=>`<option value="${b}"${cur===b?' selected':''}>${b}</option>`).join('');
+    bSel.innerHTML=`<option value="">— Select bundle —</option>`+_sortNamesAZ(getBundleNames()).map(b=>`<option value="${b}"${cur===b?' selected':''}>${b}</option>`).join('');
   }
   populateServiceOptionsForBundle(bSel?bSel.value:'');
   // Filter-service dropdown: use catalogId so matching is exact
   const flt=_el('filter-service');
   if(flt){
     const cur=flt.value;
-    flt.innerHTML=`<option value="">All Services</option>`+cat.map(s=>`<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
+    const sortedCat=cat.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'}));
+    flt.innerHTML=`<option value="">All Services</option>`+sortedCat.map(s=>`<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
   }
   // Category filter dropdown — sourced from the admin-editable category
   // list (getCatalogCategories()), same pattern as bundles above.
   const catFlt=_el('filter-category');
   if(catFlt){
     const cur=catFlt.value;
-    catFlt.innerHTML=`<option value="">All Categories</option>`+getCategoryNames().map(c=>`<option value="${escHtmlClient(c)}"${cur===c?' selected':''}>${escHtmlClient(c)}</option>`).join('');
+    catFlt.innerHTML=`<option value="">All Categories</option>`+_sortNamesAZ(getCategoryNames()).map(c=>`<option value="${escHtmlClient(c)}"${cur===c?' selected':''}>${escHtmlClient(c)}</option>`).join('');
   }
   // Bundle Types dropdown: always offer the canonical bundle taxonomy, plus any
   // other type value (e.g. legacy "Recurring Service") actually present on a client.
@@ -2981,7 +3016,8 @@ function populateServiceDropdown(){
 function populateServiceOptionsForBundle(bundle){
   const cat=getCatalog();
   const cur=_el('svc-name')?.value||'';
-  const list=bundle?cat.filter(s=>s.bundle===bundle):cat;
+  const list=(bundle?cat.filter(s=>s.bundle===bundle):cat)
+    .slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'',undefined,{sensitivity:'base'})); // A→Z (2026-09-11)
   const opts=list.map(s=>`<option value="${s.id}" data-freq="${s.freq}">${s.name}</option>`).join('');
   const el=_el('svc-name');
   if(el){ el.innerHTML=`<option value="">— Select service —</option>`+opts; if(list.some(s=>s.id===cur)) el.value=cur; }
@@ -3301,16 +3337,68 @@ function computeProjectStats(clients){
   return { completed, ongoing, overdue };
 }
 
+// Services Due Soon — populated by updateStats() below in the SAME loop
+// that computes the st-due card's own count, so the drill modal
+// (openDueSoonDrillModal()) can never show a different number than what's
+// printed on the card (2026-09-11).
+let _dueSoonDrillItems=[];
 function updateStats(){
   const clients=getClients();
   const in7=new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
   let due=0;
-  clients.forEach(c=>{ (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s) due++; }); });
+  const dueSoonItems=[];
+  clients.forEach(c=>{ (c.services||[]).forEach(s=>{ if(s.due&&s.due<=in7s){ due++; dueSoonItems.push({clientId:c.id, clientName:c.name, serviceId:s.id, serviceName:s.name, due:s.due}); } }); });
+  dueSoonItems.sort((a,b)=>(a.due||'').localeCompare(b.due||''));
+  _dueSoonDrillItems=dueSoonItems;
   const set=(id,v,col)=>{ const e=_el(id); if(e){e.textContent=v; if(col) e.style.color=col;} };
   set('st-total',clients.length);
   set('st-active',clients.filter(c=>c.status==='active').length,'var(--green)');
   set('st-inactive',clients.filter(c=>c.status!=='active').length,'#aaa');
   set('st-due',due,due>0?'var(--orange)':'var(--green)');
+}
+
+// Clickable summary cards (2026-09-11) — Total/Active/Inactive-Paused drill
+// into the client grid already on this same page, filtered to exactly what
+// the card itself counts (clearing every OTHER filter first, so the
+// resulting list can never disagree with the card's own number because of
+// some unrelated filter left active from an earlier search).
+function _clDrillStatCard(status){
+  ['client-search','filter-service','filter-svc-status','filter-category','filter-proj-type','filter-proj-status','filter-manager','filter-assignee']
+    .forEach(id=>{ const el=_el(id); if(el) el.value=''; });
+  const statusEl=_el('filter-status'); if(statusEl) statusEl.value=status;
+  filterClients();
+  const grid=_el('client-grid');
+  if(grid) grid.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// Services Due Soon drill modal — a small, self-contained list (this file
+// has no existing generic "drill-down" modal to reuse; the Service
+// Schedule page's own "Due Soon (7d)" filter was considered but its
+// _scheduleDueBucket() deliberately EXCLUDES an already-overdue service
+// from "soon" — a materially different definition than this card's own
+// s.due<=in7s check, which includes it — so deep-linking there would show
+// a different count than the card itself. Building this from the exact
+// same loop that sets st-due avoids that mismatch entirely.
+function renderDueSoonDrillModal(){
+  const body=_el('dueSoonDrillBody');
+  if(!body) return;
+  if(!_dueSoonDrillItems.length){
+    body.innerHTML=`<div style="padding:30px 10px;text-align:center;color:var(--text-light);font-size:13px;">No services due within 7 days.</div>`;
+    return;
+  }
+  body.innerHTML=_dueSoonDrillItems.map(it=>`
+    <div onclick="closeModal('dueSoonDrillModal');_navigateToServiceInTracker('${it.clientId}','${it.serviceId}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);cursor:pointer;">
+      <div style="min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(it.serviceName||'(untitled service)')}</div>
+        <div style="font-size:11px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlClient(it.clientName||'')}</div>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--orange);white-space:nowrap;">${escHtmlClient(it.due||'')}</div>
+    </div>
+  `).join('');
+}
+function openDueSoonDrillModal(){
+  renderDueSoonDrillModal();
+  openModal('dueSoonDrillModal');
 }
 
 function filterClients(){
@@ -3333,8 +3421,12 @@ function filterClients(){
     (c.industry||'').toLowerCase().includes(q)
   );
 
-  // client status
-  if(st) list=list.filter(c=>(c.status||'active')===st);
+  // client status. 'not-active' (2026-09-11, the Inactive/Paused summary
+  // card's own drill target) is a synthetic combined value — the same
+  // status!=='active' grouping updateStats()'s own st-inactive count
+  // already uses — matched separately since no single real status value
+  // covers both 'inactive' and 'paused' together.
+  if(st) list=list.filter(c=>st==='not-active' ? (c.status||'active')!=='active' : (c.status||'active')===st);
 
   // service type — match catalogId or service name
   if(sv){ const svl=sv.toLowerCase(); list=list.filter(c=>(c.services||[]).some(s=>(s.name||'').toLowerCase()===svl||(s.name||'').toLowerCase().includes(svl)||svl.includes((s.name||'').toLowerCase()))); }

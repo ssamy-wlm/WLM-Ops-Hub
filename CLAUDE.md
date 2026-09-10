@@ -8659,6 +8659,227 @@ Low-risk per rule #10: `client.html` only, pure CSS/stacking-order
 logic, no data-write/sync/auth/permission logic touched — eligible for
 direct merge once CI is green.
 
+**Fix sync: server is authoritative for un-edited records — `user.html`'s
+own `_applyServerArray()` had NO dirty-check at all (2026-09-11).**
+`user.html` only. Given as "the app pushes a local copy of a record it
+didn't actively edit over a newer server version" — investigated all
+three frontends' sync mechanisms before writing anything (rule #7), since
+this is a general architectural claim, not a named file. `client.html`
+and `index.html` each already have a correct, already-proven
+dirty-preserving `_applyServerArray()` (compares every local record
+against the last-known server snapshot via `_opsDirty()`; a record that
+genuinely differs — a real, not-yet-pushed local edit — survives a pull
+intact instead of being overwritten by the server's necessarily-older
+copy; `index.html`'s copy also already gained a `tombstoneIds` parameter
+on 2026-09-04 for the "Whole team task delete" resurrection bug). Reading
+`user.html`'s own copy of this same function found it was a completely
+different, much weaker implementation: `saveFn(arr); _opsSetSnapshot(table,
+arr);` — an UNCONDITIONAL overwrite on every single pull, with no dirty
+check of any kind, despite this file's own header comment (right above
+`DB_KEYS`) claiming "this file no longer merges conflicting local/cloud
+copies of anything" — a genuine mismatch between the code's documented
+intent and what it actually did.
+
+**Confirmed this is real and frequently reachable, not a theoretical
+edge case:** `user.html` has its OWN 20s stats-refresh `setInterval`
+(pulls `clients`/`tasks`/`timeOffLedger`/orgchart depending on which
+section is open) AND its own 15s message-poll `setInterval` while the
+Messages page is open, plus several more direct `cloudFetchUsers()` calls
+scattered through the file — any one of these landing inside the 2s
+window of this file's own debounced `_scheduleCloudPush()` would silently
+revert a just-made local edit back to its pre-edit server value, AND
+reset the snapshot to match that stale value in the same call — so the
+edit no longer even looked "dirty" by the time the debounced push fired,
+and was lost with no error surfaced anywhere. The same gap also applied
+to the shared `wl_clients_db` localStorage key: `index.html` and
+`client.html` each maintain their OWN already-correct dirty-preserving
+copy of this exact mechanism against that identical key (client.html is
+embedded as an iframe inside both admin/employee portals — same origin,
+same localStorage), but `user.html`'s PARENT frame runs its own
+independent pull cycle against the same key from a completely separate
+script context — so even a perfectly safe edit made inside the embedded
+Tracker iframe could still get clobbered by this file's own broken pull.
+
+**Fix:** rewrote `user.html`'s `_applyServerArray()` to match
+`index.html`'s/`client.html`'s own already-correct pattern exactly
+(byte-for-byte the same merge logic, hand-duplicated per the zero-shared-
+code rule): accepts a `getFn` (reads the current local array for that
+table) and an optional `tombstoneIds`; a still-dirty local record
+survives a pull, a not-yet-pushed brand-new local record isn't dropped
+just because the server doesn't have it yet, and the snapshot is always
+set to the (tombstone-filtered) SERVER array so a preserved edit stays
+flagged dirty until its pending push actually lands. Every call site in
+`cloudFetchUsers()` updated to pass the matching `getFn` — `dbGet(DB_KEYS.
+<table>)` for most, and `JSON.parse(localStorage.getItem('wl_clients_db')
+||'[]')` for `clients` (the shared key). The `tasks` table also gets
+`tombstoneIds` from this file's own existing `DB_KEYS.deletedTaskIds`
+queue (the Undo Import feature's delete tombstones) — the identical
+"can't delete Whole team/cloned tasks" resurrection bug index.html fixed
+for its own copy on 2026-09-04 was equally present here and un-fixed
+until now, since `ops_tasks` has no `deleted_at` column (a genuine hard
+SQL DELETE) and this file's own tombstone-send-dedup mechanism already
+existed for the push side, just never protected against a pull racing
+ahead of a tombstone actually reaching the server.
+
+Verified two ways, no live DB access (rule #11): (1) a Node script
+extracting the real, byte-identical `_opsDirty`/`_applyServerArray`/
+`_opsSetSnapshot` functions from `user.html` into a sandboxed context
+with a fake localStorage (7/7) — a genuinely un-edited record IS
+correctly replaced by a newer server value (server is authoritative for
+un-edited records, the literal acceptance criterion); a local edit still
+pending push SURVIVES a concurrent pull carrying the server's stale
+pre-edit copy, and stays flagged dirty afterward so the pending push
+still fires; a not-yet-pushed brand-new local record isn't dropped by a
+pull that doesn't have it yet; a locally-tombstoned task is never
+resurrected by a pull that still includes it; an empty/missing server
+result never blanks real local data (unchanged guard). Re-ran the
+identical script against unmodified `main` via `git stash` — 4 of 7
+checks genuinely FAIL there, confirming this reproduces the real reported
+bug rather than testing something already-working. (2) An end-to-end
+Playwright reproduction against the real `user.html` UI (5/5, using a
+STATEFUL `/api/ops-state`+`/api/ops-sync` mock so a real push genuinely
+lands and a subsequent pull genuinely reflects it): edited a task's
+notes, then fired a concurrent `cloudFetchUsers()` pull carrying the
+server's still-stale copy inside the 2s debounce window — the edit
+survives the concurrent pull, the debounced push still carries it
+through 2.2s later, the server genuinely receives it, and a subsequent
+pull reflects the now-confirmed value. Re-ran the identical Playwright
+script against unmodified `main` — 4 of 5 checks fail there (the edit
+gets clobbered by the concurrent pull, is never pushed, and is lost),
+confirming this is a genuine, reproducible regression fix, not a
+tautological test.
+
+Re-ran a representative sweep of this session's own pre-existing
+`user.html` Playwright suites that exercise `cloudFetchUsers()`/task
+rendering after this change — all clean, no regressions:
+`verify_dt_new_task_button.mjs` (26/26), `verify_dt_tabrow_layout.mjs`
+(16/16), `verify_recurring_tasks_user_ui.mjs` (11/11),
+`verify_due_date_change_request_user_ui.mjs` (22/22),
+`verify_report_reason_ui_employee.mjs` (15/15),
+`verify_user_client_directory.mjs` (22/22). One pre-existing failure
+(`verify_weekend_clamp_user_ui.mjs`, a stale `#nav-dailytasks` selector)
+was confirmed to fail identically against unmodified `main` — unrelated,
+out of scope here. `node --check`-equivalent syntax check (`new
+Function()` on the extracted `<script>` block) clean; comment-stripped
+div-balance unchanged vs. `main` (delta −1, matching `main`'s own
+baseline exactly — a pure JS change, no HTML structure touched).
+
+**Not touched, out of scope for this fix, flagged rather than silently
+expanded to:** the deeper, per-FIELD (not per-record) granularity gap
+already documented elsewhere in this file — e.g. `api/ops-sync.js`'s
+member task-write branch still does a full `row = inc` replace of the
+whole task object, with only a growing, hand-maintained list of specific
+fields protected by their own fallback-to-`cur` rule (`assignedById`,
+`assignedDate`, the `dueDate` lock, etc.) — and a handful of explicit,
+user-initiated admin edit-modal saves (e.g. `saveEditUser`) that build
+their outgoing payload from a `current` object read at modal-open time,
+which could theoretically go stale if someone else edits an untouched
+field on that same record between open and save. Both are real,
+pre-existing architectural characteristics of this codebase's per-RECORD
+(not per-field) sync model (see rule #1) — genuinely different from, and
+much narrower in blast radius than, the background-sync bug this task
+targeted (an entire periodic pull unconditionally overwriting/losing
+data with no user action involved at all) — and would each be their own,
+separately-scoped decision if ever tightened further.
+
+**Production Tracker: clickable summary cards + alphabetical service
+dropdown (2026-09-11).** `client.html` only, display-only — no server
+change, low-risk per rule #10.
+
+**1. Clickable summary cards.** The four Tracker header stat-cards
+(`.stat-card`, "Total Clients"/"Active"/"Inactive / Paused"/"Services Due
+Soon") gained a `.stat-card-clickable` class (cursor:pointer, matching
+the cursor-pointer affordance Overview/Client Health's own drill-down
+cards already establish in `index.html` — a separate file, so only the
+visual convention is shared, not any code) and an `onclick`. Total/
+Active/Inactive-Paused drill into the client grid ALREADY on this same
+page — `_clDrillStatCard(status)` clears every OTHER filter first
+(search text, service, project type/status, manager, assignee, svc-
+status, category — reusing the same id list `clearClientFilters()`
+already resets) before setting `#filter-status` and calling
+`filterClients()`, so the resulting list can never disagree with the
+card's own count because of some unrelated filter left active from an
+earlier search — verified directly (a leftover text search is confirmed
+cleared by a card click). "Inactive / Paused" needed a small, real
+extension: the existing `#filter-status` `<select>` only ever offered
+`active`/`inactive`/`paused` individually, with no single value matching
+`status!=='active'` (the exact grouping `updateStats()`'s own
+`st-inactive` count already uses) — added a new `not-active` option
+(labeled "Inactive / Paused," so it's also a real, manually-selectable
+filter now, not just a card-click side effect) and extended
+`filterClients()`'s status match to treat it as `status!=='active'`.
+
+**"Services Due Soon" — a small self-contained modal, not a deep-link to
+the existing Service Schedule page, per a real discrepancy found while
+investigating (rule #7).** The Service Schedule page already has a "Due
+Soon (7d)" filter (`schedule-filter=soon`) — considered reusing it, but
+its own `_scheduleDueBucket()` deliberately EXCLUDES an already-overdue
+service from "soon" (overdue is its own separate bucket), while
+`updateStats()`'s `st-due` card counts every service with `s.due<=in7s`
+regardless of whether it's also overdue — a materially different
+definition. Deep-linking there would have shown a DIFFERENT count than
+what's printed on the card, exactly the kind of "the numbers must never
+disagree" mismatch this session's own established discipline (Overview's
+ratio cards, Client Health's drill modals, etc.) exists to prevent.
+Built a small, genuinely self-contained modal instead
+(`openDueSoonDrillModal()`/`renderDueSoonDrillModal()`, reusing this
+file's own `.modal-overlay`/`openModal()`/`closeModal()` — including the
+z-index-stacking fix from the PR immediately above, which composes for
+free if this modal is ever opened over another one) — populated from a
+new `_dueSoonDrillItems` array built inside `updateStats()`'s OWN loop,
+the exact same one that sets the `st-due` card's number, so the drilled
+list can never show a different count than the card itself; verified
+directly (2 seeded services, both the card and the modal's row count
+show exactly 2). Each row deep-links via the existing
+`_navigateToServiceInTracker(clientId, serviceId)` (already built for
+notification click-through) straight to that client's Services tab with
+the exact service row highlighted.
+
+**2. Alphabetical service dropdown.** `populateServiceOptionsForBundle()`
+(builds the Add Service modal's "Service *" dropdown, `#svc-name`) and
+`populateServiceDropdown()` (the single function that ALSO builds
+"Bundle *" `#svc-bundle`, plus the page-toolbar's `#filter-service`/
+`#filter-category` — "any other service/category list dropdowns in that
+flow," per the task's own wording, since this is the one choke point
+serving all four) now sort every option list alphabetically A→Z via a
+new shared `_sortNamesAZ()` helper (case-insensitive `localeCompare`,
+`sensitivity:'base'` — the identical convention Task Assignments' own
+client-dropdown sort already established, 2026-08-27). Only the rendered
+`<option>` order changed — `getBundleNames()`/`getCategoryNames()`/
+`getCatalog()` themselves are untouched, so any other caller relying on
+their original (catalog-storage) order is unaffected. Narrowing "Service
+*" to one bundle still correctly filters AND sorts what's left.
+
+Verified: `node --check`-equivalent syntax check (`new Function()` on the
+extracted `<script>` block) — clean; comment-stripped div-balance
+unchanged vs. `main` (delta 0, matching `main`'s own baseline exactly). A
+new Playwright suite against the real UI (33/33, run against a seeded set
+of 4 clients across active/inactive/paused and 3 out-of-order catalog
+bundles/services/categories): all four cards show the right counts and a
+real computed `cursor:pointer`; Active/Inactive-Paused/Total each
+correctly filter the visible grid (including the paused-client case,
+confirming the combined `not-active` value actually includes both
+inactive AND paused, not just one); a leftover search filter is cleared
+by a card click; the Services Due Soon modal lists exactly the 2 real
+due-soon services (client + service name + due date) and excludes the
+far-future one, with its row count matching the card's own number
+exactly; clicking a row closes the modal and opens the correct client's
+detail panel; and all four dropdowns (Bundle, Service Name — both
+unfiltered and narrowed to one bundle — Category filter, Service filter)
+render in genuine alphabetical order. Re-ran `verify_modal_stacking_fix.mjs`
+(13/13, from the PR immediately above — exercises `populateServiceDropdown()`/
+`populateServiceOptionsForBundle()` end-to-end through the real "+ Add
+Service" flow) to confirm the alphabetization didn't disturb that
+feature — clean. One pre-existing, unrelated failure
+(`verify_client_service_review_badge.mjs`, `openClientDetail is not
+defined`) was confirmed to fail identically against unmodified `main` —
+out of scope here.
+
+Low-risk per rule #10: `client.html` only, display-only (client-side
+filtering + a read-only modal + dropdown sort order), no data-write/
+sync/auth/permission logic touched — eligible for direct merge once CI
+is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
