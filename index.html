@@ -2118,8 +2118,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Net-based tiered commission — 5% under $20,000 month net, 10% at/above, applied to the whole month</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <!-- Month|Year toggle — mirrors the roadmap List/Calendar toggle
+               (_myrmToggleBtn): a stable base class (btn btn-sm btn-outline)
+               that never changes size/shape between states, with only the
+               .btn-toggle-active modifier flipping on top. -->
+          <div style="display:flex;gap:4px;">
+            <button type="button" class="btn btn-sm btn-outline btn-toggle-active" id="commViewMonthBtn" onclick="setCommViewMode('month')">Month</button>
+            <button type="button" class="btn btn-sm btn-outline" id="commViewYearBtn" onclick="setCommViewMode('year')">Year</button>
+          </div>
           <input type="month" class="form-select" id="comm-month" style="font-size:13px;width:150px;" onchange="loadCommissionsMonth()">
-          <select class="form-select" id="comm-recipient" style="font-size:13px;width:220px;" onchange="renderCommissionEditor()"></select>
+          <input type="number" class="form-select" id="comm-year" style="font-size:13px;width:100px;display:none;" placeholder="Year" onchange="renderCommissionYearView()">
+          <select class="form-select" id="comm-recipient" style="font-size:13px;width:220px;" onchange="_commOnRecipientChange()"></select>
           <button class="btn btn-outline btn-sm" onclick="toggleCommissionRecipientsPanel()">Manage recipients</button>
         </div>
       </div>
@@ -2191,6 +2200,48 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <div style="font-size:22px;font-weight:800;font-family:'Poppins',sans-serif;color:var(--text-dark);" id="comm-total">$0.00</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- YEAR view — read-only rollup of the same ops_commissions rows the
+           month editor above already stores. No new data, no new table,
+           purely aggregates existing rows for the selected recipient+year.
+           Tier stays computed PER MONTH exactly as saved (recomputeCommission()
+           in api/ops-sync.js) — this view only SUMS the monthly rows, never
+           recomputes across the year. Nothing here writes anything. -->
+      <div id="commYearCard" class="card" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" id="comm-year-title">—</div>
+            <div class="card-sub">Read-only — tier is computed per month; this view sums the monthly rows</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="exportCommissionYearCSV()">Export year CSV</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="commYearEmpty" style="display:none;font-size:13px;color:var(--text-light);padding:20px 4px;text-align:center;">No commission records for this recipient in this year.</div>
+          <table id="commYearTable" style="width:100%;">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th style="text-align:right;">Month net</th>
+                <th style="text-align:center;">Rate</th>
+                <th style="text-align:right;">Commission</th>
+                <th>Payout status</th>
+              </tr>
+            </thead>
+            <tbody id="commYearRows"></tbody>
+            <tfoot>
+              <tr style="font-weight:800;border-top:2px solid var(--border);">
+                <td>Year total</td>
+                <td style="text-align:right;" id="comm-year-total-net">$0.00</td>
+                <td></td>
+                <td style="text-align:right;" id="comm-year-total-commission">$0.00</td>
+                <td id="comm-year-total-owed">Owed $0.00</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
     </div>
@@ -13389,15 +13440,48 @@ function loadCommissionsMonth(){
 // needs to change (a first recipient just granted, or the previously
 // selected one was just revoked) — a grant/revoke for someone OTHER than
 // the currently-open recipient must never discard in-progress unsaved
-// entry-row edits sitting in that open editor.
+// entry-row edits sitting in that open editor. The empty state itself is
+// shared by BOTH the Month and Year views — "no recipients granted" is the
+// same fact regardless of which view is currently selected; only which of
+// commEditorCard/commYearCard shows once a recipient exists depends on
+// _commViewMode.
+let _commViewMode = 'month';
 function _commRefreshRecipientAvailability(forceEditorRender){
   const sel = document.getElementById('comm-recipient');
   const prevValue = sel ? sel.value : '';
   const recipients = _commPopulateRecipientSelect();
   const hasAny = recipients && recipients.length;
   document.getElementById('commEmptyState').style.display = hasAny ? 'none' : 'block';
-  document.getElementById('commEditorCard').style.display = hasAny ? 'block' : 'none';
-  if(hasAny && (forceEditorRender || (sel && sel.value !== prevValue))) renderCommissionEditor();
+  document.getElementById('commEditorCard').style.display = (hasAny && _commViewMode==='month') ? 'block' : 'none';
+  document.getElementById('commYearCard').style.display = (hasAny && _commViewMode==='year') ? 'block' : 'none';
+  if(!hasAny) return;
+  const selectionChanged = forceEditorRender || (sel && sel.value !== prevValue);
+  if(_commViewMode==='month'){ if(selectionChanged) renderCommissionEditor(); }
+  else { if(selectionChanged) renderCommissionYearView(); }
+}
+// Month|Year toggle — read-only switch, never triggers a write. Swaps which
+// date picker is visible (comm-month vs. comm-year) and which card is shown,
+// then re-renders whichever view is now active from the currently-selected
+// recipient.
+function setCommViewMode(mode){
+  if(mode!=='month' && mode!=='year') return;
+  _commViewMode = mode;
+  const monthBtn = document.getElementById('commViewMonthBtn'), yearBtn = document.getElementById('commViewYearBtn');
+  if(monthBtn) monthBtn.classList.toggle('btn-toggle-active', mode==='month');
+  if(yearBtn) yearBtn.classList.toggle('btn-toggle-active', mode==='year');
+  const monthInput = document.getElementById('comm-month'), yearInput = document.getElementById('comm-year');
+  if(monthInput) monthInput.style.display = mode==='month' ? '' : 'none';
+  if(yearInput){
+    yearInput.style.display = mode==='year' ? '' : 'none';
+    if(mode==='year' && !yearInput.value) yearInput.value = new Date().getFullYear();
+  }
+  _commRefreshRecipientAvailability(true);
+}
+// The recipient <select> is shared by both views — route to whichever
+// render function is currently relevant instead of hardcoding one.
+function _commOnRecipientChange(){
+  if(_commViewMode==='year') renderCommissionYearView();
+  else renderCommissionEditor();
 }
 function _commRecordId(recipientId, month){ return 'comm_'+recipientId+'_'+month; }
 function _commFindRecord(recipientId, month){
@@ -13523,6 +13607,103 @@ function exportCommissionCSV(){
   a.download = `commissions-${recipientName.replace(/\s+/g,'_')}-${month}.csv`;
   a.click();
   showToast('Commissions CSV downloaded ✓');
+}
+const COMM_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const COMM_STATUS_LABELS = { pending:'Pending', client_paid:'Client Paid', paid:'Paid' };
+// Pure read-only aggregation over the SAME stored ops_commissions rows the
+// month editor already writes — no new data, no new table, no write of any
+// kind. Tier/commission per month are exactly what recomputeCommission()
+// (api/ops-sync.js) already computed and saved for that month; this only
+// sums the monthly rows, it never recomputes anything across the year.
+function _commYearRecords(recipientId, year){
+  const prefix = year + '-';
+  return (dbGet(DB_KEYS.commissions)||[])
+    .filter(r=>r.recipientId===recipientId && typeof r.month==='string' && r.month.startsWith(prefix))
+    .sort((a,b)=>a.month.localeCompare(b.month));
+}
+function _commRecordNet(r){
+  return (Array.isArray(r.entries) ? r.entries : []).reduce((s,e)=>s+(Number(e.net)||0),0);
+}
+function _commMonthLabel(monthStr){
+  const parts = String(monthStr||'').split('-');
+  const idx = parseInt(parts[1],10)-1;
+  return (COMM_MONTH_NAMES[idx]||monthStr) + ' ' + parts[0];
+}
+function renderCommissionYearView(){
+  const sel = document.getElementById('comm-recipient');
+  const card = document.getElementById('commYearCard');
+  const yearInput = document.getElementById('comm-year');
+  if(!sel || !sel.value || !card || !yearInput) return;
+  const [kind, id] = sel.value.split(':');
+  const year = yearInput.value || String(new Date().getFullYear());
+  const person = _commActivePeople().find(p=>p.kind===kind && p.id===id);
+  card.dataset.recipientId = id;
+  card.dataset.recipientName = person?.name || '';
+  card.dataset.year = year;
+  document.getElementById('comm-year-title').textContent = (person?.name || 'Recipient') + ' — ' + year;
+
+  const records = _commYearRecords(id, year);
+  const rowsEl = document.getElementById('commYearRows');
+  const emptyEl = document.getElementById('commYearEmpty');
+  const table = document.getElementById('commYearTable');
+  if(!records.length){
+    rowsEl.innerHTML = '';
+    if(emptyEl) emptyEl.style.display = 'block';
+    if(table) table.style.display = 'none';
+    document.getElementById('comm-year-total-net').textContent = '$0.00';
+    document.getElementById('comm-year-total-commission').textContent = '$0.00';
+    document.getElementById('comm-year-total-owed').textContent = 'Owed $0.00';
+    return;
+  }
+  if(emptyEl) emptyEl.style.display = 'none';
+  if(table) table.style.display = '';
+
+  let totalNet = 0, totalCommission = 0, totalPaid = 0;
+  rowsEl.innerHTML = records.map(r=>{
+    const net = _commRecordNet(r);
+    const commission = Number(r.computedCommission)||0;
+    const tier = r.tier || '—';
+    const status = r.status || 'pending';
+    totalNet += net;
+    totalCommission += commission;
+    if(status==='paid') totalPaid += commission;
+    return `<tr>
+      <td>${escHtml(_commMonthLabel(r.month))}</td>
+      <td style="text-align:right;">$${net.toFixed(2)}</td>
+      <td style="text-align:center;">${escHtml(tier)}</td>
+      <td style="text-align:right;">$${commission.toFixed(2)}</td>
+      <td>${escHtml(COMM_STATUS_LABELS[status]||status)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('comm-year-total-net').textContent = '$'+totalNet.toFixed(2);
+  document.getElementById('comm-year-total-commission').textContent = '$'+totalCommission.toFixed(2);
+  document.getElementById('comm-year-total-owed').textContent = 'Owed $'+(totalCommission-totalPaid).toFixed(2);
+}
+// Mirrors exportPayrollCSV()'s pattern exactly: client-side Blob + <a
+// download>, no server round trip. One row per month plus the same totals
+// row shown on screen.
+function exportCommissionYearCSV(){
+  const card = document.getElementById('commYearCard');
+  const recipientName = card.dataset.recipientName||'recipient', recipientId = card.dataset.recipientId, year = card.dataset.year||'';
+  const records = _commYearRecords(recipientId, year);
+  let csv = 'Month,Month Net,Rate,Commission,Payout Status\n';
+  let totalNet = 0, totalCommission = 0, totalPaid = 0;
+  records.forEach(r=>{
+    const net = _commRecordNet(r);
+    const commission = Number(r.computedCommission)||0;
+    const status = r.status || 'pending';
+    totalNet += net;
+    totalCommission += commission;
+    if(status==='paid') totalPaid += commission;
+    csv += `"${_commMonthLabel(r.month)}","${net.toFixed(2)}","${r.tier||''}","${commission.toFixed(2)}","${COMM_STATUS_LABELS[status]||status}"\n`;
+  });
+  csv += `"Year total","${totalNet.toFixed(2)}","","${totalCommission.toFixed(2)}","Owed ${(totalCommission-totalPaid).toFixed(2)}"\n`;
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `commissions-${recipientName.replace(/\s+/g,'_')}-${year}.csv`;
+  a.click();
+  showToast('Commissions year CSV downloaded ✓');
 }
 // Read-only reflection for a non-super (or any) recipient's OWN rows —
 // api/ops-state.js already scopes DB_KEYS.commissions to this caller's own
