@@ -317,6 +317,9 @@ const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate', 'selfAssignedAt',
+  // SOP links (2026-09-11) — admin-editable only, same as category/
+  // priority above; attach-only in this PR (no gate logic here).
+  'sopLinks',
 ];
 
 // Recurring tasks (2026-09-08) — a task the assignee (or an admin) has

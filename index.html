@@ -3055,6 +3055,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <textarea class="form-input" id="tem-notes" rows="3" placeholder="Optional"></textarea>
       <label class="form-label" style="margin-top:12px;">Tags (comma-separated)</label>
       <input class="form-input" id="tem-tags" placeholder="e.g. urgent, social">
+      <label class="form-label" style="margin-top:12px;">SOP Links</label>
+      <div style="font-size:10.5px;color:var(--text-light);margin-bottom:6px;">Linked procedures from the Weblight Media Library — copied from the service's own SOP links at creation time when this task came from one (a frozen snapshot, not a live link back to the catalog).</div>
+      <div id="tem-sop-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:6px;">
+        <input class="form-input" id="tem-sop-title" placeholder="SOP title" style="flex:1;">
+        <input class="form-input" id="tem-sop-url" placeholder="Paste URL" style="flex:1;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="addTemSopLink()">+ Add</button>
+      </div>
       <div style="margin-top:16px;display:flex;gap:10px;">
         <button class="btn btn-primary" onclick="saveTaskEdit()">Save</button>
         <button class="btn btn-outline" onclick="closeModal('taskEditModal')">Cancel</button>
@@ -11291,6 +11299,34 @@ function _taToggleBlockReasonField(){
   document.getElementById('tem-block-reason-wrap').style.display = blocked ? '' : 'none';
 }
 
+// SOP links (attach-only, 2026-09-11) — {title,url} pairs on a task, same
+// in-memory-array-then-save-on-submit pattern the Service Catalog editor's
+// own _scSopLinks uses (client.html), hand-duplicated per the zero-shared-
+// code rule. No gate/enforcement logic here — this PR is attach + copy-on-
+// create only.
+let _temSopLinks=[];
+function _renderTemSopLinks(){
+  const wrap=document.getElementById('tem-sop-list'); if(!wrap) return;
+  wrap.innerHTML=_temSopLinks.length ? _temSopLinks.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg,#f4f6f9);border:1px solid var(--border);border-radius:8px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlAdmin(l.title)}</div>
+        <div style="font-size:10px;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlAdmin(l.url)}</div>
+      </div>
+      <button type="button" onclick="removeTemSopLink(${i})" title="Remove" style="border:none;background:none;cursor:pointer;color:var(--red,#c94a4a);font-weight:700;font-size:13px;flex-shrink:0;">✕</button>
+    </div>`).join('') : `<div style="font-size:11px;color:var(--text-light);">No SOP links yet.</div>`;
+}
+function addTemSopLink(){
+  const titleEl=document.getElementById('tem-sop-title'), urlEl=document.getElementById('tem-sop-url');
+  const title=(titleEl?.value||'').trim(), url=(urlEl?.value||'').trim();
+  if(!title || !url){ showToast('Enter both a title and a URL'); return; }
+  _temSopLinks.push({title,url});
+  if(titleEl) titleEl.value='';
+  if(urlEl) urlEl.value='';
+  _renderTemSopLinks();
+}
+function removeTemSopLink(i){ _temSopLinks.splice(i,1); _renderTemSopLinks(); }
+
 function openTaskEditModal(id){
   const isNew = !id;
   document.getElementById('taskEditModalTitle').textContent = isNew ? 'New Task' : 'Edit Task';
@@ -11312,6 +11348,10 @@ function openTaskEditModal(id){
   document.getElementById('tem-due-lock').style.display = t.dueDateLocked ? '' : 'none';
   document.getElementById('tem-notes').value = t.notes || '';
   document.getElementById('tem-tags').value = (t.tags||[]).join(', ');
+  _temSopLinks = Array.isArray(t.sopLinks) ? t.sopLinks.slice() : [];
+  document.getElementById('tem-sop-title').value = '';
+  document.getElementById('tem-sop-url').value = '';
+  _renderTemSopLinks();
   // Nothing to delete server-side for a brand-new, unsaved task.
   document.getElementById('tem-delete-btn').style.display = isNew ? 'none' : '';
   closeTaDetailPanel();
@@ -11370,6 +11410,16 @@ function saveTaskEdit(){
     dueDate, dueDateLocked,
     notes: document.getElementById('tem-notes').value,
     tags: document.getElementById('tem-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+    // SOP links (2026-09-11) — attach-only in this PR, no gate. Copy-on-
+    // create from a catalog service (rule #8, frozen snapshot, never a
+    // live link) has nowhere to hook here: this modal has had no service-
+    // picker since "Service" was removed 2026-09-03 (see the comment on
+    // the now-always-blank `service` field right below) — a new task's
+    // sopLinks is always whatever was typed directly into this list, empty
+    // by default. If a real service-picker is ever added back to this
+    // modal, THIS is the spot to seed _temSopLinks from that service's own
+    // sopLinks before the user gets a chance to edit them further.
+    sopLinks: _temSopLinks.slice(),
     // No UI field for these any more (Service removed 2026-09-03 — see
     // that entry: always-blank in practice, never linked to the real
     // Service Catalog; Email received/Reply status removed the same way,
