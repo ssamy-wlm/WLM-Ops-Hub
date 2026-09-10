@@ -65,7 +65,7 @@ export default async function handler(req, res) {
       usersQ, adminsQ, clientsQ, goalsQ, feedQ, recentClientFeedQ, messagesQ, roadmapQ,
       timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
       orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
-      tasksQ,
+      tasksQ, commissionsQ,
     ] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
@@ -106,6 +106,7 @@ export default async function handler(req, res) {
       supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
       supabase.from('ops_sales_funnel').select('id, data'),
       supabase.from('ops_tasks').select('id, data'),
+      supabase.from('ops_commissions').select('id, data'),
     ]);
 
     // A single table's query failing (e.g. a column a newer deploy expects
@@ -126,7 +127,7 @@ export default async function handler(req, res) {
       ['timeOffRequests', timeOffReqQ], ['timeOffLedger', timeOffLedgerQ], ['payroll', payrollQ], ['summaries', summariesQ],
       ['settings', settingsQ], ['deletedUserIds', deletedQ], ['orgNodes', orgNodesQ],
       ['orgLinks', orgLinksQ], ['catalogSuggestions', catalogSuggestionsQ], ['notifications', notificationsQ],
-      ['salesFunnel', salesFunnelQ], ['tasks', tasksQ],
+      ['salesFunnel', salesFunnelQ], ['tasks', tasksQ], ['commissions', commissionsQ],
     ];
     for (const [table, q] of namedQueries) {
       if (q.error) {
@@ -171,6 +172,12 @@ export default async function handler(req, res) {
     const tasks = rows(tasksQ.data).filter(
       t => tier !== 'member' || t.assigneeId === session.id || t.assignedById === session.id
     );
+    // Commissions (Phase 1) — Super Admin/Owner sees every recipient's
+    // rows; anyone else sees only their OWN, matched by recipientId,
+    // mirroring the timeOffLedger employeeId filter below exactly (both
+    // are "a person's own record of something an admin logs about them").
+    let commissions = rows(commissionsQ.data);
+    if (tier !== 'super') commissions = commissions.filter(r => r.recipientId === session.id);
 
     // Sales Funnel access — three levels (viewer/editor/owner). Super
     // Admin/CEO (this row's own level is 'super'/'owner') always resolves to
@@ -288,6 +295,13 @@ export default async function handler(req, res) {
       // response.
       viewerSalesFunnelLevel: funnelLevel,
       ...(funnelLevel ? { salesFunnel } : {}),
+      commissions,
+      // Server-verified, same convention as viewerSalesFunnelLevel above —
+      // the ONE flag either portal needs to decide whether to show a "My
+      // Commissions" nav item at all. Computed from the caller's own row
+      // only (never another person's), same identity resolution
+      // callerOwnRow already uses for funnelLevel just above.
+      viewerEarnsCommission: !!callerOwnRow?.earnsCommission,
     };
 
     // Password (hash today, legacy plaintext for any not-yet-upgraded

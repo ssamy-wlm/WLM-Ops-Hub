@@ -8,7 +8,8 @@
 // Body shape: { changes: { users?, admins?, clients?, goals?, feed?,
 // messages?, roadmapTasks?, timeOffRequests?, timeOffLedger?, payroll?,
 // summaries?, settings?, orgNodes?, orgLinks?, catalogSuggestions?,
-// notifications?, salesFunnel?, salesFunnelGrants?, tasks? },
+// notifications?, salesFunnel?, salesFunnelGrants?, tasks?, commissions?,
+// commissionGrants? },
 // tombstones?: { users?: [ids], orgNodes?: [ids], orgLinks?: [ids], taskIds?: [ids] },
 // restoreUserIds?: [ids] }
 //
@@ -59,7 +60,7 @@ import { clampToWeekday } from '../lib/dateUtils.js';
 // Dropped for members outright (never a legitimate member write); within the
 // isAdmin branch below, admins/roadmapTasks/orgNodes/orgLinks/timeOffLedger/
 // settings are further narrowed to tier === 'super' only.
-const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'payroll', 'summaries', 'orgNodes', 'orgLinks', 'settings']);
+const ADMIN_TABLES = new Set(['users', 'admins', 'roadmapTasks', 'timeOffLedger', 'payroll', 'summaries', 'orgNodes', 'orgLinks', 'settings', 'commissions']);
 const PAYROLL_FIELDS = ['payRate', 'hours'];
 
 // Sales Funnel access level resolution — kept identical to (but deliberately
@@ -89,6 +90,31 @@ function validClient(row) {
 }
 function validGeneric(row) {
   return row && typeof row === 'object' && hasContent(row.id);
+}
+// Commissions (Phase 1): a row must at least identify who it's for and
+// which month — mirrors validUserOrAdmin/validClient's "shape check
+// before it's allowed near the DB" convention above.
+function validCommissionRow(row) {
+  return row && typeof row === 'object' && hasContent(row.id) && hasContent(row.recipientId)
+    && (row.recipientType === 'user' || row.recipientType === 'admin') && hasContent(row.month);
+}
+// net and the tiered commission are ALWAYS recomputed here from entries[],
+// never trusted from the client — same "server owns the math" discipline
+// CLAUDE.md's rule #4 already applies to role/tier, applied here to the
+// dollar figures themselves. Whole-month net (sum of every entry's net)
+// decides the tier: >= $20,000 -> 10%, otherwise 5%, applied to the whole
+// month's net, not per client line.
+function recomputeCommission(row) {
+  const entries = Array.isArray(row.entries) ? row.entries.map(e => {
+    const gross = Number(e?.gross) || 0;
+    const adSpend = Number(e?.adSpend) || 0;
+    const contractor = Number(e?.contractor) || 0;
+    return { ...e, gross, adSpend, contractor, net: gross - adSpend - contractor };
+  }) : [];
+  const monthNet = entries.reduce((s, e) => s + e.net, 0);
+  const tier = monthNet >= 20000 ? '10%' : '5%';
+  const computedCommission = monthNet * (tier === '10%' ? 0.10 : 0.05);
+  return { ...row, entries, computedCommission, tier };
 }
 
 // A NEW incoming ops_users/ops_admins row may carry a plaintext password
@@ -1874,6 +1900,14 @@ export default async function handler(req, res) {
         if (Array.isArray(c.payroll) && c.payroll.length) {
           applied.payroll = await insertNewOnly(supabase, 'ops_payroll', c.payroll.filter(validGeneric), warnings);
         }
+        // Commissions (Phase 1): mutable, upsertRows() like ops_tasks — NOT
+        // insertNewOnly() like payroll/timeOffLedger above, since a
+        // commission-month row is a live-edited line-item record (client
+        // rows added/changed before payout), not an append-only audit log.
+        // Super Admin/Owner exclusive, same tier gate as payroll/settings.
+        if (Array.isArray(c.commissions) && c.commissions.length) {
+          applied.commissions = await upsertRows(supabase, 'ops_commissions', c.commissions.filter(validCommissionRow).map(recomputeCommission), warnings);
+        }
         if (c.settings && typeof c.settings === 'object') {
           const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
           for (const [key, value] of otherKeys) {
@@ -1883,7 +1917,7 @@ export default async function handler(req, res) {
           if (otherKeys.length) applied.settings = otherKeys.length;
         }
       } else {
-        for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'payroll', 'settings']) {
+        for (const key of ['admins', 'roadmapTasks', 'orgNodes', 'orgLinks', 'timeOffLedger', 'payroll', 'settings', 'commissions']) {
           const hasOtherSettings = key === 'settings' && c.settings && Object.keys(c.settings).some(k => k !== 'serviceCatalog');
           if (key === 'settings' ? hasOtherSettings : Array.isArray(c[key]) && c[key].length) {
             warnings.push(`${key}: dropped — Super Admin/CEO only, caller is a manager-tier admin`);
@@ -2690,6 +2724,45 @@ export default async function handler(req, res) {
           else n++;
         }
         applied.salesFunnelGrants = n;
+      }
+    }
+
+    // ── commission-eligibility grants: Super Admin/Owner exclusive — no
+    // owner-carve-out like salesFunnelGrants above, since Commissions
+    // management itself is tier==='super' only (see CLAUDE.md's
+    // Commissions Phase 1 investigation, Q3). Deliberately a separate
+    // top-level key, not routed through changes.users/changes.admins —
+    // mirrors salesFunnelGrants' own reasoning (a dedicated single-field
+    // path can't accidentally widen if those two tables' own gate is ever
+    // loosened later) even though today both paths land on the identical
+    // tier==='super' check. Touches ONLY the earnsCommission key on the
+    // target's row — nothing else about that person's record changes.
+    // NOTE ON THE "member-write disallow list" INSTRUCTION (investigation
+    // Q4): there is no such list to add earnsCommission to. ops_users/
+    // ops_admins writes are gated entirely by canEditUsers(session)
+    // (lib/opsSession.js), now defined as exactly tier==='super' — a
+    // member/manager caller has NO write path into either table at all
+    // (their only exception is the separate, top-level selfPasswordChange
+    // key above), so earnsCommission is already unreachable by a
+    // lower-tier write the same way salesFunnelLevel already is. Flagged
+    // here rather than inventing a disallow-list mechanism that doesn't
+    // exist anywhere else in this file.
+    if (Array.isArray(c.commissionGrants) && c.commissionGrants.length) {
+      if (tier !== 'super') {
+        warnings.push('commissionGrants: dropped — Super Admin/Owner only');
+      } else {
+        let n = 0;
+        for (const grant of (c.commissionGrants || [])) {
+          if (!grant || !hasContent(grant.id) || (grant.kind !== 'user' && grant.kind !== 'admin')) continue;
+          const table = grant.kind === 'admin' ? 'ops_admins' : 'ops_users';
+          const { data: currentRows } = await supabase.from(table).select('id, data').eq('id', grant.id);
+          const cur = currentRows?.[0]?.data;
+          if (!cur) { warnings.push(`commissionGrants(${grant.id}): not found`); continue; }
+          const { error } = await supabase.from(table).update({ data: { ...cur, earnsCommission: !!grant.earnsCommission } }).eq('id', grant.id);
+          if (error) warnings.push(`commissionGrants(${grant.id}): ${error.message}`);
+          else n++;
+        }
+        applied.commissionGrants = n;
       }
     }
 
