@@ -9094,6 +9094,133 @@ the user's own click-through against a real inbound email still needs
 to happen once the Resend-side configuration above is in place; nothing
 in this environment can exercise that.
 
+**Inbound `service@`: match against the Service Catalog before creating,
+confirm-or-new on a close match (2026-09-11 follow-up).** `api/inbound-
+email.js` only — no new `api/*.js` file, still 12. Before this, every
+`service@` email created a brand-new, one-off client service with no
+awareness of the Catalog (`ops_settings` key `'serviceCatalog'`, the same
+single source of truth client.html's own Manage Bundles/Categories editor
+writes — see that file's own header comment on this key) at all, so a
+typo'd or re-worded resend of an existing service name would silently
+create a near-duplicate. Now every parsed service name is matched against
+the live catalog (`matchCatalogService()`) before anything is written:
+
+1. **Exact/normalized match** (trim + lowercase + collapsed whitespace) —
+   reuses the catalog entry's own canonical name/freq/bundle/category
+   (never the raw, possibly differently-capitalized, parsed text). No
+   catalog write.
+2. **Close/fuzzy match** — small edit distance (Levenshtein, normalized
+   0..1 similarity, 0.72 threshold — the exact same threshold
+   `api/process-transcript.js`'s own `_phoneticSimilarity()` already
+   established for client-name fuzzy matching, 2026-08-20/2026-08-25,
+   reused here as this codebase's own precedent for "close enough to ask,
+   not close enough to assume"), OR one name containing the other (the
+   task's own second named example) — NEVER auto-created. Held as a
+   pending confirmation and the sender is asked, in the task's own exact
+   wording: `"Bloging" looks like your existing "Blogging" — reply
+   CONFIRM to use it, or NEW to create a separate service.` Every close
+   match is logged via `logError()` (`endpoint:'inbound-email:catalog-
+   match'`), per the task's own explicit "log ambiguous cases"
+   requirement — regardless of whether exactly one or several catalog
+   names scored above the threshold (an `ambiguous:true` flag distinguishes
+   the latter in the log entry, though the reply itself always offers the
+   single best-scoring candidate — asking about the strongest guess is
+   more useful to the sender than refusing to guess at all).
+3. **No reasonable match** — created immediately using the parsed name
+   verbatim, AND the exact same name is appended to the Catalog in the
+   same request (one single catalog read-modify-write for every 'new'-tier
+   item in the whole email, never one write per item — bundles/categories/
+   every existing entry pass through completely untouched, the same
+   non-destructive discipline this file's client-write functions already
+   established) — so the next email using this same name hits case 1
+   instead. The confirmation reply carries the task's own exact specified
+   note: `Created new service "X" and added it to the catalog.`
+
+**A design decision made and explicitly flagged, per rule #7 — not a
+literal reading of the spec, which described the desired REPLY WORDING
+but not how a later reply gets correlated back to the specific pending
+item it answers.** Reply correlation is deliberately NOT based on Resend's
+own email-threading headers (In-Reply-To/References/thread id) — this
+environment has no live access to confirm what threading metadata the
+webhook payload or the Received-Emails API actually exposes for a real
+reply (rule #11), so relying on it unverified risked a silent, untestable
+failure in production. Instead: one `ops_settings` row per sender email
+(`inboundServicePending:<email>`, never one row per item — a sender has a
+single accumulating list of unresolved close-match items, appended to by
+each service@ email that produces one), and a reply is recognized purely
+by content — the ENTIRE first line of the subject or the body must be
+just the word CONFIRM or NEW, optionally followed by a number (required
+only once more than one item is pending, to say which one) — checked
+BEFORE the parser runs (no Anthropic cost for a plain "CONFIRM" reply).
+Deliberately whole-line-anchored, not a substring match, so an ordinary
+new email that happens to start with the word "New" (e.g. "New blog post
+needed...") is never mistaken for a reply — verified directly (see below).
+When a sender has nothing pending, or the email doesn't look like a reply
+at all, this check is a no-op and the normal parse-and-match flow runs
+unchanged. The numbering shown in a CONFIRM/NEW reply prompt always
+reflects each item's REAL position in the persisted pending array
+(existing unresolved items first, new ones appended after) — not just
+1..N within the current email — so a later "CONFIRM 2" reply correctly
+resolves against what's actually stored even across multiple emails.
+CONFIRM applies the catalog entry's own canonical fields (name/freq/
+bundle/category) frozen at the moment the close match was first found —
+not re-read live at reply time — an accepted, documented tradeoff (a
+catalog edit mid-flight between the original email and its reply is a
+genuine corner case, and this endpoint isn't authoritative for catalog
+display, only creation). NEW creates a standalone service using the
+ORIGINAL parsed name and adds it to the catalog, identically to case 3
+above. Resolving either action removes exactly that one item from the
+pending list, leaving any other still-pending items (from the same or an
+earlier email) completely untouched.
+
+No stored catalog at all (a genuinely fresh install) is treated as EMPTY,
+never reconstructed from `client.html`'s own large hardcoded default seed
+(`BUNDLE_DEFS`/`DEFAULT_CATALOG`) — this endpoint has no access to that
+client-side constant and shouldn't guess at it (rule #7); every match
+then correctly falls to the 'new' tier and starts building the real
+catalog from there, the safe direction to err in.
+
+Verified with a new, dedicated `node:test --experimental-test-module-
+mocks` suite against the real, byte-identical `api/inbound-email.js`
+handler (`parseTaskEmailForSession` mocked wholesale — this suite's own
+job is the catalog-matching/pending-reply logic layered on top of it, not
+the parser's own extraction accuracy, which has extensive separate
+coverage elsewhere), no live Supabase/Resend access (rule #11) — 42/42:
+an exact (including whitespace/case) match reuses the catalog entry's
+canonical fields and writes nothing to the catalog; a close/typo match
+creates nothing and sends the spec's own exact reply wording, logged as
+ambiguous; a real, separate CONFIRM reply email resolves it using the
+catalog's canonical name/freq/bundle, clearing the pending row; a real,
+separate NEW reply creates a standalone service under the original typo'd
+name and adds it to the catalog; a genuinely new name is created
+immediately and added to the catalog with the exact specified note; a
+"contains" case (not a Levenshtein-close typo) is correctly held as close,
+not new; two close matches pending at once produce correctly-numbered
+prompts, an unnumbered "CONFIRM" reply is correctly treated as ambiguous
+(asks which one, resolves nothing) while a numbered "CONFIRM 2" resolves
+exactly that item and leaves item 1 still pending; a plain new email whose
+body happens to start with the word "New" is parsed normally, never
+swallowed as a false-positive reply; a missing catalog row doesn't crash
+and correctly falls back to empty; and the pre-existing unmatched-client
+regression (a parsed row with no resolvable client is reported, never
+invented) still holds alongside a real match in the same email. The
+pre-existing `verify_inbound_email.mjs` suite (62/62) and two
+`process-transcript.js` regression suites (`verify_process_transcript_
+refactor.mjs` 8/8, `verify_process_transcript_weekend_clamp.mjs` 4/4)
+re-run clean and unaffected — confirming the parser-reuse refactor and
+every other pre-existing inbound-email behavior (signature verification,
+dedupe, rate limit, routing, the task@ path, the `__ALL__` guard) are
+untouched by this change. `node --check` passed; `ls api/*.js | wc -l`
+still 12 (no new file — this PR touches only the one existing endpoint).
+
+**Merged 2026-09-11 (PR #374), on the user's explicit instruction —**
+the reply-correlation design decision above (content-based, not
+threading-header-based) still hasn't been verified against a real Resend
+reply in production; nothing in this environment can exercise that, so a
+real click-through (a genuine typo'd service name, then a real CONFIRM/
+NEW reply email) is still owed once the Resend-side configuration named
+in the entry above is in place.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
