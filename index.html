@@ -1216,9 +1216,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            applyAdminRoleRestrictions() (login/session-restore) and
            cloudPullAll() (a live mid-session grant, no reload needed). -->
       <div class="admin-nav-group-label">Sales</div>
-      <!-- Sales Funnel — for PR A this still opens the funnel's CURRENT
-           location (inside the Tracker, via openAdminTrackerToSalesFunnel())
-           — moving it to a standalone chrome-free destination is PR B. -->
+      <!-- Sales Funnel — PR B (2026-09-11) moved this to its own standalone
+           left-nav destination (#admin-salesFunnel, loadAdminSalesFunnelFrame())
+           instead of opening inside the Tracker tab — no Tracker chrome, no
+           click-Tracker-to-go-back round trip. See switchAdminTab('salesFunnel'). -->
       <div class="admin-nav-item locked" id="admin-nav-salesfunnel" onclick="_onSalesNavClick('funnel',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span>Sales Funnel<span class="admin-nav-lock">🔒</span></div>
       <div class="admin-nav-item locked" id="admin-nav-mycommissions" onclick="_onSalesNavClick('commission',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 2.5-1.5h.5a2 2 0 1 1 0 4h-1a2 2 0 1 0 0 4h.5a2.5 2.5 0 0 0 2.5-1.5"/></svg></span>My Commissions<span class="admin-nav-lock">🔒</span></div>
 
@@ -2080,6 +2081,21 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-tracker" class="page-section">
       <div class="tracker-embed-wrap admin-tracker-embed-wrap">
         <iframe id="adminTrackerFrame" class="tracker-embed-frame" src="about:blank" title="Production Tracker"></iframe>
+      </div>
+    </div>
+
+    <!-- ══ SALES FUNNEL (standalone left-nav destination, PR B 2026-09-11) —
+         the SAME leads tool client.html already builds (renderFunnelTable()
+         etc.), just embedded chrome-free (?chrome=none hides client.html's
+         own .wlm-topbar/.topbar) instead of living inside the Tracker tab —
+         no Tracker chrome, no click-Tracker-to-go-back round trip. Lazy-
+         loaded exactly like #admin-tracker's own iframe (see
+         loadAdminSalesFunnelFrame()); client.html's own SESSION.funnelLevel
+         check inside showPage('sales-funnel') remains the real, unchanged
+         access boundary regardless of what this nav item shows. ══ -->
+    <div id="admin-salesFunnel" class="page-section">
+      <div class="tracker-embed-wrap admin-tracker-embed-wrap">
+        <iframe id="adminSalesFunnelFrame" class="tracker-embed-frame" src="about:blank" title="Sales Funnel"></iframe>
       </div>
     </div>
 
@@ -4012,6 +4028,7 @@ function switchAdminTab(el, tab){
     if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
+  if(tab==='salesFunnel') loadAdminSalesFunnelFrame();
   if(tab==='clientHealth') renderClientHealthDashboard();
   if(tab==='clientDirectory') renderClientDirectory();
   if(tab==='workload'){
@@ -4043,6 +4060,24 @@ function loadAdminTrackerFrame(){
       win.showPage('clients', win.document.getElementById('nav-clients'));
     }
   }catch(e){}
+}
+
+// Standalone Sales Funnel destination (PR B, 2026-09-11) — same lazy-load-
+// once-then-reset-on-each-visit pattern as loadAdminTrackerFrame() above,
+// pointed at client.html?chrome=none&page=sales-funnel so the embedded
+// Tracker's own topbar/tab-nav never renders here at all (see client.html's
+// _applyChromeParam()) — just the funnel's own stat cards/table, edge-to-
+// edge. client.html's own showPage('sales-funnel') re-checks
+// SESSION.funnelLevel on every load/reset regardless of what this nav item
+// shows — that server-verified check is the real access boundary.
+function loadAdminSalesFunnelFrame(){
+  const frame = document.getElementById('adminSalesFunnelFrame');
+  if(!frame) return;
+  const params = new URLSearchParams();
+  params.set('chrome', 'none');
+  params.set('page', 'sales-funnel');
+  params.set('v', Date.now());
+  frame.src = 'client.html?' + params.toString();
 }
 
 // ── REPORT TABS ──
@@ -5782,27 +5817,13 @@ function openAdminTrackerToClient(clientId, serviceId){
   const frame = document.getElementById('adminTrackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
 }
-// Sales Funnel sidebar shortcut (PR A of the Sales Area rebuild,
-// 2026-09-11) — same tab-switch-first ordering as openAdminTrackerToClient()
-// above (switchAdminTab('tracker') can reset frame.src via
-// loadAdminTrackerFrame(), so the deep-link src must be set AFTER the tab
-// switch to win). Uses the ?page= deep-link convention client.html's own
-// _openDeepLinkFromUrl() already reads (showPage(page, _el('nav-'+page)))
-// rather than ?openClient=, since this isn't a client-specific deep link
-// — it just opens the Sales Funnel page, which re-checks
-// SESSION.funnelLevel itself on load (see client.html's showPage()) as
-// its own, real, unchanged access boundary regardless of what this
-// sidebar item shows. Still opens the funnel INSIDE the Tracker for now
-// (PR B moves it to a standalone chrome-free destination).
-function openAdminTrackerToSalesFunnel(){
-  const trackerNavEl = document.querySelector('.admin-nav-item[onclick*="\'tracker\'"]');
-  switchAdminTab(trackerNavEl, 'tracker');
-  const params = new URLSearchParams();
-  params.set('page', 'sales-funnel');
-  params.set('v', Date.now());
-  const frame = document.getElementById('adminTrackerFrame');
-  if(frame) frame.src = 'client.html?' + params.toString();
-}
+// openAdminTrackerToSalesFunnel() — the PR A version of the Sales Funnel
+// sidebar shortcut, which opened the funnel INSIDE the Tracker tab — was
+// removed in PR B (2026-09-11) per rule #6 (remove the tool, not just its
+// call site) once _onSalesNavClick() switched to the real standalone
+// destination (switchAdminTab(el,'salesFunnel') -> loadAdminSalesFunnelFrame()
+// above); it had exactly one caller and is fully superseded, not a
+// standing capability worth keeping around.
 // Was the Unassigned Services card's own onclick until 2026-09-07, when
 // that card switched to the shared drill-down popup (openChStatDrill('un
 // assigned')) like every other Client Health card — kept, not deleted:
@@ -14545,7 +14566,7 @@ function _onSalesNavClick(kind, el){
       : '🔒 Commission eligibility hasn\'t been enabled for your account — ask your Super Admin');
     return;
   }
-  if(kind==='funnel') openAdminTrackerToSalesFunnel();
+  if(kind==='funnel') switchAdminTab(el, 'salesFunnel');
   else switchAdminTab(el, 'mycommissions');
 }
 

@@ -617,10 +617,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
            security boundary. State set in _updateSalesNavLockState(),
            called from cloudFetchUsers() on every pull. -->
       <div class="nav-group-label">Sales</div>
-      <!-- Sales Funnel — reached via the same openTrackerPage() deep-link
-           every other Tracker shortcut in this sidebar already uses.
-           Still opens the funnel INSIDE the Tracker for now (PR B moves
-           it to a standalone chrome-free destination). -->
+      <!-- Sales Funnel — PR B (2026-09-11) moved this to its own standalone
+           left-nav destination (#sec-salesFunnel, loadSalesFunnelFrame())
+           instead of opening inside the Tracker section — no Tracker
+           chrome, no click-Tracker-to-go-back round trip. -->
       <div class="nav-item locked" id="nav-salesfunnel" onclick="_onSalesNavClick('funnel',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span>Sales Funnel<span class="nav-lock">🔒</span></div>
       <!-- My Commissions — read-only reflection of this employee's own
            ops_commissions rows (server already scopes to recipientId===
@@ -766,6 +766,17 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div id="sec-tracker" class="page-section">
         <div class="tracker-embed-wrap">
           <iframe id="trackerFrame" class="tracker-embed-frame" src="about:blank" title="Production Tracker"></iframe>
+        </div>
+      </div>
+
+      <!-- ── SALES FUNNEL (standalone left-nav destination, PR B 2026-09-11)
+           — the SAME leads tool client.html already builds, embedded chrome-
+           free (?chrome=none hides client.html's own .wlm-topbar/.topbar)
+           instead of living inside the Tracker section — no Tracker chrome,
+           no click-Tracker-to-go-back round trip. See loadSalesFunnelFrame(). ── -->
+      <div id="sec-salesFunnel" class="page-section">
+        <div class="tracker-embed-wrap">
+          <iframe id="salesFunnelFrame" class="tracker-embed-frame" src="about:blank" title="Sales Funnel"></iframe>
         </div>
       </div>
 
@@ -1533,7 +1544,7 @@ function _onSalesNavClick(kind, el){
       : "🔒 Commission eligibility hasn't been enabled for your account — ask your Super Admin");
     return;
   }
-  if(kind==='funnel') openTrackerPage('sales-funnel', el);
+  if(kind==='funnel') showSection('salesFunnel', el);
   else showSection('mycommissions', el);
 }
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
@@ -5410,7 +5421,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks',mycommissions:'My Commissions'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks',mycommissions:'My Commissions',salesFunnel:'Sales Funnel'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -5418,6 +5429,7 @@ function showSection(id, el){
   if(id==='operations'){ renderMyServiceSchedule(); renderRoadmap(); }
   if(id==='myreports') loadMyReports();
   if(id==='tracker') loadTrackerFrame();
+  if(id==='salesFunnel') loadSalesFunnelFrame();
   if(id==='clientDirectory') renderClientDirectory();
   if(id==='mycommissions') renderMyCommissionsUser();
   if(id==='bizSetup') loadCoC();
@@ -5467,6 +5479,30 @@ function openTrackerPage(pageName, el){
   const frame = document.getElementById('trackerFrame');
   if(frame) frame.src = 'client.html?' + params.toString();
   showSection('tracker', el);
+}
+
+// Standalone Sales Funnel destination (PR B, 2026-09-11) — same
+// leads tool client.html already builds, now reached as its own left-nav
+// section instead of inside the Tracker section. usermode=1 is still
+// required here (same as every other client.html embed in this file) —
+// it's how client.html's own _applyViewerTier() tells this is a user.html
+// embed and reads the member-scoped session token. chrome=none additionally
+// hides client.html's own .wlm-topbar/.topbar so only the funnel's own
+// content renders, edge-to-edge — no double chrome, no Tracker-tab detour.
+// Always reloads (not a load-once guard like loadTrackerFrame()) since
+// there's no other internal state on this single-page destination to reset.
+// client.html's own showPage('sales-funnel') re-checks SESSION.funnelLevel
+// on every load regardless of what this nav item shows — that server-
+// verified check is the real access boundary.
+function loadSalesFunnelFrame(){
+  const frame = document.getElementById('salesFunnelFrame');
+  if(!frame) return;
+  const params = new URLSearchParams();
+  params.set('usermode','1');
+  params.set('chrome','none');
+  params.set('page','sales-funnel');
+  params.set('v', Date.now());
+  frame.src = 'client.html?' + params.toString();
 }
 
 
