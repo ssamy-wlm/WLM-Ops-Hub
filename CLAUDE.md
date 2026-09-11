@@ -9089,10 +9089,10 @@ dashboard; the Resend webhook itself must be pointed at
 independently checkable from this environment (rule #11's live-access
 limitation extends to Resend's dashboard, not just Supabase).
 
-Held for the user's explicit approval on the Vercel preview before
-merge, per rule #10 and the task's own explicit instruction — a new
-write path plus the app's first piece of unauthenticated external
-ingress.
+**Merged 2026-09-11 (PR #370), on the user's explicit instruction —**
+the user's own click-through against a real inbound email still needs
+to happen once the Resend-side configuration above is in place; nothing
+in this environment can exercise that.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
