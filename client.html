@@ -4380,6 +4380,26 @@ function toggleProjectBlock(header){
 // first. Hides the whole .wlm-topbar wrapper (not just its inner .navrow),
 // so it's unaffected by _applyFunnelAccess()'s own separate, unrelated
 // visibility toggling of elements nested inside it.
+//
+// Also hides #page-clients (2026-09-11 flash fix) when this load is
+// SPECIFICALLY the standalone Sales Funnel destination (chrome=none AND
+// page=sales-funnel together — never for a plain chrome=none embed with no
+// page param, which has no reason to hide its own default landing page).
+// #page-clients is the only page-section marked .active in this file's own
+// static HTML, so on every fresh iframe load it's what actually paints
+// FIRST — before _initialTierResolve()'s async round trip (up to 12.5s
+// across its 5 retries) ever resolves and _openDeepLinkFromUrl() calls
+// showPage('sales-funnel',...) to switch to the real destination. An
+// employee/admin with real Sales Funnel access would see the Tracker's
+// Client & Production list flash on screen first, every single time, before
+// flipping to the funnel — easily read as "it keeps toggling between the
+// Tracker and the Sales Funnel." Removing .active here (the exact class
+// showPage() itself toggles) means NOTHING is visible in the content area
+// until showPage('sales-funnel') explicitly activates the right section —
+// a brief blank content area (chrome already hidden either way) instead of
+// a flash of the wrong page. Purely a class removal, synchronous, before
+// any paint — same "runs first, before anything else" placement and
+// reasoning as the chrome-hiding above.
 function _applyChromeParam(){
   const params=new URLSearchParams(window.location.search);
   if(params.get('chrome')!=='none') return;
@@ -4387,6 +4407,10 @@ function _applyChromeParam(){
   const pageTop=document.querySelector('.topbar');
   if(topNav) topNav.style.display='none';
   if(pageTop) pageTop.style.display='none';
+  if(params.get('page')==='sales-funnel'){
+    const clientsPage=_el('page-clients');
+    if(clientsPage) clientsPage.classList.remove('active');
+  }
 }
 
 // ── Deep-link support: ?openClient=&openProject=&openTask= (used by task-edit
