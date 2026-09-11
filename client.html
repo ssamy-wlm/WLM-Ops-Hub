@@ -442,7 +442,14 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
            provides (bell + 📚 Library) for every admin viewer. -->
       <div class="nav-item" id="nav-my-work" onclick="showPage('my-work',this)">My work<span class="nav-badge nav-badge-gold" id="my-work-badge" style="display:none;">0</span></div>
       <div class="nav-item" id="nav-recurring-catalog" onclick="showPage('recurring-catalog',this)">Service catalog</div>
-      <div class="nav-item funnel-access-only" id="nav-sales-funnel" onclick="showPage('sales-funnel',this)" style="display:none;">Sales funnel<span class="nav-badge nav-badge-green" id="funnel-badge" style="display:none;">0</span></div>
+      <!-- The Sales Funnel tab that used to live here was removed (PR B,
+           2026-09-11) — the funnel moved to its own standalone left-nav
+           destination in each portal (?chrome=none&page=sales-funnel embed
+           of this same file), so it no longer needs an entry point inside
+           the Tracker's own chrome. #page-sales-funnel itself (below) and
+           its funnel-access-only gate are untouched — still reached via
+           showPage('sales-funnel', ...) from the deep-link handler, just
+           never from this nav row anymore. -->
     </div>
   </div>
 </div>
@@ -1615,24 +1622,19 @@ function _applyViewerTier(tier){
 function _applyFunnelAccess(level){
   SESSION.funnelLevel = level || null;
   const hasAnyAccess = !!SESSION.funnelLevel; // viewer, editor, or owner — any of the three
+  // Reveals/hides #page-sales-funnel itself only (the one remaining
+  // .funnel-access-only element) — defense-in-depth ahead of the
+  // SESSION.funnelLevel check inside showPage() above, preventing any
+  // flash of the funnel page content before the first pull resolves.
+  // Before PR B (2026-09-11) this also revealed the Tracker's own
+  // .wlm-topbar-navrow (with every tab but the funnel's own hidden) for a
+  // plain member granted funnel access, since the funnel's nav tab lived
+  // inside that admin-only bar and was otherwise unreachable — removed
+  // once the funnel got its own standalone left-nav destination in each
+  // portal: a plain member never needs to see this embedded Tracker's nav
+  // bar at all anymore, they reach the funnel via ?chrome=none&page=
+  // sales-funnel directly, bypassing this navrow entirely.
   document.querySelectorAll('.funnel-access-only').forEach(el=>{ el.style.display = hasAnyAccess?'':'none'; });
-  // The Sales Funnel nav item lives inside .wlm-topbar-navrow, which is
-  // itself admin-only (_applyViewerTier() already hid the WHOLE tab bar for
-  // any non-admin/manager/super viewer, before this function ever runs) — a
-  // granted plain member has no other reason to see that tab bar, so reveal
-  // just the navrow wrapper and the funnel tab for them, and explicitly hide
-  // every OTHER tab inside it (they don't carry their own visibility class,
-  // only ever relying on the wrapper's — which is no longer safe to reuse
-  // once the wrapper itself is being shown to a non-admin).
-  const navrow = document.querySelector('.wlm-topbar-navrow');
-  if(!navrow) return;
-  if(hasAnyAccess && !SESSION.isAdmin){
-    navrow.style.display = '';
-    navrow.querySelectorAll('.nav-item:not(.funnel-access-only)').forEach(el=>{ el.style.display='none'; });
-  } else if(!hasAnyAccess && !SESSION.isAdmin){
-    navrow.style.display = 'none';
-  }
-  // SESSION.isAdmin true: leave navrow exactly as _applyViewerTier() already set it.
 }
 // Editor or Owner may add/edit/archive/advance/convert prospects; Viewer may
 // only look. Checked fresh every time (never cached beyond SESSION), same
@@ -4367,6 +4369,26 @@ function toggleProjectBlock(header){
   if(body){ body.classList.toggle('open'); exp.classList.toggle('open'); }
 }
 
+// ── Standalone-embed support: ?chrome=none (PR B, 2026-09-11) — hides this
+// file's own .wlm-topbar (tab-nav row) and .topbar (per-page title bar)
+// entirely, for a destination that already supplies its own chrome (each
+// portal's new standalone Sales Funnel left-nav section — see index.html's
+// loadAdminSalesFunnelFrame() / user.html's loadSalesFunnelFrame()) — no
+// double chrome, no click-Tracker-to-go-back round trip. Called once,
+// synchronously, as the very first thing init() does — before the cloud
+// pull even starts — so there's no visible flash of this file's own chrome
+// first. Hides the whole .wlm-topbar wrapper (not just its inner .navrow),
+// so it's unaffected by _applyFunnelAccess()'s own separate, unrelated
+// visibility toggling of elements nested inside it.
+function _applyChromeParam(){
+  const params=new URLSearchParams(window.location.search);
+  if(params.get('chrome')!=='none') return;
+  const topNav=document.querySelector('.wlm-topbar');
+  const pageTop=document.querySelector('.topbar');
+  if(topNav) topNav.style.display='none';
+  if(pageTop) pageTop.style.display='none';
+}
+
 // ── Deep-link support: ?openClient=&openProject=&openTask= (used by task-edit
 // notification emails to jump straight to the task that changed) ──
 function _openDeepLinkFromUrl(){
@@ -6958,6 +6980,7 @@ function updateMyWorkBadge(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
+  _applyChromeParam();
   // Pull latest client data (incl. the Service Catalog) from cloud first, THEN
   // seed a local default catalog only if the pull didn't deliver a real one —
   // seeding before the pull resolves would mark the local default "dirty" and
