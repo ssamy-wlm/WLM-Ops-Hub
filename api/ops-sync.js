@@ -120,7 +120,19 @@ function validCommissionPercent(row) {
 // commissionPercent itself is validated separately (validCommissionPercent,
 // above) BEFORE this ever runs — by the time recomputeCommission sees a
 // row, commissionPercent is already known to be exactly 5 or 10.
-function recomputeCommission(row) {
+// updatedBy/updatedByName are stamped server-side from the caller's own
+// verified session (2026-09-11 fix) — the client previously sent a field
+// called `updatedBy` holding a plain display-name string it read off its
+// own local admin object, and there was no `updatedByName` at all, so the
+// stored row genuinely never had that key (hence reading NULL). Matches
+// every other "who did this" field already established in this file
+// (reportedMisassignedByName, requestedByName, submittedByName,
+// reviewedByName, createdByName/updatedByName on the sibling feature at
+// the client-write block below) — never trusted from the client, always
+// the resolved session. Whatever the client sends for either key here is
+// completely ignored: the spread below runs BEFORE these two overrides,
+// so they always win regardless of what `row` contains.
+function recomputeCommission(row, session) {
   const entries = Array.isArray(row.entries) ? row.entries.map(e => {
     const gross = Number(e?.gross) || 0;
     const adSpend = Number(e?.adSpend) || 0;
@@ -132,7 +144,7 @@ function recomputeCommission(row) {
   const monthNet = entries.reduce((s, e) => s + e.net, 0);
   const commissionPercent = row.commissionPercent;
   const computedCommission = monthNet * (commissionPercent / 100);
-  return { ...row, entries, computedCommission, commissionPercent };
+  return { ...row, entries, computedCommission, commissionPercent, updatedBy: session.id, updatedByName: session.name };
 }
 
 // A NEW incoming ops_users/ops_admins row may carry a plaintext password
@@ -1929,7 +1941,7 @@ export default async function handler(req, res) {
           shaped.filter(row => !validCommissionPercent(row)).forEach(row => {
             warnings.push(`commissions.${row.id}: dropped — commissionPercent must be exactly 5 or 10 (got ${JSON.stringify(row.commissionPercent)})`);
           });
-          applied.commissions = await upsertRows(supabase, 'ops_commissions', validRows.map(recomputeCommission), warnings);
+          applied.commissions = await upsertRows(supabase, 'ops_commissions', validRows.map(row => recomputeCommission(row, session)), warnings);
         }
         if (c.settings && typeof c.settings === 'object') {
           const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
