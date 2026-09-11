@@ -5489,14 +5489,26 @@ function openTrackerPage(pageName, el){
 // embed and reads the member-scoped session token. chrome=none additionally
 // hides client.html's own .wlm-topbar/.topbar so only the funnel's own
 // content renders, edge-to-edge — no double chrome, no Tracker-tab detour.
-// Always reloads (not a load-once guard like loadTrackerFrame()) since
-// there's no other internal state on this single-page destination to reset.
 // client.html's own showPage('sales-funnel') re-checks SESSION.funnelLevel
 // on every load regardless of what this nav item shows — that server-
 // verified check is the real access boundary.
+//
+// Load-once guard (2026-09-11 flash fix), matching loadTrackerFrame()'s own
+// src==='about:blank' check — a full iframe reload was the actual mechanism
+// behind "Sales Funnel keeps toggling to the Tracker": every click of this
+// nav item tore the iframe down and rebuilt client.html from scratch, which
+// paints its own default page (#page-clients, the Tracker) FIRST, then only
+// switches to the funnel once its async tier-resolve round trip completes —
+// so every re-visit repeated that same flash, not just the first one. This
+// file's own 20s stats-refresh poll and 15s message-poll don't touch the
+// funnel iframe at all, and client.html's own embedded 30s poll/
+// visibilitychange listener already keep the ALREADY-loaded funnel's data
+// fresh on their own — there's no other internal state here that actually
+// needed a full reload on every visit, unlike the original comment (removed
+// here) assumed.
 function loadSalesFunnelFrame(){
   const frame = document.getElementById('salesFunnelFrame');
-  if(!frame) return;
+  if(!frame || frame.src!=='about:blank') return;
   const params = new URLSearchParams();
   params.set('usermode','1');
   params.set('chrome','none');

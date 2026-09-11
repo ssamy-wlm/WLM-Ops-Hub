@@ -4062,17 +4062,31 @@ function loadAdminTrackerFrame(){
   }catch(e){}
 }
 
-// Standalone Sales Funnel destination (PR B, 2026-09-11) — same lazy-load-
-// once-then-reset-on-each-visit pattern as loadAdminTrackerFrame() above,
-// pointed at client.html?chrome=none&page=sales-funnel so the embedded
-// Tracker's own topbar/tab-nav never renders here at all (see client.html's
+// Standalone Sales Funnel destination (PR B, 2026-09-11) — pointed at
+// client.html?chrome=none&page=sales-funnel so the embedded Tracker's own
+// topbar/tab-nav never renders here at all (see client.html's
 // _applyChromeParam()) — just the funnel's own stat cards/table, edge-to-
 // edge. client.html's own showPage('sales-funnel') re-checks
-// SESSION.funnelLevel on every load/reset regardless of what this nav item
-// shows — that server-verified check is the real access boundary.
+// SESSION.funnelLevel on every load regardless of what this nav item shows
+// — that server-verified check is the real access boundary.
+//
+// Load-once guard (2026-09-11 flash fix), the same src==='about:blank'
+// pattern loadAdminTrackerFrame() above already uses — this function used
+// to unconditionally reset frame.src on EVERY click despite an earlier
+// comment here claiming it already matched that pattern; it didn't. A full
+// iframe reload was the actual mechanism behind "Sales Funnel keeps
+// toggling to the Tracker": every re-visit tore client.html down and
+// rebuilt it from scratch, which paints its own default page (#page-clients,
+// the Tracker) FIRST, before its async tier-resolve round trip resolves and
+// switches to the funnel — so every click repeated that flash, not just the
+// first. Unlike loadAdminTrackerFrame(), this single-page destination has no
+// internal sub-navigation to reset on a re-visit, so a plain load-once guard
+// (no reset-view branch) is enough — client.html's own embedded 30s poll/
+// visibilitychange listener already keep the already-loaded funnel's data
+// fresh on their own.
 function loadAdminSalesFunnelFrame(){
   const frame = document.getElementById('adminSalesFunnelFrame');
-  if(!frame) return;
+  if(!frame || frame.src!=='about:blank') return;
   const params = new URLSearchParams();
   params.set('chrome', 'none');
   params.set('page', 'sales-funnel');
