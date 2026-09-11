@@ -9213,14 +9213,13 @@ dedupe, rate limit, routing, the task@ path, the `__ALL__` guard) are
 untouched by this change. `node --check` passed; `ls api/*.js | wc -l`
 still 12 (no new file — this PR touches only the one existing endpoint).
 
-Held for the user's explicit approval on the Vercel preview before merge,
-per rule #10 and the task's own explicit "needs preview + approval"
-instruction — touches a real write path (both the client-service write
-and the Catalog write) on the app's one piece of unauthenticated external
-ingress. In particular, the reply-correlation design decision above
-(content-based, not threading-header-based) has not been verified against
-a real Resend reply in production — flagged for confirmation once the
-user can test it live.
+**Merged 2026-09-11 (PR #374), on the user's explicit instruction —**
+the reply-correlation design decision above (content-based, not
+threading-header-based) still hasn't been verified against a real Resend
+reply in production; nothing in this environment can exercise that, so a
+real click-through (a genuine typo'd service name, then a real CONFIRM/
+NEW reply email) is still owed once the Resend-side configuration named
+in the entry above is in place.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
