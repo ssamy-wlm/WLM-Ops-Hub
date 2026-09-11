@@ -2094,6 +2094,34 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          check inside showPage('sales-funnel') remains the real, unchanged
          access boundary regardless of what this nav item shows. ══ -->
     <div id="admin-salesFunnel" class="page-section">
+      <!-- ── SALES FUNNEL ACCESS (PR C, 2026-09-11) — moved here from Admin
+           Controls, since this is where an Owner actually manages who else
+           can see/edit the funnel. Visible ONLY when _mySalesFunnelLevel
+           ('owner' resolves for both Super Admin/Owner tier AND anyone
+           explicitly granted funnel-Owner level, Google-Drive-style — see
+           funnelLevelOf() in api/ops-state.js/api/ops-sync.js) is exactly
+           'owner' — a viewer/editor never sees this card, only the funnel
+           table below it. Toggled from _updateSalesNavLockState() (the
+           same function that already lights/locks this page's own nav
+           item), so it can never disagree with whether the person can even
+           reach this destination in the first place, and stays in sync
+           with a live mid-session grant the same way the nav item already
+           does. Reuses the EXACT same renderSalesFunnelAccessList()/
+           setSalesFunnelLevel()/salesFunnelGrants server action this card
+           already used inside Admin Controls — unchanged, only its DOM
+           location and visibility condition moved. ── -->
+      <div class="card" id="salesFunnelAccessCard" style="margin-bottom:18px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🎯 Sales Funnel Access</div>
+            <div class="card-sub">Grant Viewer, Editor, or Owner access to the Sales Funnel — Owners can also grant access to others.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="renderSalesFunnelAccessList()">↻ Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="salesFunnelAccessList" style="padding:6px 20px;"></div>
+        </div>
+      </div>
       <div class="tracker-embed-wrap admin-tracker-embed-wrap">
         <iframe id="adminSalesFunnelFrame" class="tracker-embed-frame" src="about:blank" title="Sales Funnel"></iframe>
       </div>
@@ -2768,14 +2796,16 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div><!-- /rm-biz-wrap -->
 
-      <!-- Error Log, Pending Migrations, Password Security Migration, and
-           Sales Funnel Access moved to the Admin Controls tab (Super Admin
-           only) — see admin-adminControls below. -->
+      <!-- Error Log, Pending Migrations, and Password Security Migration
+           moved to the Admin Controls tab (Super Admin only) — see
+           admin-adminControls below. Sales Funnel Access lives inside the
+           Sales Funnel's own standalone destination now (PR C, 2026-09-11)
+           — see #admin-salesFunnel. -->
 
     </div>
 
     <!-- ── ADMIN CONTROLS — Super Admin only (tier==='super', currently
-         David + Sarah). Consolidates 7 admin/system panels previously
+         David + Sarah). Consolidates admin/system panels previously
          scattered across Business Setup and Users: each one moved here
          verbatim (same ids, same endpoints, same behavior) — this is a
          relocation, not a rebuild. Visibility is server-enforced by each
@@ -2786,27 +2816,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          "UX convenience, not the actual security boundary" pattern already
          used for every other role-gated nav item in this file (see
          RESTRICTED_ADMIN_ROLES above).
-         Note: Sales Funnel Access previously also let a non-super admin
-         granted Sales Funnel Owner level manage funnel access (Google-Drive-
-         style carve-out — see _mySalesFunnelLevel). Per Sarah's explicit
-         follow-up decision, that carve-out is preserved end-to-end: the
-         tab's nav item is visible to Super Admin/Owner OR a non-super Sales
-         Funnel Owner, but everything inside except the Sales Funnel Access
-         card itself is wrapped in #admin-controls-super-only-wrap, shown
-         ONLY for level==='super'||'owner' — a non-super Funnel Owner who
-         opens this tab sees Sales Funnel Access and nothing else. Server-
-         side enforcement (already tierOf(session)==='super' on every other
-         panel's endpoint) is unchanged and remains authoritative regardless
-         of what this client-side wrapper shows. ── -->
+         The Sales Funnel Access card that used to live here (and the
+         non-super-Funnel-Owner carve-out that existed solely to let that
+         person reach it through this tab) moved out in PR C — see
+         #admin-salesFunnel — so this tab is Super Admin/Owner only again,
+         no OR condition. ── -->
     <div id="admin-adminControls" class="page-section">
       <div style="margin-bottom:18px;">
         <div style="font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);" id="admin-controls-title">Admin Controls</div>
         <div style="font-size:12px;color:var(--text-light);margin-top:2px;" id="admin-controls-desc">System diagnostics and admin-only tools.</div>
       </div>
 
-      <!-- Wraps every panel EXCEPT Sales Funnel Access — Super Admin/Owner
-           only. A non-super Sales Funnel Owner who reaches this tab (see
-           the nav-item gate) must see nothing in here; toggled in
+      <!-- Wraps every panel in this tab — Super Admin/Owner only; toggled in
            applyAdminRoleRestrictions() alongside the panels it contains. -->
       <div id="admin-controls-super-only-wrap" style="display:none;">
 
@@ -2863,29 +2884,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       </div><!-- /admin-controls-super-only-wrap (part 1) -->
-
-      <!-- ── SALES FUNNEL ACCESS (own screen, separate from Edit User/Edit
-           Admin) — visible to Super Admin/Owner AND any person granted
-           Sales Funnel Owner level specifically (see the
-           _mySalesFunnelLevel==='owner' check in applyAdminRoleRestrictions
-           below) — Google-Drive-style: Owners can manage other people's
-           access, not just Super Admin. Server-side enforcement lives in
-           api/ops-state.js/api/ops-sync.js (a 3-level salesFunnelLevel field
-           — viewer/editor/owner) — this card is just the control surface
-           for setting that field; it never reads or writes Sales Funnel
-           prospect data itself. ── -->
-      <div class="card" id="salesFunnelAccessCard" style="margin-top:22px;display:none;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">🎯 Sales Funnel Access</div>
-            <div class="card-sub">Grant Viewer, Editor, or Owner access to the Sales Funnel — Owners can also grant access to others.</div>
-          </div>
-          <button class="btn btn-sm btn-outline" onclick="renderSalesFunnelAccessList()">↻ Refresh</button>
-        </div>
-        <div class="card-body" style="padding:0;">
-          <div id="salesFunnelAccessList" style="padding:6px 20px;"></div>
-        </div>
-      </div>
 
       <div id="admin-controls-super-only-wrap-2" style="display:none;">
 
@@ -4017,18 +4015,20 @@ function switchAdminTab(el, tab){
   }
   // Admin Controls — loads the same four panels' data that used to load on
   // bizSettings (Error Log, Pending Migrations/schema drift, Password
-  // Security Migration, Sales Funnel Access), unchanged aside from which tab
-  // triggers them. Sales Funnel Access keeps its own OR condition (also
-  // rendered for a non-super admin granted funnel-Owner specifically) —
-  // same gate as the card's own visibility in applyAdminRoleRestrictions().
+  // Security Migration), unchanged aside from which tab triggers them.
+  // Sales Funnel Access moved out to the Sales Funnel's own destination
+  // (PR C) — see the 'salesFunnel' branch below instead.
   if(tab==='adminControls'){
     if(_adminLevel==='super' || _adminLevel==='owner'){
       loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); loadBackupsList();
     }
-    if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
-  if(tab==='salesFunnel') loadAdminSalesFunnelFrame();
+  // Sales Funnel Access is loaded unconditionally here (cheap no-op render
+  // when the caller isn't an Owner — the card itself stays display:none per
+  // _updateSalesNavLockState()) rather than re-checking _mySalesFunnelLevel
+  // a second time, so this can never drift from that one real gate.
+  if(tab==='salesFunnel'){ loadAdminSalesFunnelFrame(); renderSalesFunnelAccessList(); }
   if(tab==='clientHealth') renderClientHealthDashboard();
   if(tab==='clientDirectory') renderClientDirectory();
   if(tab==='workload'){
@@ -6274,7 +6274,7 @@ const HELP_CONTENT = {
     learnMore: "Edit the company structure chart, manage the Service Catalog (the source of truth for bundles/services), and replay the tour. Diagnostics and other admin-only tools (error log, pending migrations, platforms, etc.) live under Admin Controls." },
   adminControls: { label: 'Admin Controls', sel: '.admin-nav-item[onclick*="\'adminControls\'"]',
     tip: "System diagnostics and admin-only tools — Super Admin only.",
-    learnMore: "Error Log, Pending Migrations, Password Security Migration, Sales Funnel Access, Platforms & Tools, Data Backups, and Email Notifications — all in one place, visible only to Super Admin." },
+    learnMore: "Error Log, Pending Migrations, Password Security Migration, Platforms & Tools, Data Backups, and Email Notifications — all in one place, visible only to Super Admin." },
 };
 // Sidebar order, per the build spec — 'archive' intentionally excluded (see
 // the HELP_CONTENT comment above). The bell keeps its original one-liner,
@@ -8990,7 +8990,17 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // Commissions (Phase 1): mutable, same _applyServerArray dirty-preserving
     // pull as tasks above (no tombstone set — Phase 1 has no delete path).
     _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[]);
-    if(typeof renderCommissionEditor==='function' && document.getElementById('admin-commissions')?.classList.contains('active')) renderCommissionEditor();
+    // Never let a background pull's re-render silently discard in-progress
+    // typing (data-loss fix, 2026-09-11) — a 30s live-sync poll, or the
+    // post-push pull from an unrelated Save elsewhere, both land here with
+    // no user action involved, so there's no one to ask; skip the render
+    // instead (never a confirm() for a non-interactive background event).
+    // The freshly-pulled record is already stored locally either way
+    // (_applyServerArray above already ran) — it'll show correctly once the
+    // admin actually saves or navigates away from this recipient/month.
+    if(typeof renderCommissionEditor==='function' && document.getElementById('admin-commissions')?.classList.contains('active')){
+      if(!(typeof _commHasUnsavedEdits==='function' && _commHasUnsavedEdits())) renderCommissionEditor();
+    }
     if(typeof renderMyCommissionsAdmin==='function' && document.getElementById('admin-mycommissions')?.classList.contains('active')) renderMyCommissionsAdmin();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
     if(typeof renderNotificationSettingsUI==='function') renderNotificationSettingsUI();
@@ -13528,7 +13538,18 @@ function _commPopulateRecipientSelect(){
   if(recipients.some(p=>`${p.kind}:${p.id}`===prev)) sel.value = prev;
   return recipients;
 }
+// Guarded the same way _commOnRecipientChange() is: called both by the
+// #comm-month <input>'s onchange (where the browser has already applied the
+// new month value by the time this runs — a cancelled discard must revert
+// it) AND by initCommissions() on tab-open (where the editor is still
+// hidden, so _commHasUnsavedEdits() is always false and this never blocks).
 function loadCommissionsMonth(){
+  if(!_commConfirmDiscardIfDirty()){
+    const monthEl = document.getElementById('comm-month');
+    const card = document.getElementById('commEditorCard');
+    if(monthEl && card && card.dataset.month) monthEl.value = card.dataset.month;
+    return;
+  }
   _commRefreshRecipientAvailability(true);
 }
 // Single source of truth for the empty-state vs. recipient-editor switch —
@@ -13560,12 +13581,63 @@ function _commRefreshRecipientAvailability(forceEditorRender){
   if(_commViewMode==='month'){ if(selectionChanged) renderCommissionEditor(); }
   else { if(selectionChanged) renderCommissionYearView(); }
 }
+function _commRecordId(recipientId, month){ return 'comm_'+recipientId+'_'+month; }
+function _commFindRecord(recipientId, month){
+  return (dbGet(DB_KEYS.commissions)||[]).find(r=>r.id===_commRecordId(recipientId, month)) || null;
+}
+// Unsaved-edit guard (data-loss fix, 2026-09-11) — compares the editor's live
+// DOM inputs against a snapshot of what was actually RENDERED into them
+// (_commLastRenderedSnapshot, captured at the end of renderCommissionEditor()
+// below), NOT against whatever happens to be in local storage right now.
+// This distinction matters: comparing against local storage instead would
+// treat "the stored record changed remotely (another admin's save, or this
+// same pull) while nothing here was actually typed" as if it were a real
+// edit — the DOM would legitimately differ from the just-pulled record even
+// though the admin touched nothing, which would wrongly block every refresh
+// forever once any remote change happened to a record that's simply sitting
+// open and unedited. Comparing against "what this DOM was last SET to"
+// correctly reads that case as clean (safe to re-render) while still
+// catching a genuine, not-yet-saved keystroke (which is exactly what
+// diverges the live DOM from its own last-rendered snapshot).
+// Used two ways: (1) a background pull (cloudPullAll's 30s live-sync poll,
+// or the pull after a DIFFERENT save) must never silently blow away
+// in-progress typing via its own renderCommissionEditor() re-render — see
+// that call site; (2) a recipient/month/view switch must ask before
+// discarding — see _commOnRecipientChange()/loadCommissionsMonth()/
+// setCommViewMode() below. Never true when the editor isn't even showing.
+let _commLastRenderedSnapshot = null;
+function _commCurrentEditorStateJson(){
+  const nonBlank = e => e.client || e.gross || e.adSpend || e.net;
+  return JSON.stringify({
+    entries: _commReadEntriesFromDOM().filter(nonBlank),
+    payoutDate: document.getElementById('comm-payout-date')?.value || '',
+    status: document.getElementById('comm-status')?.value || 'pending',
+    commissionPercent: Number(document.getElementById('comm-rate')?.value) || 5,
+  });
+}
+function _commHasUnsavedEdits(){
+  const card = document.getElementById('commEditorCard');
+  if(!card || card.style.display==='none') return false;
+  if(!card.dataset.recipientId || !card.dataset.month) return false;
+  if(_commLastRenderedSnapshot===null) return false; // never actually rendered yet — nothing to have edited
+  return _commCurrentEditorStateJson() !== _commLastRenderedSnapshot;
+}
+// Shared by every switch below that would otherwise silently discard
+// in-progress edits — a single confirm() prompt, never a second variant that
+// could drift out of sync with the check it's paired with.
+function _commConfirmDiscardIfDirty(){
+  if(!_commHasUnsavedEdits()) return true;
+  return confirm('You have unsaved commission changes for this recipient/month. Switch and discard them?');
+}
 // Month|Year toggle — read-only switch, never triggers a write. Swaps which
 // date picker is visible (comm-month vs. comm-year) and which card is shown,
 // then re-renders whichever view is now active from the currently-selected
-// recipient.
+// recipient. Guarded: switching AWAY from Month (the only view with anything
+// editable) while there are unsaved edits asks first — switching from Year
+// to Month never has anything to lose, so the guard only fires one direction.
 function setCommViewMode(mode){
   if(mode!=='month' && mode!=='year') return;
+  if(mode!==_commViewMode && _commViewMode==='month' && !_commConfirmDiscardIfDirty()) return;
   _commViewMode = mode;
   const monthBtn = document.getElementById('commViewMonthBtn'), yearBtn = document.getElementById('commViewYearBtn');
   if(monthBtn) monthBtn.classList.toggle('btn-toggle-active', mode==='month');
@@ -13579,14 +13651,22 @@ function setCommViewMode(mode){
   _commRefreshRecipientAvailability(true);
 }
 // The recipient <select> is shared by both views — route to whichever
-// render function is currently relevant instead of hardcoding one.
+// render function is currently relevant instead of hardcoding one. Guarded:
+// the browser has already applied the new selection to sel.value by the time
+// this onchange handler runs, so a cancelled discard has to explicitly
+// revert it back to whichever recipient the (still-showing, unsaved) editor
+// dataset says is actually open.
 function _commOnRecipientChange(){
+  if(!_commConfirmDiscardIfDirty()){
+    const sel = document.getElementById('comm-recipient');
+    const card = document.getElementById('commEditorCard');
+    if(sel && card && card.dataset.recipientKind && card.dataset.recipientId){
+      sel.value = card.dataset.recipientKind+':'+card.dataset.recipientId;
+    }
+    return;
+  }
   if(_commViewMode==='year') renderCommissionYearView();
   else renderCommissionEditor();
-}
-function _commRecordId(recipientId, month){ return 'comm_'+recipientId+'_'+month; }
-function _commFindRecord(recipientId, month){
-  return (dbGet(DB_KEYS.commissions)||[]).find(r=>r.id===_commRecordId(recipientId, month)) || null;
 }
 function _commEmptyEntry(){ return { client:'', gross:0, adSpend:0, net:0 }; }
 function renderCommissionEditor(){
@@ -13620,6 +13700,12 @@ function renderCommissionEditor(){
   card.dataset.rateOverride = (storedPercent!=null && storedPercent!==autoPercent) ? '1' : '0';
   if(rateSel) rateSel.value = String(storedPercent!=null ? storedPercent : autoPercent);
   _commRecalcTotals();
+  // Data-loss fix (2026-09-11) — capture what the DOM now actually holds as
+  // the "last rendered" baseline _commHasUnsavedEdits() compares against.
+  // Must be the very last thing this function does, after every field above
+  // has already been written into the DOM, so the snapshot genuinely
+  // matches what's on screen.
+  _commLastRenderedSnapshot = _commCurrentEditorStateJson();
 }
 function _commEntryRowHtml(e, i){
   const gross = Number(e.gross)||0, adSpend = Number(e.adSpend)||0;
@@ -14566,6 +14652,11 @@ function _updateSalesNavLockState(){
   const myCommNav = document.getElementById('admin-nav-mycommissions');
   if(funnelNav) funnelNav.classList.toggle('locked', !_mySalesFunnelLevel);
   if(myCommNav) myCommNav.classList.toggle('locked', _viewerEarnsCommission !== true);
+  // Sales Funnel Access grant panel (PR C, 2026-09-11) — visible ONLY at
+  // funnel-Owner level, same single source of truth as the nav lock above,
+  // so it can never show for someone who can't even reach this destination.
+  const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
+  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (_mySalesFunnelLevel==='owner') ? 'block' : 'none';
 }
 // A locked item's click is a no-op (plus an explanatory toast) rather
 // than navigating — defense in depth on top of the real server-side
@@ -14624,44 +14715,34 @@ function applyAdminRoleRestrictions(level, adminObj){
     levelBadge.style.color = info.color;
   }
 
-  // Admin Controls tab nav item — visible to Super Admin/Owner, OR a
-  // non-super admin granted Sales Funnel Owner level (same OR condition as
-  // the Sales Funnel Access card itself, below) — otherwise that person
-  // would have no path left to reach Sales Funnel Access at all now that it
-  // lives inside this tab (per Sarah's explicit follow-up decision). Inline
-  // display:none is the default in the HTML (fails closed if this JS never
-  // runs); this is the only place it's ever revealed. Same "nav-hide is UX
-  // convenience, the real boundary is server-side" pattern as every other
-  // role-gated nav item — each panel inside this tab is independently
-  // server-enforced by its own endpoint regardless of whether this nav item
-  // is visible.
+  // Admin Controls tab nav item — Super Admin/Owner only. Used to also
+  // carry an OR condition for a non-super Sales Funnel Owner, back when
+  // Sales Funnel Access lived inside this tab (the only path such a person
+  // had to reach it) — removed in PR C (2026-09-11) once that card moved
+  // to the Sales Funnel's own standalone destination, which that person
+  // already has a real nav item for. Inline display:none is the default in
+  // the HTML (fails closed if this JS never runs); this is the only place
+  // it's ever revealed. Same "nav-hide is UX convenience, the real
+  // boundary is server-side" pattern as every other role-gated nav item —
+  // each panel inside this tab is independently server-enforced by its own
+  // endpoint regardless of whether this nav item is visible.
   const isSuperAdmin = (level==='super' || level==='owner');
   const adminControlsNav = document.getElementById('admin-nav-admincontrols');
-  if(adminControlsNav) adminControlsNav.style.display = (isSuperAdmin || _mySalesFunnelLevel==='owner') ? '' : 'none';
+  if(adminControlsNav) adminControlsNav.style.display = isSuperAdmin ? '' : 'none';
 
-  // Everything inside Admin Controls EXCEPT Sales Funnel Access is wrapped
-  // in these two containers, Super Admin/Owner only — so a non-super Sales
-  // Funnel Owner who reaches this tab (via the OR condition above) sees
-  // ONLY the Sales Funnel Access card and nothing else: not Error Log, not
-  // Pending Migrations, not Password Security, not Platforms & Tools, not
-  // Data Backups, not Email Notifications. This is a client-side display
-  // choice only — every one of those panels' own endpoints already
+  // Everything inside Admin Controls is wrapped in these two containers,
+  // Super Admin/Owner only — Sales Funnel Access (formerly the one
+  // exception here) moved out in PR C, so this tab no longer has a
+  // non-super visitor to carve an exception out for, and its title/
+  // description no longer need to be swapped for anyone. This is a
+  // client-side display choice only — every panel's own endpoint already
   // independently requires tierOf(session)==='super' server-side (or, for
   // Platforms & Tools, has no write endpoint of its own to begin with), so
   // this wrapper is UX scoping, not the security boundary.
-  const adminControlsTitle = document.getElementById('admin-controls-title');
-  const adminControlsDesc = document.getElementById('admin-controls-desc');
   const superOnlyWrap = document.getElementById('admin-controls-super-only-wrap');
   const superOnlyWrap2 = document.getElementById('admin-controls-super-only-wrap-2');
   if(superOnlyWrap) superOnlyWrap.style.display = isSuperAdmin ? '' : 'none';
   if(superOnlyWrap2) superOnlyWrap2.style.display = isSuperAdmin ? '' : 'none';
-  if(!isSuperAdmin && _mySalesFunnelLevel==='owner'){
-    if(adminControlsTitle) adminControlsTitle.textContent = 'Sales Funnel Access';
-    if(adminControlsDesc) adminControlsDesc.textContent = 'Grant Viewer, Editor, or Owner access to the Sales Funnel.';
-  } else if(adminControlsTitle && adminControlsDesc){
-    adminControlsTitle.textContent = 'Admin Controls';
-    adminControlsDesc.textContent = 'System diagnostics and admin-only tools.';
-  }
 
   // Error log viewer (read-only capture) — Super Admin/Owner only, same
   // visibility as business settings/org chart/roadmap.
@@ -14683,20 +14764,13 @@ function applyAdminRoleRestrictions(level, adminObj){
   const localRecoveryCard = document.getElementById('localRecoveryCard');
   if(localRecoveryCard) localRecoveryCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
-  // Sales Funnel Access permissions screen — Super Admin/Owner-level admin,
-  // OR (Google-Drive-style) anyone granted Sales Funnel Owner level
-  // specifically, regardless of their own admin level. This is the one
-  // card whose visibility isn't purely admin-level-gated — a plain 'admin'
-  // level person granted funnel-Owner can reach it too. This card only
-  // writes the salesFunnelLevel field on a person's record; server-side
-  // enforcement of the funnel itself lives in api/ops-state.js/
-  // api/ops-sync.js, not here.
-  const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
-  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner' || _mySalesFunnelLevel==='owner') ? 'block' : 'none';
-
-  // Sales category items (see _updateSalesNavLockState() above this
-  // function) — the category itself is always visible now; only the two
-  // items' locked/lit state depends on role, set once here, unconditionally.
+  // Sales category items, AND the Sales Funnel Access grant panel living
+  // inside that destination (PR C, 2026-09-11) — both toggled together in
+  // _updateSalesNavLockState() above this function, off the single
+  // _mySalesFunnelLevel source of truth, so the card can never show for
+  // someone who can't even reach this destination in the first place. The
+  // category itself is always visible now; only the two nav items' locked/
+  // lit state (and this card) depend on role, set once here, unconditionally.
   _updateSalesNavLockState();
 
   // ── Admin restriction project baseline (see CLAUDE.md): every non-super
