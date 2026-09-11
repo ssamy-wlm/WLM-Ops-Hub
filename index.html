@@ -2094,6 +2094,34 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          check inside showPage('sales-funnel') remains the real, unchanged
          access boundary regardless of what this nav item shows. ══ -->
     <div id="admin-salesFunnel" class="page-section">
+      <!-- ── SALES FUNNEL ACCESS (PR C, 2026-09-11) — moved here from Admin
+           Controls, since this is where an Owner actually manages who else
+           can see/edit the funnel. Visible ONLY when _mySalesFunnelLevel
+           ('owner' resolves for both Super Admin/Owner tier AND anyone
+           explicitly granted funnel-Owner level, Google-Drive-style — see
+           funnelLevelOf() in api/ops-state.js/api/ops-sync.js) is exactly
+           'owner' — a viewer/editor never sees this card, only the funnel
+           table below it. Toggled from _updateSalesNavLockState() (the
+           same function that already lights/locks this page's own nav
+           item), so it can never disagree with whether the person can even
+           reach this destination in the first place, and stays in sync
+           with a live mid-session grant the same way the nav item already
+           does. Reuses the EXACT same renderSalesFunnelAccessList()/
+           setSalesFunnelLevel()/salesFunnelGrants server action this card
+           already used inside Admin Controls — unchanged, only its DOM
+           location and visibility condition moved. ── -->
+      <div class="card" id="salesFunnelAccessCard" style="margin-bottom:18px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🎯 Sales Funnel Access</div>
+            <div class="card-sub">Grant Viewer, Editor, or Owner access to the Sales Funnel — Owners can also grant access to others.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="renderSalesFunnelAccessList()">↻ Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="salesFunnelAccessList" style="padding:6px 20px;"></div>
+        </div>
+      </div>
       <div class="tracker-embed-wrap admin-tracker-embed-wrap">
         <iframe id="adminSalesFunnelFrame" class="tracker-embed-frame" src="about:blank" title="Sales Funnel"></iframe>
       </div>
@@ -2768,14 +2796,16 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div><!-- /rm-biz-wrap -->
 
-      <!-- Error Log, Pending Migrations, Password Security Migration, and
-           Sales Funnel Access moved to the Admin Controls tab (Super Admin
-           only) — see admin-adminControls below. -->
+      <!-- Error Log, Pending Migrations, and Password Security Migration
+           moved to the Admin Controls tab (Super Admin only) — see
+           admin-adminControls below. Sales Funnel Access lives inside the
+           Sales Funnel's own standalone destination now (PR C, 2026-09-11)
+           — see #admin-salesFunnel. -->
 
     </div>
 
     <!-- ── ADMIN CONTROLS — Super Admin only (tier==='super', currently
-         David + Sarah). Consolidates 7 admin/system panels previously
+         David + Sarah). Consolidates admin/system panels previously
          scattered across Business Setup and Users: each one moved here
          verbatim (same ids, same endpoints, same behavior) — this is a
          relocation, not a rebuild. Visibility is server-enforced by each
@@ -2786,27 +2816,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
          "UX convenience, not the actual security boundary" pattern already
          used for every other role-gated nav item in this file (see
          RESTRICTED_ADMIN_ROLES above).
-         Note: Sales Funnel Access previously also let a non-super admin
-         granted Sales Funnel Owner level manage funnel access (Google-Drive-
-         style carve-out — see _mySalesFunnelLevel). Per Sarah's explicit
-         follow-up decision, that carve-out is preserved end-to-end: the
-         tab's nav item is visible to Super Admin/Owner OR a non-super Sales
-         Funnel Owner, but everything inside except the Sales Funnel Access
-         card itself is wrapped in #admin-controls-super-only-wrap, shown
-         ONLY for level==='super'||'owner' — a non-super Funnel Owner who
-         opens this tab sees Sales Funnel Access and nothing else. Server-
-         side enforcement (already tierOf(session)==='super' on every other
-         panel's endpoint) is unchanged and remains authoritative regardless
-         of what this client-side wrapper shows. ── -->
+         The Sales Funnel Access card that used to live here (and the
+         non-super-Funnel-Owner carve-out that existed solely to let that
+         person reach it through this tab) moved out in PR C — see
+         #admin-salesFunnel — so this tab is Super Admin/Owner only again,
+         no OR condition. ── -->
     <div id="admin-adminControls" class="page-section">
       <div style="margin-bottom:18px;">
         <div style="font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);" id="admin-controls-title">Admin Controls</div>
         <div style="font-size:12px;color:var(--text-light);margin-top:2px;" id="admin-controls-desc">System diagnostics and admin-only tools.</div>
       </div>
 
-      <!-- Wraps every panel EXCEPT Sales Funnel Access — Super Admin/Owner
-           only. A non-super Sales Funnel Owner who reaches this tab (see
-           the nav-item gate) must see nothing in here; toggled in
+      <!-- Wraps every panel in this tab — Super Admin/Owner only; toggled in
            applyAdminRoleRestrictions() alongside the panels it contains. -->
       <div id="admin-controls-super-only-wrap" style="display:none;">
 
@@ -2863,29 +2884,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
 
       </div><!-- /admin-controls-super-only-wrap (part 1) -->
-
-      <!-- ── SALES FUNNEL ACCESS (own screen, separate from Edit User/Edit
-           Admin) — visible to Super Admin/Owner AND any person granted
-           Sales Funnel Owner level specifically (see the
-           _mySalesFunnelLevel==='owner' check in applyAdminRoleRestrictions
-           below) — Google-Drive-style: Owners can manage other people's
-           access, not just Super Admin. Server-side enforcement lives in
-           api/ops-state.js/api/ops-sync.js (a 3-level salesFunnelLevel field
-           — viewer/editor/owner) — this card is just the control surface
-           for setting that field; it never reads or writes Sales Funnel
-           prospect data itself. ── -->
-      <div class="card" id="salesFunnelAccessCard" style="margin-top:22px;display:none;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">🎯 Sales Funnel Access</div>
-            <div class="card-sub">Grant Viewer, Editor, or Owner access to the Sales Funnel — Owners can also grant access to others.</div>
-          </div>
-          <button class="btn btn-sm btn-outline" onclick="renderSalesFunnelAccessList()">↻ Refresh</button>
-        </div>
-        <div class="card-body" style="padding:0;">
-          <div id="salesFunnelAccessList" style="padding:6px 20px;"></div>
-        </div>
-      </div>
 
       <div id="admin-controls-super-only-wrap-2" style="display:none;">
 
@@ -4017,18 +4015,20 @@ function switchAdminTab(el, tab){
   }
   // Admin Controls — loads the same four panels' data that used to load on
   // bizSettings (Error Log, Pending Migrations/schema drift, Password
-  // Security Migration, Sales Funnel Access), unchanged aside from which tab
-  // triggers them. Sales Funnel Access keeps its own OR condition (also
-  // rendered for a non-super admin granted funnel-Owner specifically) —
-  // same gate as the card's own visibility in applyAdminRoleRestrictions().
+  // Security Migration), unchanged aside from which tab triggers them.
+  // Sales Funnel Access moved out to the Sales Funnel's own destination
+  // (PR C) — see the 'salesFunnel' branch below instead.
   if(tab==='adminControls'){
     if(_adminLevel==='super' || _adminLevel==='owner'){
       loadErrorLog(); loadSchemaDrift(); renderPasswordMigrationStatus(); loadBackupsList();
     }
-    if(_adminLevel==='super' || _adminLevel==='owner' || _mySalesFunnelLevel==='owner') renderSalesFunnelAccessList();
   }
   if(tab==='tracker')     loadAdminTrackerFrame();
-  if(tab==='salesFunnel') loadAdminSalesFunnelFrame();
+  // Sales Funnel Access is loaded unconditionally here (cheap no-op render
+  // when the caller isn't an Owner — the card itself stays display:none per
+  // _updateSalesNavLockState()) rather than re-checking _mySalesFunnelLevel
+  // a second time, so this can never drift from that one real gate.
+  if(tab==='salesFunnel'){ loadAdminSalesFunnelFrame(); renderSalesFunnelAccessList(); }
   if(tab==='clientHealth') renderClientHealthDashboard();
   if(tab==='clientDirectory') renderClientDirectory();
   if(tab==='workload'){
@@ -6260,7 +6260,7 @@ const HELP_CONTENT = {
     learnMore: "Edit the company structure chart, manage the Service Catalog (the source of truth for bundles/services), and replay the tour. Diagnostics and other admin-only tools (error log, pending migrations, platforms, etc.) live under Admin Controls." },
   adminControls: { label: 'Admin Controls', sel: '.admin-nav-item[onclick*="\'adminControls\'"]',
     tip: "System diagnostics and admin-only tools — Super Admin only.",
-    learnMore: "Error Log, Pending Migrations, Password Security Migration, Sales Funnel Access, Platforms & Tools, Data Backups, and Email Notifications — all in one place, visible only to Super Admin." },
+    learnMore: "Error Log, Pending Migrations, Password Security Migration, Platforms & Tools, Data Backups, and Email Notifications — all in one place, visible only to Super Admin." },
 };
 // Sidebar order, per the build spec — 'archive' intentionally excluded (see
 // the HELP_CONTENT comment above). The bell keeps its original one-liner,
@@ -14638,6 +14638,11 @@ function _updateSalesNavLockState(){
   const myCommNav = document.getElementById('admin-nav-mycommissions');
   if(funnelNav) funnelNav.classList.toggle('locked', !_mySalesFunnelLevel);
   if(myCommNav) myCommNav.classList.toggle('locked', _viewerEarnsCommission !== true);
+  // Sales Funnel Access grant panel (PR C, 2026-09-11) — visible ONLY at
+  // funnel-Owner level, same single source of truth as the nav lock above,
+  // so it can never show for someone who can't even reach this destination.
+  const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
+  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (_mySalesFunnelLevel==='owner') ? 'block' : 'none';
 }
 // A locked item's click is a no-op (plus an explanatory toast) rather
 // than navigating — defense in depth on top of the real server-side
@@ -14696,44 +14701,34 @@ function applyAdminRoleRestrictions(level, adminObj){
     levelBadge.style.color = info.color;
   }
 
-  // Admin Controls tab nav item — visible to Super Admin/Owner, OR a
-  // non-super admin granted Sales Funnel Owner level (same OR condition as
-  // the Sales Funnel Access card itself, below) — otherwise that person
-  // would have no path left to reach Sales Funnel Access at all now that it
-  // lives inside this tab (per Sarah's explicit follow-up decision). Inline
-  // display:none is the default in the HTML (fails closed if this JS never
-  // runs); this is the only place it's ever revealed. Same "nav-hide is UX
-  // convenience, the real boundary is server-side" pattern as every other
-  // role-gated nav item — each panel inside this tab is independently
-  // server-enforced by its own endpoint regardless of whether this nav item
-  // is visible.
+  // Admin Controls tab nav item — Super Admin/Owner only. Used to also
+  // carry an OR condition for a non-super Sales Funnel Owner, back when
+  // Sales Funnel Access lived inside this tab (the only path such a person
+  // had to reach it) — removed in PR C (2026-09-11) once that card moved
+  // to the Sales Funnel's own standalone destination, which that person
+  // already has a real nav item for. Inline display:none is the default in
+  // the HTML (fails closed if this JS never runs); this is the only place
+  // it's ever revealed. Same "nav-hide is UX convenience, the real
+  // boundary is server-side" pattern as every other role-gated nav item —
+  // each panel inside this tab is independently server-enforced by its own
+  // endpoint regardless of whether this nav item is visible.
   const isSuperAdmin = (level==='super' || level==='owner');
   const adminControlsNav = document.getElementById('admin-nav-admincontrols');
-  if(adminControlsNav) adminControlsNav.style.display = (isSuperAdmin || _mySalesFunnelLevel==='owner') ? '' : 'none';
+  if(adminControlsNav) adminControlsNav.style.display = isSuperAdmin ? '' : 'none';
 
-  // Everything inside Admin Controls EXCEPT Sales Funnel Access is wrapped
-  // in these two containers, Super Admin/Owner only — so a non-super Sales
-  // Funnel Owner who reaches this tab (via the OR condition above) sees
-  // ONLY the Sales Funnel Access card and nothing else: not Error Log, not
-  // Pending Migrations, not Password Security, not Platforms & Tools, not
-  // Data Backups, not Email Notifications. This is a client-side display
-  // choice only — every one of those panels' own endpoints already
+  // Everything inside Admin Controls is wrapped in these two containers,
+  // Super Admin/Owner only — Sales Funnel Access (formerly the one
+  // exception here) moved out in PR C, so this tab no longer has a
+  // non-super visitor to carve an exception out for, and its title/
+  // description no longer need to be swapped for anyone. This is a
+  // client-side display choice only — every panel's own endpoint already
   // independently requires tierOf(session)==='super' server-side (or, for
   // Platforms & Tools, has no write endpoint of its own to begin with), so
   // this wrapper is UX scoping, not the security boundary.
-  const adminControlsTitle = document.getElementById('admin-controls-title');
-  const adminControlsDesc = document.getElementById('admin-controls-desc');
   const superOnlyWrap = document.getElementById('admin-controls-super-only-wrap');
   const superOnlyWrap2 = document.getElementById('admin-controls-super-only-wrap-2');
   if(superOnlyWrap) superOnlyWrap.style.display = isSuperAdmin ? '' : 'none';
   if(superOnlyWrap2) superOnlyWrap2.style.display = isSuperAdmin ? '' : 'none';
-  if(!isSuperAdmin && _mySalesFunnelLevel==='owner'){
-    if(adminControlsTitle) adminControlsTitle.textContent = 'Sales Funnel Access';
-    if(adminControlsDesc) adminControlsDesc.textContent = 'Grant Viewer, Editor, or Owner access to the Sales Funnel.';
-  } else if(adminControlsTitle && adminControlsDesc){
-    adminControlsTitle.textContent = 'Admin Controls';
-    adminControlsDesc.textContent = 'System diagnostics and admin-only tools.';
-  }
 
   // Error log viewer (read-only capture) — Super Admin/Owner only, same
   // visibility as business settings/org chart/roadmap.
@@ -14755,20 +14750,13 @@ function applyAdminRoleRestrictions(level, adminObj){
   const localRecoveryCard = document.getElementById('localRecoveryCard');
   if(localRecoveryCard) localRecoveryCard.style.display = (level==='super' || level==='owner') ? 'block' : 'none';
 
-  // Sales Funnel Access permissions screen — Super Admin/Owner-level admin,
-  // OR (Google-Drive-style) anyone granted Sales Funnel Owner level
-  // specifically, regardless of their own admin level. This is the one
-  // card whose visibility isn't purely admin-level-gated — a plain 'admin'
-  // level person granted funnel-Owner can reach it too. This card only
-  // writes the salesFunnelLevel field on a person's record; server-side
-  // enforcement of the funnel itself lives in api/ops-state.js/
-  // api/ops-sync.js, not here.
-  const salesFunnelAccessCard = document.getElementById('salesFunnelAccessCard');
-  if(salesFunnelAccessCard) salesFunnelAccessCard.style.display = (level==='super' || level==='owner' || _mySalesFunnelLevel==='owner') ? 'block' : 'none';
-
-  // Sales category items (see _updateSalesNavLockState() above this
-  // function) — the category itself is always visible now; only the two
-  // items' locked/lit state depends on role, set once here, unconditionally.
+  // Sales category items, AND the Sales Funnel Access grant panel living
+  // inside that destination (PR C, 2026-09-11) — both toggled together in
+  // _updateSalesNavLockState() above this function, off the single
+  // _mySalesFunnelLevel source of truth, so the card can never show for
+  // someone who can't even reach this destination in the first place. The
+  // category itself is always visible now; only the two nav items' locked/
+  // lit state (and this card) depend on role, set once here, unconditionally.
   _updateSalesNavLockState();
 
   // ── Admin restriction project baseline (see CLAUDE.md): every non-super
