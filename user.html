@@ -164,7 +164,14 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    explaining why instead of navigating, rather than looking broken/inert. */
 .nav-item.locked{color:#5a6688;}
 .nav-item.locked:hover{color:#8a95b8;background:rgba(255,255,255,.04);}
-.nav-lock{margin-left:auto;font-size:11px;opacity:.7;}
+/* Lock badge — bug fix (2026-09-11): the badge markup is always present in
+   the DOM (unconditionally rendered on both Sales-category items, see the
+   nav markup below), but was missing this rule entirely — it rendered
+   unconditionally regardless of lock state, so an already-unlocked item
+   still visibly showed a 🔒 next to it. Only ever visible on the item
+   that's actually still locked. */
+.nav-lock{margin-left:auto;font-size:11px;opacity:.7;display:none;}
+.nav-item.locked .nav-lock{display:inline;}
 .sidebar-user{border-top-color:#26375c;}
 .sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
 .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
