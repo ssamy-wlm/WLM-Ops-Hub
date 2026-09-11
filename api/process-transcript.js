@@ -637,14 +637,34 @@ async function handleTaskEmailMode(req, res) {
   if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'text is required' });
   }
+
+  const result = await parseTaskEmailForSession(session, text);
+  return res.status(result.status).json(result.body);
+}
+
+// Extracted from handleTaskEmailMode (2026-09-11) — the shared parsing core,
+// given only a resolved session + raw text, with no dependency on an HTTP
+// req/res pair. handleTaskEmailMode (the authenticated portal endpoint,
+// above) is now a thin wrapper: resolve the session from the request, then
+// delegate here. api/inbound-email.js (the new David/Sarah-can-email-a-task
+// webhook) is the second, and only other, caller — it has no bearer-token
+// session at all (email isn't an authenticated portal request), so it
+// builds its own session-SHAPED object for whichever allowlisted sender the
+// email came from (see resolveInboundSender() there) and calls this exact
+// same function, so a task created by email goes through the identical
+// owner-matching/client-matching/scope/dedupe logic a portal paste already
+// does — genuinely reused, not re-implemented. Every original
+// res.status(X).json(Y) call site below is now `return {status:X, body:Y}`
+// instead — no other behavior changed.
+export async function parseTaskEmailForSession(session, text) {
   if (!process.env.ANTHROPIC_API_KEY) {
     await logError({ endpoint: 'process-transcript:taskEmail', error: 'ANTHROPIC_API_KEY is not configured on the server.', session });
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+    return { status: 500, body: { error: 'ANTHROPIC_API_KEY is not configured on the server.' } };
   }
 
   let supabase;
   try { supabase = getSupabaseAdmin(); }
-  catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err, session }); return res.status(500).json({ error: err.message }); }
+  catch (err) { await logError({ endpoint: 'process-transcript:taskEmail', error: err, session }); return { status: 500, body: { error: err.message } }; }
 
   // Roster + client-matching data are fetched BEFORE calling the model, not
   // after — the roster feeds the prompt itself (see buildTaskEmailSystemPrompt),
@@ -674,7 +694,7 @@ async function handleTaskEmailMode(req, res) {
       .filter(t => t.status !== 'Done');
   } catch (err) {
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
-    return res.status(500).json({ error: err.message });
+    return { status: 500, body: { error: err.message } };
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -724,10 +744,10 @@ async function handleTaskEmailMode(req, res) {
         await logError({ endpoint: 'process-transcript:taskEmail', error: 'Response truncated by max_tokens; repaired ' + repaired.tasks.length + ' task(s) from the well-formed prefix', session, extra: { recoveredTaskCount: repaired.tasks.length, raw: raw.slice(0, 300) } });
       } else if (truncated) {
         await logError({ endpoint: 'process-transcript:taskEmail', error: 'Response truncated by max_tokens with nothing recoverable', session, extra: { raw: raw.slice(0, 300) } });
-        return res.status(422).json({ error: 'The list was too long to parse in one go — split it into two and try again.' });
+        return { status: 422, body: { error: 'The list was too long to parse in one go — split it into two and try again.' } };
       } else {
         await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
-        return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
+        return { status: 500, body: { error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) } };
       }
     }
 
@@ -870,11 +890,11 @@ async function handleTaskEmailMode(req, res) {
     // actually ran — additive field, ignored by any caller that doesn't
     // look for it, so no client change is required for this to be useful
     // later (e.g. a "some tasks may be missing" note in the UI).
-    return res.status(200).json({ tasks: finalTasks, raw_count: rawTasks.length, ...(parsed._repaired ? { truncated: true } : {}) });
+    return { status: 200, body: { tasks: finalTasks, raw_count: rawTasks.length, ...(parsed._repaired ? { truncated: true } : {}) } };
   } catch (err) {
     console.error('Anthropic API error (taskEmail):', err);
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
-    return res.status(500).json({ error: err.message || 'Anthropic API call failed' });
+    return { status: 500, body: { error: err.message || 'Anthropic API call failed' } };
   }
 }
 
