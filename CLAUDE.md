@@ -8880,6 +8880,220 @@ filtering + a read-only modal + dropdown sort order), no data-write/
 sync/auth/permission logic touched — eligible for direct merge once CI
 is green.
 
+**Inbound email → auto-create task/service (Resend `email.received`
+webhook) (2026-09-11).** New `api/inbound-email.js` — the app's first
+piece of unauthenticated EXTERNAL ingress. Only possible now that this
+project moved off the Vercel Hobby plan's 12-function cap (per the task's
+own statement — this agent has no way to independently verify the plan
+tier); this is a genuinely new `api/*.js` file, not folded into an
+existing one. David or Sarah can now email `task@opshub.wlmsend.com` or
+`service@opshub.wlmsend.com` and have the app parse the email and create
+the item(s), with a confirmation reply.
+
+**Strict step ordering, per the task's own explicit security requirement
+— cheapest/safest checks first, so nothing expensive or risky ever runs
+for an untrusted request:** (1) reject non-POST; (2) read the raw request
+body (Vercel's default body parser is disabled via `export const config
+= {api:{bodyParser:false}}`, since any re-serialization would change the
+exact bytes a signature is computed over) and verify it against
+`RESEND_WEBHOOK_SECRET` using Resend's Svix webhook-signing scheme —
+`signedContent = svix-id.svix-timestamp.rawBody`, HMAC-SHA256 keyed by
+the base64-decoded secret (after stripping its `whsec_` prefix), compared
+via `crypto.timingSafeEqual` against every space-separated `v1,<sig>`
+entry in `svix-signature`, with a 5-minute timestamp tolerance against
+replay — verified against Svix's own public docs
+(`docs.svix.com/receiving/verifying-payloads/how-manual`), not guessed,
+per rule #7. A missing secret is treated exactly like a bad signature
+(fail closed, never "verification unavailable, allow anyway"). No `svix`
+npm dependency was added for this — Node's built-in `crypto` already
+covers the whole algorithm, matching this codebase's own established
+preference to avoid a new dependency when one isn't needed (the same
+reasoning `lib/passwordHash.js`'s scrypt-over-bcrypt/argon2 choice
+already documents); (3) parse the now-verified JSON and confirm
+`type==='email.received'`; (4) dedupe on `data.email_id` — before doing
+anything else that costs money, a `ops_settings` key
+(`inboundEmailSeen:<emailId>`) is checked; (5) the sender allowlist — the
+real cost/abuse gate, checked BEFORE any email-body fetch or model call —
+`ALLOWED_SENDERS = new Set(['david@weblightmedia.com',
+'ssamy@weblightmedia.com'])`, a plain, easy-to-edit constant, matched
+against `data.from` (parsed out of a `"Name <email>"` header if present).
+A non-allowlisted sender is a complete, silent 200-OK no-op: nothing is
+read from Resend beyond the webhook's own metadata, and — critically —
+Anthropic is never called for them at all; a per-sender daily rate limit
+(20/day, `ops_settings` key `inboundEmailRate:<sender>:<day>`, a
+non-atomic read-then-write counter — an accepted limitation given the
+realistic concurrency here, two human senders occasionally emailing a
+task tracker, not a high-throughput system) applies on top; (6) route by
+recipient — `data.to` matched against the two exact inbound addresses,
+case-insensitive; neither matching is also a silent no-op; (7) resolve
+the sender into a session-SHAPED object (`{id, role, level, name,
+email}`, the identical shape `api/ops-auth.js` issues on a real login) —
+Sarah's is the same fixed `primary-admin` sentinel literal every other
+notification resolver in this codebase already hardcodes for her (she
+has no real `ops_admins` row, per this file's own architecture notes);
+David's `id` is NEVER hardcoded, looked up fresh against the live
+`ops_admins` table by email, the same "never trust an unverified id"
+discipline the task-parser's own Sarah-alias fix already established
+(2026-08-25) — self-corrects if his account is ever recreated under a
+different id; (8) fetch the full email body via Resend's Received-Emails
+API (`GET https://api.resend.com/emails/receiving/{id}`, confirmed via
+WebFetch against Resend's own live docs, not guessed — the webhook
+payload itself is metadata-only, no body); (9) parse — reuses the
+existing, already-tested Task Assignments email parser WHOLESALE, never
+a re-implementation (see the refactor below); (10) write the result
+(tasks or services); (11) send a confirmation reply via
+`lib/resendClient.js` — "✅ Added your task/service: ..." or "⚠️
+Couldn't process..." — reusing the exact same Resend-send function
+`api/ops-sync.js`'s notification pipeline already uses. Every failure
+branch logs to `ops_error_log` via `lib/errorLog.js` with
+`endpoint:'inbound-email'` (or `'inbound-email:confirmation'` for a
+failed reply specifically), per the task's own explicit requirement.
+
+**`api/process-transcript.js` refactored, not otherwise changed, to make
+this reuse possible.** `handleTaskEmailMode(req,res)` (the existing
+authenticated portal endpoint behind Task Assignments'/Daily Tasks'
+"paste an email" parser) is now a thin wrapper: resolve the session from
+the request, validate `text`, then delegate to a newly-exported
+`parseTaskEmailForSession(session, text)`, which contains ALL of the
+original logic (roster/client-matching fetch, the Anthropic call, JSON
+repair, owner/client matching, scope filtering, dedupe-within-batch,
+merge-candidate matching) completely unchanged — every original
+`res.status(X).json(Y)` call site is mechanically now `return
+{status:X, body:Y}` instead, with no other behavior change. This is the
+SECOND caller of this function (the first being the still-thin
+`handleTaskEmailMode` itself) — a task or service created by email goes
+through the identical owner-matching/client-matching/scope/dedupe logic
+a portal paste already does, genuinely reused rather than reimplemented,
+so a fix or improvement to the parser (due-date estimation, client
+detection, phonetic name-matching, etc.) automatically covers both entry
+points with zero extra work. The separate Roadmap meeting-transcript
+extractor at the bottom of this same file (a different mode, different
+system prompt, sharing this file only because of the historical
+12-function cap) is completely untouched.
+
+**Two design decisions made and explicitly flagged, per rule #7, rather
+than silently built more completely or silently left broken:**
+
+1. **The `'__ALL__'` whole-team-assignment sentinel has no server-side
+   equivalent here.** `resolveTaskOwners()` can legitimately return
+   `EVERYONE_ASSIGNEE_ID` for a "the whole team"/no-resolvable-attendees
+   group task — normally expanded client-side, post-parse, into one real
+   clone per active roster member by `index.html`'s
+   `_taBuildEveryoneClones()` (2026-08-25) before anything ever reaches
+   the server. This endpoint has no equivalent expansion step. Rather
+   than silently write the literal, unresolvable `'__ALL__'` string into
+   a stored `assigneeId` (which no portal could ever display correctly)
+   or attempt a full server-side reimplementation of the roster-wide
+   clone fan-out for what should be a rare case in a one-off email, a
+   `resolveAssigneeIdForWrite()` guard treats it as unassigned instead —
+   a deliberate, documented limitation, not a silent bug. Caught during
+   construction by tracing `parseTaskEmailForSession`'s own logic (not by
+   any test failing) — `allowEveryone = scope.isAdmin &&
+   !session.employeeId` is true for BOTH David and Sarah's constructed
+   sessions here, so this is a genuinely reachable case, not
+   hypothetical.
+2. **`service@` reuses the exact same task-extraction schema/prompt as
+   `task@` — there is no separate service-extraction prompt in this
+   codebase**, and building one was judged out of scope for a first pass.
+   `createServicesFromParsed()` maps the parser's task-shaped output onto
+   a deliberately MINIMAL service shape — `freq:'one-time'` always (the
+   safest default, and already a real, supported frequency value in this
+   app), no bundle/catalog linkage, no frequency signal at all — not the
+   full catalog-linked shape `client.html`'s own Add Service modal
+   builds. A parsed row with no matched client is never written (rule #7
+   — never invent a client-less record), only reported back as unmatched
+   in the confirmation reply. Read-modify-write on the whole client row,
+   extending ONLY `services[]` — every other field passes through
+   completely untouched, the same non-destructive discipline
+   `preserveMissingClientFields()` established for the browser write path
+   (`api/ops-sync.js`, 2026-08-24), reapplied here by hand since this
+   endpoint writes directly to Supabase rather than through that shared
+   merge function.
+
+**This endpoint bypasses `api/ops-sync.js`'s own write path entirely —
+direct Supabase writes, via `getSupabaseAdmin()`.** There is no signed
+session/bearer token for an inbound email to carry through that endpoint's
+own auth middleware, and building a second, email-specific auth path into
+`api/ops-sync.js` just to reuse its write functions was judged a larger,
+riskier change than writing directly here with the same validation this
+endpoint already re-implements inline (assignee-name resolution mirroring
+`resolveAssigneeName()`'s exact fallback precedence — primary-admin
+sentinel, then `ops_users`, then `ops_admins` — since this write site has
+no automatic name-fill of its own otherwise). A `mergeIntoId` match from
+the parser is deliberately SKIPPED here, never auto-merged — the parser's
+own additive-merge logic (append notes, union tags, fill an empty
+`dueDate`) is implemented client-side in both portals' staging-commit
+functions today, with no server-side equivalent to call into; reimplementing
+it for this one-off, low-volume path was judged not worth the risk of a
+subtly different merge behavior. Skipped rows are reported back in the
+confirmation reply, not silently dropped.
+
+Verified two ways, no live Resend/Anthropic/Supabase access (rule #11):
+(1) a `node:test --experimental-test-module-mocks` run against the real,
+byte-identical `api/inbound-email.js` handler (62/62) — every step of the
+ordering above independently: missing secret → 401 with zero downstream
+calls; a bad signature → 401; a stale (>5min) timestamp → 401 (replay
+protection); invalid JSON → 400; a wrong event type → 200 ignored, no
+parser call; a non-allowlisted sender → 200 ignored, confirmed ZERO
+parser calls AND zero Resend body-fetch calls (the actual cost/abuse
+gate, not just the routing); dedup on an already-processed `email_id` →
+200 ignored, no parser call; a rate-limited sender → 200 ignored, no
+parser call, logged; an unmatched recipient → 200 ignored; an
+allowlisted sender with no matching live admin row → 500, logged; Sarah's
+sentinel resolves correctly even with zero `ops_admins` rows present; the
+full task@ happy path — the Resend receiving-API fetch carries the real
+Bearer auth and the real `email_id`, the parser is called with the
+fetched subject+body text, David's session carries his REAL live
+`ops_admins` id (never hardcoded), exactly the right number of real tasks
+are written (a `mergeIntoId` candidate correctly skipped), the written
+row carries a correctly-resolved assignee name and the right
+`assignedById`/`assignedByName`/`origin`/`source`, the `'__ALL__'`
+sentinel never reaches storage as a literal string and resolves to
+unassigned instead, the dedup key is written, and the confirmation email
+names the real created task + assignee + due date + the skipped
+duplicate by its existing subject; the full service@ happy path — the
+matched client's `services[]` gains exactly the right new row with every
+other client field left completely untouched, and an unmatched-client row
+is reported, not written; a definitive parse failure (422, or 500 with an
+"invalid JSON" message) is marked processed and gets an apologetic reply,
+while a genuine infrastructure failure (a different 500) is explicitly
+NOT marked processed (so a Resend retry can succeed later) and sends no
+confirmation; zero parsed tasks → marked processed, a "no items found"
+reply, nothing written; and a confirmation-send failure never fails the
+whole request (the real write already happened) and is itself logged.
+(2) A separate `node:test` regression run against the real, byte-identical
+`api/process-transcript.js` (8/8) confirming the refactor changed nothing
+observable: the authenticated portal path (`handler` with
+`mode:'taskEmail'`) still returns the identical status/body shape it did
+before, calling the newly-exported `parseTaskEmailForSession` directly
+(exactly as `api/inbound-email.js` does, with no req/res at all) produces
+a body that is deep-equal, byte-for-byte, to what the HTTP wrapper
+returned for the same input; and the wrapper's own two still-inline
+checks (missing session → 401, blank text → 400) are unchanged. Two more
+pre-existing `process-transcript.js` regression suites
+(`verify_process_transcript_weekend_clamp.mjs`,
+`verify_process_transcript_clamp_composition.mjs`) were re-run against the
+refactored file and pass unchanged (4/4, 7/7) — confirming the extraction
+didn't disturb the weekend-clamp/`validDueDate` behavior those suites
+cover. `node --check` passed on both files.
+
+**Environment/configuration this agent cannot verify or configure
+itself, flagged for Sarah:** the `RESEND_WEBHOOK_SECRET` Vercel env var
+must be set to the real signing secret Resend issues for this webhook;
+the `task@opshub.wlmsend.com`/`service@opshub.wlmsend.com` inbound
+addresses and the confirmation-reply sending identity
+(`RESEND_FROM_EMAIL`/`RESEND_REPLY_TO`, already-existing env vars per
+`lib/resendClient.js`) must be verified/configured on Resend's own
+dashboard; the Resend webhook itself must be pointed at
+`/api/inbound-email` for the `email.received` event. None of this is
+independently checkable from this environment (rule #11's live-access
+limitation extends to Resend's dashboard, not just Supabase).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and the task's own explicit instruction — a new
+write path plus the app's first piece of unauthenticated external
+ingress.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
