@@ -158,6 +158,13 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .nav-item{color:#c7d0e6;}
 .nav-item:hover{background:rgba(255,255,255,.07);color:#fff;}
 .nav-item.active{background:#f5b301;color:#152444;border-left:none;font-weight:700;box-shadow:none;}
+/* Locked Sales-category item (2026-09-11) — built into every profile,
+   grayed out until its own grant lights it up (see _updateSalesNavLockState()).
+   Keeps cursor:pointer — clicking still works, it just shows a toast
+   explaining why instead of navigating, rather than looking broken/inert. */
+.nav-item.locked{color:#5a6688;}
+.nav-item.locked:hover{color:#8a95b8;background:rgba(255,255,255,.04);}
+.nav-lock{margin-left:auto;font-size:11px;opacity:.7;}
 .sidebar-user{border-top-color:#26375c;}
 .sidebar-user-card{display:flex;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:10px 12px;}
 .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;overflow:hidden;}
@@ -589,6 +596,30 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
            never a separate copy. -->
       <div class="nav-item" onclick="showSection('clientDirectory',this)" id="nav-clientDirectory"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="8" cy="14.5" r="1.6"/><line x1="12" y1="14.5" x2="17" y2="14.5"/></svg></span>Client Directory</div>
       <div class="nav-item" onclick="openTrackerPage('recurring-catalog',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>Service Catalog</div>
+
+      <!-- Sales — rebuilt 2026-09-11 (Sales Area full build). ALWAYS
+           present, the 2nd nav category (right after My Work, before
+           Resources). Each item independently locks/lights per its own
+           flag — Sales Funnel on any resolved _mySalesFunnelLevel, My
+           Commissions on _viewerEarnsCommission===true — mirroring
+           index.html's role-split admin portal build exactly (hand-
+           duplicated per the zero-shared-code rule). A locked item is
+           grayed with a lock badge; clicking it shows a toast instead of
+           navigating (see _onSalesNavClick() above) — defense in depth
+           on top of the real server-side checks, never the actual
+           security boundary. State set in _updateSalesNavLockState(),
+           called from cloudFetchUsers() on every pull. -->
+      <div class="nav-group-label">Sales</div>
+      <!-- Sales Funnel — reached via the same openTrackerPage() deep-link
+           every other Tracker shortcut in this sidebar already uses.
+           Still opens the funnel INSIDE the Tracker for now (PR B moves
+           it to a standalone chrome-free destination). -->
+      <div class="nav-item locked" id="nav-salesfunnel" onclick="_onSalesNavClick('funnel',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span>Sales Funnel<span class="nav-lock">🔒</span></div>
+      <!-- My Commissions — read-only reflection of this employee's own
+           ops_commissions rows (server already scopes to recipientId===
+           session.id for any non-super tier). -->
+      <div class="nav-item locked" id="nav-mycommissions" onclick="_onSalesNavClick('commission',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 2.5-1.5h.5a2 2 0 1 1 0 4h-1a2 2 0 1 0 0 4h.5a2.5 2.5 0 0 0 2.5-1.5"/></svg></span>My Commissions<span class="nav-lock">🔒</span></div>
+
       <div class="nav-group-label">Resources</div>
       <div class="nav-item" onclick="window.open('https://wlmlibrary.vercel.app/','_blank','noopener')" title="Opens in a new tab"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Weblight media library</div>
       <div class="nav-item" onclick="showSection('downtimeTasks',this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="6" y="4" width="12" height="18" rx="2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg></span>Downtime Tasks</div>
@@ -754,6 +785,20 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         </div>
         <div id="cdGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;"></div>
         <div id="cdEmpty" style="display:none;text-align:center;padding:40px;color:var(--text-light);font-size:13px;">No clients match your search.</div>
+      </div>
+
+      <!-- ── MY COMMISSIONS (2026-09-11, Sales Area rebuild) — read-only
+           reflection of this employee's own ops_commissions rows, ported
+           from index.html's renderMyCommissionsAdmin() (same field
+           names/structure). No write actions here — commission months
+           are only ever entered by a Super Admin/Owner (under Payroll). ── -->
+      <div id="sec-mycommissions" class="page-section">
+        <div class="card">
+          <div class="card-header"><div class="card-title">My Commissions</div><div class="card-sub">Your commission months, logged by your Super Admin</div></div>
+          <div class="card-body">
+            <div id="myCommissionsUserList"></div>
+          </div>
+        </div>
       </div>
 
       <!-- ── DOWNTIME TASKS ── -->
@@ -1446,7 +1491,44 @@ const DB_KEYS = {
   // index.html use (same-origin shared storage, see client.html's CL_KEYS
   // comment for why that's intentional, not a coincidence).
   tourFlags: 'wl_tour_flags',
+  // Commissions (Phase 1) — read-only reflection for an employee's own
+  // rows (Sales Area rebuild, 2026-09-11). api/ops-state.js already
+  // scoped `commissions` and computed viewerEarnsCommission/
+  // viewerSalesFunnelLevel for every tier, member included — this file
+  // previously never read any of it.
+  commissions: 'wl_commissions_db',
 };
+// Sales category (Sales Funnel + My Commissions) — mirrors index.html's
+// role-split rebuild for the admin portal (2026-09-11), hand-duplicated
+// here per the zero-shared-code rule. ALWAYS present for every employee,
+// grayed/locked by default, each item lighting up independently of the
+// other on its own flag — no admin-tier concept exists in this file at
+// all (every session here is a plain employee).
+let _mySalesFunnelLevel = null;
+let _viewerEarnsCommission = false;
+// Called from cloudFetchUsers() right after the two flags above are set
+// (every pull — fresh login, session restore, live-sync poll) — one
+// function, one set of conditions, never two independently-computed
+// copies that could disagree.
+function _updateSalesNavLockState(){
+  const funnelNav = document.getElementById('nav-salesfunnel');
+  const myCommNav = document.getElementById('nav-mycommissions');
+  if(funnelNav) funnelNav.classList.toggle('locked', !_mySalesFunnelLevel);
+  if(myCommNav) myCommNav.classList.toggle('locked', _viewerEarnsCommission !== true);
+}
+// A locked item's click is a no-op (plus an explanatory toast) rather
+// than navigating — defense in depth on top of the real server-side
+// checks, never the actual security boundary.
+function _onSalesNavClick(kind, el){
+  if(el.classList.contains('locked')){
+    showToast(kind==='funnel'
+      ? '🔒 Ask your Super Admin for Sales Funnel access'
+      : "🔒 Commission eligibility hasn't been enabled for your account — ask your Super Admin");
+    return;
+  }
+  if(kind==='funnel') openTrackerPage('sales-funnel', el);
+  else showSection('mycommissions', el);
+}
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
 function dbSet(key,val){ try{ localStorage.setItem(key,JSON.stringify(val)); }catch(e){} }
 function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(key,arr.slice(0,500)); }
@@ -1590,6 +1672,16 @@ async function cloudFetchUsers(){
     const data = await res.json();
     const r = data?.record || {};
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
+    // Sales Funnel access / Commissions eligibility — server-verified,
+    // same convention as viewerTier: never re-derived client-side. Drives
+    // the always-present Sales category's per-item lock state on every
+    // pull, not just at login, so a live mid-session grant takes effect
+    // without a reload.
+    _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
+    _viewerEarnsCommission = !!r.viewerEarnsCommission;
+    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[]);
+    if(document.getElementById('sec-mycommissions')?.classList.contains('active') && typeof renderMyCommissionsUser==='function') renderMyCommissionsUser();
+    if(typeof _updateSalesNavLockState==='function') _updateSalesNavLockState();
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
     // Redacted {id,name,title,funnelLevel} shape for a member session (see
     // api/ops-state.js) — added 2026-09-01 so _dtPersonName() can resolve
@@ -4276,6 +4368,42 @@ function _cdRenderGrid(list){
   }).join('');
 }
 
+// ── My Commissions (2026-09-11, Sales Area rebuild) — read-only
+// reflection of THIS employee's own ops_commissions rows. Ported from
+// index.html's renderMyCommissionsAdmin() (same field names/structure —
+// entries[]={client,gross,adSpend,net}, commissionPercent,
+// computedCommission), just reading currentUser.id instead of
+// _currentAdminId(). api/ops-state.js already scopes `commissions` to
+// recipientId===session.id for any non-super tier, so no client-side
+// filter is even strictly required here — filtered anyway (belt-and-
+// suspenders, matching _dtMyTasks()'s own established convention of
+// never trusting server scoping alone). ──
+function renderMyCommissionsUser(){
+  const list = document.getElementById('myCommissionsUserList');
+  if(!list) return;
+  const myId = currentUser?.id;
+  const mine = (dbGet(DB_KEYS.commissions)||[]).filter(r=>r.recipientId===myId).sort((a,b)=>b.month.localeCompare(a.month));
+  if(!mine.length){ list.innerHTML = '<div style="font-size:13px;color:var(--text-light);">No commissions logged yet.</div>'; return; }
+  const STATUS_META = { pending:['var(--orange)','rgba(245,185,66,.1)'], client_paid:['var(--btn)','rgba(45,107,182,.1)'], paid:['var(--green)','rgba(46,158,110,.1)'] };
+  list.innerHTML = mine.map(r=>{
+    const [color,bg] = STATUS_META[r.status] || STATUS_META.pending;
+    const monthNet = (r.entries||[]).reduce((s,e)=>s+(Number(e.net)||0),0);
+    const rows = (r.entries||[]).map(e=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${escHtmlUser(e.client||'(unnamed client)')}</span><span>net $${(Number(e.net)||0).toFixed(2)}</span></div>`).join('');
+    return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.month}
+            <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${bg};color:${color};margin-left:6px;">${(r.status||'pending').replace('_',' ').toUpperCase()}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-light);">Tier ${r.commissionPercent!=null?r.commissionPercent+'%':'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
+        </div>
+        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${(Number(r.computedCommission)||0).toFixed(2)}</div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No client entries</span>'}</div>
+    </div>`;
+  }).join('');
+}
+
 // ── Per-user notification/work-view settings (Monday feature pack, Feature 4) ──
 // Local-only, per-person preferences that FILTER what My Work shows/counts —
 // they can only narrow or re-scope what this person's own view surfaces,
@@ -5275,7 +5403,7 @@ function showSection(id, el){
   document.getElementById('sec-'+id).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(el) el.classList.add('active');
-  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks'};
+  const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks',mycommissions:'My Commissions'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
   const name = currentUser?.name||'User';
   logActivity('nav', name, 'Navigated to '+id, id);
@@ -5284,6 +5412,7 @@ function showSection(id, el){
   if(id==='myreports') loadMyReports();
   if(id==='tracker') loadTrackerFrame();
   if(id==='clientDirectory') renderClientDirectory();
+  if(id==='mycommissions') renderMyCommissionsUser();
   if(id==='bizSetup') loadCoC();
   if(id==='mywork'||id==='myassignments'){
     loadMyAssignments();
