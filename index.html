@@ -2768,49 +2768,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            applyAdminRoleRestrictions() alongside the panels it contains. -->
       <div id="admin-controls-super-only-wrap" style="display:none;">
 
-      <!-- ── ERROR LOG — Super Admin/Owner only. Capture itself stays
-           read-only/passive; the one exception is the manually-triggered
-           "Clear old entries" archive control below (never automatic, never
-           on load — see api/error-log.js). ── -->
-      <div class="card" id="errorLogCard" style="margin-top:22px;display:none;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">🛑 Error Log</div>
-            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent 100 rows. Capture is passive/read-only — the archive control below is the one manual exception.</div>
-          </div>
-          <button class="btn btn-sm btn-outline" onclick="loadErrorLog()">↻ Refresh</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);">
-            Show:
-            <select id="errorLogRangeSelect" onchange="_renderErrorLog()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;color:var(--text-dark);background:#fff;">
-              <option value="7">Last 7 days</option>
-              <option value="30" selected>Last 30 days</option>
-              <option value="90">Last 90 days</option>
-              <option value="all">All time</option>
-            </select>
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
-            <input type="checkbox" id="errorLogGroupToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
-            Group by error type
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
-            <input type="checkbox" id="errorLogShowArchivedToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
-            Show archived
-          </label>
-          <div id="errorLogCountNote" style="font-size:11px;color:var(--text-light);"></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2);">
-          <span style="font-size:12px;color:var(--text-mid);">Clear entries older than:</span>
-          <input type="date" id="errorLogCutoffDate" class="form-input" style="width:auto;padding:5px 8px;font-size:12px;">
-          <button class="btn btn-sm btn-outline" onclick="previewArchiveErrorLog()">Preview & Clear…</button>
-          <span style="font-size:11px;color:var(--text-light);">Archived entries are hidden from the default view (never deleted) — toggle "Show archived" to see them.</span>
-        </div>
-        <div class="card-body" style="padding:0;">
-          <div id="errorLogResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to load.</div>
-        </div>
-      </div>
-
       <!-- ── SCHEMA DRIFT CHECK (read-only, never applies anything) — Super Admin/Owner only ── -->
       <div class="card" id="schemaDriftCard" style="margin-top:22px;display:none;">
         <div class="card-header">
@@ -2949,6 +2906,57 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <input class="form-input" id="emailTestTo" type="email" placeholder="you@weblightmedia.com">
             <button class="btn btn-sm btn-primary" onclick="sendTestAssignmentEmail()">Send Test Email</button>
           </div>
+        </div>
+      </div>
+
+      <!-- ── ERROR LOG — Super Admin/Owner only. Capture itself stays
+           read-only/passive; the one exception is the manually-triggered
+           "Clear old entries" archive control below (never automatic, never
+           on load — see api/error-log.js). Moved to the LAST position in
+           Admin Controls (2026-09-11, layout-only reorder) — it used to sit
+           first and dominate the page, making it look like the only thing
+           here; every other panel (Pending Migrations, Password Security,
+           Platforms & Tools, Data Backups, Email Notifications, Sales
+           Funnel Access) now comes before it. Still gated inside this same
+           Super Admin/Owner-only wrap, same visibility as before — only
+           its physical position changed, not what it does, how it loads,
+           or its read-only capture. ── -->
+      <div class="card" id="errorLogCard" style="margin-top:22px;display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🛑 Error Log</div>
+            <div class="card-sub">Server endpoint failures and failed cloud writes, most recent 100 rows. Capture is passive/read-only — the archive control below is the one manual exception.</div>
+          </div>
+          <button class="btn btn-sm btn-outline" onclick="loadErrorLog()">↻ Refresh</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);">
+            Show:
+            <select id="errorLogRangeSelect" onchange="_renderErrorLog()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;color:var(--text-dark);background:#fff;">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="all">All time</option>
+            </select>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+            <input type="checkbox" id="errorLogGroupToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
+            Group by error type
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-mid);cursor:pointer;">
+            <input type="checkbox" id="errorLogShowArchivedToggle" onchange="_renderErrorLog()" style="width:14px;height:14px;">
+            Show archived
+          </label>
+          <div id="errorLogCountNote" style="font-size:11px;color:var(--text-light);"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2);">
+          <span style="font-size:12px;color:var(--text-mid);">Clear entries older than:</span>
+          <input type="date" id="errorLogCutoffDate" class="form-input" style="width:auto;padding:5px 8px;font-size:12px;">
+          <button class="btn btn-sm btn-outline" onclick="previewArchiveErrorLog()">Preview & Clear…</button>
+          <span style="font-size:11px;color:var(--text-light);">Archived entries are hidden from the default view (never deleted) — toggle "Show archived" to see them.</span>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="errorLogResults" style="font-size:13px;color:var(--text-mid);padding:16px 20px;">Click Refresh to load.</div>
         </div>
       </div>
 
