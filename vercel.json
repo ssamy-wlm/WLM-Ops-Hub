@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "functions": {
+    "api/ops-state.js": {
+      "maxDuration": 30
+    }
+  },
   "routes": [
     {
       "src": "/admin",

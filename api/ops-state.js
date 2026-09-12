@@ -19,7 +19,7 @@
 //     user/admin fields for display, Live Feed with the same
 //     payroll/time-off events stripped, nothing else.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { requireSession, tierOf } from '../lib/opsSession.js';
+import { verifySession, isSessionRevoked, tierOf } from '../lib/opsSession.js';
 import { logError } from '../lib/errorLog.js';
 import { isHashed } from '../lib/passwordHash.js';
 
@@ -50,8 +50,13 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
+  // Token verification (signature/expiry — no DB call) stays a synchronous,
+  // sequential gate: an invalid token means there's nothing worth fetching at
+  // all, so there's no latency to save by parallelizing this part.
   let session;
-  try { session = await requireSession(req); }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  try { session = verifySession(token); }
   catch (err) { await logError({ endpoint: 'ops-state', error: err }); return res.status(500).json({ error: err.message }); }
   if (!session) return res.status(401).json({ error: 'Missing or invalid session' });
 
@@ -61,53 +66,71 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'ops-state', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   try {
+    // Revocation check (2026-09-12 latency fix): this used to be awaited
+    // sequentially inside requireSession() BEFORE any of the 21 queries below
+    // even started — a full extra Supabase round trip serialized in front of
+    // everything else, on every single request. It now runs CONCURRENTLY
+    // with that fan-out instead, via the same Promise.all — same end result
+    // (a revoked session still gets 401 below, before any of the fetched
+    // data is ever assembled or returned to the caller), just without paying
+    // for two round trips back-to-back. isSessionRevoked() itself, and
+    // requireSession()'s own (unchanged, sequential) use of it for every
+    // OTHER endpoint, are both completely untouched by this.
     const [
-      usersQ, adminsQ, clientsQ, goalsQ, feedQ, recentClientFeedQ, messagesQ, roadmapQ,
-      timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
-      orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
-      tasksQ, commissionsQ,
+      revoked,
+      [
+        usersQ, adminsQ, clientsQ, goalsQ, feedQ, recentClientFeedQ, messagesQ, roadmapQ,
+        timeOffReqQ, timeOffLedgerQ, payrollQ, summariesQ, settingsQ, deletedQ,
+        orgNodesQ, orgLinksQ, catalogSuggestionsQ, notificationsQ, salesFunnelQ,
+        tasksQ, commissionsQ,
+      ],
     ] = await Promise.all([
-      supabase.from('ops_users').select('id, data'),
-      supabase.from('ops_admins').select('id, data'),
-      supabase.from('ops_clients').select('id, status, data'),
-      supabase.from('ops_goals').select('id, data'),
-      supabase.from('ops_feed').select('id, data').order('created_at', { ascending: false }).limit(300),
-      // Overview's "Recent Activity" needs client-service events specifically
-      // (type:'client') — the general feed query above is shared with Live
-      // Feed, which needs the OPPOSITE (user-activity types only), and its
-      // 300-row cap is by recency across ALL types. With enough login/nav
-      // volume, that cap can be entirely consumed by non-client events,
-      // leaving Recent Activity with nothing even when plenty of client
-      // events exist further back — a dedicated, type-scoped query is the
-      // only way to guarantee Recent Activity actually sees them.
-      // .neq('data->>user','System') (2026-09-02) — excludes the automated
-      // due-date reminder alerts client.html's runScheduledAlerts() pushes
-      // (title "[OVERDUE]"/"[Due TODAY]"/"[Upcoming] <service>", always
-      // fromUser:'System', i.e. data.user==='System') at the QUERY level,
-      // not just at render time. index.html's own renderer already
-      // filtered these out (`.filter(e=>e.user!=='System')`), but that
-      // filter ran AFTER this query's 50-row cap — with enough System
-      // volume (1000+ auto events is the real reported case), the 50 most
-      // recent type:'client' rows were ALL System noise, leaving nothing
-      // for the render-time filter to keep. Excluding it here instead
-      // means the 50-row window is always real team activity.
-      supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').neq('data->>user', 'System').order('created_at', { ascending: false }).limit(50),
-      supabase.from('ops_messages').select('id, data'),
-      supabase.from('ops_roadmap_tasks').select('id, data'),
-      supabase.from('ops_time_off_requests').select('id, data'),
-      supabase.from('ops_time_off_ledger').select('id, data'),
-      supabase.from('ops_payroll').select('id, data'),
-      supabase.from('ops_summaries').select('client_id, kind, period_key, data'),
-      supabase.from('ops_settings').select('key, data'),
-      supabase.from('ops_deleted_user_ids').select('user_id'),
-      supabase.from('ops_org_nodes').select('id, data').is('deleted_at', null),
-      supabase.from('ops_org_links').select('id, data').is('deleted_at', null),
-      supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
-      supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
-      supabase.from('ops_sales_funnel').select('id, data'),
-      supabase.from('ops_tasks').select('id, data'),
-      supabase.from('ops_commissions').select('id, data'),
+      isSessionRevoked(session),
+      Promise.all([
+        supabase.from('ops_users').select('id, data'),
+        supabase.from('ops_admins').select('id, data'),
+        supabase.from('ops_clients').select('id, status, data'),
+        supabase.from('ops_goals').select('id, data'),
+        supabase.from('ops_feed').select('id, data').order('created_at', { ascending: false }).limit(300),
+        // Overview's "Recent Activity" needs client-service events specifically
+        // (type:'client') — the general feed query above is shared with Live
+        // Feed, which needs the OPPOSITE (user-activity types only), and its
+        // 300-row cap is by recency across ALL types. With enough login/nav
+        // volume, that cap can be entirely consumed by non-client events,
+        // leaving Recent Activity with nothing even when plenty of client
+        // events exist further back — a dedicated, type-scoped query is the
+        // only way to guarantee Recent Activity actually sees them.
+        // .neq('data->>user','System') (2026-09-02) — excludes the automated
+        // due-date reminder alerts client.html's runScheduledAlerts() pushes
+        // (title "[OVERDUE]"/"[Due TODAY]"/"[Upcoming] <service>", always
+        // fromUser:'System', i.e. data.user==='System') at the QUERY level,
+        // not just at render time. index.html's own renderer already
+        // filtered these out (`.filter(e=>e.user!=='System')`), but that
+        // filter ran AFTER this query's 50-row cap — with enough System
+        // volume (1000+ auto events is the real reported case), the 50 most
+        // recent type:'client' rows were ALL System noise, leaving nothing
+        // for the render-time filter to keep. Excluding it here instead
+        // means the 50-row window is always real team activity.
+        supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').neq('data->>user', 'System').order('created_at', { ascending: false }).limit(50),
+        supabase.from('ops_messages').select('id, data'),
+        supabase.from('ops_roadmap_tasks').select('id, data'),
+        supabase.from('ops_time_off_requests').select('id, data'),
+        supabase.from('ops_time_off_ledger').select('id, data'),
+        supabase.from('ops_payroll').select('id, data'),
+        supabase.from('ops_summaries').select('client_id, kind, period_key, data'),
+        supabase.from('ops_settings').select('key, data'),
+        supabase.from('ops_deleted_user_ids').select('user_id'),
+        supabase.from('ops_org_nodes').select('id, data').is('deleted_at', null),
+        supabase.from('ops_org_links').select('id, data').is('deleted_at', null),
+        supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
+        supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
+        supabase.from('ops_sales_funnel').select('id, data'),
+        supabase.from('ops_tasks').select('id, data'),
+        supabase.from('ops_commissions').select('id, data'),
+      ]),
     ]);
+
+    if (revoked) return res.status(401).json({ error: 'Missing or invalid session' });
 
     // A single table's query failing (e.g. a column a newer deploy expects
     // but a pending migration hasn't been applied for yet — see CLAUDE.md's
