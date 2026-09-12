@@ -2284,6 +2284,48 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- SAVED (2026-09-11) — a distinct confirmation + at-a-glance history
+           for the recipient selected above, shown only in Month view, right
+           below the in-progress editor. Deliberately reads ONLY from the
+           STORED ops_commissions record(s) via renderCommissionSavedSection()
+           — never the editor's live DOM/unsaved entry-row edits — so this
+           can never show something that hasn't actually been confirmed by
+           the server. Lists every saved month for this recipient (not just
+           the one currently open above), newest first — a recipient can
+           have several months on file, and switching months in the editor
+           above shouldn't hide the others. Payout date and Status are
+           editable per row here and save immediately, per-record
+           (_commSaveInlineField()) — the exact same commissions write path
+           saveCommissionMonth() already uses, so the server's own
+           recomputeCommission() re-verifies net/commission on every change
+           and DB_KEYS.commissions stays the single source of truth
+           renderMyCommissionsAdmin() (My Commissions) already reads — no
+           separate reflection step needed. -->
+      <div id="commSavedCard" class="card" style="display:none;">
+        <div class="card-header">
+          <div>
+            <div class="card-title" id="comm-saved-title">✓ Saved</div>
+            <div class="card-sub">Confirmed commission records for this recipient — Payout and Status are editable here and save immediately.</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="commSavedEmpty" style="display:none;font-size:13px;color:var(--text-light);padding:16px 4px;">No saved commission records yet for this recipient.</div>
+          <table id="commSavedTable" style="width:100%;">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th style="text-align:right;">Net</th>
+                <th style="text-align:center;">Rate</th>
+                <th style="text-align:right;">Commission</th>
+                <th>Payout</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="commSavedRows"></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- YEAR view — read-only rollup of the same ops_commissions rows the
            month editor above already stores. No new data, no new table,
            purely aggregates existing rows for the selected recipient+year.
@@ -8999,7 +9041,14 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // (_applyServerArray above already ran) — it'll show correctly once the
     // admin actually saves or navigates away from this recipient/month.
     if(typeof renderCommissionEditor==='function' && document.getElementById('admin-commissions')?.classList.contains('active')){
+      // The Saved section reads only from stored ops_commissions rows, never
+      // the editor's live DOM — so it refreshes on a background pull
+      // independently of the unsaved-edits guard that protects the in-progress
+      // entry editor above. renderCommissionEditor() already calls it too when
+      // that guard allows a full re-render, so this only matters in the
+      // guarded (unsaved-edits) branch, where the editor itself is skipped.
       if(!(typeof _commHasUnsavedEdits==='function' && _commHasUnsavedEdits())) renderCommissionEditor();
+      else if(typeof renderCommissionSavedSection==='function') renderCommissionSavedSection();
     }
     if(typeof renderMyCommissionsAdmin==='function' && document.getElementById('admin-mycommissions')?.classList.contains('active')) renderMyCommissionsAdmin();
     _applyServerValue(v=>dbSet(DB_KEYS.notificationSettings, v), r.notificationSettings);
@@ -13576,7 +13625,11 @@ function _commRefreshRecipientAvailability(forceEditorRender){
   document.getElementById('commEmptyState').style.display = hasAny ? 'none' : 'block';
   document.getElementById('commEditorCard').style.display = (hasAny && _commViewMode==='month') ? 'block' : 'none';
   document.getElementById('commYearCard').style.display = (hasAny && _commViewMode==='year') ? 'block' : 'none';
-  if(!hasAny) return;
+  if(!hasAny){
+    const savedCard = document.getElementById('commSavedCard');
+    if(savedCard) savedCard.style.display = 'none';
+    return;
+  }
   const selectionChanged = forceEditorRender || (sel && sel.value !== prevValue);
   if(_commViewMode==='month'){ if(selectionChanged) renderCommissionEditor(); }
   else { if(selectionChanged) renderCommissionYearView(); }
@@ -13648,6 +13701,14 @@ function setCommViewMode(mode){
     yearInput.style.display = mode==='year' ? '' : 'none';
     if(mode==='year' && !yearInput.value) yearInput.value = new Date().getFullYear();
   }
+  // Saved section is Month-view-only (see its own markup comment) — its
+  // content is only ever (re)built by renderCommissionEditor()/
+  // renderCommissionSavedSection(), which don't run in Year mode, so its
+  // visibility has to be explicitly cleared here on the way OUT of Month.
+  if(mode==='year'){
+    const savedCard = document.getElementById('commSavedCard');
+    if(savedCard) savedCard.style.display = 'none';
+  }
   _commRefreshRecipientAvailability(true);
 }
 // The recipient <select> is shared by both views — route to whichever
@@ -13706,6 +13767,7 @@ function renderCommissionEditor(){
   // has already been written into the DOM, so the snapshot genuinely
   // matches what's on screen.
   _commLastRenderedSnapshot = _commCurrentEditorStateJson();
+  if(typeof renderCommissionSavedSection==='function') renderCommissionSavedSection();
 }
 function _commEntryRowHtml(e, i){
   const gross = Number(e.gross)||0, adSpend = Number(e.adSpend)||0;
@@ -13836,6 +13898,87 @@ async function saveCommissionMonth(){
     showToast('Commission entry saved ✓');
     renderCommissionEditor(); // re-render from the (now server-confirmed) stored copy
     logActivity('admin', _currentAdminName()||'Admin', `Saved commissions for ${recipientName} — ${month}`, '');
+  }
+}
+// SAVED section (2026-09-11) — confirmation + at-a-glance history, below the
+// in-progress editor. Reads ONLY the stored ops_commissions rows for the
+// recipient the editor above currently has open (card.dataset.recipientId) —
+// never the editor's live/unsaved DOM state — so it can never show anything
+// that hasn't actually been confirmed by the server. Lists every saved month
+// for that recipient, newest first, independent of which single month the
+// editor above happens to be showing.
+function renderCommissionSavedSection(){
+  const savedCard = document.getElementById('commSavedCard');
+  if(!savedCard) return;
+  const card = document.getElementById('commEditorCard');
+  const recipientId = card?.dataset.recipientId;
+  if(!recipientId || _commViewMode!=='month'){ savedCard.style.display = 'none'; return; }
+  savedCard.style.display = 'block';
+  const titleEl = document.getElementById('comm-saved-title');
+  if(titleEl) titleEl.textContent = '✓ Saved' + (card.dataset.recipientName ? ' — ' + card.dataset.recipientName : '');
+  const records = (dbGet(DB_KEYS.commissions)||[])
+    .filter(r=>r.recipientId===recipientId)
+    .sort((a,b)=>b.month.localeCompare(a.month));
+  const emptyEl = document.getElementById('commSavedEmpty');
+  const tableEl = document.getElementById('commSavedTable');
+  if(!records.length){
+    if(emptyEl) emptyEl.style.display = 'block';
+    if(tableEl) tableEl.style.display = 'none';
+    const rowsEl = document.getElementById('commSavedRows');
+    if(rowsEl) rowsEl.innerHTML = ''; // clear any stale rows from a previously-selected recipient
+    return;
+  }
+  if(emptyEl) emptyEl.style.display = 'none';
+  if(tableEl) tableEl.style.display = '';
+  document.getElementById('commSavedRows').innerHTML = records.map(r=>{
+    const net = _commRecordNet(r);
+    const rate = r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
+    const commission = Number(r.computedCommission)||0;
+    const status = r.status || 'pending';
+    const statusOpts = Object.keys(COMM_STATUS_LABELS).map(s=>
+      `<option value="${s}" ${s===status?'selected':''}>${escHtml(COMM_STATUS_LABELS[s])}</option>`).join('');
+    return `<tr data-record-id="${escHtml(r.id)}">
+      <td>${escHtml(_commMonthLabel(r.month))}</td>
+      <td style="text-align:right;">$${net.toFixed(2)}</td>
+      <td style="text-align:center;">${rate}</td>
+      <td style="text-align:right;">$${commission.toFixed(2)}</td>
+      <td><input type="date" class="form-select" value="${escHtml(r.payoutDate||'')}" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','payoutDate',this.value,this)"></td>
+      <td><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','status',this.value,this)">${statusOpts}</select></td>
+    </tr>`;
+  }).join('');
+}
+// Per-record inline save for the Saved section's Payout/Status fields —
+// confirmed-write discipline matching saveCommissionMonth(): write local
+// immediately, disable the changed field while the push is in flight, only
+// toast success once cloudAutoSync() genuinely confirms it. The server's own
+// recomputeCommission() (api/ops-sync.js) re-verifies/re-stamps the row on
+// every save exactly as it does for the main editor's Save button — this is
+// the same DB_KEYS.commissions write path, not a second one, so a change here
+// already reflects into My Commissions with no separate step.
+async function _commSaveInlineField(recordId, field, value, el){
+  const all = dbGet(DB_KEYS.commissions)||[];
+  const idx = all.findIndex(r=>r.id===recordId);
+  if(idx<0) return;
+  const record = { ...all[idx], [field]: value, updatedBy: _currentAdminName()||'Admin', updatedAt: new Date().toISOString() };
+  all[idx] = record;
+  dbSet(DB_KEYS.commissions, all);
+  if(el) el.disabled = true;
+  const ok = await cloudAutoSync();
+  if(el) el.disabled = false;
+  if(ok === false){
+    showToast('❌ Saved locally but the cloud sync failed — it will retry automatically, or click Sync now.');
+    return;
+  }
+  showToast('Saved ✓');
+  const editorCard = document.getElementById('commEditorCard');
+  // Keep the main editor's own Payout/Status fields in sync when this same
+  // recipient+month is the one currently open above — but never when there
+  // are genuine unsaved entry-row edits sitting in it, which a full
+  // renderCommissionEditor() re-render would otherwise silently discard.
+  if(editorCard && editorCard.dataset.recipientId===record.recipientId && editorCard.dataset.month===record.month && !_commHasUnsavedEdits()){
+    renderCommissionEditor();
+  } else {
+    renderCommissionSavedSection();
   }
 }
 function exportCommissionCSV(){
