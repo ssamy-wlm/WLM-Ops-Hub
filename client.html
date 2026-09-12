@@ -721,6 +721,15 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min
               <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Stage</th>
               <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Next Step</th>
               <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Follow-up</th>
+              <!-- Audit columns (PR D, 2026-09-12) — surfacing fields the
+                   record already carries (createdBy/updatedBy stamping has
+                   existed on ops_sales_funnel since PR A) so the whole sales
+                   team can see who touched a prospect and when without
+                   opening every row. Display-only: no new data, no schema
+                   change, no write path touched — see renderFunnelTable(). -->
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Updated By</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Updated</th>
+              <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Notes</th>
             </tr>
           </thead>
           <tbody id="funnel-table-body"></tbody>
@@ -6746,6 +6755,33 @@ function _funnelAccountabilityLine(p){
   const updated=(p.updatedByName && p.updatedAt!==p.createdAt)?`Last updated by ${p.updatedByName} · ${new Date(p.updatedAt).toLocaleDateString()}`:'';
   return [created,updated].filter(Boolean).join(' · ');
 }
+// Audit columns (PR D, 2026-09-12) — plain table-cell renderers for fields
+// this record has always carried (createdBy/updatedBy stamping, PR A) but
+// which previously only ever showed inside the row's own modal
+// (_funnelAccountabilityLine, combining created+updated into one line for
+// that context). The table needs the two pieces separately, as their own
+// columns, so the whole sales team can scan who last touched a prospect
+// and when without opening it — this reads the identical p.updatedByName/
+// p.updatedAt fields, just formatted for a table cell instead of a modal
+// sentence. Never gated by _funnelCanWrite() — a Viewer already receives
+// this same synced record and already saw this in the modal; this is
+// purely relocating/duplicating a display of the same data, not exposing
+// anything new to a role that couldn't already see it.
+function _funnelUpdatedByCell(p){
+  return p.updatedByName ? escHtmlClient(p.updatedByName) : '<span style="color:var(--text-light);">—</span>';
+}
+function _funnelUpdatedAtCell(p){
+  if(!p.updatedAt) return '<span style="color:var(--text-light);">—</span>';
+  return `<span style="white-space:nowrap;">${new Date(p.updatedAt).toLocaleDateString()}</span>`;
+}
+// Truncated with a title tooltip for the full text on hover — same pattern
+// this table's own Next Step column already uses, since notes can be a
+// full free-text paragraph (see the fm-notes textarea) that would otherwise
+// blow out the row's height or width.
+function _funnelNotesCell(p){
+  if(!p.notes) return '<span style="color:var(--text-light);">—</span>';
+  return `<span title="${escHtmlClient(p.notes)}">${escHtmlClient(p.notes)}</span>`;
+}
 // Follow-up column cell for the table — unlike _funnelFollowUpBadge() above
 // (used in the row-click modal/accountability context, which only ever
 // shows something when due/overdue), the table column always shows
@@ -6796,6 +6832,9 @@ function renderFunnelTable(){
         <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700;color:${stage.color};">${stage.label}</td>
         <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(p.nextSteps||'—')}</td>
         <td style="padding:14px 18px;border-bottom:1px solid var(--border);">${_funnelShowArchived?'<span style="font-size:11px;color:var(--text-light);">—</span>':_funnelFollowUpCell(p)}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedByCell(p)}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedAtCell(p)}</td>
+        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_funnelNotesCell(p)}</td>
       </tr>`;
     }).join('');
   }
