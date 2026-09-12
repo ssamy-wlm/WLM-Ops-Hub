@@ -2473,6 +2473,94 @@ function populatePfTypeOptions(selected){
 // ═══════════════════════════════════════════════════════
 const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
+
+// ── /api/ops-state polling coordination (2026-09-12) ──
+// Hand-duplicated per file (zero-shared-code rule, CLAUDE.md rule #3) —
+// index.html/user.html each carry their own identical copy. This file is
+// the one most in need of it: it's embedded as up to THREE independent
+// iframes at once in index.html (trackerFrame/adminTrackerFrame/
+// adminSalesFunnelFrame) and up to two in user.html, each running its own
+// 30s poll and its own visibilitychange-triggered refetch, none previously
+// aware of any sibling — the real driver of intermittent /api/ops-state
+// Gateway Timeouts (investigated 2026-09-12; the applied indexes migration
+// didn't move the timeout rate, confirming it's concurrency, not query
+// cost). Does NOT change what /api/ops-state returns or the full-snapshot
+// read model (rule #1) — only how the record is obtained; every consumer
+// still runs its own unchanged apply/unsaved-edit-guard pipeline on it.
+// See index.html's matching comment (same code, same reasoning) for the
+// full design writeup: same-context in-flight coalescing, cross-context
+// sharing via BroadcastChannel (same-origin, crosses iframe boundaries for
+// free), and a synchronous localStorage claim so near-simultaneous
+// BACKGROUND pulls (e.g. all iframes' visibilitychange firing in the same
+// tick) don't all start their own fetch before any broadcast exists yet.
+// `background:true` is passed ONLY from the 30s poll and the
+// visibilitychange handler in init() below — _initialTierResolve() (the
+// on-load resolve) and refreshMyWork() (an explicit user click) always
+// force a real, uncoalesced fetch.
+const OPS_STATE_SYNC_CHANNEL = 'wlm_ops_state_sync';
+const OPS_STATE_CLAIM_KEY    = 'wl_ops_state_claim';
+const OPS_STATE_FRESH_MS     = 5000;
+const OPS_STATE_CLAIM_MS     = 8000;
+let _opsStateInFlight = null;
+let _opsStateChannel = null;
+let _opsStateLastRecord = null;
+let _opsStateLastRecordAt = 0;
+let _opsStateWaiters = [];
+(function _opsStateChannelInit(){
+  if(typeof BroadcastChannel==='undefined') return;
+  try{
+    _opsStateChannel = new BroadcastChannel(OPS_STATE_SYNC_CHANNEL);
+    _opsStateChannel.onmessage = (ev)=>{
+      const msg = ev.data;
+      if(!msg || msg.type!=='pulled') return;
+      _opsStateLastRecord = msg.record;
+      _opsStateLastRecordAt = msg.ts;
+      const waiters = _opsStateWaiters; _opsStateWaiters = [];
+      waiters.forEach(w=>w.resolve(msg.record));
+    };
+  }catch(e){ _opsStateChannel = null; }
+})();
+async function _opsStateRealFetch(token){
+  try{
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const record = data?.record || {};
+    const now = Date.now();
+    _opsStateLastRecord = record;
+    _opsStateLastRecordAt = now;
+    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record}); }catch(e){} }
+    return record;
+  } finally {
+    _opsStateInFlight = null;
+    try{ localStorage.removeItem(OPS_STATE_CLAIM_KEY); }catch(e){}
+  }
+}
+async function fetchOpsStateCoordinated(token, background){
+  if(_opsStateInFlight) return _opsStateInFlight;
+  const now = Date.now();
+  if(background && _opsStateLastRecord && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
+    return _opsStateLastRecord;
+  }
+  if(background){
+    let claim = null;
+    try{ claim = JSON.parse(localStorage.getItem(OPS_STATE_CLAIM_KEY) || 'null'); }catch(e){}
+    if(claim && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
+      _opsStateInFlight = new Promise((resolve)=>{
+        _opsStateWaiters.push({resolve});
+        setTimeout(()=>resolve(null), Math.max(500, OPS_STATE_CLAIM_MS - (now - claim.ts) + 500));
+      }).then((record)=>{
+        _opsStateInFlight = null;
+        return record ? record : _opsStateRealFetch(token);
+      });
+      return _opsStateInFlight;
+    }
+  }
+  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now})); }catch(e){}
+  _opsStateInFlight = _opsStateRealFetch(token);
+  return _opsStateInFlight;
+}
+
 // Portal-scoped key (was the single shared 'wl_ops_token' written by both
 // index.html and user.html's independent logins) — that one key meant the
 // most recently authenticated portal on this origin silently overwrote every
@@ -2674,13 +2762,19 @@ window.addEventListener('pagehide', _flushCloudPush);
 // one fetch succeeding — see _initialTierResolve() below, which retries
 // this specifically so a single transient failure can't leave an admin
 // stuck on the fail-closed member/view-only render until the next 30s poll.
-async function _pullClientsFromCloud(){
+// `background` (default false, 2026-09-12): pass true ONLY from a recurring
+// timer tick or a visibilitychange handler (see init() below) — marks this
+// call as eligible to reuse a fresh-enough sibling context's already-fetched
+// result via fetchOpsStateCoordinated() instead of firing its own request.
+// _initialTierResolve() (on-load) and any explicit user-triggered refresh
+// always call this with no argument (background stays false — always a
+// real, uncoalesced fetch), matching this function's existing behavior
+// exactly for those callers.
+async function _pullClientsFromCloud(background){
   const token=_opsToken();
   if(!token){ console.warn('[WLM Tracker] No auth token found in this browser — cannot resolve viewer tier or pull client data.'); return false; }
   try{
-    const r=await fetch(OPS_STATE_URL,{cache:'no-store', headers:{'Authorization':'Bearer '+token}});
-    if(!r.ok){ console.warn('[WLM Tracker] /api/ops-state returned HTTP '+r.status+' — tier not resolved this attempt.'); return false; }
-    const rec=(await r.json())?.record||{};
+    const rec = await fetchOpsStateCoordinated(token, !!background);
     // The ONLY point admin capability is ever granted from — server-verified,
     // fresh on every pull (init, 30s poll, visibility change). Never derived
     // from a cached localStorage session; see _applyViewerTier().
@@ -2722,14 +2816,32 @@ async function _pullClientsFromCloud(){
 // here (cold Vercel function, a transient network blip) used to mean the
 // admin stayed on the synchronous fail-closed member/view-only render for a
 // full 30 seconds (the background poll interval) with zero indication
-// anything was wrong. Retries a few times, quickly, before falling back to
-// that same 30s poll as the last resort. Does not change what gets rendered
-// on success — only how persistently it retries on failure.
+// anything was wrong. Retries a few times before falling back to that same
+// 30s poll as the last resort. Does not change what gets rendered on
+// success — only how persistently it retries on failure. Always calls
+// _pullClientsFromCloud() with no argument — never `background:true` — this
+// is a real, uncoalesced fetch every attempt, on purpose: reusing a sibling
+// iframe's possibly-stale cached/broadcast result here (instead of a real
+// network answer) would defeat the whole point of retrying at all.
+//
+// Capped exponential backoff + jitter (2026-09-12) — replaces a fixed
+// 5×2.5s cadence, which (across this file's up to three simultaneously-
+// loaded iframe instances, each running this same retry loop independently
+// on load) produced a synchronized retry STORM: every instance re-hit
+// /api/ops-state at the same 2.5s cadence, worsening exactly the load a
+// struggling server needed relief from. Backing off exponentially instead
+// gives the server increasing recovery room between later attempts, and
+// jitter keeps multiple instances' retries from re-synchronizing with each
+// other even if they started within the same instant.
 async function _initialTierResolve(){
-  const MAX_ATTEMPTS = 5, RETRY_DELAY_MS = 2500;
+  const MAX_ATTEMPTS = 5, BASE_DELAY_MS = 1000, MAX_DELAY_MS = 8000;
   for(let attempt=1; attempt<=MAX_ATTEMPTS; attempt++){
     if(await _pullClientsFromCloud()) return true;
-    if(attempt<MAX_ATTEMPTS) await new Promise(r=>setTimeout(r, RETRY_DELAY_MS));
+    if(attempt<MAX_ATTEMPTS){
+      const backoff = Math.min(BASE_DELAY_MS * Math.pow(2, attempt-1), MAX_DELAY_MS);
+      const jitter = Math.random() * backoff * 0.5;
+      await new Promise(r=>setTimeout(r, backoff + jitter));
+    }
   }
   console.warn('[WLM Tracker] Could not resolve viewer tier after '+MAX_ATTEMPTS+' attempts — staying on the fail-closed view-only render until the next successful background sync (every 30s).');
   return false;
@@ -7082,21 +7194,30 @@ function init(){
   refreshNotifBadge();
   updateMyWorkBadge();
   runScheduledAlerts();
-  // Poll every 30s for new alerts / badge refresh and cloud sync
-  setInterval(()=>{
+  // Poll every ~30s for new alerts / badge refresh and cloud sync. Jittered
+  // (2026-09-12, ±4s) via a self-rescheduling setTimeout rather than a flat
+  // setInterval, and `background:true` on the pull itself — this file can be
+  // loaded as up to three simultaneous iframes (index.html) or two
+  // (user.html), each running this same poll independently; both changes
+  // reduce how often they all hit /api/ops-state in the same instant. See
+  // fetchOpsStateCoordinated()'s own comment above OPS_STATE_URL for the
+  // full design.
+  const _clPollTick = ()=>{
     refreshNotifBadge();
     renderNotifPanel();
     checkServiceAlerts();
     updateMyWorkBadge();
-    _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients();
+    _pullClientsFromCloud(true).then(()=>{ populateDropdowns(); filterClients();
       // Temporary diagnostic (2026-07-28) — see the matching comment in
       // _openDeepLinkFromUrl(). Confirms whether the 30s poll is silently
       // reverting an active Assigned-To filter. Remove once resolved.
       console.log('[WLM Workload click-through] 30s poll — filter-assignee.value:', _el('filter-assignee')?.value);
-      renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
-  }, 30000);
+      renderMyWork(); updateMyWorkBadge(); }).catch(()=>{})
+      .finally(()=>{ setTimeout(_clPollTick, 30000 + (Math.random()*8000 - 4000)); });
+  };
+  setTimeout(_clPollTick, 30000 + (Math.random()*8000 - 4000));
   document.addEventListener('visibilitychange',()=>{
-    if(!document.hidden) _pullClientsFromCloud().then(()=>{ populateDropdowns(); filterClients();
+    if(!document.hidden) _pullClientsFromCloud(true).then(()=>{ populateDropdowns(); filterClients();
       console.log('[WLM Workload click-through] visibilitychange pull — filter-assignee.value:', _el('filter-assignee')?.value, '| document.hidden:', document.hidden);
       renderMyWork(); updateMyWorkBadge(); }).catch(()=>{});
   });

@@ -1559,6 +1559,93 @@ function dbPush(key,item){ const arr=dbGet(key)||[]; arr.unshift(item); dbSet(ke
 const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
 const OPS_AUTH_URL  = '/api/ops-auth';
+
+// ── /api/ops-state polling coordination (2026-09-12) ──
+// Hand-duplicated per file (zero-shared-code rule, CLAUDE.md rule #3) —
+// index.html/client.html each carry their own identical copy; see
+// index.html's matching comment above its own OPS_AUTH_URL for the full
+// design writeup. This file's own recurring pulls (the 20s general
+// interval's conditional cloudFetchUsers() calls, and the 15s message poll)
+// PLUS its two embedded client.html iframes (trackerFrame/salesFunnelFrame,
+// each running their own independent 30s poll and visibilitychange
+// refetch) are exactly the near-simultaneous /api/ops-state fan-out that
+// was driving intermittent Gateway Timeouts (the applied indexes migration
+// didn't move the timeout rate, confirming it's concurrency, not query
+// cost). Does NOT change what /api/ops-state returns or the full-snapshot
+// read model (rule #1) — only how the record is obtained; every consumer
+// still runs its own unchanged apply/unsaved-edit-guard pipeline on it.
+// `background:true` is passed ONLY from a recurring timer tick — never from
+// a login, a manual refresh, or any other user/system-action-triggered
+// pull, which always force a real, uncoalesced fetch.
+const OPS_STATE_SYNC_CHANNEL = 'wlm_ops_state_sync';
+const OPS_STATE_CLAIM_KEY    = 'wl_ops_state_claim';
+const OPS_STATE_FRESH_MS     = 5000;
+const OPS_STATE_CLAIM_MS     = 8000;
+let _opsStateInFlight = null;
+let _opsStateChannel = null;
+let _opsStateLastRecord = null;
+let _opsStateLastRecordAt = 0;
+let _opsStateWaiters = [];
+(function _opsStateChannelInit(){
+  if(typeof BroadcastChannel==='undefined') return;
+  try{
+    _opsStateChannel = new BroadcastChannel(OPS_STATE_SYNC_CHANNEL);
+    _opsStateChannel.onmessage = (ev)=>{
+      const msg = ev.data;
+      if(!msg || msg.type!=='pulled') return;
+      _opsStateLastRecord = msg.record;
+      _opsStateLastRecordAt = msg.ts;
+      const waiters = _opsStateWaiters; _opsStateWaiters = [];
+      waiters.forEach(w=>w.resolve(msg.record));
+    };
+  }catch(e){ _opsStateChannel = null; }
+})();
+async function _opsStateRealFetch(token){
+  try{
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    if(!res.ok){
+      let detail = '';
+      try{ const errBody = await res.json(); if(errBody?.error) detail = ': '+errBody.error; }
+      catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
+      throw new Error(`HTTP ${res.status}${detail}`);
+    }
+    const data = await res.json();
+    const record = data?.record || {};
+    const now = Date.now();
+    _opsStateLastRecord = record;
+    _opsStateLastRecordAt = now;
+    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record}); }catch(e){} }
+    return record;
+  } finally {
+    _opsStateInFlight = null;
+    try{ localStorage.removeItem(OPS_STATE_CLAIM_KEY); }catch(e){}
+  }
+}
+async function fetchOpsStateCoordinated(token, background){
+  if(_opsStateInFlight) return _opsStateInFlight;
+  const now = Date.now();
+  if(background && _opsStateLastRecord && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
+    return _opsStateLastRecord;
+  }
+  if(background){
+    let claim = null;
+    try{ claim = JSON.parse(localStorage.getItem(OPS_STATE_CLAIM_KEY) || 'null'); }catch(e){}
+    if(claim && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
+      _opsStateInFlight = new Promise((resolve)=>{
+        _opsStateWaiters.push({resolve});
+        setTimeout(()=>resolve(null), Math.max(500, OPS_STATE_CLAIM_MS - (now - claim.ts) + 500));
+      }).then((record)=>{
+        _opsStateInFlight = null;
+        return record ? record : _opsStateRealFetch(token);
+      });
+      return _opsStateInFlight;
+    }
+  }
+  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now})); }catch(e){}
+  _opsStateInFlight = _opsStateRealFetch(token);
+  return _opsStateInFlight;
+}
+
 function cloudIsConfigured(){ return true; }
 // Portal-scoped key (was the single shared 'wl_ops_token' for all three
 // pages) — that one key meant the most recently authenticated portal on this
@@ -1681,14 +1768,18 @@ function _applyServerValue(saveFn, value){
 
 // Fetch the current state from the server and adopt it as-is per table — no
 // client-side merging. Returns the users array for callers that need it.
-async function cloudFetchUsers(){
+// `background` (default false, 2026-09-12): pass true ONLY from a recurring
+// timer tick (the 20s general interval / the 15s message poll below) — marks
+// this call as eligible to reuse a fresh-enough sibling context's (e.g. an
+// embedded client.html iframe's) already-fetched result via
+// fetchOpsStateCoordinated() instead of firing its own request. Every other
+// call site (login, a manual refresh, a tab-open trigger) leaves this false,
+// always forcing a real, uncoalesced fetch — unchanged behavior for them.
+async function cloudFetchUsers(background){
   const token = _opsToken();
   if(!token) return null;
   try{
-    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
-    if(!res.ok) return null;
-    const data = await res.json();
-    const r = data?.record || {};
+    const r = await fetchOpsStateCoordinated(token, !!background);
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
     // Sales Funnel access / Commissions eligibility — server-verified,
     // same convention as viewerTier: never re-derived client-side. Drives
@@ -5441,7 +5532,7 @@ function showSection(id, el){
   if(id==='timeoff'){
     setTimeout(()=>_maybeShowTip('myWorkRequestTimeOff','#to-start','Pick your dates and submit — your admin gets notified to review it.'),50);
   }
-  if(id==='messages'){ loadMessages(); } else { clearInterval(_msgPollInterval); }
+  if(id==='messages'){ loadMessages(); } else { clearTimeout(_msgPollInterval); }
   // Paint immediately from whatever's cached (no flash of the empty state),
   // then pull fresh so an admin's just-saved chart change shows up here
   // without needing a full logout/login — cloudFetchUsers() re-renders this
@@ -5600,27 +5691,37 @@ function showToast(msg){
 // ── INIT ──
 // Modals only close via X button — not by clicking outside
 
-// Auto-refresh ops stats every 20s (picks up admin changes like CoC updates)
-setInterval(()=>{
-  if(document.getElementById('userApp')?.classList.contains('visible')){
-    loadCoC();
-    checkAnnouncements();
-    updateAssignmentsBadge(); // check for new client assignments
-    if(document.getElementById('sec-timeoff')?.classList.contains('active')){
-      cloudFetchUsers().then(renderMyTimeOffLedger);
+// Auto-refresh ops stats every ~20s (picks up admin changes like CoC
+// updates). Jittered (2026-09-12, ±4s) via a self-rescheduling setTimeout
+// rather than a flat setInterval, and every cloudFetchUsers() call here
+// passes background:true — this file's own embedded client.html iframes run
+// their own independent 30s poll, and this tick's cadence would otherwise
+// tend to drift into phase with them over a long-open session. See
+// fetchOpsStateCoordinated()'s own comment above OPS_STATE_URL for the full
+// design.
+(function _scheduleOpsStatsTick(){
+  setTimeout(function tick(){
+    if(document.getElementById('userApp')?.classList.contains('visible')){
+      loadCoC();
+      checkAnnouncements();
+      updateAssignmentsBadge(); // check for new client assignments
+      if(document.getElementById('sec-timeoff')?.classList.contains('active')){
+        cloudFetchUsers(true).then(renderMyTimeOffLedger);
+      }
+      // Company Overview: same pattern — pick up an admin's org chart save
+      // within 20s if a member has this tab open, without a manual refresh.
+      if(document.getElementById('sec-companyOverview')?.classList.contains('active')){
+        cloudFetchUsers(true);
+      }
+      // Daily Tasks: same pattern — pick up a newly-assigned/reassigned task
+      // within 20s without a manual refresh.
+      if(document.getElementById('sec-dailyTasks')?.classList.contains('active')){
+        cloudFetchUsers(true);
+      }
     }
-    // Company Overview: same pattern — pick up an admin's org chart save
-    // within 20s if a member has this tab open, without a manual refresh.
-    if(document.getElementById('sec-companyOverview')?.classList.contains('active')){
-      cloudFetchUsers();
-    }
-    // Daily Tasks: same pattern — pick up a newly-assigned/reassigned task
-    // within 20s without a manual refresh.
-    if(document.getElementById('sec-dailyTasks')?.classList.contains('active')){
-      cloudFetchUsers();
-    }
-  }
-},20000);
+    setTimeout(tick, 20000 + (Math.random()*8000 - 4000));
+  }, 20000 + (Math.random()*8000 - 4000));
+})();
 
 // ═══════════════════════════════════════════════════════════
 // TIME OFF LEDGER — read-only balance + history for the logged-in user.
@@ -5955,10 +6056,15 @@ function loadMessages(){
     renderUserMessages();
     if(_userOpenConvEmail) markConvRead(_userOpenConvEmail);
   });
-  clearInterval(_msgPollInterval);
-  _msgPollInterval = setInterval(()=>{
-    cloudFetchUsers().then(()=>{ renderUserMessages(); updateUserMsgBadge(); });
-  }, 15000);
+  clearTimeout(_msgPollInterval);
+  // Jittered (2026-09-12, ±3s) via a self-rescheduling setTimeout rather than
+  // a flat setInterval — same reasoning as the ~20s ops-stats tick above —
+  // and background:true, since this is a recurring poll, not a user action.
+  const _msgTick = ()=>{
+    cloudFetchUsers(true).then(()=>{ renderUserMessages(); updateUserMsgBadge(); })
+      .finally(()=>{ _msgPollInterval = setTimeout(_msgTick, 15000 + (Math.random()*6000 - 3000)); });
+  };
+  _msgPollInterval = setTimeout(_msgTick, 15000 + (Math.random()*6000 - 3000));
 }
 
 function renderUserMessages(){

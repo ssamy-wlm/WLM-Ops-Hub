@@ -8399,6 +8399,122 @@ const OPS_STATE_URL = '/api/ops-state';
 const OPS_SYNC_URL  = '/api/ops-sync';
 const OPS_AUTH_URL  = '/api/ops-auth';
 
+// ── /api/ops-state polling coordination (2026-09-12) ──
+// This same-origin app can have SEVERAL independent contexts calling
+// /api/ops-state at once from one browser tab: this file's own 30s live-sync
+// poll, PLUS up to three separately-loaded client.html iframes
+// (trackerFrame/adminTrackerFrame/adminSalesFunnelFrame), each running its
+// OWN 30s poll and its OWN visibilitychange-triggered refetch — none of them
+// previously aware of each other. Under load that fan-out of near-simultaneous
+// requests (not the query cost — see the applied ops_state_perf_indexes
+// migration, which didn't move the timeout rate) is the real driver of
+// intermittent Gateway Timeouts. This coordinator does NOT change what
+// /api/ops-state returns or the full-snapshot read model (CLAUDE.md rule #1)
+// — every existing caller still gets back the exact same `record` shape and
+// still runs its own full _applyServerArray()/unsaved-edit-guard pipeline on
+// it unchanged; this only changes HOW that record is obtained:
+//   1. Same-context in-flight coalescing: a second call in THIS SAME script
+//      context (e.g. a user action racing the poll) while a fetch is already
+//      running just awaits that one fetch instead of starting a second.
+//   2. Cross-context sharing via BroadcastChannel (same-origin, crosses
+//      iframe boundaries and other tabs on this origin for free, no
+//      postMessage plumbing needed): whichever context's fetch actually lands
+//      broadcasts the parsed record; siblings that ask for a BACKGROUND pull
+//      (the 30s poll / a visibilitychange refetch — never a user-initiated
+//      action) within OPS_STATE_FRESH_MS of that broadcast reuse it instead
+//      of firing their own request.
+//   3. A synchronous localStorage "claim" additionally prevents near-
+//      simultaneous BACKGROUND pulls (e.g. all three client.html iframes'
+//      visibilitychange firing in the same tick on tab refocus) from each
+//      starting their own network request before any broadcast exists yet —
+//      whoever claims first wins; the rest wait on that claimant's broadcast,
+//      with a safety-valve timeout so a claimant that never finishes (e.g. its
+//      tab closed mid-fetch) can never wedge the others.
+// `background:true` is passed ONLY from a recurring timer tick or a
+// visibilitychange handler — see cloudPullAll()'s own fromLiveSync parameter
+// and _pullClientsFromCloud()'s new `background` parameter in client.html.
+// Every action-triggered pull (login, a manual Refresh click, the pull
+// cloudAutoSync() runs right after a push to confirm what was just written)
+// still always forces a real, uncoalesced fetch — never reusing a broadcast
+// that could predate that action's own write — so nothing about correctness
+// changes for any caller that actually needs a guaranteed-fresh answer.
+const OPS_STATE_SYNC_CHANNEL = 'wlm_ops_state_sync';
+const OPS_STATE_CLAIM_KEY    = 'wl_ops_state_claim';
+const OPS_STATE_FRESH_MS     = 5000;  // reuse a sibling's broadcast this recent, for a background pull only
+const OPS_STATE_CLAIM_MS     = 8000;  // treat another context's in-flight claim as live for this long
+let _opsStateInFlight = null;
+let _opsStateChannel = null;
+let _opsStateLastRecord = null;
+let _opsStateLastRecordAt = 0;
+let _opsStateWaiters = [];
+(function _opsStateChannelInit(){
+  if(typeof BroadcastChannel==='undefined') return;
+  try{
+    _opsStateChannel = new BroadcastChannel(OPS_STATE_SYNC_CHANNEL);
+    _opsStateChannel.onmessage = (ev)=>{
+      const msg = ev.data;
+      if(!msg || msg.type!=='pulled') return;
+      _opsStateLastRecord = msg.record;
+      _opsStateLastRecordAt = msg.ts;
+      const waiters = _opsStateWaiters; _opsStateWaiters = [];
+      waiters.forEach(w=>w.resolve(msg.record));
+    };
+  }catch(e){ _opsStateChannel = null; }
+})();
+async function _opsStateRealFetch(token){
+  try{
+    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
+    if(!res.ok){
+      let detail = '';
+      try{ const errBody = await res.json(); if(errBody?.error) detail = ': '+errBody.error; }
+      catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
+      throw new Error(`HTTP ${res.status}${detail}`);
+    }
+    const data = await res.json();
+    const record = data?.record || {};
+    const now = Date.now();
+    _opsStateLastRecord = record;
+    _opsStateLastRecordAt = now;
+    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record}); }catch(e){} }
+    return record;
+  } finally {
+    _opsStateInFlight = null;
+    try{ localStorage.removeItem(OPS_STATE_CLAIM_KEY); }catch(e){}
+  }
+}
+// The one function every /api/ops-state caller in this file should use
+// instead of a raw fetch. `background` (default false) marks a call as
+// coalesce-eligible — pass true ONLY from a recurring timer tick or a
+// visibilitychange handler, never from a user action or a post-write
+// confirmation pull. Returns the same `record` shape a raw fetch's
+// `(await res.json()).record` always did; throws the same `HTTP <status>...`
+// Error a raw fetch's own failure handling already threw, so every existing
+// caller's try/catch needs no change at all.
+async function fetchOpsStateCoordinated(token, background){
+  if(_opsStateInFlight) return _opsStateInFlight;
+  const now = Date.now();
+  if(background && _opsStateLastRecord && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
+    return _opsStateLastRecord;
+  }
+  if(background){
+    let claim = null;
+    try{ claim = JSON.parse(localStorage.getItem(OPS_STATE_CLAIM_KEY) || 'null'); }catch(e){}
+    if(claim && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
+      _opsStateInFlight = new Promise((resolve)=>{
+        _opsStateWaiters.push({resolve});
+        setTimeout(()=>resolve(null), Math.max(500, OPS_STATE_CLAIM_MS - (now - claim.ts) + 500));
+      }).then((record)=>{
+        _opsStateInFlight = null;
+        return record ? record : _opsStateRealFetch(token);
+      });
+      return _opsStateInFlight;
+    }
+  }
+  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now})); }catch(e){}
+  _opsStateInFlight = _opsStateRealFetch(token);
+  return _opsStateInFlight;
+}
+
 function cloudIsConfigured(){ return true; }
 // Portal-scoped key (was the single shared 'wl_ops_token' for all three
 // pages) — that one key meant the most recently authenticated portal on this
@@ -8975,15 +9091,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
   _lastPullOk = false;
   setCloudStatus('Syncing…','syncing');
   try {
-    const res = await fetch(OPS_STATE_URL, {cache:'no-store', headers:{'Authorization':'Bearer '+token}});
-    if(!res.ok){
-      let detail = '';
-      try{ const errBody = await res.json(); if(errBody?.error) detail = ': '+errBody.error; }
-      catch{ try{ detail = ': '+(await res.text()).slice(0,150); }catch{} }
-      throw new Error(`HTTP ${res.status}${detail}`);
-    }
-    const data = await res.json();
-    const r = data?.record || {};
+    // background:true ONLY for the recurring 30s live-sync tick
+    // (fromLiveSync) — every other caller of cloudPullAll (login, a manual
+    // Refresh click, cloudAutoSync()'s own post-push confirmation pull, etc.)
+    // still always forces a real, uncoalesced fetch. See the
+    // fetchOpsStateCoordinated() comment above OPS_STATE_URL for why.
+    const r = await fetchOpsStateCoordinated(token, !!fromLiveSync);
     // Server-verified, set only once we actually have a response — see the
     // module-level comment above _lastViewerTier for why restoreAdminSession()
     // gates on this instead of anything cached.
@@ -9783,15 +9896,25 @@ async function cloudAutoSync(){
   return await cloudPushAll(true);
 }
 
-// Live sync — polls the server every 30s so all devices/roles stay in sync,
+// Live sync — polls the server every ~30s so all devices/roles stay in sync,
 // with no manual Pull/Push needed. Runs for both admins and members.
-let _liveSyncInterval = null;
+// Jittered (2026-09-12, ±4s) via a self-rescheduling setTimeout rather than a
+// flat setInterval — this file's own poll and each embedded client.html
+// iframe's independent 30s poll would otherwise tend to drift INTO phase
+// with each other over a long-open session (both started from a flat
+// 30000ms clock), which is exactly the near-simultaneous-request pattern
+// fetchOpsStateCoordinated()'s cross-context sharing above is there to
+// absorb, but is cheaper to avoid outright than to rely on being absorbed.
+let _liveSyncTimer = null;
 function startLiveSync(level){
-  if(_liveSyncInterval) clearInterval(_liveSyncInterval);
-  _liveSyncInterval = setInterval(async ()=>{
-    if(!cloudIsConfigured()) return;
-    await cloudPullAll(true, true); // silent background sync — does NOT reset org chart canvas
-  }, 30000); // every 30 seconds
+  if(_liveSyncTimer) clearTimeout(_liveSyncTimer);
+  const tick = async ()=>{
+    if(cloudIsConfigured()){
+      await cloudPullAll(true, true); // silent background sync — does NOT reset org chart canvas
+    }
+    _liveSyncTimer = setTimeout(tick, 30000 + (Math.random()*8000 - 4000));
+  };
+  _liveSyncTimer = setTimeout(tick, 30000 + (Math.random()*8000 - 4000));
 }
 
 // ── Task Assignments (admin) — port of the WebLight Media Email Tracker.
