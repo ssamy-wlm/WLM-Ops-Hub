@@ -28,13 +28,18 @@ import { resolveReportRecipients } from './ops-sync.js';
 import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
 import { sendResendEmail } from '../lib/resendClient.js';
 
-// Retention: this cadence moved from 1x/day to 4x/day (every 6h) — to keep
-// roughly the same ~30 days of daily-auto history the old keep=30 count gave
-// at 1x/day, the keep count is raised to 120 (30 days * 4 runs/day). This is
-// a deliberate, stated choice, not left at the old default — see the PR
-// description. Email copies are NEVER pruned by this job (or anything else)
-// — they live in the recipients' inboxes indefinitely, by design.
-const DAILY_AUTO_KEEP_COUNT = 120;
+// Retention (tightened 2026-09-13, from 120 to 28): the in-DB copy only ever
+// needs to cover a short fast-restore window on this constrained instance —
+// the real deep-history safety net is the off-site email copy this same job
+// sends every run (below), which is never pruned. 28 = 7 days * 4 runs/day
+// at this endpoint's every-6h cadence. Only kind==='daily-auto' rows are
+// ever eligible for pruning (pruneOldDailyBackups() in lib/opsBackup.js) —
+// a manual snapshot (Admin Controls -> Data Backups -> Create Manual
+// Snapshot) is a different `kind` and is never touched by this call, and
+// the DB-level ops_backups_guard trigger additionally refuses to DELETE any
+// row that isn't kind==='daily-auto' regardless, so a manual snapshot stays
+// permanent/undeletable even if this code ever had a bug.
+const DAILY_AUTO_KEEP_COUNT = 28;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
