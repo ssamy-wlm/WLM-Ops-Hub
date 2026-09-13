@@ -297,6 +297,14 @@ export default async function handler(req, res) {
       // existing ops_settings table (see api/ops-sync.js) rather than a new
       // table or a field on a row that may not exist for every account.
       tourFlags: settingsMap['tourFlags_' + session.id] ?? { tourSeen: {}, dismissedTips: [] },
+      // Weekly backup-download reminder state (2026-09-13) — Super Admin/
+      // Owner only (nulled for every other tier below, same visibility as
+      // commissions/payRate), keyed by the caller's own ADMIN identity —
+      // identical self-scoped-key pattern as teamNotifPrefs just below,
+      // including the session.adminId fallback for a dual-role account and
+      // the literal 'primary-admin' sentinel for Sarah (no ops_admins row
+      // of her own for a field to live on otherwise).
+      backupReminder: settingsMap['backupReminder_' + (session.adminId || session.id)] ?? { lastBackupDownloadAt: null, lastBackupReminderDismissedAt: null },
       // Notification on/off toggles: same Super Admin/CEO-only visibility as
       // otPolicy/coc below — everyone still GETS notified server-side
       // regardless (the toggle is read directly from ops_settings inside
@@ -425,6 +433,7 @@ export default async function handler(req, res) {
       record.notificationSettings = null;
       record.teamNotifPrefs = null;
       record.passwordMigrationStatus = null;
+      record.backupReminder = null;
       // Payroll saves and time-off decisions are stripped out of the Live
       // Feed for members too — same leak, same fix (see the permission
       // project's Insights follow-up) — never gated by tier before this.
@@ -469,6 +478,12 @@ export default async function handler(req, res) {
       // primaryAdminPw already stripped unconditionally above, for every tier.
       record.notificationSettings = null;
       record.passwordMigrationStatus = null;
+      // Backup-download reminder is Super Admin/Owner only — same
+      // visibility as commissions/payRate, unlike teamNotifPrefs just above
+      // (kept for manager tier, since any admin managing a team can
+      // legitimately want team-event notifications; the backup reminder is
+      // specifically about who owns the once-a-week download task).
+      record.backupReminder = null;
       // Every non-super admin loses visibility into OTHER people's
       // payRate/hours — the caller's own record is left intact, same
       // carve-out already used for member tier above. This is a read-only

@@ -1772,6 +1772,28 @@ export default async function handler(req, res) {
       if (error) warnings.push(`teamNotifPrefs: ${error.message}`); else applied.teamNotifPrefs = 1;
     }
 
+    // ── weekly backup-download reminder state (2026-09-13) — same
+    // self-scoped-key carve-out as tourFlags/teamNotifPrefs above, Super
+    // Admin/Owner only (the only tier that ever sees the reminder banner in
+    // the first place — see api/ops-state.js's own comment on this same
+    // field), keyed by the caller's own ADMIN identity exactly like
+    // teamNotifPrefs (session.adminId for a dual-role account, falling back
+    // to session.id — which is the literal 'primary-admin' sentinel for
+    // Sarah, who has no ops_admins row for a field to live on otherwise).
+    // Two independent timestamps, either one silencing the reminder for a
+    // week: lastBackupDownloadAt (stamped by downloadBackup() itself, no
+    // separate action) and lastBackupReminderDismissedAt (stamped only when
+    // the admin explicitly dismisses the banner without downloading).
+    if (tier === 'super' && c.backupReminder && typeof c.backupReminder === 'object') {
+      const key = 'backupReminder_' + (session.adminId || session.id);
+      const data = {
+        lastBackupDownloadAt: c.backupReminder.lastBackupDownloadAt || null,
+        lastBackupReminderDismissedAt: c.backupReminder.lastBackupReminderDismissedAt || null,
+      };
+      const { error } = await supabase.from('ops_settings').upsert({ key, data }, { onConflict: 'key' });
+      if (error) warnings.push(`backupReminder: ${error.message}`); else applied.backupReminder = 1;
+    }
+
     // ── session kill-switch: Super Admin/CEO only. Two scopes:
     //   'account' — sign a specific user and/or admin out everywhere, by id.
     //   'all'     — emergency: sign every account out everywhere, including
