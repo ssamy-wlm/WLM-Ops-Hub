@@ -27,22 +27,20 @@
 // member's own (pre-existing, local-only) overdue awareness is left exactly
 // as it was before this feature; this cron never notifies the assignee.
 //
-// Also runs the daily ops_backups snapshot (see lib/opsBackup.js) at the end
-// of every invocation, regardless of the overdue-notifications toggle below.
-// This used to be its own endpoint (api/cron-backup.js, its own Vercel Cron
-// entry) but that endpoint has been deleted outright: the Vercel Hobby plan
-// this app runs on caps both the number of scheduled crons AND the total
-// number of serverless functions per project (12), and this app was over
-// that function limit too — so rather than leaving cron-backup.js in place
-// as an unscheduled-but-still-deployed function (which would have kept
-// costing one of those 12 slots for nothing), its logic was folded in here
-// and the file removed. A manual/on-demand snapshot is still available via
-// api/ops-backups.js's `action:'manual'` (Admin Controls → Data Backups →
-// Create Manual Snapshot), so no capability was actually lost.
+// The daily ops_backups snapshot (see lib/opsBackup.js) used to run at the
+// end of every invocation of THIS endpoint — folded in here back when the
+// Vercel Hobby plan's caps (2 crons, 12 serverless functions) made a
+// dedicated cron-backup.js endpoint too expensive to keep deployed. Now on
+// Vercel Pro (no such caps), the backup step has been moved back out to its
+// own dedicated endpoint (api/cron-backup.js) on its own, more frequent
+// schedule ("0 */6 * * *", every 6h — see that file), so this endpoint goes
+// back to doing only overdue/task-attention/digest/escalation work, exactly
+// as before backups were ever folded in here. A manual/on-demand snapshot is
+// still available via api/ops-backups.js's `action:'manual'` (Admin
+// Controls → Data Backups → Create Manual Snapshot), unaffected either way.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
-import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
 import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
 
 // Weekday morning "log your tasks" reminder (2026-09-07) — v1 hardcoded
@@ -147,7 +145,6 @@ export default async function handler(req, res) {
   const warnings = [];
   const summary = { scanned: 0, overdueFound: 0, newlyStamped: 0, clientsUpdated: 0, notificationsSent: 0 };
   const utcHour = new Date().getUTCHours();
-  let backup = null;
 
   try {
     // ── Weekday morning "log your tasks" reminder — the 07:00 UTC weekday
@@ -202,13 +199,13 @@ export default async function handler(req, res) {
     }
 
     // Everything below (overdue escalation, task attention, focus digest,
-    // hierarchy escalation, daily backup) is the ORIGINAL once-daily job —
-    // unchanged behavior, just now gated to its original 22:00 UTC slot so
-    // folding the new 07:00/08:00 UTC morning triggers into this same single
-    // cron entry (see the Hobby-plan cron-limit note above) doesn't triple
-    // any of it.
+    // hierarchy escalation) is the ORIGINAL once-daily job — unchanged
+    // behavior, just now gated to its original 22:00 UTC slot so folding the
+    // new 07:00/08:00 UTC morning triggers into this same single cron entry
+    // (see the note above) doesn't triple any of it. The daily backup
+    // snapshot no longer runs here — see api/cron-backup.js.
     if (utcHour !== 22) {
-      return res.status(200).json({ ok: true, summary, warnings, backup, skipped: 'not the 22:00 UTC daily-job hour' });
+      return res.status(200).json({ ok: true, summary, warnings, skipped: 'not the 22:00 UTC daily-job hour' });
     }
 
     // Org-wide on/off toggle (Super Admin-visible in Settings, same as the
@@ -290,7 +287,7 @@ export default async function handler(req, res) {
     // (different table, different notification types, different
     // recipients) and deliberately NOT gated behind the `overdueEnabled`
     // toggle above, which only ever governed service-overdue escalation —
-    // runs every invocation, same as the backup snapshot below. No
+    // runs every invocation this endpoint fires (22:00 UTC). No
     // per-item idempotency stamp (unlike the service block above): a
     // digest/reminder is SUPPOSED to repeat every single day the
     // underlying task is still overdue/due-today, so "today's real state"
@@ -638,27 +635,7 @@ export default async function handler(req, res) {
       warnings.push(`hierarchyEscalation: ${err.message}`);
     }
 
-    // Daily backup snapshot — see the header comment above. Runs every
-    // invocation, independent of the overdue-notifications branch above, so
-    // a disabled overdue toggle (or an overdue-side warning) never silently
-    // stops the daily backup from happening. Failures here are logged and
-    // reported in the response but never turn this endpoint's own overdue
-    // work into a failure — the two jobs are independent, just sharing a
-    // schedule slot.
-    try {
-      const { warnings: backupWarnings, snapshot } = await buildBackupSnapshot(supabase);
-      const id = await insertBackupRow(supabase, 'daily-auto', snapshot);
-      const prune = await pruneOldDailyBackups(supabase, 30);
-      if (backupWarnings.length) {
-        await logError({ endpoint: 'cron-overdue-check:backup', error: `snapshot completed with ${backupWarnings.length} table warning(s)`, extra: { warnings: backupWarnings } });
-      }
-      backup = { ok: true, id, tableCounts: snapshot.meta.tableCounts, warnings: backupWarnings, trimmed: prune.trimmed, pruneError: prune.error || null };
-    } catch (err) {
-      await logError({ endpoint: 'cron-overdue-check:backup', error: err });
-      backup = { ok: false, error: err.message };
-    }
-
-    return res.status(200).json({ ok: true, summary, warnings, backup });
+    return res.status(200).json({ ok: true, summary, warnings });
   } catch (err) {
     await logError({ endpoint: 'cron-overdue-check', error: err });
     return res.status(500).json({ error: err.message });
