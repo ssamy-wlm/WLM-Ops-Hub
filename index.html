@@ -1359,6 +1359,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
 
+      <!-- Weekly backup-download reminder (2026-09-13) — Super Admin/Owner
+           only, injected by _renderBackupReminderBanner(); hidden/empty by
+           default so it never flashes for any other tier while the pull
+           that decides visibility is still in flight. -->
+      <div id="overviewBackupReminderWrap" style="display:none;"></div>
+
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
 
       <!-- My Roadmap (admin, 2026-09-01) — per-admin, read-only, own
@@ -2959,6 +2965,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-primary btn-sm" onclick="createManualBackup()">📸 Create Manual Snapshot</button>
         </div>
         <div class="card-body">
+          <!-- Same weekly reminder as overviewBackupReminderWrap above, a
+               second mount point right where the actual Download button
+               lives — _renderBackupReminderBanner() renders into BOTH. -->
+          <div id="backupsCardReminderWrap" style="display:none;"></div>
           <div id="backupsListStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:10px;">Loading snapshots…</div>
           <table style="width:100%;">
             <thead>
@@ -6897,6 +6907,11 @@ const DB_KEYS = {
   // Per-admin "team activity" notification-type toggles (My Team's Work) —
   // own copy, not shared with client.html/user.html (zero-shared-code rule).
   teamNotifPrefs: 'wl_team_notif_prefs',
+  // Weekly backup-download reminder state (2026-09-13), Super Admin/Owner
+  // only — server-synced (ops_settings, keyed per-admin, see api/ops-sync.js
+  // /api/ops-state.js) so it persists across devices, not a localStorage-only
+  // flag that would nag again on a different browser.
+  backupReminder: 'wl_backup_reminder',
 };
 
 function dbGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); } catch(e){ return null; } }
@@ -8842,9 +8857,82 @@ async function downloadBackup(id){
     a.href = url; a.download = `wlm-ops-hub-snapshot-${id}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
+    // Weekly backup-download reminder (2026-09-13): a successful download of
+    // ANY snapshot (daily-auto or manual) counts as this week's download —
+    // reuses the existing button, no separate "mark as done" action.
+    _stampBackupReminder('lastBackupDownloadAt');
   }catch(e){
     showToast('❌ Download failed: '+e.message);
   }
+}
+
+// ── Weekly backup-download reminder (2026-09-13), Super Admin/Owner only ──
+// Server-synced per-admin state (ops_settings, keyed by the caller's own
+// admin identity — see api/ops-sync.js/api/ops-state.js), NOT a
+// localStorage-only flag: a localStorage-only reminder would nag again the
+// moment Sarah or David opened the app on a different device/browser, which
+// defeats the entire point of a "don't nag once done" reminder. Reused at
+// two mount points (Overview + the Data Backups card itself) — one function
+// renders into both, so they can never show conflicting state.
+function _bkupReminderState(){
+  return dbGet(DB_KEYS.backupReminder) || { lastBackupDownloadAt:null, lastBackupReminderDismissedAt:null };
+}
+// "Friday or later in the week" — Sun(0)/Fri(5)/Sat(6) in JS's own
+// getDay() numbering (Mon-Sun week, Friday through Sunday counts as
+// "the tail end of the week").
+function _bkupIsLateInWeek(d){ const dow=d.getDay(); return dow===5||dow===6||dow===0; }
+function _bkupWithinLast7Days(iso, now){
+  if(!iso) return false;
+  const t = new Date(iso).getTime();
+  if(isNaN(t)) return false;
+  return (now.getTime() - t) < 7*24*60*60*1000;
+}
+function _shouldShowBackupReminder(){
+  if(!(_adminLevel==='super' || _adminLevel==='owner')) return false;
+  const now = new Date();
+  if(!_bkupIsLateInWeek(now)) return false;
+  const s = _bkupReminderState();
+  if(_bkupWithinLast7Days(s.lastBackupDownloadAt, now)) return false;
+  if(_bkupWithinLast7Days(s.lastBackupReminderDismissedAt, now)) return false;
+  return true;
+}
+function _backupReminderBannerHtml(){
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#FFF7E6;border:1px solid #F5B000;border-radius:10px;padding:12px 16px;margin-bottom:16px;">
+    <div style="font-size:13px;color:var(--text-dark);">
+      <strong>🗄 Weekly backup reminder</strong> — please download this week's data backup for off-site safekeeping.
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0;">
+      <button class="btn btn-primary btn-sm" onclick="_goToBackupsFromReminder()">Go to Data Backups</button>
+      <button class="btn btn-outline btn-sm" onclick="_dismissBackupReminder()">Dismiss for this week</button>
+    </div>
+  </div>`;
+}
+function _goToBackupsFromReminder(){
+  const nav = document.querySelector('.admin-nav-item[onclick*="\'adminControls\'"]');
+  if(nav) switchAdminTab(nav, 'adminControls');
+  const card = document.getElementById('backupsListStatus');
+  if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function _maybeShowBackupReminder(){
+  const show = _shouldShowBackupReminder();
+  const html = show ? _backupReminderBannerHtml() : '';
+  ['overviewBackupReminderWrap','backupsCardReminderWrap'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.innerHTML = html;
+    el.style.display = show ? '' : 'none';
+  });
+}
+function _stampBackupReminder(field){
+  if(!(_adminLevel==='super' || _adminLevel==='owner')) return; // never reachable for a non-super caller anyway
+  const s = { ..._bkupReminderState() };
+  s[field] = new Date().toISOString();
+  dbSet(DB_KEYS.backupReminder, s);
+  _maybeShowBackupReminder();
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+}
+function _dismissBackupReminder(){
+  _stampBackupReminder('lastBackupReminderDismissedAt');
 }
 
 // Restore is a deliberate, multi-step, admin-only action — see CLAUDE.md
@@ -9009,6 +9097,10 @@ async function cloudPushAll(silent=false){
     // Team-activity notification prefs — only ever written by an explicit
     // toggle in the My Team's Work panel (see _saveTeamNotifPrefs below).
     const teamNotifPrefs = dbGet(DB_KEYS.teamNotifPrefs); if(teamNotifPrefs) changes.teamNotifPrefs = teamNotifPrefs;
+    // Weekly backup-download reminder state — only ever written by an
+    // explicit download (downloadBackup()) or dismiss (_dismissBackupReminder())
+    // action, never on load (see the "STOP CONDITION" comment further down).
+    const backupReminder = dbGet(DB_KEYS.backupReminder); if(backupReminder) changes.backupReminder = backupReminder;
 
     // Tombstones: only send ids we haven't already told the server about, so
     // we don't keep re-sending the same delete forever.
@@ -9172,6 +9264,8 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
     _applyServerValue(v=>dbSet(DB_KEYS.teamNotifPrefs, v), r.teamNotifPrefs);
     if(typeof renderMyTeamsWork==='function') renderMyTeamsWork();
+    _applyServerValue(v=>dbSet(DB_KEYS.backupReminder, v), r.backupReminder);
+    if(typeof _maybeShowBackupReminder==='function') _maybeShowBackupReminder();
     // deletedUserIds isn't part of the dirty/snapshot system above (tombstones
     // push separately, tracked via wl_tombstones_sent) but the same "empty
     // result must never undo real local tombstones" rule applies — an empty
@@ -14956,6 +15050,11 @@ function applyAdminRoleRestrictions(level, adminObj){
   // correctly on load — a no-op if the Users tab/table isn't in the DOM.
   if(typeof renderUserTable==='function' && document.getElementById('userTableBody')) renderUserTable();
   updateRoadmapNavVisibility(level, adminObj);
+  // Weekly backup-download reminder (2026-09-13) — same race-condition fix
+  // as renderUserTable() just above: _adminLevel is still null at
+  // cloudPullAll()'s own first pull-driven call, so re-check here too, once
+  // the real, server-verified level is known.
+  if(typeof _maybeShowBackupReminder==='function') _maybeShowBackupReminder();
 
   // My Team's Work: visible only to an admin who actually manages someone
   // (managedUserIds.length>0) — orthogonal to every level-based gate below,
