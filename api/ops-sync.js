@@ -46,6 +46,7 @@ import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 import { logError } from '../lib/errorLog.js';
 import { isHashed, hashPassword, verifyPassword } from '../lib/passwordHash.js';
 import { clampToWeekday } from '../lib/dateUtils.js';
+import { isWithinQuietHours } from '../lib/quietHours.js';
 
 // NOTE: the Blob-era task-change email notifications (api/_task-notifications.js)
 // are deferred to a follow-up PR — they depended on the whole-record diffing
@@ -1315,10 +1316,27 @@ export async function insertNotifications(supabase, rows, warnings) {
   // here — every caller of insertNotifications already gates on the
   // relevant notifSettings.* flag before ever building these rows.
   if (process.env.RESEND_API_KEY) {
+    // Per-team weekend quiet hours (2026-09-13) — resolved HERE, once, for
+    // every notification type this function ever sends, rather than at each
+    // of the ~24 call sites that build a `rows` entry: every row already
+    // carries recipientId/recipientKind (used for personOf() lookups
+    // upstream), which is exactly what's needed to look up that person's
+    // `team` from the same directory this file already loads elsewhere —
+    // so no call site needed to change at all. See lib/quietHours.js.
+    // Suppression is email-only: the in-app ops_notifications row for a
+    // suppressed item was already inserted above, unaffected.
+    const { users, admins } = await getDirectory(supabase);
+    const teamOf = (id, kind) => {
+      if (id === 'primary-admin') return undefined; // no row -> falls back to the default (Egypt) window
+      const rec = kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
+      return rec?.team;
+    };
+    const now = new Date();
     const byEmail = new Map();
     for (const row of payload) {
       const to = row.data.recipientEmail;
       if (!to) continue;
+      if (isWithinQuietHours(teamOf(row.data.recipientId, row.data.recipientKind), now)) continue;
       if (!byEmail.has(to)) byEmail.set(to, []);
       byEmail.get(to).push(row.data);
     }
