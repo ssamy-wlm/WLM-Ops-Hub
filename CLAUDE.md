@@ -9335,6 +9335,168 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 and this task's own explicit "needs preview +
 approval" instruction — touches the real service-creation write path.
 
+**Inbound: removed the Monthly frequency default (ask instead) +
+per-address sender rules (2026-09-14, second follow-up on the same PR).**
+`api/inbound-email.js` only, continuing branch/PR #391 rather than a new
+PR — still exactly 12 files under `api/`.
+
+**1. No more silent default — genuinely ask instead, mirroring the
+existing CONFIRM/NEW catalog-match pending-reply flow, not a new
+mechanism invented from scratch.** `extractServiceFrequency()` no longer
+falls back to a `DEFAULT_FREQ` constant (removed outright, zero remaining
+references) — a fetched email with no recognizable frequency word now
+returns `{freq:null, label:null, detected:false}`. When that happens for
+a genuinely-new (tier-3) service, NOTHING is created — the item is held
+in a brand-new, dedicated pending queue
+(`inboundServiceFreqPending:<email>`, via `holdForFrequencyReply()`) and
+the sender is asked the task's own exact wording via a new
+`frequencyQuestionBody()`: `What frequency for "[service]"? Reply
+weekly / biweekly / monthly / quarterly / yearly / one-time.` — numbered
+(`weekly 1`/`weekly 2`/etc.) only once more than one item is pending at
+once, same numbering discipline the catalog-match queue already
+established. A later, separate reply consisting of just the bare
+frequency word (optionally with a number when disambiguation is needed)
+is recognized by a new, whole-line-anchored `parseFrequencyReply()` —
+the same "requires the ENTIRE first line, never a substring match"
+discipline `parseConfirmReply()` already uses, so an ordinary new email
+that happens to start with a frequency-shaped word is never misread as a
+reply — and `resolveFrequencyPendingReply()` then actually creates the
+service (and adds it to the Catalog), using the ORIGINAL parsed name.
+
+**Deliberately a SEPARATE queue/key from the catalog-match pending
+flow, not one shared queue with a `kind` field — flagged as a design
+decision, not obvious from the task's own wording (rule #7).** The two
+kinds of pending question are answered with structurally different reply
+text (`CONFIRM`/`NEW` vs. a bare frequency word) — keeping them in
+separate `ops_settings` rows means a stray `"weekly"` reply can never be
+misread as answering a still-open catalog-match question, or vice versa,
+with no cross-queue disambiguation logic needed at all.
+
+**The two flows CHAIN, they don't collide — the harder case, verified
+directly, not assumed.** A close-catalog-match item that also had no
+stated frequency now takes two round trips to resolve, not one:
+`resolvePendingServiceReply()`'s NEW branch (an admin choosing to create
+a separate service rather than reuse the close catalog match) now checks
+`target.freqDetected` — if the ORIGINAL email that produced the close
+match already stated a frequency, behavior is completely unchanged
+(create immediately, using that stored frequency); if it didn't, this
+branch no longer defaults either — it calls the same
+`holdForFrequencyReply()` the tier-3 direct path uses and returns the
+frequency question as the reply's body instead of creating anything. A
+second, later bare-frequency-word reply then resolves it via
+`resolveFrequencyPendingReply()`, exactly as the tier-3 case would. One
+real implementation of "ask about frequency," called from two call
+sites — never two.
+
+**2. Per-address sender rules replace the single global allowlist — a
+genuine per-recipient trust boundary, not just a routing tweak.**
+`service@` keeps a static, easy-to-edit two-person allowlist
+(`SERVICE_ALLOWED_SENDERS = new Set(['david@weblightmedia.com',
+'ssamy@weblightmedia.com'])`, renamed from the old `ALLOWED_SENDERS`) —
+its own resolver, `resolveInboundSender()`, is otherwise unchanged.
+`task@` gets a genuinely new resolver, `resolveActiveTeamMemberSender()`,
+checking the sender's email against the LIVE `ops_users`/`ops_admins`
+roster instead of any static list — any active team member can now email
+tasks in, not just David/Sarah. Both are dispatched from one new
+`resolveAllowedSender(supabase, fromEmail, isService)`, called at the
+same point in the handler's own step ordering as before (Step 5 — after
+signature verification and dedupe, still strictly before any body fetch
+or parser call, so the cost/abuse gate is unaffected).
+
+**`resolveActiveTeamMemberSender()` precisely mirrors
+`api/ops-auth.js`'s own real login-resolution precedence, not a
+simplified reinvention — deliberate, to avoid reintroducing the
+already-fixed 2026-08-25 "linked/dual-identity account" bug class (see
+that entry above).** Email alone never merges an `ops_users` row and an
+`ops_admins` row into one account — only an admin row's own
+`linkedUserId` field does that (the same real mechanism Sherine's dual-
+role account already relies on elsewhere in this codebase). The `role`/
+`level`/`employeeId` on the resulting session-shaped object are set
+exactly the way `callerTaskScope()`/`tierOf()` need to see them — a
+plain employee-only match resolves `role:'member'`,
+`employeeId:<their id>`, landing on `api/process-transcript.js`'s
+member-tier task-creation branch (self-assign only, matching
+`createTasksFromParsed()`'s existing `origin: sender.role === 'admin' ?
+'admin' : 'self'` split, updated in the same change so a plain team
+member's inbound task correctly gets `origin:'self'` — gating the
+employee-facing "Report this task" button the same way an equivalent
+member-created task already does everywhere else in this app).
+
+**A real, previously-undiscovered product-code gap found and fixed
+purely through disciplined regression-suite verification, not by
+inspection alone (rule #7) — service@ and task@ need genuinely different
+"sender not found" semantics, not the same one.** An early draft of
+`resolveAllowedSender()` collapsed both cases to an identical silent
+200-ignore. Re-running the pre-existing `verify_inbound_email.mjs` suite
+against this surfaced a real regression: its "allowlisted sender with no
+matching live admin record → 500, logged" case (a genuine
+misconfiguration worth a loud failure, since `service@` still has a real
+separate static allowlist an entry could be "on" without a backing
+`ops_admins` row) started silently succeeding instead. Determined this
+was a genuine, deliberate distinction to preserve, not a stale test to
+paper over: fixed `resolveAllowedSender()` to `throw` for the service@
+branch specifically when `resolveInboundSender()` returns null
+(restoring the original 500+logged behavior, since a static allowlist
+entry with no backing record IS a misconfiguration worth surfacing loudly),
+while `task@`'s branch (no static list to be erroneously "on" without a
+matching row) returns a plain `null` on no-match, handled uniformly by
+the caller as a silent 200 ignore — there's nothing anomalous about a
+team member's email simply not matching any live roster entry.
+
+Verified with `node --check` (clean) and three scratchpad Node
+integration-test suites against the real, byte-identical handler — no
+live Resend/Anthropic/Supabase access (rule #11):
+`verify_inbound_service_frequency.mjs` (rewritten/extended to 67/67,
+from the prior follow-up's 45) — the "explicitly stated" and
+"all six recognized words"/tier-1-exact/regression cases are unaffected
+and re-run clean; test 2 (no frequency stated) now confirms NOTHING is
+created, the exact required un-numbered question text is sent, one
+frequency-pending item is stored, and a later, separate bare `"weekly"`
+reply then creates the service using the original parsed name with the
+catalog addition also carrying it; test 5 (parsed-subject text must never
+leak into extraction) now confirms the same "asks instead of creating"
+outcome, still correctly naming the real parsed subject
+("Quarterly Drone Photography") in the question rather than being thrown
+off by the frequency-shaped word inside it; test 8 (close-match + no
+stated frequency) is now a full three-step flow — the original close-
+match email creates nothing, a NEW reply resolves the catalog question
+but still creates nothing (chaining into the frequency question instead,
+confirmed via the frequency-pending queue actually gaining an entry while
+the catalog-pending queue is confirmed cleared), and a further, separate
+bare-frequency-word reply then genuinely creates the service and adds it
+to the catalog; a new test 11 covers the previously-untested multi-item
+numbering/disambiguation path for the new pending-frequency queue — two
+new services with no stated frequency in one email produce two correctly
+NUMBERED questions, an un-numbered reply is genuinely ambiguous (resolves
+nothing, lists both candidates by number, leaves both still pending), and
+a numbered reply resolves exactly the right one, correctly leaving the
+other one still pending. `verify_inbound_email.mjs` (extended to 70/70,
+from 62) — the pre-existing "allowlisted sender, no matching record → 500"
+test was retargeted specifically to `service@` (the one recipient where
+that case still genuinely applies) and two new tests added:
+`task@` from neither an `ops_users` nor `ops_admins` match → silent
+200-ignore, zero parser calls (regression-proofing the new no-static-list
+behavior); `task@` from a real, plain `ops_users`-only employee (Rana) →
+full success, a correctly member-shaped session
+(`role!=='admin'`, `employeeId` set to her real id), and the resulting
+task correctly stamped `origin:'self'`/`assignedById` as her own id — the
+literal "any active team member" acceptance criterion, exercised
+end-to-end, not just asserted from the resolver's return shape in
+isolation. `verify_inbound_service_catalog.mjs` re-run clean at 42/42
+after seeding an explicit stated frequency in four unrelated tests whose
+own premise (catalog-matching behavior) was incidentally decoupled from
+the now-separate ask-instead path, matching this session's own
+established "surgical fix, preserve original test intent" convention —
+zero of that suite's own catalog-matching assertions changed. `ls
+api/*.js | wc -l` still 12 (no new file, `api/inbound-email.js` was the
+only file touched).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this task's own explicit "needs preview +
+approval" instruction — touches the real service-creation write path and
+widens who can create data via email (task@ now accepts any active team
+member, not a fixed two-person list).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
