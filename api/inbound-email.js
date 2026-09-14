@@ -364,13 +364,21 @@ async function loadCatalog(supabase) {
 // read-modify-write — bundles/categories/every existing service pass
 // through completely untouched, the same non-destructive discipline this
 // file's own service-write functions already use for a client record.
-async function addNewCatalogServices(supabase, catalog, names) {
+// `freq` (2026-09-14) is the frequency extracted/defaulted for the email
+// that produced these names (see extractServiceFrequency() below) — every
+// 'new'-tier item in one email shares it, since extraction is email-level,
+// not per-item (see that function's own comment on why). Falls back to
+// DEFAULT_FREQ if a caller ever omits it, never to the old hardcoded
+// 'one-time'.
+async function addNewCatalogServices(supabase, catalog, names, freq) {
+  const resolvedFreq = freq || DEFAULT_FREQ;
   const additions = names.map(name => ({
     id: genId('svc'),
     name,
     bundle: null,
     category: null,
-    freq: 'one-time',
+    freq: resolvedFreq,
+    freqLabel: FREQ_LABELS[resolvedFreq] || '',
     desc: '',
     defaultAssignee: '',
   }));
@@ -378,6 +386,56 @@ async function addNewCatalogServices(supabase, catalog, names) {
   const { error } = await supabase.from('ops_settings').upsert({ key: CATALOG_SETTINGS_KEY, data: updated }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
   return additions;
+}
+
+// ── Frequency extraction (2026-09-14 follow-up) ─────────────────────────
+// service@ previously hardcoded every created service to freq:'one-time'
+// because it reused the task-extraction schema, which has no frequency
+// concept at all. This scans the email's own text with plain, deterministic
+// regex — the same "never let the model guess a structured attribute"
+// conviction matchClient()/matchOwner()/matchCatalogService() already
+// established in this codebase — for one of the six frequency words this
+// follow-up names. Values/labels reused from client.html's own Add Service
+// modal (`weekly`/`monthly`/`quarterly`/`yearly`/`one-time` are the real
+// dropdown options there; `biweekly` isn't one of those five, but this
+// codebase already stores a non-enum value in a service's own freqLabel
+// field for display — e.g. a seeded "3x/week" service — so a detected
+// biweekly is stored the identical way: freq:'biweekly', freqLabel:
+// 'Biweekly'). No frequency mentioned anywhere → defaults to Monthly (the
+// most common service frequency, per this follow-up's own explicit
+// instruction) and the confirmation reply says so.
+//
+// Deliberately EMAIL-LEVEL, not per-service: this follow-up's own "ideally
+// add a small service-extraction step" suggestion is read as aspirational,
+// not mandatory, given its own stated scope ("api/inbound-email.js (parse
+// step)") — a genuine second Anthropic extraction pass, or widening the
+// shared task-extraction schema the Task Assignments/Daily Tasks parser
+// also depends on, would be materially more than a "parse step" fix. A
+// one-off email about services realistically states one frequency for the
+// whole message; if that assumption is ever wrong in practice, real
+// per-service extraction is a well-scoped follow-up, not a silent gap —
+// flagged here (and in this feature's own CLAUDE.md entry) rather than
+// silently built more completely or silently left unaddressed.
+const FREQ_LABELS = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly', 'one-time': 'One-Time' };
+const DEFAULT_FREQ = 'monthly';
+// Ordered with 'biweekly' checked before 'weekly' purely for defensiveness/
+// readability — \bweekly\b already can't match inside the single word
+// "biweekly" (no word boundary between "bi" and "weekly"), confirmed by
+// the regression test for this function.
+const FREQ_PATTERNS = [
+  { freq: 'biweekly', re: /\bbi-?weekly\b|every other week/i },
+  { freq: 'weekly', re: /\bweekly\b/i },
+  { freq: 'monthly', re: /\bmonthly\b/i },
+  { freq: 'quarterly', re: /\bquarterly\b/i },
+  { freq: 'yearly', re: /\byearly\b|\bannual(ly)?\b/i },
+  { freq: 'one-time', re: /\bone[\s-]?time\b/i },
+];
+function extractServiceFrequency(text) {
+  const s = String(text || '');
+  for (const { freq, re } of FREQ_PATTERNS) {
+    if (re.test(s)) return { freq, label: FREQ_LABELS[freq], detected: true };
+  }
+  return { freq: DEFAULT_FREQ, label: FREQ_LABELS[DEFAULT_FREQ], detected: false };
 }
 
 // ── Pending CONFIRM/NEW state for a close-match reply ───────────────────
@@ -488,11 +546,18 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
       fromCatalogServiceId: target.matchedService.id,
     });
   } else {
+    // Frequency comes from THIS pending item — extracted/defaulted from the
+    // ORIGINAL email that first produced this close match (see
+    // createServicesFromParsed()'s own pendingNew construction below), never
+    // re-extracted from the reply itself: a CONFIRM/NEW reply is typically
+    // just the bare keyword, with no service-context text to extract from.
+    const freq = target.freq || DEFAULT_FREQ;
     created = await writeOneService(supabase, target.clientId, {
       id: genId('svc'),
       name: target.parsedName,
       notes: target.notes,
-      freq: 'one-time',
+      freq,
+      freqLabel: target.freqLabel || FREQ_LABELS[freq] || '',
       due: target.dueDate || '',
       assigneeId: target.assigneeId,
       assigneeName: target.assigneeName,
@@ -503,8 +568,14 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
       addedToCatalog: true,
     });
     const catalog = await loadCatalog(supabase);
-    await addNewCatalogServices(supabase, catalog, [target.parsedName]);
+    await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
   }
+
+  const freqNote = parsed.action === 'new'
+    ? (target.freqDetected
+      ? ` Frequency: ${target.freqLabel || FREQ_LABELS[target.freq] || target.freq}.`
+      : ' Frequency set to Monthly (default) — reply to change.')
+    : '';
 
   return {
     resolved: true,
@@ -513,7 +584,7 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
     created,
     body: parsed.action === 'confirm'
       ? `Added your service "${target.matchedService.name}" to ${target.clientName} (used your existing catalog entry).`
-      : `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}.`,
+      : `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}.${freqNote}`,
   };
 }
 
@@ -535,7 +606,12 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
 //     — so the NEXT email using this name hits tier 1 instead.
 // A parsed item with no matched clientId is still reported as unmatched,
 // unchanged from before this feature.
-async function createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId) {
+//
+// `freqResult` (2026-09-14) is extractServiceFrequency()'s own result for
+// this ONE email — computed once by the caller, before this function runs,
+// and applied uniformly to every 'new'-tier item here (see that function's
+// own comment on why this is email-level, not per-item).
+async function createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult) {
   const unmatched = [];
   const withClient = [];
   for (const t of parsedTasks) {
@@ -602,7 +678,8 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     id: genId('svc'),
     name: t.subject,
     notes: t.notes,
-    freq: 'one-time',
+    freq: freqResult.freq,
+    freqLabel: freqResult.label,
     due: t.dueDate || '',
     assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
     assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
@@ -614,7 +691,7 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
   }));
 
   if (newItems.length) {
-    await addNewCatalogServices(supabase, catalog, newItems.map(({ t }) => t.subject));
+    await addNewCatalogServices(supabase, catalog, newItems.map(({ t }) => t.subject), freqResult.freq);
   }
 
   // Display numbering reflects each item's REAL position in the persisted
@@ -635,6 +712,13 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
       assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
       assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
       matchedService: { id: m.service.id, name: m.service.name, freq: m.service.freq || 'one-time', bundle: m.service.bundle || null, category: m.service.category || '' },
+      // The ORIGINAL email's own extracted/defaulted frequency — reused
+      // verbatim if this item is later resolved via a NEW reply (never via
+      // CONFIRM, which always uses the matched catalog entry's own freq
+      // instead; see resolvePendingServiceReply()'s own comment on why).
+      freq: freqResult.freq,
+      freqLabel: freqResult.label,
+      freqDetected: freqResult.detected,
       createdAt: new Date().toISOString(),
     }));
     const existingPending = await loadPendingConfirmations(supabase, sender.email);
@@ -773,6 +857,13 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 
+  // Extracted/defaulted once per email (service@ only meaningfully uses
+  // this — see extractServiceFrequency()'s own comment on why it's
+  // email-level, not per-item); computed unconditionally since it's a
+  // cheap, side-effect-free regex scan, not gated on `isService` to avoid
+  // a branch that could drift from what's actually used below.
+  const freqResult = extractServiceFrequency(emailText);
+
   // ── Step 6.5 (service@ only): is this a CONFIRM/NEW reply to a pending
   // close-match item? Runs BEFORE the parser — no Anthropic cost for a
   // plain "CONFIRM" reply — and, when recognized, completely replaces the
@@ -846,7 +937,7 @@ export default async function handler(req, res) {
       await markProcessed(supabase, emailId, { kind, createdCount: created.length, skippedAsDuplicateCount: skippedAsDuplicate.length });
       await sendConfirmation(created.length > 0, buildTaskConfirmationBody(created, skippedAsDuplicate));
     } else {
-      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId);
+      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult);
       const totalCreated = createdExisting.length + createdNew.length;
       await markProcessed(supabase, emailId, {
         kind,
@@ -857,7 +948,7 @@ export default async function handler(req, res) {
       });
       await sendConfirmation(
         totalCreated > 0 || pendingConfirmDisplay.length > 0,
-        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched)
+        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqResult)
       );
     }
   } catch (err) {
@@ -879,10 +970,18 @@ function buildTaskConfirmationBody(created, skippedAsDuplicate) {
   return lines.join('\n');
 }
 
-function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched) {
+function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqResult) {
   const lines = [];
   createdExisting.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''} (matched your existing catalog entry)`));
-  createdNew.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''}. Created new service "${s.name}" and added it to the catalog.`));
+  createdNew.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, ${s.freqLabel || 'Monthly'}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''}. Created new service "${s.name}" and added it to the catalog.`));
+  // Literal required text (per this follow-up's own explicit acceptance
+  // criteria) for every email where nothing recognizable as a frequency
+  // was found — a single note, not per-service, since freqResult is one
+  // extraction for the whole email (see extractServiceFrequency()'s own
+  // comment on why).
+  if (createdNew.length && freqResult && !freqResult.detected) {
+    lines.push('Frequency set to Monthly (default) — reply to change.');
+  }
   if (pendingConfirmDisplay.length) {
     const numbered = totalPendingAfter > 1;
     lines.push('', "Waiting on you — these looked like an existing catalog service, but weren't an exact match:");

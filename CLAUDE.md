@@ -9221,6 +9221,120 @@ real click-through (a genuine typo'd service name, then a real CONFIRM/
 NEW reply email) is still owed once the Resend-side configuration named
 in the entry above is in place.
 
+**Inbound `service@`: extract frequency from the email, stop defaulting to
+one-time (2026-09-14 follow-up).** `api/inbound-email.js` only — no new
+`api/*.js` file. Before this, every service created via `service@` (both
+the direct 'new'-tier create and a close-match's later NEW-reply
+resolution) hardcoded `freq: 'one-time'`, because both paths reuse the
+task-extraction schema (`parseTaskEmailForSession()`), which has no
+frequency concept at all.
+
+**A new `extractServiceFrequency(text)`** scans the ONE fetched email's
+own subject+body with plain, deterministic regex — the same "never let
+the model guess a structured attribute" conviction `matchClient()`/
+`matchOwner()`/`matchCatalogService()` already established in this file —
+for weekly/biweekly/monthly/quarterly/yearly/one-time. No frequency word
+found anywhere → defaults to Monthly (the most common service frequency,
+per this follow-up's own explicit instruction), and the confirmation
+reply says so with the literal required text: `Frequency set to Monthly
+(default) — reply to change.` `biweekly` isn't one of the five real
+dropdown values in `client.html`'s own Add Service modal
+(`weekly`/`monthly`/`quarterly`/`yearly`/`one-time`) — stored the same
+way this codebase already stores a non-enum frequency for display (a
+seeded "3x/week" service already does this): `freq:'biweekly'`,
+`freqLabel:'Biweekly'`.
+
+**Deliberately EMAIL-LEVEL, not per-service — flagged, not silently
+decided either way.** The task's own "ideally add a small
+service-extraction step (name + frequency + assignee)" suggestion was
+read as aspirational, not mandatory, given its own stated scope
+(`api/inbound-email.js (parse step)`) — a genuine second Anthropic
+extraction pass, or widening the shared task-extraction schema the Task
+Assignments/Daily Tasks parser also depends on, would be materially more
+than a "parse step" fix. One extraction is computed once per email and
+applied uniformly to every 'new'-tier service that email produces — a
+one-off email about services realistically states one frequency for the
+whole message. If that assumption is ever wrong in practice, genuine
+per-service extraction is a well-scoped follow-up, not a silent gap.
+
+**Persisted across the CONFIRM/NEW reply round-trip, not re-guessed from
+the reply.** A close-match pending item (`inboundServicePending:<email>`)
+now also stores `freq`/`freqLabel`/`freqDetected` — the ORIGINAL email's
+own extraction, at the moment the close match was first found — since a
+later CONFIRM/NEW reply is typically just the bare keyword, with no
+service-context text to extract a frequency from. Resolving via CONFIRM
+is completely unaffected (still always uses the matched catalog entry's
+own canonical freq, never the email's stated/defaulted one — unchanged,
+out of scope, verified as a regression check). Resolving via NEW creates
+the standalone service using the pending item's stored frequency, and the
+reply body names it: `Frequency: Weekly.` when it was genuinely detected,
+or the same default note when it wasn't. Tier-1 exact catalog matches are
+also completely unaffected — they still use the catalog's own canonical
+freq, never the email's, exactly as before this change (verified as a
+regression check too, including a case where the email explicitly states
+a different frequency than the catalog entry has, to prove it's ignored).
+
+A newly-created catalog entry (`addNewCatalogServices()`, for both the
+'new' tier and a NEW-reply resolution) now carries the same extracted/
+defaulted frequency instead of the old hardcoded 'one-time', so the next
+email using that exact name (tier 1) reuses a catalog entry with the
+correct frequency already on it.
+
+**Real bug found and fixed while writing the regression suite, not
+shipped blind:** the first version of the `one-time` regex
+(`/\bone-?time\b/i`) only matched a hyphenated or unhyphenated-no-space
+spelling ("one-time"/"onetime") — it did NOT match the equally natural
+"one time" (a plain space between the words), which a real Node test
+case caught immediately. Fixed to `/\bone[\s-]?time\b/i`.
+
+Verified with a new, dedicated Node test suite
+(`verify_inbound_service_frequency.mjs`, 45/45) against the real,
+byte-identical handler — no live Resend/Anthropic/Supabase access (rule
+#11) — covering: an explicitly-stated frequency ("monthly") creates the
+service with that freq and no default note; no frequency stated anywhere
+defaults to Monthly with the exact required note text; all six
+recognized words (weekly, biweekly via both "bi-weekly" and "every other
+week", quarterly, yearly via both "yearly" and "annual", one-time via
+both "one-time" and "one time") each resolve correctly on both the
+created service AND its catalog addition; "biweekly" never gets
+misread as "weekly" (confirmed directly, not just assumed from the
+regex's word-boundary behavior); extraction reads the FETCHED EMAIL body,
+never the parser's own parsed task subject (a subject that happens to
+contain a frequency word, like "Quarterly Drone Photography", must not
+leak into the result when the real email says nothing — verified
+directly); the exact catalog match (tier 1) regression-checked to ignore
+the email's stated frequency entirely; a close-match pending item stores
+the extracted frequency and a later, separate NEW-reply email correctly
+reuses it (both the detected-with-a-note and the defaulted-with-the-
+required-note cases); the sibling CONFIRM reply is unaffected by any of
+this; and multiple genuinely-new services in one email correctly share
+the same one extraction. Re-ran the two pre-existing suites
+(`verify_inbound_email.mjs` 62/62, `verify_inbound_service_catalog.mjs`
+42/42) — one pre-existing assertion in the base suite needed updating
+(test M expected the old hardcoded `freq==='one-time'`; its fake fetched
+email body has no frequency keyword, so it now correctly defaults to
+`'monthly'` — an intentional, expected supersession from this change,
+not a regression) and passes clean after the update; every other check
+in both suites passed unmodified. `node --check` passed; `ls api/*.js |
+wc -l` still 12 (no new file, `api/inbound-email.js` was the only file
+touched).
+
+**Concurrent-change note:** a separate, unrelated feature (per-team
+weekend email quiet hours, `lib/quietHours.js`, 2026-09-13) landed on
+`main` and also touches this same file (`sendConfirmation()` now checks
+`isWithinQuietHours(sender.team, ...)` before sending any reply) while
+this follow-up was in flight. Rebasing onto the latest `main` merged
+cleanly with no conflicts — verified by reading the full merged file, not
+assumed — and this follow-up's own new test suite mocks
+`isWithinQuietHours` to always allow the send, so its assertions are
+deterministic regardless of the real wall-clock day/time the suite
+happens to run, rather than relying on it never coinciding with a real
+quiet window.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this task's own explicit "needs preview +
+approval" instruction — touches the real service-creation write path.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
