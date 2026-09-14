@@ -42,6 +42,7 @@ import { logError } from '../lib/errorLog.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { sendResendEmail, buildEmailHtml } from '../lib/resendClient.js';
 import { parseTaskEmailForSession } from './process-transcript.js';
+import { isWithinQuietHours } from '../lib/quietHours.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -163,13 +164,17 @@ async function checkAndBumpRateLimit(supabase, senderEmail) {
 // recreated under a different id.
 async function resolveInboundSender(supabase, fromEmail) {
   if (fromEmail === 'ssamy@weblightmedia.com') {
-    return { id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: fromEmail };
+    // No ops_admins row to read a real team from — same 'Egypt' default
+    // this codebase already applies to any unset team (index.html: `u.team
+    // || 'Egypt'`), used here so per-team weekend quiet hours (2026-09-13)
+    // resolve exactly like an unset team would for any other account.
+    return { id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: fromEmail, team: 'Egypt' };
   }
   const { data: admins, error } = await supabase.from('ops_admins').select('id, data');
   if (error) throw new Error(error.message);
   const row = (admins || []).find(a => (a.data?.email || '').toLowerCase() === fromEmail && a.data?.status !== 'inactive');
   if (!row) return null;
-  return { id: row.id, role: 'admin', level: row.data.level || 'admin', name: row.data.name || fromEmail, email: fromEmail };
+  return { id: row.id, role: 'admin', level: row.data.level || 'admin', name: row.data.name || fromEmail, email: fromEmail, team: row.data.team || 'Egypt' };
 }
 
 // Name lookup for a resolved assigneeId — the same fallback-fill
@@ -730,6 +735,12 @@ export default async function handler(req, res) {
   // insertNotifications() already established (2026-09-02, "Log when
   // email is skipped"). ──
   async function sendConfirmation(ok, body) {
+    // Per-team weekend quiet hours (2026-09-13) — the actual task/service
+    // write (or the definitive "nothing to create" decision) has already
+    // happened by the time this ever runs, completely unaffected either
+    // way; only this reply email is gated, same "email only" scope every
+    // other notification path in this codebase now follows.
+    if (isWithinQuietHours(sender.team, new Date())) return;
     try {
       await sendResendEmail({
         to: sender.email,

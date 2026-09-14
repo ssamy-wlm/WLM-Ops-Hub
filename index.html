@@ -6609,6 +6609,10 @@ function _pushUserAssignment(userId, title, body, icon){
 }
 
 // ── Email assignment notification to a user (fire-and-forget, fails silently) ──
+// recipientId/recipientKind (2026-09-13): lets the server resolve THIS
+// user's own team and apply per-team weekend quiet hours (lib/quietHours.js)
+// — never trusting a client-side `u.team` value that could be a stale
+// localStorage snapshot; the server re-reads the real row fresh.
 function _emailUserAssignment(userId, title, body){
   try{
     const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===userId);
@@ -6620,7 +6624,8 @@ function _emailUserAssignment(userId, title, body){
         to: u.email,
         name: (u.name||'').split(' ')[0],
         title, body,
-        link: window.location.origin + '/user'
+        link: window.location.origin + '/user',
+        recipientId: userId, recipientKind: 'user'
       })
     }).catch(()=>{});
   }catch(e){}

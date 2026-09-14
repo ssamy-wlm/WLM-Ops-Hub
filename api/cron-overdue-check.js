@@ -42,6 +42,7 @@ import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
 import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
+import { isWithinQuietHours } from '../lib/quietHours.js';
 
 // Weekday morning "log your tasks" reminder (2026-09-07) — v1 hardcoded
 // recipients, can become a per-user toggle later. Sent via the same Resend
@@ -171,8 +172,32 @@ export default async function handler(req, res) {
               .upsert({ key: 'dailyTaskReminderState', data: { lastSentDate: cairo.dateStr } }, { onConflict: 'key' });
             if (stampErr) warnings.push(`dailyTaskReminderState stamp: ${stampErr.message}`);
 
+            // Quiet-hours check (2026-09-13) — this send site is the one
+            // place in this file that emails via sendResendEmail() DIRECTLY
+            // rather than through insertNotifications() (see this block's
+            // own header comment above: hardcoded name/email pairs, no
+            // recipientId to look a team up from the way every other
+            // notification type in this codebase already does). Resolved by
+            // matching each hardcoded email against the live directory, same
+            // "never trust a hardcoded default, resolve fresh" discipline
+            // already used elsewhere in this file — falls back to the
+            // Egypt/default window (matching this codebase's own established
+            // `team || 'Egypt'` convention) only if no matching row exists.
+            // In practice this cron only ever fires weekday mornings
+            // (vercel.json's "0 7 * * 1-5"), which never overlaps either
+            // team's Fri-evening-through-Mon-morning window — so this is a
+            // defensive, always-correct check, not one expected to actually
+            // suppress anything under the current schedule.
+            const { users: dtrUsers, admins: dtrAdmins } = await loadDirectory(supabase);
+            const teamForEmail = (email) => {
+              const lower = (email || '').toLowerCase();
+              const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
+              return rec?.team;
+            };
             let sent = 0;
+            let suppressed = 0;
             for (const r of DAILY_TASK_REMINDER_RECIPIENTS) {
+              if (isWithinQuietHours(teamForEmail(r.email), new Date())) { suppressed++; continue; }
               try {
                 const html = buildEmailHtml({
                   name: r.name,
@@ -187,7 +212,7 @@ export default async function handler(req, res) {
                 warnings.push(`dailyTaskReminder send (${r.email}): ${err.message}`);
               }
             }
-            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}`;
+            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}${suppressed ? ` (${suppressed} suppressed — quiet hours)` : ''}`;
           }
         } else {
           summary.dailyTaskReminder = 'not a Cairo weekday (safety-net check — the cron schedule itself already restricts to weekdays)';
