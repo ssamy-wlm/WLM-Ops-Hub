@@ -25,12 +25,15 @@
 // endpoint's "the server never trusts what the client claims" discipline
 // (CLAUDE.md rule #4) has a sharper edge here: the ENTIRE trust boundary is
 // (1) the webhook's own cryptographic signature, proving this request
-// really came from Resend, and (2) a hardcoded sender allowlist, proving
-// the EMAIL really came from David or Sarah. Both must pass before a
-// single byte of the email body is read or a single dollar of Anthropic
-// API cost is spent — see the strict step ordering below, which mirrors
-// this task's own explicit security ordering, not just a stylistic
-// convenience.
+// really came from Resend, and (2) a per-address sender rule — see
+// resolveAllowedSender() — proving the EMAIL really came from someone
+// authorized for the specific inbox it was sent to: service@ stays scoped
+// to just David and Sarah; task@ (2026-09-14 follow-up) opens to any
+// active team member, verified fresh against the live ops_users/
+// ops_admins roster. Both must pass before a single byte of the email
+// body is read or a single dollar of Anthropic API cost is spent — see
+// the strict step ordering below, which mirrors this task's own explicit
+// security ordering, not just a stylistic convenience.
 //
 // Only possible now that this project moved off the Vercel Hobby plan's
 // 12-serverless-function cap (see CLAUDE.md's extensive history of every
@@ -46,15 +49,22 @@ import { isWithinQuietHours } from '../lib/quietHours.js';
 
 export const config = { api: { bodyParser: false } };
 
-// Sender allowlist — the cost/abuse gate. Anyone else emailing either
-// inbound address is a complete no-op: no signature check is skipped for
-// them (that still runs first, since it's cheaper and protects the
-// endpoint itself), but nothing past this point ever runs for them — no
-// Resend body fetch, no Anthropic call, no database write. Edit this set
-// to add/remove allowed senders; it is deliberately a plain, easy-to-read
-// constant, not sourced from any table, since the whole point is that this
-// gate must be trivially auditable.
-const ALLOWED_SENDERS = new Set(['david@weblightmedia.com', 'ssamy@weblightmedia.com']);
+// Per-address sender rules (2026-09-14 follow-up), replacing the single
+// global allowlist this file started with. service@ stays tightly scoped
+// to the two admins who could always use it — creating/renaming a service
+// is catalog-affecting, data-model-shaping work. task@ opens to any ACTIVE
+// team member (see resolveAllowedSender() below) — an employee should be
+// able to email in their own tasks exactly as freely as they can add one
+// from My Tasks. Anyone not covered by the rule for the address they
+// emailed is a complete no-op: no signature check is skipped for them
+// (that still runs first, since it's cheaper and protects the endpoint
+// itself), but nothing past routing ever runs for them — no Resend body
+// fetch, no Anthropic call, no database write. SERVICE_ALLOWED_SENDERS is
+// deliberately a plain, easy-to-read constant, not sourced from any table,
+// since the whole point of that half of the gate is to stay trivially
+// auditable; task@'s rule can't be a static constant the same way, since
+// "any active team member" is inherently a live roster question.
+const SERVICE_ALLOWED_SENDERS = new Set(['david@weblightmedia.com', 'ssamy@weblightmedia.com']);
 const RATE_LIMIT_PER_SENDER_PER_DAY = 20;
 // The two inbound addresses this endpoint routes on — matched against each
 // entry of the webhook's own `to` array, case-insensitively, as a full
@@ -162,6 +172,11 @@ async function checkAndBumpRateLimit(supabase, senderEmail) {
 // discipline this codebase's own task-parser Sarah-alias fix already
 // established (2026-08-25), so this self-corrects if his account is ever
 // recreated under a different id.
+//
+// service@-specific (2026-09-14 follow-up): only ever called for the two
+// SERVICE_ALLOWED_SENDERS, so this stays scoped to Sarah + a real active
+// ops_admins row exactly as it always was — task@'s own, wider resolution
+// is resolveActiveTeamMemberSender() below.
 async function resolveInboundSender(supabase, fromEmail) {
   if (fromEmail === 'ssamy@weblightmedia.com') {
     // No ops_admins row to read a real team from — same 'Egypt' default
@@ -175,6 +190,80 @@ async function resolveInboundSender(supabase, fromEmail) {
   const row = (admins || []).find(a => (a.data?.email || '').toLowerCase() === fromEmail && a.data?.status !== 'inactive');
   if (!row) return null;
   return { id: row.id, role: 'admin', level: row.data.level || 'admin', name: row.data.name || fromEmail, email: fromEmail, team: row.data.team || 'Egypt' };
+}
+
+// task@-specific (2026-09-14 follow-up): resolves ANY active team member —
+// the Sarah sentinel, a real active ops_admins row, or a real active
+// ops_users row — into the same session-shaped object above. Mirrors
+// api/ops-auth.js's own real one-account-per-email login precedence
+// EXACTLY, rather than independently re-deriving it: email alone never
+// merges two rows into one account, only an admin row's own explicit
+// linkedUserId does (see that file's own comment on why — Sherine, whose
+// ops_admins/ops_users rows share an email today with no formal link,
+// deliberately still resolves admin-only). Replicating this precisely
+// matters here specifically because getting it wrong would silently
+// reintroduce the exact dual-identity self-assign/merge-detection bug
+// already found and fixed once for her account inside process-
+// transcript.js's own roster (2026-08-25) — a plain "check admins, then
+// users" resolver would drop a genuinely dual-role sender's employeeId,
+// which callerTaskScope()'s selfId computation depends on.
+async function resolveActiveTeamMemberSender(supabase, fromEmail) {
+  if (fromEmail === 'ssamy@weblightmedia.com') {
+    return { id: 'primary-admin', role: 'admin', level: 'owner', name: 'Sarah Samy', email: fromEmail, team: 'Egypt' };
+  }
+  const [{ data: admins, error: aErr }, { data: users, error: uErr }] = await Promise.all([
+    supabase.from('ops_admins').select('id, data'),
+    supabase.from('ops_users').select('id, data'),
+  ]);
+  if (aErr) throw new Error(aErr.message);
+  if (uErr) throw new Error(uErr.message);
+  const liveUsers = (users || []).filter(u => u.data?.status !== 'inactive');
+  const adminByEmail = (admins || []).find(a => (a.data?.email || '').toLowerCase() === fromEmail && a.data?.status !== 'inactive');
+  const userByEmail = liveUsers.find(u => (u.data?.email || '').toLowerCase() === fromEmail);
+
+  let employeeRow = null, adminRow = null;
+  if (adminByEmail && adminByEmail.data?.linkedUserId) {
+    const linked = liveUsers.find(u => u.id === adminByEmail.data.linkedUserId);
+    if (linked) { employeeRow = linked; adminRow = adminByEmail; }
+  }
+  if (!employeeRow && !adminRow && adminByEmail) adminRow = adminByEmail;
+  if (!employeeRow && !adminRow && userByEmail) employeeRow = userByEmail;
+  if (!employeeRow && !adminRow) return null;
+
+  const role = adminRow ? 'admin' : 'member';
+  const level = adminRow ? (adminRow.data.level || 'admin') : undefined;
+  const id = employeeRow ? employeeRow.id : adminRow.id;
+  const primary = employeeRow ? employeeRow.data : adminRow.data;
+  return {
+    id, role, level, name: primary.name || fromEmail, email: fromEmail,
+    employeeId: employeeRow ? employeeRow.id : undefined,
+    team: primary.team || 'Egypt',
+  };
+}
+
+// The single per-address dispatch point — service@ vs task@ genuinely have
+// different rules now (see the constants/functions above), so this is the
+// one place that decision is made, called from handler() right after
+// recipient routing.
+//
+// The two branches deliberately have different "not found" semantics,
+// preserved from before this follow-up rather than silently collapsed:
+// service@ still has a genuine static allowlist (SERVICE_ALLOWED_SENDERS)
+// separate from the live admin lookup — an email ON that list with no
+// matching ops_admins row is a real misconfiguration (the account was
+// deleted/renamed without updating this constant), worth a loud 500 +
+// logError, exactly as it always was. task@ has no equivalent static list
+// at all — "not an active team member" is the ONLY way to fail this check,
+// so it's always a plain, silent 200 ignore, the same as any other
+// unrecognized sender.
+async function resolveAllowedSender(supabase, fromEmail, isService) {
+  if (isService) {
+    if (!SERVICE_ALLOWED_SENDERS.has(fromEmail)) return null;
+    const sender = await resolveInboundSender(supabase, fromEmail);
+    if (!sender) throw new Error(`Allowlisted sender ${fromEmail} has no matching active admin record`);
+    return sender;
+  }
+  return resolveActiveTeamMemberSender(supabase, fromEmail);
 }
 
 // Name lookup for a resolved assigneeId — the same fallback-fill
@@ -223,6 +312,16 @@ function resolveAssigneeIdForWrite(assigneeId) {
 // a subtly different merge behavior. Skipped rows are reported back in the
 // confirmation reply instead of silently vanishing (rule #7) — see the
 // caller.
+//
+// `origin` (2026-09-14 follow-up): now that task@ accepts any active team
+// member, not just an admin, this mirrors api/ops-sync.js's own
+// established convention for its member-tier task-write branch — every
+// member-created task gets origin:'self' regardless of whether it's a
+// true self-assign or a manager-tier sender creating one for a direct
+// report, and only an admin-tier write gets origin:'admin'. This matters
+// beyond cosmetics: origin==='admin' is what gates the employee-facing
+// "Report this task" button (2026-09-01) — a plain employee's own emailed-
+// in task must never look admin-assigned when it wasn't.
 async function createTasksFromParsed(supabase, parsedTasks, sender, roster) {
   const created = [];
   const skippedAsDuplicate = [];
@@ -244,7 +343,7 @@ async function createTasksFromParsed(supabase, parsedTasks, sender, roster) {
       assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
       assignedById: sender.id,
       assignedByName: sender.name,
-      origin: 'admin',
+      origin: sender.role === 'admin' ? 'admin' : 'self',
       status: t.status,
       recurring: null,
       selfAssignedAt: null,
@@ -364,13 +463,22 @@ async function loadCatalog(supabase) {
 // read-modify-write — bundles/categories/every existing service pass
 // through completely untouched, the same non-destructive discipline this
 // file's own service-write functions already use for a client record.
-async function addNewCatalogServices(supabase, catalog, names) {
+// `freq` (2026-09-14) is the ACTUAL, KNOWN frequency for these names —
+// either genuinely stated in the email that produced them, or resolved via
+// a later frequency-reply (see resolveFrequencyPendingReply() below) —
+// never a silent default (2026-09-14 follow-up: the default was removed
+// outright, per this follow-up's own explicit ask). Every caller of this
+// function now only ever calls it once a real freq is in hand, so a
+// missing one here is a genuine caller bug, not a case to paper over.
+async function addNewCatalogServices(supabase, catalog, names, freq) {
+  if (!freq) throw new Error('addNewCatalogServices called without a resolved frequency');
   const additions = names.map(name => ({
     id: genId('svc'),
     name,
     bundle: null,
     category: null,
-    freq: 'one-time',
+    freq,
+    freqLabel: FREQ_LABELS[freq] || '',
     desc: '',
     defaultAssignee: '',
   }));
@@ -378,6 +486,194 @@ async function addNewCatalogServices(supabase, catalog, names) {
   const { error } = await supabase.from('ops_settings').upsert({ key: CATALOG_SETTINGS_KEY, data: updated }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
   return additions;
+}
+
+// ── Frequency extraction (2026-09-14, revised same-day follow-up) ───────
+// service@ previously hardcoded every created service to freq:'one-time'
+// because it reused the task-extraction schema, which has no frequency
+// concept at all. This scans the email's own text with plain, deterministic
+// regex — the same "never let the model guess a structured attribute"
+// conviction matchClient()/matchOwner()/matchCatalogService() already
+// established in this codebase — for one of the six frequency words this
+// follow-up names. Values/labels reused from client.html's own Add Service
+// modal (`weekly`/`monthly`/`quarterly`/`yearly`/`one-time` are the real
+// dropdown options there; `biweekly` isn't one of those five, but this
+// codebase already stores a non-enum value in a service's own freqLabel
+// field for display — e.g. a seeded "3x/week" service — so a detected
+// biweekly is stored the identical way: freq:'biweekly', freqLabel:
+// 'Biweekly').
+//
+// The FIRST version of this follow-up (same day) defaulted an undetected
+// frequency to Monthly. Per an explicit later revision, that default is
+// now REMOVED outright: no frequency stated anywhere means the service is
+// NOT created — it's held pending a frequency reply instead (see
+// holdForFrequencyReply()/resolveFrequencyPendingReply() below, the
+// sibling of the existing catalog-match CONFIRM/NEW pending flow), and the
+// confirmation reply asks the sender directly rather than silently
+// guessing. `detected:false` now carries `freq:null`/`label:null` — every
+// downstream caller MUST check `.detected` before ever creating a service
+// or writing to the catalog.
+//
+// Deliberately EMAIL-LEVEL, not per-service: this follow-up's own "ideally
+// add a small service-extraction step" suggestion is read as aspirational,
+// not mandatory, given its own stated scope ("api/inbound-email.js (parse
+// step)") — a genuine second Anthropic extraction pass, or widening the
+// shared task-extraction schema the Task Assignments/Daily Tasks parser
+// also depends on, would be materially more than a "parse step" fix. A
+// one-off email about services realistically states one frequency for the
+// whole message; if that assumption is ever wrong in practice, real
+// per-service extraction is a well-scoped follow-up, not a silent gap —
+// flagged here (and in this feature's own CLAUDE.md entry) rather than
+// silently built more completely or silently left unaddressed.
+const FREQ_LABELS = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly', 'one-time': 'One-Time' };
+// Ordered with 'biweekly' checked before 'weekly' purely for defensiveness/
+// readability — \bweekly\b already can't match inside the single word
+// "biweekly" (no word boundary between "bi" and "weekly"), confirmed by
+// the regression test for this function.
+const FREQ_PATTERNS = [
+  { freq: 'biweekly', re: /\bbi-?weekly\b|every other week/i },
+  { freq: 'weekly', re: /\bweekly\b/i },
+  { freq: 'monthly', re: /\bmonthly\b/i },
+  { freq: 'quarterly', re: /\bquarterly\b/i },
+  { freq: 'yearly', re: /\byearly\b|\bannual(ly)?\b/i },
+  { freq: 'one-time', re: /\bone[\s-]?time\b/i },
+];
+function extractServiceFrequency(text) {
+  const s = String(text || '');
+  for (const { freq, re } of FREQ_PATTERNS) {
+    if (re.test(s)) return { freq, label: FREQ_LABELS[freq], detected: true };
+  }
+  return { freq: null, label: null, detected: false };
+}
+
+// The literal question text (2026-09-14 follow-up's own exact wording),
+// with an optional trailing " N" on each option when more than one item
+// is pending at once — same numbering convention the catalog CONFIRM/NEW
+// question already established below.
+function frequencyQuestionBody(parsedName, displayIndex, numbered) {
+  const n = numbered ? ` ${displayIndex}` : '';
+  return `What frequency for "${parsedName}"? Reply weekly${n} / biweekly${n} / monthly${n} / quarterly${n} / yearly${n} / one-time${n}.`;
+}
+
+// ── Pending "what frequency?" state — the sibling of the catalog CONFIRM/
+// NEW pending flow below, for the OTHER question this endpoint can now
+// ask. Same storage shape/rationale (one ops_settings row per sender
+// email, content-based reply recognition, never Resend's own threading
+// headers — see pendingKey()'s own comment for why), deliberately a
+// SEPARATE key/queue from the catalog-match one rather than one queue with
+// a `kind` field: the two are answered with structurally different reply
+// text (CONFIRM/NEW vs. a bare frequency word), so keeping them apart
+// means a stray "weekly" reply can never be misread as answering a
+// still-open catalog-match question, or vice versa. ──
+function freqPendingKey(senderEmail) { return `inboundServiceFreqPending:${senderEmail}`; }
+async function loadFrequencyPending(supabase, senderEmail) {
+  const { data, error } = await supabase.from('ops_settings').select('data').eq('key', freqPendingKey(senderEmail)).maybeSingle();
+  if (error) throw new Error(error.message);
+  return Array.isArray(data?.data?.items) ? data.data.items : [];
+}
+async function saveFrequencyPending(supabase, senderEmail, items) {
+  if (!items.length) {
+    const { error } = await supabase.from('ops_settings').delete().eq('key', freqPendingKey(senderEmail));
+    if (error) throw new Error(error.message);
+    return;
+  }
+  const { error } = await supabase.from('ops_settings').upsert({ key: freqPendingKey(senderEmail), data: { items } }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+}
+// Appends one or more items awaiting a frequency reply, returning them
+// with their REAL persisted position (existing items first) — the exact
+// same numbering discipline the catalog-pending queue already established,
+// so a later "weekly 2" reply resolves against what's actually stored even
+// across multiple emails.
+async function holdForFrequencyReply(supabase, senderEmail, newItemsRaw) {
+  const pendingNew = newItemsRaw.map(raw => ({
+    id: genId('freqpend'),
+    parsedName: raw.parsedName,
+    clientId: raw.clientId,
+    clientName: raw.clientName,
+    notes: raw.notes,
+    dueDate: raw.dueDate || '',
+    assigneeId: raw.assigneeId,
+    assigneeName: raw.assigneeName,
+    createdAt: new Date().toISOString(),
+  }));
+  const existing = await loadFrequencyPending(supabase, senderEmail);
+  const merged = [...existing, ...pendingNew];
+  await saveFrequencyPending(supabase, senderEmail, merged);
+  const display = pendingNew.map((p, i) => ({ ...p, displayIndex: existing.length + i + 1 }));
+  return { display, totalAfter: merged.length };
+}
+
+// Requires the WHOLE first line to be just one of the six frequency words
+// (+ optional number) — same whole-line-anchored discipline
+// parseConfirmReply() below already established, so an ordinary new email
+// is never mistaken for a reply.
+function parseFrequencyReply(subject, body) {
+  const tryText = (text) => {
+    const line = String(text || '').replace(/^re:\s*/i, '').trim().split(/\r?\n/)[0].trim();
+    const m = line.match(/^(bi-?weekly|weekly|monthly|quarterly|yearly|one[\s-]?time)\s*#?(\d+)?\.?$/i);
+    if (!m) return null;
+    const raw = m[1].toLowerCase().replace(/\s+/g, ' ');
+    const freq = /^bi-?weekly$/.test(raw) ? 'biweekly' : /^one[\s-]?time$/.test(raw) ? 'one-time' : raw;
+    return { freq, index: m[2] ? parseInt(m[2], 10) : null };
+  };
+  return tryText(subject) || tryText(body);
+}
+
+// Resolves a bare frequency-word reply against this sender's pending
+// missing-frequency items. Returns null when this sender has nothing
+// pending or the email isn't recognizable as this kind of reply — the
+// caller then falls through exactly as if this function didn't exist.
+async function resolveFrequencyPendingReply(supabase, sender, subject, emailBody) {
+  const pending = await loadFrequencyPending(supabase, sender.email);
+  if (!pending.length) return null;
+  const parsed = parseFrequencyReply(subject, emailBody);
+  if (!parsed) return null;
+
+  let target = null;
+  if (pending.length === 1 && parsed.index == null) target = pending[0];
+  else if (parsed.index != null) target = pending[parsed.index - 1] || null;
+
+  if (!target) {
+    return {
+      resolved: false,
+      body: [
+        'Couldn\'t tell which pending service you meant — reply with the number too, e.g. "weekly 1":',
+        '',
+        ...pending.map((p, i) => `${i + 1}. "${p.parsedName}" for ${p.clientName}`),
+      ].join('\n'),
+    };
+  }
+
+  const remaining = pending.filter(p => p.id !== target.id);
+  await saveFrequencyPending(supabase, sender.email, remaining);
+
+  const freq = parsed.freq;
+  const created = await writeOneService(supabase, target.clientId, {
+    id: genId('svc'),
+    name: target.parsedName,
+    notes: target.notes,
+    freq,
+    freqLabel: FREQ_LABELS[freq] || '',
+    due: target.dueDate || '',
+    assigneeId: target.assigneeId,
+    assigneeName: target.assigneeName,
+    workStatus: 'not_started',
+    status: 'active',
+    category: '',
+    source: 'inbound-email',
+    addedToCatalog: true,
+  });
+  const catalog = await loadCatalog(supabase);
+  await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
+
+  return {
+    resolved: true,
+    action: 'freq',
+    item: target,
+    created,
+    body: `Created new service "${target.parsedName}" (${FREQ_LABELS[freq] || freq}) and added it to the catalog, for ${target.clientName}.`,
+  };
 }
 
 // ── Pending CONFIRM/NEW state for a close-match reply ───────────────────
@@ -470,9 +766,8 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
   const remaining = pending.filter(p => p.id !== target.id);
   await savePendingConfirmations(supabase, sender.email, remaining);
 
-  let created;
   if (parsed.action === 'confirm') {
-    created = await writeOneService(supabase, target.clientId, {
+    const created = await writeOneService(supabase, target.clientId, {
       id: genId('svc'),
       name: target.matchedService.name,
       notes: target.notes,
@@ -487,12 +782,28 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
       source: 'inbound-email',
       fromCatalogServiceId: target.matchedService.id,
     });
-  } else {
-    created = await writeOneService(supabase, target.clientId, {
+    return {
+      resolved: true,
+      action: 'confirm',
+      item: target,
+      created,
+      body: `Added your service "${target.matchedService.name}" to ${target.clientName} (used your existing catalog entry).`,
+    };
+  }
+
+  // action === 'new'. Frequency comes from THIS pending item — extracted
+  // from the ORIGINAL email that first produced this close match (see
+  // createServicesFromParsed()'s own pendingNew construction below), never
+  // re-extracted from the reply itself: a NEW reply is typically just the
+  // bare keyword, with no service-context text to extract from.
+  if (target.freqDetected) {
+    const freq = target.freq;
+    const created = await writeOneService(supabase, target.clientId, {
       id: genId('svc'),
       name: target.parsedName,
       notes: target.notes,
-      freq: 'one-time',
+      freq,
+      freqLabel: target.freqLabel || FREQ_LABELS[freq] || '',
       due: target.dueDate || '',
       assigneeId: target.assigneeId,
       assigneeName: target.assigneeName,
@@ -503,17 +814,31 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
       addedToCatalog: true,
     });
     const catalog = await loadCatalog(supabase);
-    await addNewCatalogServices(supabase, catalog, [target.parsedName]);
+    await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
+    return {
+      resolved: true,
+      action: 'new',
+      item: target,
+      created,
+      body: `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}. Frequency: ${target.freqLabel || FREQ_LABELS[target.freq] || target.freq}.`,
+    };
   }
 
+  // The original email never stated a frequency for this one either — per
+  // this follow-up's own "no silent default" requirement, hold it for a
+  // frequency reply instead of creating it now. Resolving the CONFIRM/NEW
+  // question is still real progress (action:'new', resolved:true) — it's
+  // the NEXT question, not a failure to understand this reply.
+  const { display, totalAfter } = await holdForFrequencyReply(supabase, sender.email, [{
+    parsedName: target.parsedName, clientId: target.clientId, clientName: target.clientName,
+    notes: target.notes, dueDate: target.dueDate, assigneeId: target.assigneeId, assigneeName: target.assigneeName,
+  }]);
   return {
     resolved: true,
-    action: parsed.action,
+    action: 'new',
     item: target,
-    created,
-    body: parsed.action === 'confirm'
-      ? `Added your service "${target.matchedService.name}" to ${target.clientName} (used your existing catalog entry).`
-      : `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}.`,
+    created: null,
+    body: frequencyQuestionBody(target.parsedName, display[0].displayIndex, totalAfter > 1),
   };
 }
 
@@ -535,14 +860,19 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
 //     — so the NEXT email using this name hits tier 1 instead.
 // A parsed item with no matched clientId is still reported as unmatched,
 // unchanged from before this feature.
-async function createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId) {
+//
+// `freqResult` (2026-09-14) is extractServiceFrequency()'s own result for
+// this ONE email — computed once by the caller, before this function runs,
+// and applied uniformly to every 'new'-tier item here (see that function's
+// own comment on why this is email-level, not per-item).
+async function createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult) {
   const unmatched = [];
   const withClient = [];
   for (const t of parsedTasks) {
     if (!t.clientId) { unmatched.push({ subject: t.subject }); continue; }
     withClient.push(t);
   }
-  if (!withClient.length) return { createdExisting: [], createdNew: [], pendingConfirmDisplay: [], totalPendingAfter: 0, unmatched };
+  if (!withClient.length) return { createdExisting: [], createdNew: [], pendingConfirmDisplay: [], totalPendingAfter: 0, freqPendingDisplay: [], totalFreqPendingAfter: 0, unmatched };
 
   const catalog = await loadCatalog(supabase);
   const matched = withClient.map(t => ({ t, m: matchCatalogService(t.subject, catalog.services) }));
@@ -598,23 +928,49 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     fromCatalogServiceId: m.service.id,
   }));
 
-  const createdNew = await writeGrouped(newItems, (t) => ({
-    id: genId('svc'),
-    name: t.subject,
-    notes: t.notes,
-    freq: 'one-time',
-    due: t.dueDate || '',
-    assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
-    assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
-    workStatus: 'not_started',
-    status: 'active',
-    category: '',
-    source: 'inbound-email',
-    addedToCatalog: true,
-  }));
+  // Genuinely-new (tier 3) items split on whether a frequency was actually
+  // stated in the email (2026-09-14 revised follow-up: no more silent
+  // default). Detected → created immediately, exactly as before. Not
+  // detected → NOT created — held for a frequency reply instead (see
+  // holdForFrequencyReply() above), reported back below as its own
+  // "waiting on you" section, the sibling of the catalog CONFIRM/NEW one.
+  const freqDetected = !!freqResult?.detected;
+  const createdNew = freqDetected
+    ? await writeGrouped(newItems, (t) => ({
+        id: genId('svc'),
+        name: t.subject,
+        notes: t.notes,
+        freq: freqResult.freq,
+        freqLabel: freqResult.label,
+        due: t.dueDate || '',
+        assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
+        assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
+        workStatus: 'not_started',
+        status: 'active',
+        category: '',
+        source: 'inbound-email',
+        addedToCatalog: true,
+      }))
+    : [];
 
-  if (newItems.length) {
-    await addNewCatalogServices(supabase, catalog, newItems.map(({ t }) => t.subject));
+  if (freqDetected && newItems.length) {
+    await addNewCatalogServices(supabase, catalog, newItems.map(({ t }) => t.subject), freqResult.freq);
+  }
+
+  let freqPendingDisplay = [];
+  let totalFreqPendingAfter = 0;
+  if (!freqDetected && newItems.length) {
+    const held = await holdForFrequencyReply(supabase, sender.email, newItems.map(({ t }) => ({
+      parsedName: t.subject,
+      clientId: t.clientId,
+      clientName: t.clientName,
+      notes: t.notes,
+      dueDate: t.dueDate,
+      assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
+      assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
+    })));
+    freqPendingDisplay = held.display;
+    totalFreqPendingAfter = held.totalAfter;
   }
 
   // Display numbering reflects each item's REAL position in the persisted
@@ -635,6 +991,13 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
       assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
       assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
       matchedService: { id: m.service.id, name: m.service.name, freq: m.service.freq || 'one-time', bundle: m.service.bundle || null, category: m.service.category || '' },
+      // The ORIGINAL email's own extracted/defaulted frequency — reused
+      // verbatim if this item is later resolved via a NEW reply (never via
+      // CONFIRM, which always uses the matched catalog entry's own freq
+      // instead; see resolvePendingServiceReply()'s own comment on why).
+      freq: freqResult.freq,
+      freqLabel: freqResult.label,
+      freqDetected: freqResult.detected,
       createdAt: new Date().toISOString(),
     }));
     const existingPending = await loadPendingConfirmations(supabase, sender.email);
@@ -644,7 +1007,7 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     totalPendingAfter = merged.length;
   }
 
-  return { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched };
+  return { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, freqPendingDisplay, totalFreqPendingAfter, unmatched };
 }
 
 function confirmationSubject(kind, ok) {
@@ -693,13 +1056,30 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 
-  // ── Step 4: sender allowlist — the cost/abuse gate. Runs BEFORE any
-  // parsing or body fetch, per this feature's own explicit security
-  // ordering. A non-allowlisted sender is a complete, silent no-op: 200 OK,
-  // nothing written, nothing read from Resend beyond the webhook metadata
-  // already in hand, and — critically — the Anthropic API is never called
-  // for them at all. ──
-  if (!ALLOWED_SENDERS.has(fromEmail)) {
+  // ── Step 4: route by recipient FIRST — a free, no-DB comparison. Which
+  // per-address sender rule applies (Step 5) depends on which inbox this
+  // email came to, so routing has to happen before that check now (it
+  // didn't need to when there was a single global allowlist). ──
+  const isTask = toList.includes(TASK_INBOX);
+  const isService = toList.includes(SERVICE_INBOX);
+  if (!isTask && !isService) return res.status(200).json({ ok: true, ignored: 'recipient did not match task@ or service@' });
+  const kind = isTask ? 'task' : 'service';
+
+  // ── Step 5: per-address sender allowlist/resolution — the cost/abuse
+  // gate, per this feature's own explicit security ordering, still runs
+  // BEFORE any parsing or body fetch. A non-matching sender is a complete,
+  // silent no-op: 200 OK, nothing written, nothing read from Resend beyond
+  // the webhook metadata already in hand, and — critically — the Anthropic
+  // API is never called for them at all. See resolveAllowedSender()'s own
+  // comment for why service@/task@ now have genuinely different rules. ──
+  let sender;
+  try {
+    sender = await resolveAllowedSender(supabase, fromEmail, isService);
+  } catch (err) {
+    await logError({ endpoint: 'inbound-email', error: err, extra: { emailId, fromEmail } });
+    return res.status(500).json({ error: err.message });
+  }
+  if (!sender) {
     return res.status(200).json({ ok: true, ignored: 'sender not allowlisted' });
   }
 
@@ -709,21 +1089,6 @@ export default async function handler(req, res) {
   if (!rateOk) {
     await logError({ endpoint: 'inbound-email', error: `Rate limit exceeded for ${fromEmail}`, extra: { emailId } });
     return res.status(200).json({ ok: true, ignored: 'rate limit exceeded' });
-  }
-
-  // ── Step 5: route by recipient. ──
-  const isTask = toList.includes(TASK_INBOX);
-  const isService = toList.includes(SERVICE_INBOX);
-  if (!isTask && !isService) return res.status(200).json({ ok: true, ignored: 'recipient did not match task@ or service@' });
-  const kind = isTask ? 'task' : 'service';
-
-  let sender;
-  try {
-    sender = await resolveInboundSender(supabase, fromEmail);
-    if (!sender) throw new Error(`Allowlisted sender ${fromEmail} has no matching active admin record`);
-  } catch (err) {
-    await logError({ endpoint: 'inbound-email', error: err, extra: { emailId, fromEmail } });
-    return res.status(500).json({ error: err.message });
   }
 
   // ── Step 9 (defined here, used from every outcome below): confirmation
@@ -773,16 +1138,26 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 
-  // ── Step 6.5 (service@ only): is this a CONFIRM/NEW reply to a pending
-  // close-match item? Runs BEFORE the parser — no Anthropic cost for a
-  // plain "CONFIRM" reply — and, when recognized, completely replaces the
-  // normal parse-and-create flow for this email. Returns null (falls
-  // through to the normal parse below) whenever this sender has nothing
-  // pending, or the email doesn't look like a reply at all. ──
+  // Extracted/defaulted once per email (service@ only meaningfully uses
+  // this — see extractServiceFrequency()'s own comment on why it's
+  // email-level, not per-item); computed unconditionally since it's a
+  // cheap, side-effect-free regex scan, not gated on `isService` to avoid
+  // a branch that could drift from what's actually used below.
+  const freqResult = extractServiceFrequency(emailText);
+
+  // ── Step 6.5 (service@ only): is this a reply to something already
+  // pending — either a CONFIRM/NEW catalog-match question, or a bare
+  // frequency-word answer to a "what frequency?" question? Both run
+  // BEFORE the parser — no Anthropic cost for a plain reply — and, when
+  // recognized, completely replace the normal parse-and-create flow for
+  // this email. Each returns null (falls through, trying the next one,
+  // then the normal parse below) whenever this sender has nothing pending
+  // of that kind, or the email doesn't look like that kind of reply. ──
   if (isService) {
     let replyResult;
     try {
       replyResult = await resolvePendingServiceReply(supabase, sender, emailSubject, emailBody);
+      if (!replyResult) replyResult = await resolveFrequencyPendingReply(supabase, sender, emailSubject, emailBody);
     } catch (err) {
       await logError({ endpoint: 'inbound-email', error: err, session: sender, extra: { emailId } });
       return res.status(500).json({ error: err.message });
@@ -846,18 +1221,19 @@ export default async function handler(req, res) {
       await markProcessed(supabase, emailId, { kind, createdCount: created.length, skippedAsDuplicateCount: skippedAsDuplicate.length });
       await sendConfirmation(created.length > 0, buildTaskConfirmationBody(created, skippedAsDuplicate));
     } else {
-      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId);
+      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, freqPendingDisplay, totalFreqPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult);
       const totalCreated = createdExisting.length + createdNew.length;
       await markProcessed(supabase, emailId, {
         kind,
         createdExistingCount: createdExisting.length,
         createdNewCount: createdNew.length,
         pendingConfirmCount: pendingConfirmDisplay.length,
+        freqPendingCount: freqPendingDisplay.length,
         unmatchedCount: unmatched.length,
       });
       await sendConfirmation(
-        totalCreated > 0 || pendingConfirmDisplay.length > 0,
-        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched)
+        totalCreated > 0 || pendingConfirmDisplay.length > 0 || freqPendingDisplay.length > 0,
+        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqPendingDisplay, totalFreqPendingAfter)
       );
     }
   } catch (err) {
@@ -879,10 +1255,18 @@ function buildTaskConfirmationBody(created, skippedAsDuplicate) {
   return lines.join('\n');
 }
 
-function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched) {
+// `freqPendingDisplay`/`totalFreqPendingAfter` (2026-09-14 revised
+// follow-up) — the sibling of `pendingConfirmDisplay`/`totalPendingAfter`,
+// for services whose email never stated a frequency at all: never
+// created, never defaulted, just asked about (see
+// holdForFrequencyReply()'s own comment on why).
+function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqPendingDisplay, totalFreqPendingAfter) {
   const lines = [];
   createdExisting.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''} (matched your existing catalog entry)`));
-  createdNew.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''}. Created new service "${s.name}" and added it to the catalog.`));
+  // createdNew only ever contains items whose frequency was genuinely
+  // stated (see createServicesFromParsed()'s own freqDetected split) — its
+  // freqLabel is always real, never a stand-in default.
+  createdNew.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, ${s.freqLabel || s.freq}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''}. Created new service "${s.name}" and added it to the catalog.`));
   if (pendingConfirmDisplay.length) {
     const numbered = totalPendingAfter > 1;
     lines.push('', "Waiting on you — these looked like an existing catalog service, but weren't an exact match:");
@@ -890,6 +1274,11 @@ function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfir
       const n = numbered ? ` ${p.displayIndex}` : '';
       lines.push(`"${p.parsedName}" looks like your existing "${p.matchedService.name}" — reply CONFIRM${n} to use it, or NEW${n} to create a separate service.`);
     });
+  }
+  if (freqPendingDisplay && freqPendingDisplay.length) {
+    const numbered = totalFreqPendingAfter > 1;
+    lines.push('', "Waiting on you — no frequency was stated for these:");
+    freqPendingDisplay.forEach(p => lines.push(frequencyQuestionBody(p.parsedName, p.displayIndex, numbered)));
   }
   if (unmatched.length) {
     lines.push('', "Couldn't create (no client could be identified):");
