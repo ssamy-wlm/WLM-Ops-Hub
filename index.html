@@ -3586,6 +3586,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <div style="font-size:11px;color:var(--text-light);margin-top:-8px;margin-bottom:14px;">New users default to a 2-month probation. Clear both dates to skip probation.</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Start Date</label>
+          <input class="form-input" type="date" id="newUserStartDate">
+          <div style="font-size:11px;color:var(--text-light);margin-top:4px;">Optional now — write-once: set here or later in Edit, but only once.</div>
+        </div>
+      </div>
       <div class="section-divider">Credentials & Platform Access</div>
       <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;line-height:1.5;">
         ✏️ Enter the login credentials for each platform this user will have access to. Leave blank to skip. Platforms are managed in <strong>Admin Controls → Platforms & Tools</strong>.
@@ -3645,6 +3652,21 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <option value="US">US</option>
               <option value="Egypt">Egyptian</option>
             </select>
+          </div>
+        </div>
+        <!-- Start Date (2026-09-14) — write-once server-side (see api/ops-sync.js's
+             preserveStartDateWriteOnce()): settable exactly once while empty, then
+             the input is locked read-only for the rest of this record's life — a
+             later correction is a deliberate DB action, not a casual form edit. -->
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Start Date</label>
+            <input class="form-input" type="date" id="editStartDate" onchange="_renderStartDateMarks(this.value)">
+            <div style="font-size:11px;color:var(--text-light);margin-top:4px;" id="editStartDateNote"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Milestones</label>
+            <div style="font-size:12px;color:var(--text-mid);padding-top:9px;" id="editStartDateMarks">—</div>
           </div>
         </div>
         <div class="form-group"><label class="form-label">Responsibilities</label><textarea class="form-textarea" id="editResp" rows="3" placeholder="Core responsibilities for this user…"></textarea></div>
@@ -4222,6 +4244,49 @@ function openAddUserModal(){document.getElementById('addUserModal').classList.ad
 // .modal-body, not inside it. Recomputed fresh on every open, so a later
 // open by an actual super admin correctly restores full edit capability
 // regardless of what a previous (view-only) open left behind.
+// Start Date (2026-09-14) — helpers used by the Edit User modal
+// (openEditUserModal()/saveEditUser()). The Add User modal has its own
+// plain `newUserStartDate` input (addUser()) with no lock/marks needed —
+// a brand-new user has no stored value yet, so it's a normal first-time-set
+// field; the lock/milestone logic here only matters once a real value
+// exists to protect, which is also where "keeps getting blanked" was
+// actually reported happening (an EDIT save, not creation). Parses a bare
+// 'YYYY-MM-DD' as a LOCAL date via y/m/d integers, never `new Date(dateStr)`
+// directly — the same UTC-midnight-misread bug class already fixed once
+// elsewhere in this file (e.g. _taFormatShortDate).
+function _fmtStartDateMark(d){
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+function _renderStartDateMarks(startDate){
+  const marksEl = document.getElementById('editStartDateMarks');
+  if(!marksEl) return;
+  if(!startDate){ marksEl.textContent = '—'; return; }
+  const [y,m,d] = startDate.split('-').map(Number);
+  if(!y||!m||!d){ marksEl.textContent = '—'; return; }
+  const sixMo = new Date(y, m-1, d); sixMo.setMonth(sixMo.getMonth()+6);
+  const oneYr = new Date(y, m-1, d); oneYr.setFullYear(oneYr.getFullYear()+1);
+  marksEl.innerHTML = `6-mo: <strong>${_fmtStartDateMark(sixMo)}</strong> &nbsp;·&nbsp; 1-yr: <strong>${_fmtStartDateMark(oneYr)}</strong>`;
+}
+// Write-once lock: mirrors the server's own preserveStartDateWriteOnce() —
+// a stored (non-empty) value is displayed read-only, since a form edit
+// could never actually change it server-side anyway; empty means this is
+// the one-time chance to set it. Runs AFTER _applyUserModalViewOnlyMode()
+// in openEditUserModal() below, so it correctly overrides that function's
+// blanket "enable everything for a super admin" for this one field only —
+// a super admin can still set an EMPTY startDate, just never change an
+// already-set one from this form.
+function _applyStartDateLock(startDate){
+  const input = document.getElementById('editStartDate');
+  const note  = document.getElementById('editStartDateNote');
+  if(!input) return;
+  const isSet = !!startDate;
+  if(isSet) input.disabled = true;
+  if(note) note.textContent = isSet
+    ? '🔒 Set — locked. Correcting a wrong date is a deliberate DB action, not a form edit.'
+    : 'One-time — cannot be changed once saved.';
+  _renderStartDateMarks(startDate||'');
+}
+
 function _applyUserModalViewOnlyMode(isSuperAdminViewer){
   const modal = document.getElementById('editUserModal');
   if(!modal) return;
@@ -4267,6 +4332,11 @@ function openEditUserModal(userIdOrName, forceView){
   // Missing/blank team reads as Egypt (existing records are never backfilled —
   // see CLAUDE.md rule #8/non-retroactivity; this is a read-time default only).
   document.getElementById('editUserTeam').value=u.team||'Egypt';
+  document.getElementById('editStartDate').value=u.startDate||'';
+  // Runs AFTER _applyUserModalViewOnlyMode() above so it correctly overrides
+  // that function's blanket enable for a super-tier editor — this field
+  // gets its own, stricter write-once lock regardless of viewer tier.
+  _applyStartDateLock(u.startDate);
   document.getElementById('editPass').value='';
   document.getElementById('editPass2').value='';
   // Personal info fields
@@ -4378,6 +4448,15 @@ async function saveEditUser(){
 
   const updated = {
     ...current, name, email, title, resp, role, team,
+    // Explicitly round-tripped (not just left to the `...current` spread
+    // above) so a genuine first-time value the admin just typed is actually
+    // sent — never dropped from the payload. The server is still the real
+    // write-once enforcement (preserveStartDateWriteOnce() in
+    // api/ops-sync.js): once startDate is already stored, the input here is
+    // locked read-only anyway (see _applyStartDateLock()), so fromField()
+    // just reflects the same already-stored value back, same as team/other
+    // fields above.
+    startDate: fromField('editStartDate', current.startDate),
     phone:            fromField('editPhone', current.phone),
     payRate:          fromNumberField('editPayRate', current.payRate),
     personalEmail:    fromField('editPersonalEmail', current.personalEmail),
@@ -4471,6 +4550,7 @@ async function addUser(){
   const managerId=document.getElementById('newUserManager')?.value||'';
   const probationStart=document.getElementById('newUserProbationStart')?.value||'';
   const probationEnd=document.getElementById('newUserProbationEnd')?.value||'';
+  const startDate=document.getElementById('newUserStartDate')?.value||'';
 
   const missing=[];
   if(!first) missing.push('First Name');
@@ -4510,6 +4590,7 @@ async function addUser(){
     managerId,
     probationStart,
     probationEnd,
+    startDate,
     status: 'active'
   });
   delete newUser.seeded;

@@ -176,6 +176,26 @@ function preserveMissingPasswordField(incoming, current) {
   return { ...incoming, password: current.password };
 }
 
+// A user's employment startDate is write-once (2026-09-14) — reported
+// incident: it kept getting blanked because an ordinary user save (edit
+// title/role/etc., no startDate field touched) didn't preserve it, since
+// upsertRows() does a full JSONB replace of `data`, not a merge. Same root
+// cause preserveMissingPasswordField/preserveMissingPayrollFields above
+// already exist to prevent for other fields — but startDate needs a
+// STRICTER rule than either of those (which only fall back when the
+// incoming value is missing/empty): once a real value is stored, this
+// ALWAYS wins over whatever the incoming payload carries, even a
+// deliberate non-empty edit — mirrors ops_tasks' assignedDate immutability
+// (2026-08-20, "only reads cur, never inc" once set). A genuine correction
+// to a wrong startDate is a deliberate one-off DB action, not something a
+// casual form re-save should be able to silently overwrite. First-time set
+// (current row has no startDate yet) passes the incoming value through
+// unchanged, whatever it is.
+function preserveStartDateWriteOnce(incoming, current) {
+  if (hasContent(current?.startDate)) return { ...incoming, startDate: current.startDate };
+  return incoming;
+}
+
 // A genuine password change (this row existed before, and the incoming
 // payload itself carries a new password value — not one merely carried
 // forward by preserveMissingPasswordField above, which is why this must run
@@ -1915,7 +1935,8 @@ export default async function handler(req, res) {
           const toWrite = (tier === 'manager'
             ? stamped.map(u => stripPayrollFields(u, byId.get(u.id)))
             : stamped.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
-          ).map(u => preserveMissingPasswordField(u, byId.get(u.id)));
+          ).map(u => preserveMissingPasswordField(u, byId.get(u.id)))
+           .map(u => preserveStartDateWriteOnce(u, byId.get(u.id)));
           applied.users = await upsertRows(supabase, 'ops_users', hashIncomingPasswords(toWrite), warnings);
         }
       }
