@@ -64,7 +64,8 @@ const DAILY_TASK_REMINDER_RECIPIENTS = [
 // (confirmed live: "0 7,8,22 * * *" failed the preview deploy with exactly
 // that error), even though two SEPARATE entries, each firing at most once a
 // day, deploy fine (also confirmed live). So vercel.json instead has two
-// entries: the pre-existing "0 22 * * *" (unchanged) and a new
+// entries: the pre-existing digest-cron entry (then "0 22 * * *", since
+// retimed to "0 11 * * 1-5" — see the weekday-mornings retiming entry) and a new
 // "0 7 * * 1-5" (weekdays only) for this reminder — the single-trigger
 // fallback the original task spec explicitly authorized for exactly this
 // case, with the accepted tradeoff that in winter (Cairo UTC+2) this lands
@@ -151,7 +152,7 @@ export default async function handler(req, res) {
     // ── Weekday morning "log your tasks" reminder — the 07:00 UTC weekday
     // invocation only (vercel.json's own "0 7 * * 1-5" entry — see the header
     // comment on cairoLocalParts() above for why this is a single trigger,
-    // not a 07:00/08:00 pair). Entirely independent of the 22:00 UTC block
+    // not a 07:00/08:00 pair). Entirely independent of the 11:00 UTC block
     // below — runs in its own try/catch so a failure here can never affect
     // the overdue/backup work, and vice versa. The Cairo weekday check below
     // is a defense-in-depth safety net (the cron's own "1-5" already
@@ -224,13 +225,18 @@ export default async function handler(req, res) {
     }
 
     // Everything below (overdue escalation, task attention, focus digest,
-    // hierarchy escalation) is the ORIGINAL once-daily job — unchanged
-    // behavior, just now gated to its original 22:00 UTC slot so folding the
-    // new 07:00/08:00 UTC morning triggers into this same single cron entry
-    // (see the note above) doesn't triple any of it. The daily backup
-    // snapshot no longer runs here — see api/cron-backup.js.
-    if (utcHour !== 22) {
-      return res.status(200).json({ ok: true, summary, warnings, skipped: 'not the 22:00 UTC daily-job hour' });
+    // hierarchy escalation) is the ORIGINAL once-daily job — retimed from
+    // 22:00 UTC (6 PM EDT / 5 PM EST) to 11:00 UTC weekdays-only (7 AM EDT /
+    // 6 AM EST — always 6-7 AM ET, DST-safe) so these land as a morning
+    // briefing instead of an end-of-day one; vercel.json's own cron entry
+    // for this job is now "0 11 * * 1-5" (Mon-Fri), so this gate gets to
+    // stay a plain hour check — the weekday restriction is the schedule's
+    // job, not this code's. Still gated to one specific hour, not "not 7,"
+    // so folding the unrelated 07:00 UTC morning-reminder trigger into this
+    // same handler (see the note above) can never double-run this block.
+    // The daily backup snapshot no longer runs here — see api/cron-backup.js.
+    if (utcHour !== 11) {
+      return res.status(200).json({ ok: true, summary, warnings, skipped: 'not the 11:00 UTC daily-job hour' });
     }
 
     // Org-wide on/off toggle (Super Admin-visible in Settings, same as the
@@ -283,6 +289,14 @@ export default async function handler(req, res) {
         }
 
         if (events.length) {
+          // bypassQuietHours (2026-09-15): applied to all four
+          // insertNotifications() calls in this file, not only the ones
+          // producing the five literally-named daily digest types — this
+          // 'overdue' escalation notification fires from the same
+          // weekday-11:00-UTC run as those digests, so it would hit the
+          // identical Monday-morning quiet-window suppression bug if left
+          // ungated (see the fuller reasoning on insertNotifications()'s own
+          // opts.bypassQuietHours comment in api/ops-sync.js).
           const { users, admins } = await loadDirectory(supabase);
           const rows = [];
           events.forEach(ev => {
@@ -301,7 +315,7 @@ export default async function handler(req, res) {
                 });
               });
           });
-          await insertNotifications(supabase, rows, warnings);
+          await insertNotifications(supabase, rows, warnings, { bypassQuietHours: true });
           summary.notificationsSent = rows.length;
         }
       }
@@ -312,7 +326,7 @@ export default async function handler(req, res) {
     // (different table, different notification types, different
     // recipients) and deliberately NOT gated behind the `overdueEnabled`
     // toggle above, which only ever governed service-overdue escalation —
-    // runs every invocation this endpoint fires (22:00 UTC). No
+    // runs every invocation this endpoint fires (11:00 UTC, weekdays). No
     // per-item idempotency stamp (unlike the service block above): a
     // digest/reminder is SUPPOSED to repeat every single day the
     // underlying task is still overdue/due-today, so "today's real state"
@@ -392,7 +406,7 @@ export default async function handler(req, res) {
         });
         summary.remindersSent = remindersSent;
 
-        await insertNotifications(supabase, notifRows, warnings);
+        await insertNotifications(supabase, notifRows, warnings, { bypassQuietHours: true });
       }
     } catch (err) {
       await logError({ endpoint: 'cron-overdue-check:taskAttention', error: err });
@@ -503,7 +517,7 @@ export default async function handler(req, res) {
         // insertNotifications() batches its own outgoing email per
         // recipient (see its own header comment) — one row per person here
         // means exactly one email per person, never per-item.
-        await insertNotifications(supabase, focusRows, warnings);
+        await insertNotifications(supabase, focusRows, warnings, { bypassQuietHours: true });
       }
     } catch (err) {
       await logError({ endpoint: 'cron-overdue-check:focusDigest', error: err });
@@ -654,7 +668,7 @@ export default async function handler(req, res) {
       summary.managerSummariesSent = managerSummariesSent;
       summary.escalatingAdminsCount = escalatingAdmins.length;
       summary.inactivePeopleCount = inactivePeople.length;
-      await insertNotifications(supabase, hierarchyRows, warnings);
+      await insertNotifications(supabase, hierarchyRows, warnings, { bypassQuietHours: true });
     } catch (err) {
       await logError({ endpoint: 'cron-overdue-check:hierarchyEscalation', error: err });
       warnings.push(`hierarchyEscalation: ${err.message}`);
