@@ -1314,7 +1314,7 @@ async function fireMessageNotification(supabase, message, warnings, notices) {
   }], warnings);
 }
 
-export async function insertNotifications(supabase, rows, warnings) {
+export async function insertNotifications(supabase, rows, warnings, opts = {}) {
   if (!rows.length) return;
   const payload = rows.map(r => ({ id: genNotifId(), data: { ...r, read: false, createdAt: new Date().toISOString() } }));
   const { error } = await supabase.from('ops_notifications').insert(payload);
@@ -1345,6 +1345,19 @@ export async function insertNotifications(supabase, rows, warnings) {
     // so no call site needed to change at all. See lib/quietHours.js.
     // Suppression is email-only: the in-app ops_notifications row for a
     // suppressed item was already inserted above, unaffected.
+    //
+    // opts.bypassQuietHours (2026-09-15) — an explicit, caller-scoped opt-out
+    // for api/cron-overdue-check.js's own daily digest/escalation sends ONLY
+    // (its four insertNotifications() call sites pass this; every other
+    // caller in this codebase — every other event type in this file,
+    // api/inbound-email.js's confirmation replies, etc. — omits it and keeps
+    // the normal per-team quiet-hours check unchanged). That cron now runs
+    // weekdays-only at 11:00 UTC (6-7 AM ET) instead of daily at 22:00 UTC;
+    // without this bypass, a Monday-morning run would fall inside the US
+    // team's own Fri-18:00-through-Mon-08:00 quiet window and get silently
+    // dropped — exactly the opposite of "moved to mornings so people see it
+    // at the start of the day." Weekend suppression for this cron is now the
+    // schedule's own job (it simply never fires Sat/Sun), not this gate's.
     const { users, admins } = await getDirectory(supabase);
     const teamOf = (id, kind) => {
       if (id === 'primary-admin') return undefined; // no row -> falls back to the default (Egypt) window
@@ -1356,7 +1369,7 @@ export async function insertNotifications(supabase, rows, warnings) {
     for (const row of payload) {
       const to = row.data.recipientEmail;
       if (!to) continue;
-      if (isWithinQuietHours(teamOf(row.data.recipientId, row.data.recipientKind), now)) continue;
+      if (!opts.bypassQuietHours && isWithinQuietHours(teamOf(row.data.recipientId, row.data.recipientKind), now)) continue;
       if (!byEmail.has(to)) byEmail.set(to, []);
       byEmail.get(to).push(row.data);
     }
