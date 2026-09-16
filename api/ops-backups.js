@@ -65,9 +65,17 @@ export default async function handler(req, res) {
 
   if (action === 'manual') {
     try {
-      const { warnings, snapshot } = await buildBackupSnapshot(supabase);
+      const { warnings, failedTables, complete, snapshot } = await buildBackupSnapshot(supabase);
       const newId = await insertBackupRow(supabase, 'manual', snapshot);
-      return res.status(200).json({ ok: true, id: newId, tableCounts: snapshot.meta.tableCounts, warnings });
+      // Same "fail loudly, name the tables" discipline as the daily-auto
+      // cron path (api/cron-backup.js) — a manual snapshot that silently
+      // shipped incomplete would be just as much a recovery risk as an
+      // automated one, and this endpoint shares the exact same capture
+      // logic (buildBackupSnapshot()), so it needs the exact same log.
+      if (!complete) {
+        await logError({ endpoint: 'ops-backups:manual', error: `snapshot INCOMPLETE — ${failedTables.length} table(s) failed to capture after retries: ${failedTables.join(', ')}`, extra: { backupId: newId, failedTables, warnings }, session });
+      }
+      return res.status(200).json({ ok: true, id: newId, tableCounts: snapshot.meta.tableCounts, complete, failedTables, warnings });
     } catch (err) {
       await logError({ endpoint: 'ops-backups', error: err, session });
       return res.status(500).json({ error: err.message });

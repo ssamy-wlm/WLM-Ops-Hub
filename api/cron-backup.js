@@ -25,7 +25,7 @@
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { resolveReportRecipients } from './ops-sync.js';
-import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups } from '../lib/opsBackup.js';
+import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups, TABLE_READ_MAX_ATTEMPTS } from '../lib/opsBackup.js';
 import { sendResendEmail } from '../lib/resendClient.js';
 
 // Retention (tightened 2026-09-13, from 120 to 28): the in-DB copy only ever
@@ -80,11 +80,15 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'cron-backup', error: err }); return res.status(500).json({ error: err.message }); }
 
   try {
-    const { warnings: backupWarnings, snapshot } = await buildBackupSnapshot(supabase);
+    const { warnings: backupWarnings, failedTables, complete, snapshot } = await buildBackupSnapshot(supabase);
     const id = await insertBackupRow(supabase, 'daily-auto', snapshot);
     const prune = await pruneOldDailyBackups(supabase, DAILY_AUTO_KEEP_COUNT);
-    if (backupWarnings.length) {
-      await logError({ endpoint: 'cron-backup', error: `snapshot completed with ${backupWarnings.length} table warning(s)`, extra: { warnings: backupWarnings } });
+    // Loud, not swallowed: logged with the SPECIFIC tables affected (not
+    // just a count), so a real incident can actually be diagnosed from
+    // ops_error_log alone rather than needing to pull the snapshot row and
+    // eyeball which table counts look suspiciously like zero.
+    if (!complete) {
+      await logError({ endpoint: 'cron-backup', error: `snapshot INCOMPLETE — ${failedTables.length} table(s) failed to capture after retries: ${failedTables.join(', ')}`, extra: { backupId: id, failedTables, warnings: backupWarnings } });
     }
 
     const json = JSON.stringify(snapshot);
@@ -108,10 +112,26 @@ export default async function handler(req, res) {
         const recipients = resolveReportRecipients(null, admins);
         email.recipients = recipients.length;
         const attachment = { filename, content: Buffer.from(json, 'utf8').toString('base64'), type: 'application/json' };
-        const subject = `Ops Hub backup — ${now.toISOString().slice(0, 10)} (${formatBytes(sizeBytes)})`;
-        const tableLines = Object.entries(snapshot.meta.tableCounts).map(([t, c]) => `${t}: ${c}`).join('\n');
+        const subject = complete
+          ? `Ops Hub backup — ${now.toISOString().slice(0, 10)} (${formatBytes(sizeBytes)})`
+          : `⚠️ INCOMPLETE Ops Hub backup — ${now.toISOString().slice(0, 10)} — ${failedTables.length} table(s) failed to capture`;
+        // A "0" in this list is now unambiguous even without opening the
+        // raw snapshot: tableLines only ever lists a table that actually
+        // read successfully (even if it genuinely has zero rows); a failed
+        // table is called out separately below instead, so a reader can
+        // never mistake "failed to capture" for "genuinely empty."
+        const tableLines = Object.entries(snapshot.meta.tableCounts)
+          .filter(([t]) => !failedTables.includes(t))
+          .map(([t, c]) => `${t}: ${c}`).join('\n');
+        const incompleteBanner = complete ? '' : (
+          `<div style="background:#fff3f3;border:1px solid #e8b4b4;border-radius:8px;padding:12px 14px;margin:0 0 14px;">`
+          + `<p style="font-size:13px;font-weight:700;color:#a33;margin:0 0 4px;">⚠️ This backup is INCOMPLETE</p>`
+          + `<p style="font-size:12px;color:#a33;margin:0;">Failed to capture (retried ${TABLE_READ_MAX_ATTEMPTS} time(s) each): ${failedTables.join(', ')}</p>`
+          + `</div>`
+        );
         const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1a1a1a;">`
           + `<p style="font-size:15px;font-weight:700;margin:0 0 10px;">Ops Hub daily backup</p>`
+          + incompleteBanner
           + `<p style="font-size:13px;color:#555;margin:0 0 6px;">Generated: ${now.toISOString()}</p>`
           + `<p style="font-size:13px;color:#555;margin:0 0 14px;">Size: ${formatBytes(sizeBytes)} · Backup ID: ${id}</p>`
           + `<pre style="font-size:12px;background:#f7f7f7;border-radius:8px;padding:12px;white-space:pre-wrap;">${tableLines}</pre>`
@@ -142,7 +162,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       ok: true,
-      backup: { id, tableCounts: snapshot.meta.tableCounts, sizeBytes, warnings: backupWarnings, trimmed: prune.trimmed, pruneError: prune.error || null, keepCount: DAILY_AUTO_KEEP_COUNT },
+      backup: { id, tableCounts: snapshot.meta.tableCounts, complete, failedTables, sizeBytes, warnings: backupWarnings, trimmed: prune.trimmed, pruneError: prune.error || null, keepCount: DAILY_AUTO_KEEP_COUNT },
       email,
     });
   } catch (err) {
