@@ -463,13 +463,10 @@ async function loadCatalog(supabase) {
 // read-modify-write — bundles/categories/every existing service pass
 // through completely untouched, the same non-destructive discipline this
 // file's own service-write functions already use for a client record.
-// `freq` (2026-09-14) is the ACTUAL, KNOWN frequency for these names —
-// either genuinely stated in the email that produced them, or resolved via
-// a later frequency-reply (see resolveFrequencyPendingReply() below) —
-// never a silent default (2026-09-14 follow-up: the default was removed
-// outright, per this follow-up's own explicit ask). Every caller of this
-// function now only ever calls it once a real freq is in hand, so a
-// missing one here is a genuine caller bug, not a case to paper over.
+// `freq` is always populated by the time this is called — either genuinely
+// extracted from the email or DEFAULT_FREQ's Monthly fallback (see
+// extractServiceFrequency() above) — so a caller passing a falsy value here
+// is a genuine bug, not a real-world case to paper over.
 async function addNewCatalogServices(supabase, catalog, names, freq) {
   if (!freq) throw new Error('addNewCatalogServices called without a resolved frequency');
   const additions = names.map(name => ({
@@ -488,44 +485,40 @@ async function addNewCatalogServices(supabase, catalog, names, freq) {
   return additions;
 }
 
-// ── Frequency extraction (2026-09-14, revised same-day follow-up) ───────
+// ── Frequency extraction (2026-09-16, reverted back to a Monthly default) ─
 // service@ previously hardcoded every created service to freq:'one-time'
 // because it reused the task-extraction schema, which has no frequency
 // concept at all. This scans the email's own text with plain, deterministic
 // regex — the same "never let the model guess a structured attribute"
 // conviction matchClient()/matchOwner()/matchCatalogService() already
-// established in this codebase — for one of the six frequency words this
-// follow-up names. Values/labels reused from client.html's own Add Service
-// modal (`weekly`/`monthly`/`quarterly`/`yearly`/`one-time` are the real
-// dropdown options there; `biweekly` isn't one of those five, but this
-// codebase already stores a non-enum value in a service's own freqLabel
-// field for display — e.g. a seeded "3x/week" service — so a detected
-// biweekly is stored the identical way: freq:'biweekly', freqLabel:
-// 'Biweekly').
+// established in this codebase — for one of the six frequency words. Values/
+// labels reused from client.html's own Add Service modal (`weekly`/
+// `monthly`/`quarterly`/`yearly`/`one-time` are the real dropdown options
+// there; `biweekly` isn't one of those five, but this codebase already
+// stores a non-enum value in a service's own freqLabel field for display —
+// e.g. a seeded "3x/week" service — so a detected biweekly is stored the
+// identical way: freq:'biweekly', freqLabel:'Biweekly').
 //
-// The FIRST version of this follow-up (same day) defaulted an undetected
-// frequency to Monthly. Per an explicit later revision, that default is
-// now REMOVED outright: no frequency stated anywhere means the service is
-// NOT created — it's held pending a frequency reply instead (see
-// holdForFrequencyReply()/resolveFrequencyPendingReply() below, the
-// sibling of the existing catalog-match CONFIRM/NEW pending flow), and the
-// confirmation reply asks the sender directly rather than silently
-// guessing. `detected:false` now carries `freq:null`/`label:null` — every
-// downstream caller MUST check `.detected` before ever creating a service
-// or writing to the catalog.
+// No frequency stated anywhere → defaults to Monthly (the most common
+// service frequency), `detected:false` so callers can still tell a real
+// match from the fallback and note it in the confirmation reply. This is a
+// REVERSION (2026-09-16): a same-day follow-up had briefly replaced this
+// default with an ask-and-wait pending-reply flow (never create, ask the
+// sender, wait for a frequency-word reply) — that flow shipped, merged, and
+// has since been explicitly reverted back to this original default-and-note
+// design per direct instruction. See this feature's own CLAUDE.md entry for
+// the full back-and-forth; nothing about that history changes what's live
+// now — every caller can trust `freq`/`label` are always populated.
 //
-// Deliberately EMAIL-LEVEL, not per-service: this follow-up's own "ideally
-// add a small service-extraction step" suggestion is read as aspirational,
-// not mandatory, given its own stated scope ("api/inbound-email.js (parse
-// step)") — a genuine second Anthropic extraction pass, or widening the
-// shared task-extraction schema the Task Assignments/Daily Tasks parser
-// also depends on, would be materially more than a "parse step" fix. A
-// one-off email about services realistically states one frequency for the
-// whole message; if that assumption is ever wrong in practice, real
-// per-service extraction is a well-scoped follow-up, not a silent gap —
-// flagged here (and in this feature's own CLAUDE.md entry) rather than
-// silently built more completely or silently left unaddressed.
+// Deliberately EMAIL-LEVEL, not per-service: a genuine second Anthropic
+// extraction pass, or widening the shared task-extraction schema the Task
+// Assignments/Daily Tasks parser also depends on, would be materially more
+// than a "parse step" fix. A one-off email about services realistically
+// states one frequency for the whole message; if that assumption is ever
+// wrong in practice, real per-service extraction is a well-scoped follow-up,
+// not a silent gap.
 const FREQ_LABELS = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly', 'one-time': 'One-Time' };
+const DEFAULT_FREQ = 'monthly';
 // Ordered with 'biweekly' checked before 'weekly' purely for defensiveness/
 // readability — \bweekly\b already can't match inside the single word
 // "biweekly" (no word boundary between "bi" and "weekly"), confirmed by
@@ -543,137 +536,7 @@ function extractServiceFrequency(text) {
   for (const { freq, re } of FREQ_PATTERNS) {
     if (re.test(s)) return { freq, label: FREQ_LABELS[freq], detected: true };
   }
-  return { freq: null, label: null, detected: false };
-}
-
-// The literal question text (2026-09-14 follow-up's own exact wording),
-// with an optional trailing " N" on each option when more than one item
-// is pending at once — same numbering convention the catalog CONFIRM/NEW
-// question already established below.
-function frequencyQuestionBody(parsedName, displayIndex, numbered) {
-  const n = numbered ? ` ${displayIndex}` : '';
-  return `What frequency for "${parsedName}"? Reply weekly${n} / biweekly${n} / monthly${n} / quarterly${n} / yearly${n} / one-time${n}.`;
-}
-
-// ── Pending "what frequency?" state — the sibling of the catalog CONFIRM/
-// NEW pending flow below, for the OTHER question this endpoint can now
-// ask. Same storage shape/rationale (one ops_settings row per sender
-// email, content-based reply recognition, never Resend's own threading
-// headers — see pendingKey()'s own comment for why), deliberately a
-// SEPARATE key/queue from the catalog-match one rather than one queue with
-// a `kind` field: the two are answered with structurally different reply
-// text (CONFIRM/NEW vs. a bare frequency word), so keeping them apart
-// means a stray "weekly" reply can never be misread as answering a
-// still-open catalog-match question, or vice versa. ──
-function freqPendingKey(senderEmail) { return `inboundServiceFreqPending:${senderEmail}`; }
-async function loadFrequencyPending(supabase, senderEmail) {
-  const { data, error } = await supabase.from('ops_settings').select('data').eq('key', freqPendingKey(senderEmail)).maybeSingle();
-  if (error) throw new Error(error.message);
-  return Array.isArray(data?.data?.items) ? data.data.items : [];
-}
-async function saveFrequencyPending(supabase, senderEmail, items) {
-  if (!items.length) {
-    const { error } = await supabase.from('ops_settings').delete().eq('key', freqPendingKey(senderEmail));
-    if (error) throw new Error(error.message);
-    return;
-  }
-  const { error } = await supabase.from('ops_settings').upsert({ key: freqPendingKey(senderEmail), data: { items } }, { onConflict: 'key' });
-  if (error) throw new Error(error.message);
-}
-// Appends one or more items awaiting a frequency reply, returning them
-// with their REAL persisted position (existing items first) — the exact
-// same numbering discipline the catalog-pending queue already established,
-// so a later "weekly 2" reply resolves against what's actually stored even
-// across multiple emails.
-async function holdForFrequencyReply(supabase, senderEmail, newItemsRaw) {
-  const pendingNew = newItemsRaw.map(raw => ({
-    id: genId('freqpend'),
-    parsedName: raw.parsedName,
-    clientId: raw.clientId,
-    clientName: raw.clientName,
-    notes: raw.notes,
-    dueDate: raw.dueDate || '',
-    assigneeId: raw.assigneeId,
-    assigneeName: raw.assigneeName,
-    createdAt: new Date().toISOString(),
-  }));
-  const existing = await loadFrequencyPending(supabase, senderEmail);
-  const merged = [...existing, ...pendingNew];
-  await saveFrequencyPending(supabase, senderEmail, merged);
-  const display = pendingNew.map((p, i) => ({ ...p, displayIndex: existing.length + i + 1 }));
-  return { display, totalAfter: merged.length };
-}
-
-// Requires the WHOLE first line to be just one of the six frequency words
-// (+ optional number) — same whole-line-anchored discipline
-// parseConfirmReply() below already established, so an ordinary new email
-// is never mistaken for a reply.
-function parseFrequencyReply(subject, body) {
-  const tryText = (text) => {
-    const line = String(text || '').replace(/^re:\s*/i, '').trim().split(/\r?\n/)[0].trim();
-    const m = line.match(/^(bi-?weekly|weekly|monthly|quarterly|yearly|one[\s-]?time)\s*#?(\d+)?\.?$/i);
-    if (!m) return null;
-    const raw = m[1].toLowerCase().replace(/\s+/g, ' ');
-    const freq = /^bi-?weekly$/.test(raw) ? 'biweekly' : /^one[\s-]?time$/.test(raw) ? 'one-time' : raw;
-    return { freq, index: m[2] ? parseInt(m[2], 10) : null };
-  };
-  return tryText(subject) || tryText(body);
-}
-
-// Resolves a bare frequency-word reply against this sender's pending
-// missing-frequency items. Returns null when this sender has nothing
-// pending or the email isn't recognizable as this kind of reply — the
-// caller then falls through exactly as if this function didn't exist.
-async function resolveFrequencyPendingReply(supabase, sender, subject, emailBody) {
-  const pending = await loadFrequencyPending(supabase, sender.email);
-  if (!pending.length) return null;
-  const parsed = parseFrequencyReply(subject, emailBody);
-  if (!parsed) return null;
-
-  let target = null;
-  if (pending.length === 1 && parsed.index == null) target = pending[0];
-  else if (parsed.index != null) target = pending[parsed.index - 1] || null;
-
-  if (!target) {
-    return {
-      resolved: false,
-      body: [
-        'Couldn\'t tell which pending service you meant — reply with the number too, e.g. "weekly 1":',
-        '',
-        ...pending.map((p, i) => `${i + 1}. "${p.parsedName}" for ${p.clientName}`),
-      ].join('\n'),
-    };
-  }
-
-  const remaining = pending.filter(p => p.id !== target.id);
-  await saveFrequencyPending(supabase, sender.email, remaining);
-
-  const freq = parsed.freq;
-  const created = await writeOneService(supabase, target.clientId, {
-    id: genId('svc'),
-    name: target.parsedName,
-    notes: target.notes,
-    freq,
-    freqLabel: FREQ_LABELS[freq] || '',
-    due: target.dueDate || '',
-    assigneeId: target.assigneeId,
-    assigneeName: target.assigneeName,
-    workStatus: 'not_started',
-    status: 'active',
-    category: '',
-    source: 'inbound-email',
-    addedToCatalog: true,
-  });
-  const catalog = await loadCatalog(supabase);
-  await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
-
-  return {
-    resolved: true,
-    action: 'freq',
-    item: target,
-    created,
-    body: `Created new service "${target.parsedName}" (${FREQ_LABELS[freq] || freq}) and added it to the catalog, for ${target.clientName}.`,
-  };
+  return { freq: DEFAULT_FREQ, label: FREQ_LABELS[DEFAULT_FREQ], detected: false };
 }
 
 // ── Pending CONFIRM/NEW state for a close-match reply ───────────────────
@@ -792,53 +655,40 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
   }
 
   // action === 'new'. Frequency comes from THIS pending item — extracted
-  // from the ORIGINAL email that first produced this close match (see
-  // createServicesFromParsed()'s own pendingNew construction below), never
-  // re-extracted from the reply itself: a NEW reply is typically just the
-  // bare keyword, with no service-context text to extract from.
-  if (target.freqDetected) {
-    const freq = target.freq;
-    const created = await writeOneService(supabase, target.clientId, {
-      id: genId('svc'),
-      name: target.parsedName,
-      notes: target.notes,
-      freq,
-      freqLabel: target.freqLabel || FREQ_LABELS[freq] || '',
-      due: target.dueDate || '',
-      assigneeId: target.assigneeId,
-      assigneeName: target.assigneeName,
-      workStatus: 'not_started',
-      status: 'active',
-      category: '',
-      source: 'inbound-email',
-      addedToCatalog: true,
-    });
-    const catalog = await loadCatalog(supabase);
-    await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
-    return {
-      resolved: true,
-      action: 'new',
-      item: target,
-      created,
-      body: `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}. Frequency: ${target.freqLabel || FREQ_LABELS[target.freq] || target.freq}.`,
-    };
-  }
-
-  // The original email never stated a frequency for this one either — per
-  // this follow-up's own "no silent default" requirement, hold it for a
-  // frequency reply instead of creating it now. Resolving the CONFIRM/NEW
-  // question is still real progress (action:'new', resolved:true) — it's
-  // the NEXT question, not a failure to understand this reply.
-  const { display, totalAfter } = await holdForFrequencyReply(supabase, sender.email, [{
-    parsedName: target.parsedName, clientId: target.clientId, clientName: target.clientName,
-    notes: target.notes, dueDate: target.dueDate, assigneeId: target.assigneeId, assigneeName: target.assigneeName,
-  }]);
+  // (or defaulted) from the ORIGINAL email that first produced this close
+  // match (see createServicesFromParsed()'s own pendingNew construction
+  // below), never re-extracted from the reply itself: a NEW reply is
+  // typically just the bare keyword, with no service-context text to
+  // extract from. Always creates immediately now — `target.freq` is never
+  // null (real match or DEFAULT_FREQ's Monthly fallback), so there's no
+  // second question to hold for.
+  const freq = target.freq;
+  const created = await writeOneService(supabase, target.clientId, {
+    id: genId('svc'),
+    name: target.parsedName,
+    notes: target.notes,
+    freq,
+    freqLabel: target.freqLabel || FREQ_LABELS[freq] || '',
+    due: target.dueDate || '',
+    assigneeId: target.assigneeId,
+    assigneeName: target.assigneeName,
+    workStatus: 'not_started',
+    status: 'active',
+    category: '',
+    source: 'inbound-email',
+    addedToCatalog: true,
+  });
+  const catalog = await loadCatalog(supabase);
+  await addNewCatalogServices(supabase, catalog, [target.parsedName], freq);
+  const freqNote = target.freqDetected
+    ? ` Frequency: ${target.freqLabel || FREQ_LABELS[freq] || freq}.`
+    : ' Frequency set to Monthly (default) — reply to change.';
   return {
     resolved: true,
     action: 'new',
     item: target,
-    created: null,
-    body: frequencyQuestionBody(target.parsedName, display[0].displayIndex, totalAfter > 1),
+    created,
+    body: `Created new service "${target.parsedName}" and added it to the catalog, for ${target.clientName}.${freqNote}`,
   };
 }
 
@@ -861,10 +711,12 @@ async function resolvePendingServiceReply(supabase, sender, subject, emailText) 
 // A parsed item with no matched clientId is still reported as unmatched,
 // unchanged from before this feature.
 //
-// `freqResult` (2026-09-14) is extractServiceFrequency()'s own result for
-// this ONE email — computed once by the caller, before this function runs,
-// and applied uniformly to every 'new'-tier item here (see that function's
-// own comment on why this is email-level, not per-item).
+// `freqResult` is extractServiceFrequency()'s own result for this ONE
+// email — computed once by the caller, before this function runs, and
+// applied uniformly to every 'new'-tier item here (see that function's own
+// comment on why this is email-level, not per-item). `freqResult.freq` is
+// always populated (real match or the Monthly default), so a 'new'-tier
+// item is always created immediately — never held pending a frequency.
 async function createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult) {
   const unmatched = [];
   const withClient = [];
@@ -872,7 +724,7 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     if (!t.clientId) { unmatched.push({ subject: t.subject }); continue; }
     withClient.push(t);
   }
-  if (!withClient.length) return { createdExisting: [], createdNew: [], pendingConfirmDisplay: [], totalPendingAfter: 0, freqPendingDisplay: [], totalFreqPendingAfter: 0, unmatched };
+  if (!withClient.length) return { createdExisting: [], createdNew: [], pendingConfirmDisplay: [], totalPendingAfter: 0, unmatched };
 
   const catalog = await loadCatalog(supabase);
   const matched = withClient.map(t => ({ t, m: matchCatalogService(t.subject, catalog.services) }));
@@ -928,49 +780,28 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     fromCatalogServiceId: m.service.id,
   }));
 
-  // Genuinely-new (tier 3) items split on whether a frequency was actually
-  // stated in the email (2026-09-14 revised follow-up: no more silent
-  // default). Detected → created immediately, exactly as before. Not
-  // detected → NOT created — held for a frequency reply instead (see
-  // holdForFrequencyReply() above), reported back below as its own
-  // "waiting on you" section, the sibling of the catalog CONFIRM/NEW one.
-  const freqDetected = !!freqResult?.detected;
-  const createdNew = freqDetected
-    ? await writeGrouped(newItems, (t) => ({
-        id: genId('svc'),
-        name: t.subject,
-        notes: t.notes,
-        freq: freqResult.freq,
-        freqLabel: freqResult.label,
-        due: t.dueDate || '',
-        assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
-        assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
-        workStatus: 'not_started',
-        status: 'active',
-        category: '',
-        source: 'inbound-email',
-        addedToCatalog: true,
-      }))
-    : [];
+  // Genuinely-new (tier 3) items are always created immediately — freq
+  // comes from freqResult, real or the Monthly default, never blocking on
+  // a reply (see extractServiceFrequency()'s own comment on the 2026-09-16
+  // reversion).
+  const createdNew = await writeGrouped(newItems, (t) => ({
+    id: genId('svc'),
+    name: t.subject,
+    notes: t.notes,
+    freq: freqResult.freq,
+    freqLabel: freqResult.label,
+    due: t.dueDate || '',
+    assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
+    assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
+    workStatus: 'not_started',
+    status: 'active',
+    category: '',
+    source: 'inbound-email',
+    addedToCatalog: true,
+  }));
 
-  if (freqDetected && newItems.length) {
+  if (newItems.length) {
     await addNewCatalogServices(supabase, catalog, newItems.map(({ t }) => t.subject), freqResult.freq);
-  }
-
-  let freqPendingDisplay = [];
-  let totalFreqPendingAfter = 0;
-  if (!freqDetected && newItems.length) {
-    const held = await holdForFrequencyReply(supabase, sender.email, newItems.map(({ t }) => ({
-      parsedName: t.subject,
-      clientId: t.clientId,
-      clientName: t.clientName,
-      notes: t.notes,
-      dueDate: t.dueDate,
-      assigneeId: resolveAssigneeIdForWrite(t.assigneeId),
-      assigneeName: nameForId(resolveAssigneeIdForWrite(t.assigneeId), roster),
-    })));
-    freqPendingDisplay = held.display;
-    totalFreqPendingAfter = held.totalAfter;
   }
 
   // Display numbering reflects each item's REAL position in the persisted
@@ -1007,7 +838,7 @@ async function createServicesFromParsed(supabase, parsedTasks, sender, roster, e
     totalPendingAfter = merged.length;
   }
 
-  return { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, freqPendingDisplay, totalFreqPendingAfter, unmatched };
+  return { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched };
 }
 
 function confirmationSubject(kind, ok) {
@@ -1145,19 +976,16 @@ export default async function handler(req, res) {
   // a branch that could drift from what's actually used below.
   const freqResult = extractServiceFrequency(emailText);
 
-  // ── Step 6.5 (service@ only): is this a reply to something already
-  // pending — either a CONFIRM/NEW catalog-match question, or a bare
-  // frequency-word answer to a "what frequency?" question? Both run
-  // BEFORE the parser — no Anthropic cost for a plain reply — and, when
-  // recognized, completely replace the normal parse-and-create flow for
-  // this email. Each returns null (falls through, trying the next one,
-  // then the normal parse below) whenever this sender has nothing pending
-  // of that kind, or the email doesn't look like that kind of reply. ──
+  // ── Step 6.5 (service@ only): is this a reply to an already-pending
+  // CONFIRM/NEW catalog-match question? Runs BEFORE the parser — no
+  // Anthropic cost for a plain reply — and, when recognized, completely
+  // replaces the normal parse-and-create flow for this email. Returns null
+  // (falls through to the normal parse below) whenever this sender has
+  // nothing pending, or the email doesn't look like that kind of reply. ──
   if (isService) {
     let replyResult;
     try {
       replyResult = await resolvePendingServiceReply(supabase, sender, emailSubject, emailBody);
-      if (!replyResult) replyResult = await resolveFrequencyPendingReply(supabase, sender, emailSubject, emailBody);
     } catch (err) {
       await logError({ endpoint: 'inbound-email', error: err, session: sender, extra: { emailId } });
       return res.status(500).json({ error: err.message });
@@ -1221,19 +1049,18 @@ export default async function handler(req, res) {
       await markProcessed(supabase, emailId, { kind, createdCount: created.length, skippedAsDuplicateCount: skippedAsDuplicate.length });
       await sendConfirmation(created.length > 0, buildTaskConfirmationBody(created, skippedAsDuplicate));
     } else {
-      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, freqPendingDisplay, totalFreqPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult);
+      const { createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched } = await createServicesFromParsed(supabase, parsedTasks, sender, roster, emailId, freqResult);
       const totalCreated = createdExisting.length + createdNew.length;
       await markProcessed(supabase, emailId, {
         kind,
         createdExistingCount: createdExisting.length,
         createdNewCount: createdNew.length,
         pendingConfirmCount: pendingConfirmDisplay.length,
-        freqPendingCount: freqPendingDisplay.length,
         unmatchedCount: unmatched.length,
       });
       await sendConfirmation(
-        totalCreated > 0 || pendingConfirmDisplay.length > 0 || freqPendingDisplay.length > 0,
-        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqPendingDisplay, totalFreqPendingAfter)
+        totalCreated > 0 || pendingConfirmDisplay.length > 0,
+        buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqResult)
       );
     }
   } catch (err) {
@@ -1255,18 +1082,19 @@ function buildTaskConfirmationBody(created, skippedAsDuplicate) {
   return lines.join('\n');
 }
 
-// `freqPendingDisplay`/`totalFreqPendingAfter` (2026-09-14 revised
-// follow-up) — the sibling of `pendingConfirmDisplay`/`totalPendingAfter`,
-// for services whose email never stated a frequency at all: never
-// created, never defaulted, just asked about (see
-// holdForFrequencyReply()'s own comment on why).
-function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqPendingDisplay, totalFreqPendingAfter) {
+// `freqResult` is the ONE email's own extractServiceFrequency() result —
+// when it's a fallback (not `.detected`) and at least one new service was
+// created from it, the reply appends the required default note once for
+// the whole email (matching how the note is worded, not per-item, since
+// every createdNew item in one email shares the same freqResult by
+// construction — see createServicesFromParsed()'s own comment).
+function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfirmDisplay, totalPendingAfter, unmatched, freqResult) {
   const lines = [];
   createdExisting.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''} (matched your existing catalog entry)`));
-  // createdNew only ever contains items whose frequency was genuinely
-  // stated (see createServicesFromParsed()'s own freqDetected split) — its
-  // freqLabel is always real, never a stand-in default.
   createdNew.forEach(s => lines.push(`• ${s.name} → ${s.clientName}, ${s.freqLabel || s.freq}, assigned to ${s.assigneeName || 'unassigned'}${s.due ? `, due ${s.due}` : ''}. Created new service "${s.name}" and added it to the catalog.`));
+  if (createdNew.length && freqResult && !freqResult.detected) {
+    lines.push('', 'Frequency set to Monthly (default) — reply to change.');
+  }
   if (pendingConfirmDisplay.length) {
     const numbered = totalPendingAfter > 1;
     lines.push('', "Waiting on you — these looked like an existing catalog service, but weren't an exact match:");
@@ -1274,11 +1102,6 @@ function buildServiceConfirmationBody(createdExisting, createdNew, pendingConfir
       const n = numbered ? ` ${p.displayIndex}` : '';
       lines.push(`"${p.parsedName}" looks like your existing "${p.matchedService.name}" — reply CONFIRM${n} to use it, or NEW${n} to create a separate service.`);
     });
-  }
-  if (freqPendingDisplay && freqPendingDisplay.length) {
-    const numbered = totalFreqPendingAfter > 1;
-    lines.push('', "Waiting on you — no frequency was stated for these:");
-    freqPendingDisplay.forEach(p => lines.push(frequencyQuestionBody(p.parsedName, p.displayIndex, numbered)));
   }
   if (unmatched.length) {
     lines.push('', "Couldn't create (no client could be identified):");
