@@ -2363,6 +2363,22 @@ export default async function handler(req, res) {
             // see the insert-path comment above for why this is
             // deliberately never retroactive.
             selfAssignedAt: cur.selfAssignedAt || null,
+            // Report fields — same cur-fallback discipline as every field
+            // above, mirroring the member branch's own identical fallback
+            // further below. Without this, an admin resaving a task from a
+            // stale local cache (one that predates an employee's report,
+            // or that has the boolean but not yet the metadata) silently
+            // wiped an active report with no error, no rejection, and
+            // nothing in ops_error_log — the actual bug this block fixes.
+            // The dismiss-detection block right after this still correctly
+            // overrides these back to null on a genuine true→false
+            // transition; it runs after `row` is built, so this fallback
+            // never fights it.
+            reportedMisassigned: typeof inc.reportedMisassigned === 'boolean' ? inc.reportedMisassigned : (cur.reportedMisassigned || false),
+            reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
+            reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
+            reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+            reportedMisassignedReason: inc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
           };
           // Due-date-change request resolution (2026-09-03) — detected, not
           // trusted from a client-sent flag: a pending request existed on
