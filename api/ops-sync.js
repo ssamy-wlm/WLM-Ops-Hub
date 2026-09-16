@@ -2379,6 +2379,23 @@ export default async function handler(req, res) {
             reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
             reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
             reportedMisassignedReason: inc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
+            // dueDateChangeRequest — same clobber class as the report
+            // fields just above (found in the #395 audit): a stale admin
+            // resave whose cached inc simply lacks this key (predates a
+            // member's pending request) used to silently drop the pending
+            // request AND fire a false "declined" notification to the
+            // requester via the transition-detection block right below,
+            // since `!row.dueDateChangeRequest` reads true for `undefined`
+            // just as readily as for a genuine resolution. Fixed with key
+            // PRESENCE, not truthiness — mirrors preserveMissingClientFields'
+            // convention (a key entirely ABSENT falls back to cur; a key
+            // PRESENT, even as an explicit null, always wins) rather than
+            // the boolean-typeof check used for reportedMisassigned above,
+            // because the legitimate clear path (_taResolveDueDateRequest())
+            // always sends an explicit `null`, never omits the key — so
+            // "present, value null" must still mean "resolve it," exactly
+            // as before this fix.
+            dueDateChangeRequest: ('dueDateChangeRequest' in inc) ? inc.dueDateChangeRequest : (cur.dueDateChangeRequest || null),
           };
           // Due-date-change request resolution (2026-09-03) — detected, not
           // trusted from a client-sent flag: a pending request existed on
