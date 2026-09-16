@@ -9497,6 +9497,95 @@ approval" instruction — touches the real service-creation write path and
 widens who can create data via email (task@ now accepts any active team
 member, not a fixed two-person list).
 
+**Inbound `service@`: reverted the ask-instead flow, restored the Monthly
+default (2026-09-16).** `api/inbound-email.js` only, new branch/PR
+(`claude/inbound-service-frequency-monthly-default`, off latest `main` —
+PR #391 had already merged, so per this repo's own merged-PR convention
+this is a fresh branch/PR, not a reopen of the old one) — still exactly
+12 files under `api/`.
+
+**Flagged before touching anything, per rule #7 — the task as given was
+the literal OPPOSITE of what PR #391 had most recently, deliberately
+shipped.** This exact task ("extract frequency, default to Monthly when
+unstated, note it in the reply") was the FIRST draft of that same PR; a
+same-day follow-up explicitly replaced that default with an ask-and-wait
+pending-reply flow (never create, ask "What frequency for X?", wait for a
+bare-word reply) — and that revised version is what actually merged to
+`main`. Re-issuing the original spec, unprompted, read as either a stale
+ticket or a deliberate revert; asked directly rather than guessing which.
+Confirmed: revert to the Monthly default, remove the ask-instead flow.
+
+**What changed, mechanically — the reverse of the 2026-09-14 diff:**
+- `extractServiceFrequency()` restores `DEFAULT_FREQ = 'monthly'`: no
+  recognized frequency word anywhere in the email → returns
+  `{freq:'monthly', label:'Monthly', detected:false}` instead of
+  `{freq:null, label:null, detected:false}`. Every downstream caller can
+  once again trust `freq` is always populated.
+- The entire ask-and-wait subsystem is DELETED outright, not left dead —
+  per rule #6, "remove the tool, don't leave a standing capability with no
+  UI path to it": `frequencyQuestionBody()`, the whole
+  `inboundServiceFreqPending:<email>` pending-queue helpers
+  (`freqPendingKey`/`loadFrequencyPending`/`saveFrequencyPending`/
+  `holdForFrequencyReply`), `parseFrequencyReply()`, and
+  `resolveFrequencyPendingReply()` are all gone; the handler's Step 6.5 no
+  longer calls the latter.
+- `createServicesFromParsed()`'s tier-3 ('new'-tier, no catalog match)
+  items are always created immediately again — the `freqDetected` branch
+  that split "create now" vs. "hold for a reply" is removed; the catalog
+  addition (`addNewCatalogServices()`) always runs for every 'new'-tier
+  item, real or defaulted.
+- `resolvePendingServiceReply()`'s NEW-reply branch (close-catalog-match,
+  resolved by a CONFIRM/NEW reply) also always creates immediately now —
+  `target.freqDetected` still exists (stamped when the close match was
+  first found, for wording only) but no longer gates whether anything is
+  created: a genuinely-detected item's reply says
+  `Frequency: <Label>.`; a defaulted one says the required
+  `Frequency set to Monthly (default) — reply to change.` note instead —
+  same distinction as before, just both paths create rather than one of
+  them asking a second question.
+- `buildServiceConfirmationBody()`'s signature reverts to taking
+  `freqResult` directly (not `freqPendingDisplay`/`totalFreqPendingAfter`)
+  and appends the one required default note, once per email, whenever at
+  least one `createdNew` item came from a defaulted `freqResult` — never
+  per-item, since every 'new'-tier item in one email shares the same
+  email-level extraction by construction.
+
+**Confirmed via `git log` before branching that `api/inbound-email.js`
+had no OTHER changes land on `main` between PR #391's merge and now** —
+this revert is a clean, isolated diff against the file's current live
+state, not a rebase fighting unrelated concurrent work.
+
+Verified with `node --check` (clean) and a full rewrite of
+`verify_inbound_service_frequency.mjs` back to testing the Monthly-
+default behavior (52/52, down from the ask-instead version's 67 — the
+suite genuinely has fewer cases now, since there's no more pending-queue
+numbering/disambiguation logic to cover): the "explicitly stated"/all-
+six-words/tier-1-exact/CONFIRM-unaffected cases are unchanged and re-run
+clean; the no-frequency case now confirms the service IS created with
+`freq:'monthly'`, `freqLabel:'Monthly'`, the exact required default note
+in the reply, and the catalog addition carrying the default too; the
+parsed-subject-doesn't-leak case now confirms a Monthly default rather
+than an ask; the close-match+no-frequency NEW-reply case now confirms
+immediate creation with the default note (not the "Frequency: X."
+wording used for a genuinely-detected one); a new multi-item case
+(replacing the old numbering/disambiguation test, which no longer applies
+with nothing to disambiguate) confirms multiple genuinely-new services
+with no stated frequency in one email all default to Monthly together,
+with exactly ONE default note in the reply, not one per item. Both other
+pre-existing scratchpad suites re-run clean and unaffected, confirming the
+removed subsystem's absence breaks nothing else: `verify_inbound_
+email.mjs` (70/70 — its own test M already sent an explicit "monthly" in
+its fake fetched email body, so it was never exercising the default path
+either way) and `verify_inbound_service_catalog.mjs` (42/42 — its own
+catalog-matching tests already seeded explicit frequencies for the same
+reason, decoupling them from whichever frequency-default behavior happens
+to be live). `ls api/*.js | wc -l` still 12 (no new file — this PR
+touches only the one existing endpoint).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this task's own explicit "needs preview +
+approval" instruction — touches the real service-creation write path.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
