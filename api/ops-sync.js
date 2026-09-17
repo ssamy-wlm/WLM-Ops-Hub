@@ -1238,6 +1238,121 @@ async function fireTaskReportDismissedNotification(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
+// Meeting-parse notify recipients (2026-09-16) — same fixed-rule shape as
+// resolveReportRecipients() right above (never resolveNotifyRecipients()'s
+// manager-escalation logic): always the primary-admin sentinel + every
+// super/owner admin, PLUS the item's own responsible person when
+// resolvable in either table — deduped. Used for a SERVICE mention
+// (always notify-only, per that feature's own "never auto-change"
+// instruction) and for a TASK mention whose speaker couldn't be
+// identified at all (the explicit "fall back to notify-only for tasks
+// too" case in api/process-transcript.js's evaluateMeetingParseGate()) —
+// same recipient rule either way, since both are "someone should go take
+// a look," not a routine assignment.
+export function resolveMeetingParseRecipients(personId, users, admins) {
+  const out = [{ id: 'primary-admin', kind: 'admin' }];
+  admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  if (personId && personId !== 'primary-admin') {
+    const asUser = users.find(u => u.id === personId);
+    const asAdmin = admins.find(a => a.id === personId);
+    if (asUser) out.push({ id: personId, kind: 'user' });
+    else if (asAdmin) out.push({ id: personId, kind: 'admin' });
+  }
+  const seen = new Set();
+  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
+// Fires the meeting-parse notify-only message for both item types (never
+// for the task-auto-update case — that path carries no notification at
+// all, per this feature's own "no confirmation... stamp source" wording,
+// which never mentions notifying anyone for a successful auto-write).
+// `events`: {itemType:'task'|'service', itemName, personId, clientId,
+// taskId, impliedStatus, meetingDate}. `directory` is this caller's own
+// ALREADY-FRESH {users, admins} (api/process-transcript.js's own
+// activeRoster(), split by kind) — deliberately never fetched here via
+// getDirectory(), and passed straight through to insertNotifications() as
+// opts.directory so its own internal quiet-hours lookup uses the same
+// fresh data instead of this file's per-request cache (see that
+// function's own comment on why a cross-module cache is unsafe here).
+export async function fireMeetingParseNotifyEvents(supabase, events, warnings, directory) {
+  if (!events.length) return;
+  const { users, admins } = directory;
+  const rows = [];
+  events.forEach(ev => {
+    resolveMeetingParseRecipients(ev.personId, users, admins).forEach(r => {
+      const isPrimary = r.id === 'primary-admin';
+      const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
+      const verb = ev.impliedStatus === 'done' ? 'may be done' : 'may have started';
+      const label = ev.itemType === 'task' ? 'task' : 'service';
+      rows.push({
+        type: 'meetingParseNotify', recipientId: r.id, recipientKind: r.kind,
+        recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+        recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+        title: `Meeting suggests a ${label} may need review: ${ev.itemName}`,
+        body: `Meeting on ${ev.meetingDate} suggests ${label} '${ev.itemName}' ${verb} — please review.`,
+        link: '',
+        context: { taskId: ev.taskId || null, clientId: ev.clientId || null },
+      });
+    });
+  });
+  await insertNotifications(supabase, rows, warnings, { directory });
+}
+
+// Meeting-parse task auto-update (2026-09-16) — the WRITE half of
+// "detect meeting mentions of existing work and act by type"
+// (api/process-transcript.js does the matching/gate evaluation via
+// evaluateMeetingParseGate(); this is the one place that actually
+// touches ops_tasks for it). Called directly as a library function, never
+// through this file's own signed-session handler() below — the caller
+// (a meeting transcript parse) has no session bound to the TASK'S OWNER,
+// only to whoever pasted the transcript, so this never goes through the
+// normal isAdmin/member gate at all. Write-authority here comes entirely
+// from the caller having already evaluated the self-report-or-super-admin
+// gate BEFORE calling this — it trusts that decision, it doesn't
+// re-derive it.
+//
+// No-op guarded: a task already sitting at newStatus is left completely
+// untouched (no write, no audit stamp) — the same meeting mentioned
+// twice, or a status that already matches, are both real, expected
+// no-ops. finalizeRecurring() is reused as-is so a recurring task marked
+// Done this way regenerates for its next cycle exactly like it would via
+// the UI, rather than getting stuck showing Done forever. Every change
+// carries a NEW `lastMeetingParseUpdate` audit object — deliberately
+// separate from the task's own `source` field (which already means
+// something else: 'parsed-email' vs manually created) — recording the
+// prior status alongside the new one and who/when, so the change is
+// reviewable/reversible by a human looking at the task, per this
+// feature's own explicit "auditable/reversible" requirement. No separate
+// Undo control was built for this (out of this feature's own stated
+// server-only file scope) — reversal is "an admin looks at
+// lastMeetingParseUpdate and edits status back," same as any other
+// mis-set status today.
+export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newStatus, attributedPersonId, attributedPersonName, meetingDate }, warnings) {
+  if (!task || task.status === newStatus) return null;
+  let row = {
+    ...task,
+    status: newStatus,
+    // A task moving to Done/In progress via this path is, by definition,
+    // no longer Blocked — same "clear blockReason the instant status
+    // leaves Blocked" convention both portals' own status-change UI
+    // already applies (2026-08-21).
+    blockReason: null,
+    lastMeetingParseUpdate: {
+      fromStatus: task.status || '',
+      toStatus: newStatus,
+      attributedPersonId: attributedPersonId || null,
+      attributedPersonName: attributedPersonName || '',
+      meetingDate: meetingDate || '',
+      appliedAt: new Date().toISOString(),
+    },
+  };
+  if (newStatus === 'Done') row.completedAt = new Date().toISOString();
+  row = finalizeRecurring(task, row);
+  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', task.id);
+  if (error) { warnings.push(`tasks(${task.id}) meeting-parse update: ${error.message}`); return null; }
+  return row;
+}
+
 // Due-date-change request approver resolution (2026-09-03) — deliberately
 // NOT resolveReviewRecipients(): that function ALWAYS additionally includes
 // Sarah's primary-admin sentinel even when a real manager resolves, which
@@ -1387,6 +1502,20 @@ export async function insertNotifications(supabase, rows, warnings, opts = {}) {
     // Suppression is email-only: the in-app ops_notifications row for a
     // suppressed item was already inserted above, unaffected.
     //
+    // opts.directory (2026-09-16) — an explicit {users, admins} override
+    // for the quiet-hours team lookup right below, used ONLY by
+    // fireMeetingParseNotifyEvents() (api/process-transcript.js's meeting-
+    // parse feature). That caller lives in a completely separate
+    // serverless function from this file's own handler() — the one place
+    // that resets getDirectory()'s per-request _directoryCache — so
+    // calling getDirectory() here unconditionally would risk this file's
+    // per-request cache silently going stale across many warm-container
+    // invocations of THAT other function (see the import comment at the
+    // top of process-transcript.js for the full reasoning). Every
+    // existing caller in this file omits opts.directory, so this is a
+    // purely additive, backward-compatible change — getDirectory(supabase)
+    // still runs exactly as before for all of them.
+    //
     // opts.bypassQuietHours (2026-09-15) — an explicit, caller-scoped opt-out
     // for api/cron-overdue-check.js's own daily digest/escalation sends ONLY
     // (its four insertNotifications() call sites pass this; every other
@@ -1399,7 +1528,7 @@ export async function insertNotifications(supabase, rows, warnings, opts = {}) {
     // dropped — exactly the opposite of "moved to mornings so people see it
     // at the start of the day." Weekend suppression for this cron is now the
     // schedule's own job (it simply never fires Sat/Sun), not this gate's.
-    const { users, admins } = await getDirectory(supabase);
+    const { users, admins } = opts.directory || await getDirectory(supabase);
     const teamOf = (id, kind) => {
       if (id === 'primary-admin') return undefined; // no row -> falls back to the default (Egypt) window
       const rec = kind === 'admin' ? admins.find(a => a.id === id) : users.find(u => u.id === id);
