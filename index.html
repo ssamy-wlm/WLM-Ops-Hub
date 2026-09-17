@@ -9454,7 +9454,12 @@ const NOTIF_TYPE_ICON_ADMIN = {
   // own regression suite (verify_notif_routing.mjs) already flags; closed
   // here since Item C (2026-09-03) is already touching this exact map.
   workSummary:'📤', managerOverdueSummary:'📈', superAdminAlert:'🚨',
-  taskReportDismissed:'✅',
+  taskReportDismissed:'✅', timeOffSubmitted:'🗓️',
+  // meetingParseNotify (2026-09-16's meeting-parse feature) never got an
+  // entry here either — same pre-existing-gap class as workSummary/
+  // managerOverdueSummary/superAdminAlert above, closed here since this
+  // map is already being touched for timeOffSubmitted.
+  meetingParseNotify:'🗣️',
 };
 // Human-readable labels for the "View all notifications" type filter
 // (2026-09-02) — kept as its own object rather than derived from the icon
@@ -9468,7 +9473,8 @@ const NOTIF_TYPE_LABELS_ADMIN = {
   dueDateChangeRequested:'Due-date change requested', dueDateChangeApproved:'Due-date change approved',
   dueDateChangeDeclined:'Due-date change declined',
   workSummary:'Work summary', managerOverdueSummary:'Team overdue rollup', superAdminAlert:'Super-admin alert',
-  taskReportDismissed:'Report reviewed',
+  taskReportDismissed:'Report reviewed', timeOffSubmitted:'Time off submitted',
+  meetingParseNotify:'Meeting parse: review suggested',
 };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
@@ -12963,7 +12969,12 @@ function reviewTimeOff(id, decision){
   if(idx<0){ showToast('Request not found'); return; }
   requests[idx].status = decision;
   requests[idx].reviewedAt = new Date().toISOString();
-  requests[idx].reviewedBy = 'Admin';
+  // reviewedBy/approvedBy are no longer set here (2026-09-17) — the
+  // server now stamps both authoritatively from the real approving
+  // admin's session identity the instant this write reaches
+  // api/ops-sync.js, replacing this file's own old hardcoded literal
+  // 'Admin' (which never reflected who actually decided) and the
+  // previously-always-null approvedBy.
   if(note) requests[idx].adminNote = note;
   dbSet('wl_timeoff_requests', requests);
   renderAdminTimeOff();

@@ -9607,6 +9607,116 @@ writes to `ops_tasks` with no session belonging to the record's owner,
 gated entirely on in-transcript attribution matched against the live
 roster.
 
+**Time-off notifications: notify super admins on submission + fix
+decision notifications for both admins and employees (2026-09-17).**
+`api/ops-sync.js` + `index.html` — no new `api/*.js` file, no `user.html`
+change needed.
+
+**Diagnosed first, as its own report-only pass, before any code was
+written** (per the user's explicit "report only, change nothing"
+instruction): a real production request (Jacob Joslin, admin-tier,
+`to_1789387564501`) had produced zero notifications of any kind, stored
+`userId:null`/`approvedBy:null`/`reviewedBy:'Admin'`. Traced to two
+distinct, separate bugs — one missing feature, one real bug:
+
+1. **Missing feature — no submission-time notification existed at all.**
+   `c.timeOffRequests`'s insert branch in `api/ops-sync.js` wrote the row
+   and stopped; nothing called `insertNotifications()` on creation.
+2. **Real bug — `userId` was never captured, and the decision-notify
+   lookup only checked `ops_users`.** `submitTimeOffRequest()`
+   (`user.html`) and `submitAdminMyTimeOffRequest()` (`index.html`) both
+   build `{userName, startDate, ...}` with no id at all — never trusted,
+   since identity must be server-stamped, not client-sent (rule #4). The
+   pre-existing `fireTimeOffNotification()` resolved the requester via
+   `users.find(u => u.name === request.userName)` — `ops_users`-only, so
+   an admin-tier submitter (who has an `ops_admins` row, not an
+   `ops_users` row) could never resolve, silently dropping the decision
+   notification for exactly the case that was reported.
+
+**Fix, four parts, matching the four numbered asks:**
+- `resolveTimeOffRequesterId(request, users, admins)` (new) resolves by
+  `request.userId` across BOTH tables first, falling back to a
+  case-insensitive name match across both — closes bug 2.
+  `fireTimeOffNotification()` now calls this instead of the old
+  `ops_users`-only lookup.
+- `userId` is now server-stamped, never client-trusted: the non-super
+  insert branch sets `userId: session.id` on every brand-new request
+  (covers both `user.html` and `index.html`'s "My Time Off," since both
+  funnel through this one server-side branch); the super-tier
+  decision-write branch preserves `cur.userId` verbatim when it exists,
+  defaulting to `session.id` only when there's genuinely no existing row
+  — **not** `(cur && cur.userId) || session.id`, which a first draft used
+  and which a test caught immediately: that `||` form would silently
+  backfill the id of whichever admin happens to approve a legacy
+  pre-fix, no-userId row, misattributing the request to the approver
+  instead of leaving it to resolve via the name fallback. A member
+  resave locks `userId`/`status`/`approvedBy`/`reviewedAt` to whatever's
+  already stored — a crafted incoming value is always ignored.
+- **New submission notification, `resolveTimeOffSubmittedRecipients(admins)`
+  + `fireTimeOffSubmittedNotification()`** — fixed recipients only: the
+  `primary-admin` sentinel (Sarah) plus every real `ops_admins` row with
+  `level==='super'||'owner'` (today, David), deduped — **explicitly no
+  manager-escalation call** (`resolveNotifyRecipients()` is not used
+  here), matching the ticket's own "everyone reports up to the super
+  admins for time off, no manager routing." Fires for every new request
+  regardless of submitter tier (admin or employee) via the same
+  `notifSettings.timeOff` toggle the decision-notify path already
+  respects, and the same `insertNotifications()` pipeline every other
+  notification type uses — quiet-hours/timezone suppression applies
+  automatically, no special-casing needed.
+- `reviewTimeOff()` (`index.html`) no longer sets `reviewedBy`/
+  `approvedBy` at all — both are now stamped server-side, in
+  `api/ops-sync.js`'s super-tier branch, from the real approving admin's
+  session (`reviewedBy: session.name, approvedBy: session.id`), computed
+  only on a genuine decision transition (`cur.status !== inc.status` AND
+  the new status is `approved`/`denied`) so an unrelated resave (e.g.
+  adding an admin note later) never re-stamps or disturbs already-stored
+  values. This replaces the confirmed-hardcoded `'Admin'` literal and the
+  previously-always-null `approvedBy`.
+
+**Landed alongside a concurrent, unrelated upstream commit that had
+already reached `origin/main` while this was in flight** — the generic
+clobber-protection sweep (`preserveMissingFields`, see the "Clobber class
+FULLY ADDRESSED" note in CLAUDE.md's Current State) had independently
+added `preserveMissingFields(inc, cur)` to this exact same
+`timeOffRequests` super-tier branch. Reconciled by hand (not a mechanical
+pick-one-side resolution, per this file's own established discipline for
+merge conflicts): `preserveMissingFields(inc, cur)` runs first for
+generic out-of-band-field protection, then this fix's own
+`userId`/`reviewedBy`/`approvedBy` overrides are layered on top of its
+output — matching `preserveMissingFields()`'s own documented convention
+that field-specific overrides must always run after it, on its result.
+
+Verified with a `node:test --experimental-test-module-mocks` suite
+against the real, byte-identical `api/ops-sync.js` handler, no live DB
+access (rule #11) — 34/34: a plain employee submission notifies exactly
+Sarah + David (not Sherine, a non-super/owner admin — confirms no
+manager routing), with real emails sent and the body naming the real
+requester/dates; an admin submission (Jacob) also notifies exactly
+Sarah + David, and `userId` is correctly stamped to his real admin id
+(he has no `ops_users` row); approving Jacob's request fires exactly one
+decision notification that reaches Jacob himself (the bug this whole fix
+targets — this used to be zero) with a real email sent, and stamps
+`reviewedBy`/`approvedBy` to the real approving admin; the identical
+decision path for a plain employee (Rana) is unaffected; an unrelated
+resave (adding a note) leaves `reviewedBy`/`approvedBy` untouched and
+fires no duplicate notification; a member cannot create a request under
+someone else's name, and cannot mutate `userId`/`status`/`approvedBy` on
+a resave of their own; a legacy no-userId admin-submitted request still
+resolves via the name fallback; and both notification types are
+correctly suppressed when `notifSettings.timeOff` is off, while
+`reviewedBy`/`approvedBy` still stamp regardless. Re-verified after
+reconciling the `preserveMissingFields` merge conflict — still 34/34,
+confirming the two changes compose correctly. `node --check` passed;
+all 6 extracted `<script>` blocks in `index.html` parse clean; the
+pre-existing `verify_notif_routing.mjs` regression suite re-run clean
+(26/26).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this ticket's own explicit "needs preview +
+approval" instruction — touches real write/notification logic in
+`api/ops-sync.js`.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

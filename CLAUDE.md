@@ -221,7 +221,12 @@ Don't relitigate them without an explicit decision from the user.
   paths — "key present but stale" class). C1 CLOSED.
 - Other shipped this session: #392/#393 (dead-code + orphaned endpoint
   removal), #394 (daily digests → weekday mornings, DST-safe), #397
-  (backup fail-loud on incomplete capture).
+  (backup fail-loud on incomplete capture), time-off notifications
+  (2026-09-17 — submission now notifies both super admins regardless of
+  submitter tier, decision notifications fixed for admin submitters via
+  a server-stamped `userId`, `reviewedBy`/`approvedBy` now server-
+  authoritative instead of a hardcoded `'Admin'` literal — held for
+  preview approval, see DECISIONS.md).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
