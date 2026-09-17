@@ -56,6 +56,22 @@ const DAILY_TASK_REMINDER_RECIPIENTS = [
   { name: 'Assmaa Fouad', email: 'assmaaf@weblightmedia.com' },
 ];
 
+// Shared by the hierarchy-escalation block (tier 2, below) and the
+// twice-daily overdue self-nag block (2026-09-18, below) — hoisted to
+// module scope so both agree on the exact same threshold; was previously
+// declared inside the hierarchy-escalation block alone.
+const OVERDUE_ESCALATION_THRESHOLD = 5;
+
+// Twice-daily overdue self-nag (2026-09-18) — 8 AM + 2 PM EST, fixed
+// UTC-5 (no DST adjustment), matching this file's own established
+// EST-as-a-fixed-offset convention (see cairoLocalParts()'s own comment
+// on the identical tradeoff for Cairo). vercel.json's matching cron
+// entries are "0 13 * * *"/"0 19 * * *" — deliberately EVERY day, not
+// weekday-only like the 07:00/11:00 jobs, because this block deliberately
+// does NOT bypass quiet hours (see its own comment below) — per-team
+// quiet hours are what suppresses a weekend send here, not the schedule.
+const OVERDUE_NAG_HOURS = new Set([13, 19]);
+
 // Vercel Hobby crons are fixed-UTC and don't shift for DST, but Cairo does
 // (UTC+2 in winter, UTC+3 in summer). The originally-preferred design —
 // firing this endpoint at BOTH 07:00 and 08:00 UTC so whichever one lands on
@@ -254,6 +270,103 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── Overdue self-nag, twice daily (2026-09-18) — fires at BOTH new
+    // cron hours (OVERDUE_NAG_HOURS, module-scope above), entirely
+    // independent of the once-daily 11:00 UTC job below: that job (and
+    // Sarah/David's "big-issue" summary + the manager/super-admin
+    // escalation it produces) is completely untouched by this block —
+    // this is a genuinely separate, ADDITIVE notification a person gets
+    // about their own personal overdue backlog, not a replacement for or
+    // change to any existing escalation.
+    //
+    // Anyone — a plain user OR an admin, at ANY level, including
+    // super/owner — with a MERGED overdue count >= OVERDUE_ESCALATION_
+    // THRESHOLD gets nagged. Deliberately no super/owner exemption the
+    // way tier-2 escalation (below) has one: that exemption exists
+    // because tier 2 is about escalating TO the top, and the super admins
+    // are already the top; this is a purely personal "clear your own
+    // backlog" nudge, which applies just as much to a super admin's own
+    // items as anyone else's.
+    //
+    // Uses the exact same linked-identity merge as the hierarchy-
+    // escalation block below (buildCanonicalIdMap/canonicalId/
+    // taskCountsAsOverdueBurden/isOverdue, and the identical "skip a
+    // linked ADMIN row, evaluate once via its employee counterpart"
+    // convention the inactivePeople roster already established) — a
+    // dual-role person is nagged exactly once, with their real combined
+    // count, never twice and never a partial fraction of it. Independent
+    // query, own try/catch, same "each block owns its own data" and
+    // "a failure here can never affect a sibling block" conventions the
+    // 07:00/11:00 blocks already establish in this file.
+    //
+    // Deliberately does NOT pass bypassQuietHours — unlike every other
+    // insertNotifications() call in this file, per the ticket's own
+    // explicit "respect quiet-hours" instruction. This cron is scheduled
+    // EVERY day (not weekdays-only, see OVERDUE_NAG_HOURS' own comment
+    // above), so per-team quiet hours are what actually suppresses a
+    // weekend send here, not the cron schedule itself.
+    if (OVERDUE_NAG_HOURS.has(utcHour)) {
+      try {
+        const { users: nUsers, admins: nAdmins } = await loadDirectory(supabase);
+        const nCanonMap = buildCanonicalIdMap(nUsers, nAdmins);
+        const { data: nTaskRows, error: nTaskErr } = await supabase.from('ops_tasks').select('id, data');
+        if (nTaskErr) warnings.push(`overdueNag tasks: ${nTaskErr.message}`);
+        const nTasks = (nTaskRows || []).map(r => ({ id: r.id, ...r.data }));
+        const { data: nClientRows, error: nClientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
+        if (nClientErr) warnings.push(`overdueNag clients: ${nClientErr.message}`);
+        const nToday = new Date().toISOString().slice(0, 10);
+        const nOverdueCounts = new Map();
+        const nBump = (id) => { if (!id) return; const cid = canonicalId(id, nCanonMap); nOverdueCounts.set(cid, (nOverdueCounts.get(cid) || 0) + 1); };
+        nTasks.forEach(t => { if (!t.mergedIntoId && taskCountsAsOverdueBurden(t, nToday)) nBump(t.assigneeId); });
+        const nScanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, nToday)) nBump(s.assigneeId); });
+        (nClientRows || []).forEach(row => {
+          const client = row.data; if (!client) return;
+          nScanServiceOverdue(client.services);
+          (client.locations || []).forEach(loc => nScanServiceOverdue(loc.services));
+        });
+
+        const nagRows = [];
+        const considerForNag = (p, kind) => {
+          if (!p.id) return;
+          if (kind === 'admin' && nCanonMap.has(p.id)) return; // a linked admin row — represented once via its employee counterpart
+          const count = nOverdueCounts.get(p.id) || 0;
+          if (count < OVERDUE_ESCALATION_THRESHOLD) return;
+          if (!p.email) return;
+          nagRows.push({
+            type: 'overdueNag', recipientId: p.id, recipientKind: kind,
+            recipientName: p.name || '', recipientEmail: p.email,
+            title: 'You have overdue items',
+            body: `You have ${count} overdue item${count !== 1 ? 's' : ''} — please log in and clear what you can when you get a chance.`,
+            link: '', context: {},
+          });
+        };
+        nUsers.forEach(p => considerForNag(p, 'user'));
+        nAdmins.forEach(p => considerForNag(p, 'admin'));
+
+        summary.overdueNagSent = nagRows.length;
+        // opts.directory (2026-09-18) — passes this block's own just-fetched
+        // {nUsers, nAdmins} straight through as insertNotifications()'s
+        // quiet-hours team lookup, rather than letting it call
+        // api/ops-sync.js's own getDirectory() implicitly. That function's
+        // _directoryCache is a MODULE-level cache reset only inside
+        // api/ops-sync.js's own handler() — which never runs as part of
+        // THIS file's serverless function — so on a warm container that's
+        // already called getDirectory() once (e.g. this same nag block's
+        // own EARLIER invocation, hours ago), it would silently serve
+        // stale team data to the one call site in this file that actually
+        // NEEDS an accurate team lookup for quiet hours to work correctly
+        // (every other insertNotifications() call in this file passes
+        // bypassQuietHours:true and so never exercises this path at all —
+        // this is the first one that does). Exact same fix/precedent
+        // api/process-transcript.js's fireMeetingParseNotifyEvents()
+        // already established for the identical cross-function risk.
+        await insertNotifications(supabase, nagRows, warnings, { directory: { users: nUsers, admins: nAdmins } });
+      } catch (err) {
+        await logError({ endpoint: 'cron-overdue-check:overdueNag', error: err });
+        warnings.push(`overdueNag: ${err.message}`);
+      }
+    }
+
     // Everything below (overdue escalation, task attention, focus digest,
     // hierarchy escalation) is the ORIGINAL once-daily job — retimed from
     // 22:00 UTC (6 PM EDT / 5 PM EST) to 11:00 UTC weekdays-only (7 AM EDT /
@@ -262,11 +375,15 @@ export default async function handler(req, res) {
     // for this job is now "0 11 * * 1-5" (Mon-Fri), so this gate gets to
     // stay a plain hour check — the weekday restriction is the schedule's
     // job, not this code's. Still gated to one specific hour, not "not 7,"
-    // so folding the unrelated 07:00 UTC morning-reminder trigger into this
-    // same handler (see the note above) can never double-run this block.
+    // so folding the unrelated 07:00 UTC morning-reminder trigger and the
+    // 13:00/19:00 UTC overdue-nag trigger (see above) into this same
+    // handler can never double-run this block.
     // The daily backup snapshot no longer runs here — see api/cron-backup.js.
     if (utcHour !== 11) {
-      return res.status(200).json({ ok: true, summary, warnings, skipped: 'not the 11:00 UTC daily-job hour' });
+      return res.status(200).json({
+        ok: true, summary, warnings,
+        skipped: OVERDUE_NAG_HOURS.has(utcHour) ? 'overdue-nag hour only — not the main 11:00 UTC job' : 'not a scheduled job hour for this endpoint',
+      });
     }
 
     // Org-wide on/off toggle (Super Admin-visible in Settings, same as the
@@ -588,7 +705,8 @@ export default async function handler(req, res) {
     //    super/owner admin" resolution — the exact "super-admin resolution"
     //    this feature's own spec says to reuse, not a new invented rule.
     try {
-      const OVERDUE_ESCALATION_THRESHOLD = 5;
+      // OVERDUE_ESCALATION_THRESHOLD is now module-level — shared with the
+      // overdue self-nag block above (2026-09-18).
       const now = new Date();
       const today2 = now.toISOString().slice(0, 10);
       const cutoff = previousWorkingDayStart(now);
