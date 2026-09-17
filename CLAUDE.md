@@ -231,9 +231,12 @@ Don't relitigate them without an explicit decision from the user.
   a dual-role person's admin-id/employee-id overdue counts, session
   activity, and completed work now merge into one canonical total instead
   of splitting/double-counting; reported once, never twice, in the
-  inactivity roster — held for preview approval; a follow-up "nag 5+
-  overdue twice daily" ticket is queued behind this one merging first,
-  see DECISIONS.md).
+  inactivity roster — **merged**), twice-daily overdue self-nag
+  (2026-09-18 — 8 AM + 2 PM EST via two new `vercel.json` cron entries;
+  anyone with a merged overdue count ≥5 gets emailed their own summary,
+  quiet-hours respected via a newly-additive `insertNotifications()`
+  `opts.directory` pass-through that closes a latent stale-cache risk;
+  no super/owner exemption — held for preview approval, see DECISIONS.md).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

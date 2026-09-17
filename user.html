@@ -4916,7 +4916,7 @@ function deleteServiceSubitem(subitemId){
   }catch(e){ showToast('Could not save — try again','warn'); }
 }
 
-const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤', dueDateChangeRequested:'📅', dueDateChangeApproved:'✅', dueDateChangeDeclined:'🚫' };
+const NOTIF_TYPE_ICON_USER = { assignment:'📌', timeOff:'🗓️', message:'💬', serviceUpdate:'📝', submittedForReview:'📤', dueDateChangeRequested:'📅', dueDateChangeApproved:'✅', dueDateChangeDeclined:'🚫', overdueNag:'⏰' };
 function _getAssignNotifs(){
   try{
     const myId = currentUser?.id||currentUser?.name||'';

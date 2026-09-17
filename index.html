@@ -9460,6 +9460,10 @@ const NOTIF_TYPE_ICON_ADMIN = {
   // managerOverdueSummary/superAdminAlert above, closed here since this
   // map is already being touched for timeOffSubmitted.
   meetingParseNotify:'🗣️',
+  // overdueNag (2026-09-18) — the twice-daily personal overdue self-nag,
+  // api/cron-overdue-check.js. Recipient can be a plain employee too, so
+  // this is also mirrored in user.html's own NOTIF_TYPE_ICON_USER map.
+  overdueNag:'⏰',
 };
 // Human-readable labels for the "View all notifications" type filter
 // (2026-09-02) — kept as its own object rather than derived from the icon
@@ -9475,6 +9479,7 @@ const NOTIF_TYPE_LABELS_ADMIN = {
   workSummary:'Work summary', managerOverdueSummary:'Team overdue rollup', superAdminAlert:'Super-admin alert',
   taskReportDismissed:'Report reviewed', timeOffSubmitted:'Time off submitted',
   meetingParseNotify:'Meeting parse: review suggested',
+  overdueNag:'Overdue reminder',
 };
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;

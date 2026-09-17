@@ -9820,6 +9820,110 @@ approval" instruction — touches real aggregation/notification logic in
 the follow-up ticket ("nag people with 5+ overdue twice a day") is held
 until this PR merges.
 
+**Nag people with 5+ overdue twice a day until cleared (2026-09-18).**
+`api/cron-overdue-check.js` + `vercel.json` (+ `index.html`/`user.html`,
+a small icon/label map entry each) — no new `api/*.js` file. The queued
+follow-up from the entry above, built after PR #404 merged.
+
+**Ambiguity flagged and resolved before writing any code, per rule #7:**
+the ticket offered two bracketed options — twice daily at 8 AM + 2 PM EST,
+or three times daily at 8 AM + 12 PM + 4 PM EST. Confirmed with the user:
+**twice daily, 8 AM + 2 PM EST** (fixed UTC-5, no DST adjustment — same
+"EST treated as a fixed offset" convention this file's own
+`cairoLocalParts()`/retiming comments already establish) → two new
+`vercel.json` cron entries at `"0 13 * * *"`/`"0 19 * * *"`. Deliberately
+**every day**, not weekdays-only like the existing 07:00/11:00 entries —
+this block is the one call site in the whole file that does NOT set
+`bypassQuietHours`, per the ticket's own explicit "respect quiet-hours"
+instruction, so per-team quiet hours (Friday evening through Monday
+morning) are what actually suppresses a weekend send here, not the cron
+schedule itself.
+
+**A new, fully independent block**, gated on a module-level
+`OVERDUE_NAG_HOURS = new Set([13, 19])`, inserted right before the
+existing `if (utcHour !== 11) { return ...skipped }` early return that
+gates the once-daily 11:00 UTC job — so it runs (or no-ops) regardless of
+whether that early return then fires, with zero re-indentation of the
+large, already-tested 11:00 UTC block. `OVERDUE_ESCALATION_THRESHOLD`
+(previously declared inside the hierarchy-escalation try block alone) was
+hoisted to module scope so both blocks share the identical "5" — never
+two independently-hardcoded copies that could drift.
+
+Reuses the exact same linked-identity merge PR #404 built
+(`buildCanonicalIdMap`/`canonicalId`, and the "skip a linked ADMIN row,
+evaluate once via its employee counterpart" convention the inactivity
+roster already established) — a dual-role person's overdue count merges
+across both ids and they're nagged exactly once, with their real combined
+total, never twice and never a partial fraction. Own independent query
+(tasks + active clients), own try/catch, matching this file's established
+"each block owns its own data, a failure here can't affect a sibling
+block" convention. **Deliberately no super/owner exemption** — unlike
+tier-2 escalation (which exists specifically to escalate TO the top),
+this is a purely personal "clear your own backlog" nudge that applies
+just as much to a super admin's own items as anyone else's, matching the
+ticket's own literal "people (users or admins)" wording.
+
+**A real, previously-latent bug found via the test suite itself, not
+inspection alone — this file's four PRE-EXISTING `insertNotifications()`
+calls never actually exercised it:** every one of those four calls passes
+`bypassQuietHours: true`, so none of them ever reach the quiet-hours
+team-lookup code path inside `insertNotifications()` (`api/ops-sync.js`),
+which falls back to that file's own `getDirectory(supabase)` — a
+MODULE-level cache (`_directoryCache`) reset only inside `api/ops-sync.js`'s
+own `handler()`, which never runs as part of this file's serverless
+function. This new nag block is the FIRST call site in this file to omit
+`bypassQuietHours`, and doing so would have risked a stale team lookup on
+a warm, reused container (exactly the same cross-function risk
+`api/process-transcript.js`'s `fireMeetingParseNotifyEvents()` already
+had to solve for). Fixed by passing the block's own just-fetched
+`{users, admins}` straight through as `insertNotifications()`'s existing,
+already-additive `opts.directory` override (the identical mechanism, not
+a new one) — the exact same precedent, applied to a second, independent
+caller.
+
+Verified with a `node:test --experimental-test-module-mocks` suite
+against the real, byte-identical `api/cron-overdue-check.js` handler, no
+live DB access (rule #11) — 21/21, across 5 scenarios: a person at
+exactly the threshold (5) is nagged, one just under (4) is not, a person
+with no email is silently skipped, a dual-role person's 3+3 split merges
+into one nag naming the real combined total (6), and a super/owner admin
+is NOT exempt (regression-checked against tier-2's own exemption, which
+IS untouched); the second new hour (19:00 UTC) independently fires its
+own nag for the same still-overdue person — the literal "twice a day"
+mechanism, two separate invocations each producing their own row, not one
+reused; quiet hours are genuinely respected — a recipient whose team is
+in its quiet window still gets the in-app bell row (email is the only
+thing quiet hours ever suppress) but no email, while a non-quiet
+recipient gets both; the main 11:00 UTC hour never fires this new block
+at all (`summary.overdueNagSent` isn't even set) while every pre-existing
+block at that hour (task-attention, focus digest, hierarchy-escalation)
+is completely unaffected; and a genuinely unrelated hour skips everything
+with the correct status message. Caught and fixed a real test-harness
+subtlety along the way, not a product bug: Node's
+`--experimental-test-module-mocks` freezes an already-loaded module's
+import bindings at that module's FIRST evaluation — since `api/ops-sync.js`
+(never query-busted, unlike this test's own freshly-reimported
+`api/cron-overdue-check.js`) is the direct importer of
+`lib/quietHours.js`, re-mocking that specifier per scenario silently had
+no effect on `insertNotifications()`'s actual behavior; fixed by
+registering the mock exactly once, up front, backed by a mutable variable
+each scenario reassigns, rather than re-registering the mock function
+itself per scenario — a test-harness-only fix, no product code involved.
+`node --check` passed; `vercel.json` re-parsed as valid JSON; `new
+Function()` syntax-check clean on every extracted `<script>` block in
+both `index.html`/`user.html` (a small `overdueNag` icon/label map entry
+added to each, closing the gap the pre-existing `verify_notif_routing.mjs`
+completeness suite would otherwise have caught — re-run clean, 26/26).
+The pre-existing `verify_linked_identity_overdue_merge.mjs` suite (PR
+#404's own regression coverage) re-run clean and unaffected, 18/18 —
+confirming the `OVERDUE_ESCALATION_THRESHOLD` hoist didn't change tier-2's
+own behavior.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this ticket's own explicit "needs preview +
+approval" instruction — touches real aggregation/notification logic and
+adds two new production cron schedules.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
