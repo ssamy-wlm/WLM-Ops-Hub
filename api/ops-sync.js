@@ -237,6 +237,47 @@ function preserveMissingPayrollFields(incoming, current) {
   return row;
 }
 
+// Generic clobber-protection merge (2026-09-17), mirroring
+// preserveMissingClientFields's own convention below — extended here to
+// ops_users/ops_admins/ops_commissions/ops_time_off_requests (super path)/
+// ops_org_nodes/ops_org_links/ops_roadmap_tasks/ops_catalog_suggestions.
+// Every one of those tables previously went through upsertRows()/a raw
+// .upsert() with NO merge at all (only ops_clients had this protection) —
+// a field this file doesn't know to name individually (managerId,
+// salesFunnelLevel, managedUserIds, linkedUserId, earnsCommission, status,
+// or any future field) would be silently reverted by an admin resaving an
+// unrelated field from a stale local cache that predates it, with no
+// error, no rejection, and no log entry — same root cause already fixed
+// once for ops_tasks.reportedMisassigned (#395) and .dueDateChangeRequest
+// (#396), now closed generically for every OTHER raw-upsert table that
+// shares it.
+//
+// Same key-PRESENCE rule as preserveMissingClientFields (not hasContent())
+// — a key entirely ABSENT from `incoming` falls back to `current`; a key
+// PRESENT, even as an explicit '', false, or null, always wins. Verified
+// against every real "clear" action reachable through these 8 tables
+// before this was added (see PR body, STEP 1) — none of them clear a
+// field by omitting its key, so this can never silently undo a genuine
+// clear. A shallow merge is deliberately sufficient here: unlike
+// ops_clients.services[] (which legitimately gets edited one item at a
+// time via _mergeClientItemsById), none of these 8 tables' array/object
+// fields (ops_users.credentials, ops_commissions.entries, managedUserIds,
+// assignedUsers, org node x/y/photo, etc.) are ever partially updated by
+// any real write path — each is always sent as a complete replacement
+// when touched at all, so "key present -> incoming wins outright" is
+// already correct, with no per-item id-merge needed.
+//
+// Deliberately NOT a substitute for the field-specific guards that already
+// run on users/admins (preserveMissingPasswordField, preserveMissingPayrollFields/
+// stripPayrollFields, preserveStartDateWriteOnce) — those have their own
+// stricter semantics (write-once, tier-based stripping) a generic
+// key-presence merge can't express, and must keep running AFTER this one,
+// on its output, so their own overrides still win (see call sites below).
+function preserveMissingFields(incoming, current) {
+  if (!current) return incoming;
+  return { ...current, ...incoming };
+}
+
 // Same class of incident as preserveMissingPayrollFields/
 // preserveMissingPasswordField above, for clients (2026-08-21): a browser
 // whose local cache predates an out-of-band field being set on this row
@@ -1944,7 +1985,20 @@ export default async function handler(req, res) {
           const ids = usersIncoming.map(r => r.id);
           const { data: currentRows } = await supabase.from('ops_users').select('id, data').in('id', ids);
           const byId = new Map((currentRows || []).map(r => [r.id, r.data]));
-          const stamped = usersIncoming.map(u => stampSessionRevocationOnPasswordChange(u, byId.get(u.id)));
+          // Generic clobber protection runs FIRST, filling in any field
+          // usersIncoming's own object omits entirely (see
+          // preserveMissingFields's own comment) — every guard below then
+          // runs on ITS output, unchanged in order, so each guard's own
+          // stricter semantics (write-once for startDate, tier-based
+          // payroll stripping/preservation, missing-password fallback)
+          // still wins regardless of what the generic merge already filled
+          // in. stampSessionRevocationOnPasswordChange reads incoming.password
+          // presence to decide whether to stamp — unaffected either way,
+          // since a real password change is always sent explicitly, never
+          // introduced by this merge (only a genuinely missing key falls
+          // back to cur's own already-hashed value).
+          const merged = usersIncoming.map(u => preserveMissingFields(u, byId.get(u.id)));
+          const stamped = merged.map(u => stampSessionRevocationOnPasswordChange(u, byId.get(u.id)));
           const toWrite = (tier === 'manager'
             ? stamped.map(u => stripPayrollFields(u, byId.get(u.id)))
             : stamped.map(u => preserveMissingPayrollFields(u, byId.get(u.id)))
@@ -1966,13 +2020,39 @@ export default async function handler(req, res) {
           const { data: currentAdminRows } = await supabase.from('ops_admins').select('id, data').in('id', adminsIncoming.map(r => r.id));
           const adminById = new Map((currentAdminRows || []).map(r => [r.id, r.data]));
           adminsToWrite = adminsIncoming
+            .map(a => preserveMissingFields(a, adminById.get(a.id)))
             .map(a => stampSessionRevocationOnPasswordChange(a, adminById.get(a.id)))
             .map(a => preserveMissingPasswordField(a, adminById.get(a.id)));
         }
         applied.admins = await upsertRows(supabase, 'ops_admins', hashIncomingPasswords(adminsToWrite), warnings);
-        applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', (c.roadmapTasks || []).filter(validGeneric), warnings);
-        applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', (c.orgNodes || []).filter(validGeneric), warnings);
-        applied.orgLinks = await upsertRows(supabase, 'ops_org_links', (c.orgLinks || []).filter(validGeneric), warnings);
+        // Same generic protection for roadmap/org-chart nodes/links —
+        // fetched fresh here (never reusing a stale cache from earlier in
+        // this request) since none of these three tables had any prior
+        // current-row fetch at all before this fix.
+        const roadmapIncoming = (c.roadmapTasks || []).filter(validGeneric);
+        if (roadmapIncoming.length) {
+          const { data: curRows } = await supabase.from('ops_roadmap_tasks').select('id, data').in('id', roadmapIncoming.map(r => r.id));
+          const byId = new Map((curRows || []).map(r => [r.id, r.data]));
+          applied.roadmapTasks = await upsertRows(supabase, 'ops_roadmap_tasks', roadmapIncoming.map(r => preserveMissingFields(r, byId.get(r.id))), warnings);
+        } else {
+          applied.roadmapTasks = 0;
+        }
+        const orgNodesIncoming = (c.orgNodes || []).filter(validGeneric);
+        if (orgNodesIncoming.length) {
+          const { data: curRows } = await supabase.from('ops_org_nodes').select('id, data').in('id', orgNodesIncoming.map(r => r.id));
+          const byId = new Map((curRows || []).map(r => [r.id, r.data]));
+          applied.orgNodes = await upsertRows(supabase, 'ops_org_nodes', orgNodesIncoming.map(r => preserveMissingFields(r, byId.get(r.id))), warnings);
+        } else {
+          applied.orgNodes = 0;
+        }
+        const orgLinksIncoming = (c.orgLinks || []).filter(validGeneric);
+        if (orgLinksIncoming.length) {
+          const { data: curRows } = await supabase.from('ops_org_links').select('id, data').in('id', orgLinksIncoming.map(r => r.id));
+          const byId = new Map((curRows || []).map(r => [r.id, r.data]));
+          applied.orgLinks = await upsertRows(supabase, 'ops_org_links', orgLinksIncoming.map(r => preserveMissingFields(r, byId.get(r.id))), warnings);
+        } else {
+          applied.orgLinks = 0;
+        }
         // Org chart delete: soft-delete via `deleted_at`, same tier gate as
         // the upserts above — never a hard SQL DELETE. A node delete only
         // ever touches the node row and the specific link rows the client
@@ -2015,7 +2095,15 @@ export default async function handler(req, res) {
           shaped.filter(row => !validCommissionPercent(row)).forEach(row => {
             warnings.push(`commissions.${row.id}: dropped — commissionPercent must be exactly 5 or 10 (got ${JSON.stringify(row.commissionPercent)})`);
           });
-          applied.commissions = await upsertRows(supabase, 'ops_commissions', validRows.map(row => recomputeCommission(row, session)), warnings);
+          // Generic clobber protection, same as users/admins above — a
+          // financial record, so this matters even more than most: fetched
+          // fresh here (this table never had a current-row read before this
+          // fix), merged BEFORE recomputeCommission() runs so the math
+          // still recomputes from the real, non-reverted entries/percent.
+          const { data: curCommRows } = await supabase.from('ops_commissions').select('id, data').in('id', validRows.map(r => r.id));
+          const commById = new Map((curCommRows || []).map(r => [r.id, r.data]));
+          const mergedRows = validRows.map(row => preserveMissingFields(row, commById.get(row.id)));
+          applied.commissions = await upsertRows(supabase, 'ops_commissions', mergedRows.map(row => recomputeCommission(row, session)), warnings);
         }
         if (c.settings && typeof c.settings === 'object') {
           const otherKeys = Object.entries(c.settings).filter(([key]) => key !== 'serviceCatalog');
@@ -2700,14 +2788,23 @@ export default async function handler(req, res) {
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
         if (tier === 'super') {
-          const { error } = await supabase.from('ops_time_off_requests').upsert({ id: inc.id, data: inc }, { onConflict: 'id' });
+          // Generic clobber protection, same rationale as users/admins/
+          // commissions above — this raw upsert previously had NO merge at
+          // all, unlike the member branch two lines below it (which already
+          // correctly locks status/approvedBy/reviewedAt to `cur`). Status
+          // itself is always sent explicitly by the real approve/deny UI
+          // (reviewTimeOff() in index.html — never omitted), so
+          // isNewDecision's own transition check below is unaffected by
+          // this merge either way.
+          const row = preserveMissingFields(inc, cur);
+          const { error } = await supabase.from('ops_time_off_requests').upsert({ id: inc.id, data: row }, { onConflict: 'id' });
           if (error) { warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); continue; }
           n++;
           // Fires exactly once, at the moment status actually transitions to a
           // decision — never on the initial pending-request creation, and
           // never re-fired if an admin re-saves the same already-decided status.
-          const isNewDecision = cur && cur.status !== inc.status && (inc.status === 'approved' || inc.status === 'denied');
-          if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, inc, warnings, notices);
+          const isNewDecision = cur && cur.status !== row.status && (row.status === 'approved' || row.status === 'denied');
+          if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, row, warnings, notices);
           continue;
         }
         if (!cur) {
@@ -2764,7 +2861,12 @@ export default async function handler(req, res) {
           rejected.push({ table: 'catalogSuggestions', id: inc.id, reason: 'members cannot edit an existing suggestion — only submit new ones' });
           continue;
         }
-        const row = { ...inc, reviewedBy: session.id, reviewedByName: session.name, reviewedAt: new Date().toISOString() };
+        // Generic clobber protection before the reviewedBy/ByName/At
+        // override — same rationale as the tables above: an admin
+        // reviewing this suggestion from a stale local cache must not
+        // silently blank submittedBy/name/bundle/freq just because they
+        // happen to be missing from that admin's copy.
+        const row = { ...preserveMissingFields(inc, cur), reviewedBy: session.id, reviewedByName: session.name, reviewedAt: new Date().toISOString() };
         const { error } = await supabase.from('ops_catalog_suggestions').update({ data: row }).eq('id', inc.id);
         if (error) warnings.push(`catalogSuggestions(${inc.id}): ${error.message}`); else n++;
       }
