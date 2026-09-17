@@ -680,27 +680,22 @@ function evaluateMeetingParseGate(attributedPersonId, responsiblePersonId, super
   return 'skip';
 }
 
-// Salvages a well-formed prefix of the model's task JSON when the response
-// was cut off mid-array by hitting max_tokens — only ever attempted when
-// the SDK's own message.stop_reason confirms that's actually what happened
-// (never guessed from a JSON.parse failure alone, which could just as
-// easily mean a genuinely malformed response for some other reason).
-// buildTaskEmailSystemPrompt's own schema always emits "assignedDate" and
-// "attendees" before "tasks" (see the example at the end of that function),
-// so those two fields are intact even when the tasks array itself got
-// truncated — only the LAST element of that array is ever partial. Walks
-// the array as raw text, respecting string/escape boundaries so a brace or
-// bracket inside a task's own subject/notes text is never mistaken for
-// real JSON structure, and keeps every task object that's fully present —
-// discards only the dangling partial tail. Returns null if nothing usable
-// survives (e.g. cut off before even one complete task).
-function repairTruncatedTaskJson(text) {
-  const tasksKeyIdx = text.indexOf('"tasks"');
-  if (tasksKeyIdx === -1) return null;
-  const arrStart = text.indexOf('[', tasksKeyIdx);
-  if (arrStart === -1) return null;
+// Shared by every truncated-JSON salvage path below (both the taskEmail
+// endpoint's own repairTruncatedTaskJson and the Roadmap meeting-transcript
+// extractor's repairTruncatedRoadmapJson) — walks a raw response looking
+// for a top-level `"<arrayKey>":[...]` array and returns every object
+// inside it that's fully well-formed, discarding only the dangling last
+// one if the response was cut off mid-object. Respects string/escape
+// boundaries so a brace or bracket inside a task's own text is never
+// mistaken for real JSON structure. Returns [] if the key isn't found or
+// nothing survives (e.g. cut off before even one complete object).
+function recoverArrayObjects(text, arrayKey) {
+  const keyIdx = text.indexOf(`"${arrayKey}"`);
+  if (keyIdx === -1) return [];
+  const arrStart = text.indexOf('[', keyIdx);
+  if (arrStart === -1) return [];
 
-  const recoveredTasks = [];
+  const recovered = [];
   const n = text.length;
   let i = arrStart + 1;
   while (i < n) {
@@ -728,11 +723,24 @@ function repairTruncatedTaskJson(text) {
       }
     }
     if (objEnd === -1) break; // ran off the end mid-object — the truncated tail; stop here
-    try { recoveredTasks.push(JSON.parse(text.slice(objStart, objEnd + 1))); }
+    try { recovered.push(JSON.parse(text.slice(objStart, objEnd + 1))); }
     catch { break; } // shouldn't happen given the depth-tracking above, but bail safely rather than throw
     i = objEnd + 1;
   }
+  return recovered;
+}
 
+// Salvages a well-formed prefix of the model's task JSON when the response
+// was cut off mid-array by hitting max_tokens — only ever attempted when
+// the SDK's own message.stop_reason confirms that's actually what happened
+// (never guessed from a JSON.parse failure alone, which could just as
+// easily mean a genuinely malformed response for some other reason).
+// buildTaskEmailSystemPrompt's own schema always emits "assignedDate" and
+// "attendees" before "tasks" (see the example at the end of that function),
+// so those two fields are intact even when the tasks array itself got
+// truncated — only the LAST element of that array is ever partial.
+function repairTruncatedTaskJson(text) {
+  const recoveredTasks = recoverArrayObjects(text, 'tasks');
   if (!recoveredTasks.length) return null;
   const assignedDateMatch = text.match(/"assignedDate"\s*:\s*"([^"]*)"/);
   const attendeesMatch = text.match(/"attendees"\s*:\s*"([^"]*)"/);
@@ -742,6 +750,46 @@ function repairTruncatedTaskJson(text) {
     tasks: recoveredTasks,
     _repaired: true,
   };
+}
+
+// Same salvage technique, applied to the Roadmap meeting-transcript
+// extractor's own JSON shape (SYSTEM_PROMPT below: {"tasks":[...],
+// "summary":"..."}) — a separate function because the schema differs: no
+// assignedDate/attendees preamble, and "summary" comes AFTER "tasks", so
+// it's normally truncated away too whenever the tasks array itself got cut
+// off (recovered only on the rare response that happens to still have it).
+function repairTruncatedRoadmapJson(text) {
+  const recoveredTasks = recoverArrayObjects(text, 'tasks');
+  if (!recoveredTasks.length) return null;
+  const summaryMatch = text.match(/"summary"\s*:\s*"([^"]*)"/);
+  return {
+    tasks: recoveredTasks,
+    summary: summaryMatch ? summaryMatch[1] : '',
+    _repaired: true,
+  };
+}
+
+// Splits a transcript roughly in half for the chunk-and-merge fallback in
+// extractRoadmapTasks() below — prefers a paragraph break (blank line) near
+// the midpoint, then a plain line break, so a chunk boundary avoids landing
+// mid-sentence when possible. Returns null when the text is too short to
+// usefully split, which bounds the recursion below from ever chunking down
+// to a handful of characters.
+const MIN_SPLITTABLE_TRANSCRIPT_LEN = 400;
+function splitTranscriptInHalf(text) {
+  if (text.length < MIN_SPLITTABLE_TRANSCRIPT_LEN) return null;
+  const mid = Math.floor(text.length / 2);
+  const window = 800; // how far to search around the midpoint for a clean break
+  const searchStart = Math.max(0, mid - window);
+  const searchEnd = Math.min(text.length, mid + window);
+  const region = text.slice(searchStart, searchEnd);
+  let splitAt = region.lastIndexOf('\n\n');
+  if (splitAt === -1) splitAt = region.lastIndexOf('\n');
+  const idx = splitAt === -1 ? mid : searchStart + splitAt;
+  const first = text.slice(0, idx).trim();
+  const second = text.slice(idx).trim();
+  if (!first || !second) return null;
+  return [first, second];
 }
 
 async function handleTaskEmailMode(req, res) {
@@ -1130,6 +1178,108 @@ Always spell these names and terms correctly: Servpro, Wuzzuf, Rania, Weblight M
 Return ONLY valid JSON, no markdown, no explanation:
 {"tasks":[{"bucket":"30","text":"Concise task description under 10 words","owner":"sarah","category":"hr"}],"summary":"One sentence about what this meeting covered."}`;
 
+// Bounds the chunk-and-merge recursion below to at most 2^ROADMAP_MAX_CHUNK_DEPTH
+// (= 4) leaf model calls for one submitted transcript, however many times a
+// half still comes back truncated.
+const ROADMAP_MAX_CHUNK_DEPTH = 2;
+
+// Calls the model once for transcriptText and returns {tasks, summary,
+// truncated, fallbackUsed, raw}. `fallbackUsed` is purely informational —
+// true whenever chunking or salvage-repair engaged anywhere in the
+// recursion, logged below for visibility even when nothing was actually
+// lost. `truncated` is the real "some content may be missing" signal,
+// surfaced to the submitter — it's only ever true when a leaf had to fall
+// back to repairTruncatedRoadmapJson's salvage-the-prefix behavior; a clean
+// two-half split-and-merge (both halves parsed in full) is NOT truncated,
+// since together they cover the entire original transcript.
+//
+// When the response is confirmed truncated by max_tokens
+// (message.stop_reason === 'max_tokens' — never guessed from the parse
+// failure alone, same conviction as repairTruncatedTaskJson/
+// repairTruncatedRoadmapJson above) AND splitting further is still
+// possible, this recurses into the transcript's two halves and MERGES their
+// results — a full, clean re-run per half correctly captures everything
+// instead of settling for whatever fit before the cut. Only once splitting
+// is no longer possible (depth limit reached, or the remaining text is too
+// short to usefully split) does it fall back to repairTruncatedRoadmapJson's
+// salvage-the-well-formed-prefix behavior. A genuinely malformed response
+// for some other reason (stop_reason !== 'max_tokens') is never chunked or
+// repaired — it's surfaced as-is, since guessing it's a size problem would
+// hide the real debugging signal.
+async function extractRoadmapTasks(client, transcriptText, meetingName, meetingDate, depth) {
+  const userMessage = `Meeting: ${meetingName}
+Date: ${meetingDate}
+
+TRANSCRIPT:
+${transcriptText}`;
+
+  const message = await client.messages.create({
+    model: 'claude-opus-4-7',
+    // Raised from 4096 — the identical, already-shipped 2026-08-27 fix for
+    // the sibling taskEmail endpoint above (same model) raised its own cap
+    // from 4096 to 16000 after a large real-world batch routinely got cut
+    // off mid-array; 16000 has already been proven safe there with no 400s.
+    // A dense/long meeting transcript hit the exact same failure here —
+    // "Unterminated string in JSON at position ~9,900" in the error log is
+    // consistent with a ~4096-token output cutoff, not a genuinely
+    // malformed response.
+    max_tokens: 16000,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+
+  const raw = message.content[0]?.text || '{}';
+  try {
+    const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      truncated: false,
+      fallbackUsed: false,
+      raw,
+    };
+  } catch (parseErr) {
+    const truncated = message.stop_reason === 'max_tokens';
+    if (!truncated) {
+      const err = new Error('Claude returned invalid JSON. Raw: ' + raw.slice(0, 300));
+      err._rawSnippet = raw.slice(0, 300);
+      throw err;
+    }
+
+    const halves = depth < ROADMAP_MAX_CHUNK_DEPTH ? splitTranscriptInHalf(transcriptText) : null;
+    if (halves) {
+      const [firstHalf, secondHalf] = halves;
+      const [a, b] = await Promise.all([
+        extractRoadmapTasks(client, firstHalf, meetingName, meetingDate, depth + 1),
+        extractRoadmapTasks(client, secondHalf, meetingName, meetingDate, depth + 1),
+      ]);
+      return {
+        tasks: [...a.tasks, ...b.tasks],
+        summary: [a.summary, b.summary].filter(Boolean).join(' '),
+        // A clean two-half split-and-merge is NOT an incompleteness signal
+        // — together the halves cover the whole original transcript — so
+        // `truncated` only propagates up if a DESCENDANT actually had to
+        // salvage a partial result. `fallbackUsed` is always true here
+        // (chunking itself is the fallback), independent of the children's
+        // own success.
+        truncated: a.truncated || b.truncated,
+        fallbackUsed: true,
+        raw: null,
+      };
+    }
+
+    const repaired = repairTruncatedRoadmapJson(raw);
+    if (repaired) {
+      return { tasks: repaired.tasks, summary: repaired.summary, truncated: true, fallbackUsed: true, raw };
+    }
+    const err = new Error('The list was too long to parse in one go — split it into two and try again.');
+    err._truncatedEmpty = true;
+    err._rawSnippet = raw.slice(0, 300);
+    throw err;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -1164,34 +1314,47 @@ export default async function handler(req, res) {
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  const userMessage = `Meeting: ${meeting_name || 'Untitled Meeting'}
-Date: ${meeting_date || new Date().toISOString().slice(0, 10)}
-
-TRANSCRIPT:
-${transcript.trim()}`;
+  const resolvedMeetingName = meeting_name || 'Untitled Meeting';
+  const resolvedMeetingDate = meeting_date || new Date().toISOString().slice(0, 10);
+  // Included on every logError call below so a parse/truncation failure is
+  // never silent-and-unidentifiable in the error log — there's no session/
+  // submitter identity on this endpoint (see the API-key check above, not a
+  // signed session), so the meeting name/date plus transcript length are
+  // the closest thing to a request "id" available here.
+  const logContext = { transcriptLength: transcript.length, meetingName: resolvedMeetingName, meetingDate: resolvedMeetingDate };
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-opus-4-7',
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-
-    const raw = message.content[0]?.text || '{}';
-
-    let parsed;
+    let result;
     try {
-      const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch (parseErr) {
-      await logError({ endpoint: 'process-transcript', error: parseErr, extra: { raw: raw.slice(0, 300) } });
-      return res.status(500).json({ error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) });
+      result = await extractRoadmapTasks(client, transcript.trim(), resolvedMeetingName, resolvedMeetingDate, 0);
+    } catch (err) {
+      if (err._truncatedEmpty) {
+        await logError({ endpoint: 'process-transcript', error: 'Response truncated by max_tokens with nothing recoverable, even after splitting', extra: { ...logContext, raw: err._rawSnippet } });
+        return res.status(422).json({ error: err.message });
+      }
+      await logError({ endpoint: 'process-transcript', error: err, extra: { ...logContext, raw: err._rawSnippet } });
+      return res.status(500).json({ error: err.message || 'Claude returned invalid JSON.' });
     }
 
-    const tasks   = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-    const summary = typeof parsed.summary === 'string' ? parsed.summary : '';
+    if (result.fallbackUsed) {
+      // Not necessarily a failure — a clean chunk-and-merge (truncated:
+      // false) means nothing was actually lost, just that the transcript
+      // was large enough to need more than one model call. Logged either
+      // way (never silent) so a pattern of transcripts routinely needing
+      // this fallback is visible without anyone having to notice a user
+      // report first; the message says explicitly whether data may be
+      // incomplete or the merge was clean.
+      await logError({
+        endpoint: 'process-transcript',
+        error: result.truncated
+          ? 'Response required the chunk/salvage-repair fallback and may be missing content; recovered ' + result.tasks.length + ' raw task(s)'
+          : 'Response required chunking (transcript split across multiple model calls) but the merge is complete; recovered ' + result.tasks.length + ' raw task(s)',
+        extra: logContext,
+      });
+    }
+
+    const tasks   = result.tasks;
+    const summary = result.summary;
 
     const valid = tasks.filter(t =>
       t && typeof t.text === 'string' && t.text.trim() &&
@@ -1203,14 +1366,14 @@ ${transcript.trim()}`;
       text:        t.text.trim(),
       owner:       t.owner,
       category:    VALID_CATEGORIES.includes(t.category) ? t.category : '',
-      source:      meeting_name || 'Untitled Meeting',
-      source_date: meeting_date || new Date().toISOString().slice(0, 10),
+      source:      resolvedMeetingName,
+      source_date: resolvedMeetingDate,
     }));
 
-    return res.status(200).json({ tasks: valid, summary, raw_count: tasks.length });
+    return res.status(200).json({ tasks: valid, summary, raw_count: tasks.length, ...(result.truncated ? { truncated: true } : {}) });
   } catch (err) {
     console.error('Anthropic API error:', err);
-    await logError({ endpoint: 'process-transcript', error: err });
+    await logError({ endpoint: 'process-transcript', error: err, extra: logContext });
     return res.status(500).json({ error: err.message || 'Anthropic API call failed' });
   }
 }

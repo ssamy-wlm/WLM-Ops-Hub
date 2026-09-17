@@ -17171,7 +17171,8 @@ async function rmExtractTranscript(){
 
     statusBar.className='rm-status-bar success';
     const summary=data.summary?data.summary+' — ':'';
-    statusBar.textContent=`✅ ${summary}Added ${added}, merged ${merged}, skipped ${skipped} duplicate${skipped!==1?'s':''}.`;
+    const truncNote=data.truncated?' ⚠️ This was a very long transcript — it was split/repaired to extract everything; please double-check nothing was missed.':'';
+    statusBar.textContent=`✅ ${summary}Added ${added}, merged ${merged}, skipped ${skipped} duplicate${skipped!==1?'s':''}.${truncNote}`;
     statusBar.style.display='block';
     document.getElementById('rm-transcript').value='';
     document.getElementById('rm-meeting-name').value='';
