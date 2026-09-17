@@ -1428,11 +1428,33 @@ async function fireDueDateChangeResolvedNotification(supabase, events, warnings)
   await insertNotifications(supabase, rows, warnings);
 }
 
+// Resolves the requester's real id for a time-off request (2026-09-17).
+// Checks the server-stamped userId FIRST (see the timeOffRequests write
+// block below — userId is now always set at creation, never trusted from
+// the client) against BOTH ops_users and ops_admins, then falls back to
+// the legacy name-string match — also checked against both tables now —
+// for any request created before this fix, which has no userId stored at
+// all. The original name-only lookup checked ops_users exclusively, which
+// silently dropped the decision notification for every admin-submitted
+// request (e.g. via index.html's "My Time Off" tab, 2026-09-10 — an admin
+// has no ops_users row to ever match).
+function resolveTimeOffRequesterId(request, users, admins) {
+  if (request.userId) {
+    if (users.some(u => u.id === request.userId) || admins.some(a => a.id === request.userId)) return request.userId;
+  }
+  const nameLower = String(request.userName || '').toLowerCase();
+  const asUser = users.find(u => String(u.name || '').toLowerCase() === nameLower);
+  if (asUser) return asUser.id;
+  const asAdmin = admins.find(a => String(a.name || '').toLowerCase() === nameLower);
+  if (asAdmin) return asAdmin.id;
+  return null;
+}
+
 async function fireTimeOffNotification(supabase, request, warnings, notices) {
   const { users, admins } = await getDirectory(supabase);
-  const requester = users.find(u => String(u.name || '').toLowerCase() === String(request.userName || '').toLowerCase());
-  const recipients = requester
-    ? resolveNotifyRecipients(requester.id, users, admins)
+  const requesterId = resolveTimeOffRequesterId(request, users, admins);
+  const recipients = requesterId
+    ? resolveNotifyRecipients(requesterId, users, admins)
     : [];
   // The time-off approve/deny write itself already succeeded — this is only
   // the notification side finding nobody to notify, same "expected, not a
@@ -1446,6 +1468,38 @@ async function fireTimeOffNotification(supabase, request, warnings, notices) {
       recipientName: person?.name || '', recipientEmail: person?.email || '',
       title: `Time-off request ${decision}`,
       body: `${request.userName}'s request${request.startDate ? ` (${request.startDate}${request.endDate ? ' – ' + request.endDate : ''})` : ''} was ${decision}.`,
+      link: '', context: { requestId: request.id },
+    };
+  });
+  await insertNotifications(supabase, rows, warnings);
+}
+
+// Time-off SUBMISSION recipients (2026-09-17) — always the primary-admin
+// sentinel + every real super/owner admin, regardless of who submitted
+// (an employee via user.html, or a non-super admin via index.html's "My
+// Time Off" tab) — "everyone reports up to the super admins for time
+// off," per this feature's own explicit instruction; deliberately no
+// manager-routing concept here at all. Same fixed-rule dedup shape as
+// resolveReportRecipients() above, minus its own "+ the assigner" extra,
+// which doesn't apply to a submission (there's no assigner).
+export function resolveTimeOffSubmittedRecipients(admins) {
+  const out = [{ id: 'primary-admin', kind: 'admin' }];
+  admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
+  const seen = new Set();
+  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
+}
+
+async function fireTimeOffSubmittedNotification(supabase, request, warnings) {
+  const { users, admins } = await getDirectory(supabase);
+  const rows = resolveTimeOffSubmittedRecipients(admins).map(r => {
+    const isPrimary = r.id === 'primary-admin';
+    const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
+    return {
+      type: 'timeOffSubmitted', recipientId: r.id, recipientKind: r.kind,
+      recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
+      recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
+      title: `Time-off request submitted: ${request.userName}`,
+      body: `${request.userName} requested time off${request.startDate ? ` (${request.startDate}${request.endDate ? ' – ' + request.endDate : ''})` : ''}${request.days ? ` · ${request.days} day${request.days !== 1 ? 's' : ''}` : ''}.`,
       link: '', context: { requestId: request.id },
     };
   });
@@ -2901,11 +2955,17 @@ export default async function handler(req, res) {
     // manager-tier admin now falls through to the EXACT SAME branch a plain
     // member already uses below — own-request-only, matched by userName
     // (the field the app actually writes, see user.html's
-    // submitTimeOffRequest() and index.html's submitAdminMyTimeOffRequest();
-    // userId never exists on this record), status locked once decided. This
-    // is intentionally the identical code path for both roles — a
-    // manager-tier admin has no more write authority over their OWN request
-    // than a plain member does over theirs. ──
+    // submitTimeOffRequest() and index.html's submitAdminMyTimeOffRequest()),
+    // status locked once decided. This is intentionally the identical code
+    // path for both roles — a manager-tier admin has no more write
+    // authority over their OWN request than a plain member does over
+    // theirs. `userId` (2026-09-17) is always server-stamped from the
+    // caller's own session at creation, never trusted from the client (the
+    // client still only ever sends userName; there's no client-side change
+    // needed for this) — this is what makes fireTimeOffNotification()'s
+    // by-id requester resolution above actually work for an admin
+    // submitter, who has no ops_users row for a name-string match to ever
+    // find. ──
     if (Array.isArray(c.timeOffRequests) && c.timeOffRequests.length) {
       const incoming = c.timeOffRequests.filter(validGeneric);
       const ids = incoming.map(r => r.id);
@@ -2917,22 +2977,50 @@ export default async function handler(req, res) {
       for (const inc of incoming) {
         const cur = byId.get(inc.id);
         if (tier === 'super') {
-          // Generic clobber protection, same rationale as users/admins/
-          // commissions above — this raw upsert previously had NO merge at
-          // all, unlike the member branch two lines below it (which already
-          // correctly locks status/approvedBy/reviewedAt to `cur`). Status
-          // itself is always sent explicitly by the real approve/deny UI
-          // (reviewTimeOff() in index.html — never omitted), so
-          // isNewDecision's own transition check below is unaffected by
-          // this merge either way.
-          const row = preserveMissingFields(inc, cur);
+          // Fires exactly once, at the moment status actually transitions to a
+          // decision — never on the initial pending-request creation, and
+          // never re-fired if an admin re-saves the same already-decided
+          // status. Computed off the raw `inc.status` rather than the
+          // merged row below — status is always sent explicitly by the
+          // real approve/deny UI (reviewTimeOff() in index.html, never
+          // omitted), so this can't disagree with the merged row's own
+          // status either way.
+          const isNewDecision = cur && cur.status !== inc.status && (inc.status === 'approved' || inc.status === 'denied');
+          // Generic clobber protection first (same rationale as users/
+          // admins/commissions above — this raw upsert previously had NO
+          // merge at all, so a stale client resave could blank an
+          // out-of-band field it doesn't know about), THEN the server-
+          // authoritative identity overrides on top of ITS output — per
+          // this file's own established "field-specific guards run AFTER
+          // preserveMissingFields, on its output, so their own overrides
+          // still win" convention (see that function's own comment).
+          let row = preserveMissingFields(inc, cur);
+          row = {
+            ...row,
+            // userId is immutable once a row exists — always cur's stored
+            // value verbatim (even if that's genuinely absent, e.g. a
+            // legacy pre-2026-09-17 request that predates this field —
+            // must NEVER be silently backfilled with the APPROVING admin's
+            // own id, which would misattribute the request to whoever
+            // happens to review it). Only defaults to the caller's own
+            // session id when there's truly no existing row at all (supers
+            // have no "My Time Off" submission UI today — every real new
+            // row is created through the non-super branch below — but
+            // this keeps the guarantee unconditional regardless of entry
+            // path).
+            userId: cur ? cur.userId : session.id,
+            // reviewedBy/approvedBy are always server-stamped from the
+            // real session identity on the actual decision transition,
+            // never trusted from the client (index.html's reviewTimeOff()
+            // used to hardcode reviewedBy to the literal string 'Admin',
+            // and approvedBy was never set by anyone, anywhere) — an
+            // unrelated resave (e.g. adding an admin note after the fact)
+            // leaves both fields exactly as already stored.
+            ...(isNewDecision ? { reviewedBy: session.name, approvedBy: session.id } : {}),
+          };
           const { error } = await supabase.from('ops_time_off_requests').upsert({ id: inc.id, data: row }, { onConflict: 'id' });
           if (error) { warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); continue; }
           n++;
-          // Fires exactly once, at the moment status actually transitions to a
-          // decision — never on the initial pending-request creation, and
-          // never re-fired if an admin re-saves the same already-decided status.
-          const isNewDecision = cur && cur.status !== row.status && (row.status === 'approved' || row.status === 'denied');
           if (isNewDecision && notifSettings.timeOff) await fireTimeOffNotification(supabase, row, warnings, notices);
           continue;
         }
@@ -2941,15 +3029,22 @@ export default async function handler(req, res) {
             rejected.push({ table: 'timeOffRequests', id: inc.id, reason: 'members can only create their own request' });
             continue;
           }
-          const row = { ...inc, status: 'pending', approvedBy: null, reviewedAt: null };
+          const row = { ...inc, userId: session.id, status: 'pending', approvedBy: null, reviewedAt: null };
           const { error } = await supabase.from('ops_time_off_requests').insert({ id: inc.id, data: row });
-          if (error) warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); else n++;
+          if (error) { warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); }
+          else {
+            n++;
+            // Submission notify (2026-09-17) — always both super admins,
+            // for every submitter (employee or admin), no manager routing.
+            // See resolveTimeOffSubmittedRecipients()'s own comment.
+            if (notifSettings.timeOff) await fireTimeOffSubmittedNotification(supabase, row, warnings);
+          }
         } else {
           if (String(cur.userName || '').toLowerCase() !== myNameLower) {
             rejected.push({ table: 'timeOffRequests', id: inc.id, reason: "not this member's request" });
             continue;
           }
-          const row = { ...inc, status: cur.status, approvedBy: cur.approvedBy, reviewedAt: cur.reviewedAt }; // status locked to admin
+          const row = { ...inc, userId: cur.userId, status: cur.status, approvedBy: cur.approvedBy, reviewedAt: cur.reviewedAt }; // status/identity locked to admin
           const { error } = await supabase.from('ops_time_off_requests').update({ data: row }).eq('id', inc.id);
           if (error) warnings.push(`timeOffRequests(${inc.id}): ${error.message}`); else n++;
         }
