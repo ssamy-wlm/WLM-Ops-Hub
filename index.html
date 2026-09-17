@@ -4930,11 +4930,21 @@ function renderAdminTable(){ if(window._renderAdminTableImpl) window._renderAdmi
 // same active/inactive pattern now used for admins above — never a hard
 // delete, never the ops_deleted_user_ids tombstone. Replaces the row's old
 // "Remove" button, which called removeUser() below.
-function deactivateUser(btn, userId){
+async function deactivateUser(btn, userId){
+  const preConfirm = dbGet(DB_KEYS.users)||[];
+  const preU = preConfirm.find(x=>x.id===userId||x.name===userId);
+  if(!preU) return;
+  if(!confirm(`Set ${preU.name} to inactive?`)) return;
+  // Re-pull fresh before toggling status — this only ever touches `status`,
+  // but the WHOLE record still gets pushed, so every other field (managerId,
+  // salesFunnelLevel, earnsCommission) must come from the server's current
+  // copy, not this browser's possibly-stale local cache, or an unrelated
+  // status toggle could silently revert a concurrent grant.
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
   const allUsers = dbGet(DB_KEYS.users)||[];
   const u = allUsers.find(x=>x.id===userId||x.name===userId);
   if(!u) return;
-  if(!confirm(`Set ${u.name} to inactive?`)) return;
   u.status = 'inactive';
   dbSet(DB_KEYS.users, allUsers);
   renderUserTable();
@@ -4942,11 +4952,16 @@ function deactivateUser(btn, userId){
   showToast(`${u.name} set to inactive`);
   logActivity('admin','Admin','Deactivated user: '+u.name,'');
 }
-function activateUser(btn, userId){
+async function activateUser(btn, userId){
+  const preConfirm = dbGet(DB_KEYS.users)||[];
+  const preU = preConfirm.find(x=>x.id===userId||x.name===userId);
+  if(!preU) return;
+  if(!confirm(`Set ${preU.name} to active?`)) return;
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
   const allUsers = dbGet(DB_KEYS.users)||[];
   const u = allUsers.find(x=>x.id===userId||x.name===userId);
   if(!u) return;
-  if(!confirm(`Set ${u.name} to active?`)) return;
   u.status = 'active';
   dbSet(DB_KEYS.users, allUsers);
   renderUserTable();
@@ -15497,19 +15512,41 @@ function _updateGrantManagerLevelBadge(){
   badge.style.border = `1px solid ${info.color}44`;
 }
 
-function grantManagerRole(){
+async function grantManagerRole(){
   const userId = document.getElementById('grantManagerUserId').value;
   const title  = document.getElementById('grantManagerTitle').value.trim();
   const level  = document.getElementById('grantManagerLevel').value;
   const pass   = document.getElementById('grantManagerPass').value;
   const pass2  = document.getElementById('grantManagerPass2').value;
 
-  const users = dbGet(DB_KEYS.users)||[];
-  const u = users.find(x=>x.id===userId);
-  if(!u){ showToast('User not found'); return; }
+  const preUsers = dbGet(DB_KEYS.users)||[];
+  const preU = preUsers.find(x=>x.id===userId);
+  if(!preU){ showToast('User not found'); return; }
   if(!title){ showToast('Please enter a job title'); return; }
   if(!pass||pass.length<6){ showToast('Password must be at least 6 characters'); return; }
   if(pass!==pass2){ showToast('Passwords do not match'); return; }
+
+  // Re-pull fresh before the re-grant merge below — a re-grant (existingLink
+  // branch) carries every field on that admin row through unchanged except
+  // title/level/password/status/name/email, so managedUserIds/
+  // salesFunnelLevel/earnsCommission must come from the server's current
+  // copy, not a stale local cache, or this action could silently revert a
+  // concurrent grant/change on the exact same linked admin row.
+  const btn = document.querySelector('#grantManagerModal .btn-primary');
+  if(btn){ btn.disabled=true; }
+  await cloudPullAll(true);
+  if(!_lastPullOk){
+    showToast('❌ Could not verify the current record from the server — try again.');
+    if(btn){ btn.disabled=false; }
+    return;
+  }
+  const users = dbGet(DB_KEYS.users)||[];
+  const u = users.find(x=>x.id===userId);
+  if(!u){
+    showToast('User not found');
+    if(btn){ btn.disabled=false; }
+    return;
+  }
 
   const admins = dbGet(DB_KEYS.admins)||[];
   const existingLink = admins.find(a=>a.linkedUserId===userId);
@@ -15540,6 +15577,7 @@ function grantManagerRole(){
   }
   dbSet(DB_KEYS.admins, admins);
   cloudAutoSync(); // per-record push — only this admins row is dirty, see CLAUDE.md rule #1
+  if(btn){ btn.disabled=false; }
 
   renderUserTable();
   if(typeof window._renderAdminTableImpl==='function') window._renderAdminTableImpl();
@@ -15548,18 +15586,27 @@ function grantManagerRole(){
   logActivity('admin','Admin','Granted manager role: '+u.name+' ('+_getLevelInfo(level).label+')', u.email);
 }
 
-function revokeManagerRole(userId){
-  const admins = dbGet(DB_KEYS.admins)||[];
-  const link = admins.find(a=>a.linkedUserId===userId && a.status==='active');
-  if(!link){ showToast('No active manager role found for this person'); return; }
-  const users = dbGet(DB_KEYS.users)||[];
-  const u = users.find(x=>x.id===userId);
-  const displayName = u ? u.name : link.name;
+async function revokeManagerRole(userId){
+  const preAdmins = dbGet(DB_KEYS.admins)||[];
+  const preLink = preAdmins.find(a=>a.linkedUserId===userId && a.status==='active');
+  if(!preLink){ showToast('No active manager role found for this person'); return; }
+  const preUsers = dbGet(DB_KEYS.users)||[];
+  const preU = preUsers.find(x=>x.id===userId);
+  const displayName = preU ? preU.name : preLink.name;
   // Deactivate only — never unlink/delete. A dual-role account whose admin
   // row goes inactive degrades to employee-only on next login and is never
   // locked out (see api/ops-auth.js's Step 1 design); the ops_users row is
   // untouched either way.
   if(!confirm(`Revoke manager role for ${displayName}?\nThey'll keep their employee account and login — this only removes admin/manager access. It can be re-granted later.`)) return;
+  // Re-pull fresh before the status flip — this linked admin row carries
+  // managedUserIds/salesFunnelLevel/earnsCommission/title/level too, and
+  // this action pushes the whole row back, so those must come from the
+  // server's current copy, not a stale local cache.
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
+  const admins = dbGet(DB_KEYS.admins)||[];
+  const link = admins.find(a=>a.linkedUserId===userId && a.status==='active');
+  if(!link){ showToast('No active manager role found for this person'); return; }
   link.status = 'inactive';
   dbSet(DB_KEYS.admins, admins);
   cloudAutoSync();
@@ -15751,12 +15798,21 @@ window._addAdminImpl = function(){
 // the fix here is that an inactive admin used to vanish from the table
 // entirely (_renderAdminTableImpl filtered them out) with no way back —
 // they now stay listed, shown Inactive, with an Activate button.
-window._removeAdminImpl = function(btn, adminId){
+window._removeAdminImpl = async function(btn, adminId){
+  const preAdmins = dbGet(DB_KEYS.admins)||[];
+  const preA = preAdmins.find(x=>x.id===adminId);
+  if(!preA) return;
+  const displayName = preA.name;
+  if(!confirm(`Set ${displayName} to inactive?\nThey can be reactivated later — this does not delete their account.`)) return;
+  // Re-pull fresh before toggling status — same "the whole record is what
+  // gets pushed" rationale as deactivateUser()/activateUser() above:
+  // managerId/salesFunnelLevel/earnsCommission/managedUserIds on this same
+  // admin row must come from the server's current copy, not a stale cache.
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
   if(!a) return;
-  const displayName = a.name;
-  if(!confirm(`Set ${displayName} to inactive?\nThey can be reactivated later — this does not delete their account.`)) return;
   a.status = 'inactive';
   dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
@@ -15764,12 +15820,17 @@ window._removeAdminImpl = function(btn, adminId){
   showToast(`${displayName} set to inactive`);
   logActivity('admin','Admin','Deactivated admin: '+displayName,'');
 };
-window._activateAdminImpl = function(btn, adminId){
+window._activateAdminImpl = async function(btn, adminId){
+  const preAdmins = dbGet(DB_KEYS.admins)||[];
+  const preA = preAdmins.find(x=>x.id===adminId);
+  if(!preA) return;
+  const displayName = preA.name;
+  if(!confirm(`Set ${displayName} to active?`)) return;
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
   const admins = dbGet(DB_KEYS.admins)||[];
   const a = admins.find(x=>x.id===adminId);
   if(!a) return;
-  const displayName = a.name;
-  if(!confirm(`Set ${displayName} to active?`)) return;
   a.status = 'active';
   dbSet(DB_KEYS.admins, admins);
   window._renderAdminTableImpl();
@@ -15880,7 +15941,7 @@ function _updateEditLevelBadge(){
 }
 
 // ── Save edited admin ──
-function saveEditAdmin(){
+async function saveEditAdmin(){
   const adminId = document.getElementById('editAdminId').value;
   const first   = document.getElementById('editAdminFirst').value.trim();
   const last    = document.getElementById('editAdminLast').value.trim();
@@ -15903,16 +15964,45 @@ function saveEditAdmin(){
     return;
   }
 
+  // Re-pull fresh cloud state before merging this modal's edited fields on
+  // top of it — same discipline saveEditUser()/addUser() already use, and
+  // for the identical reason: this form only ever touches name/initials/
+  // email/title/team/level/managerId/assignedUsers/managedUserIds/password.
+  // Every OTHER field on this admin row (status, salesFunnelLevel,
+  // earnsCommission, linkedUserId) is simply carried through unchanged from
+  // whatever `admins[idx]` already holds — if that's this browser's own
+  // stale local cache (predating a grant/change made from a different tab
+  // or admin in the meantime), this save would silently push that stale
+  // value back and revert it, with no error, no rejection, no log entry.
+  // Re-pulling first means `admins[idx]` below is always the server's own
+  // current copy at the moment of save.
+  const btn = document.querySelector('#editAdminModal .btn-primary');
+  if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
+  await cloudPullAll(true);
+  if(!_lastPullOk){
+    showToast('❌ Could not verify the current record from the server — try again.');
+    if(btn){ btn.textContent='Save Changes'; btn.disabled=false; }
+    return;
+  }
+
   const admins = dbGet(DB_KEYS.admins)||[];
   const idx    = admins.findIndex(x=>x.id===adminId);
-  if(idx===-1){ showToast('Admin not found'); return; }
+  if(idx===-1){
+    showToast('Admin not found');
+    if(btn){ btn.textContent='Save Changes'; btn.disabled=false; }
+    return;
+  }
 
   const name     = first+' '+last;
   const initials = (first[0]+(last[0]||'')).toUpperCase();
 
   // Check duplicate email (allow same email as self)
   const duplicate = admins.find(a=>a.email===email && a.id!==adminId);
-  if(duplicate){ showToast('Another admin already uses that email'); return; }
+  if(duplicate){
+    showToast('Another admin already uses that email');
+    if(btn){ btn.textContent='Save Changes'; btn.disabled=false; }
+    return;
+  }
 
   admins[idx].name          = name;
   admins[idx].initials      = initials;
@@ -15943,6 +16033,7 @@ function saveEditAdmin(){
 
   dbSet(DB_KEYS.admins, admins);
   cloudAutoSync(); // persist to cloud so changes survive live sync pulls
+  if(btn){ btn.textContent='Save Changes'; btn.disabled=false; }
   window._renderAdminTableImpl();
   closeModal('editAdminModal');
   showToast(`${name} updated ✓`);
