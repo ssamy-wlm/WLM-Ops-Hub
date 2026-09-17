@@ -9717,6 +9717,109 @@ merge, per rule #10 and this ticket's own explicit "needs preview +
 approval" instruction — touches real write/notification logic in
 `api/ops-sync.js`.
 
+**Inactivity/overdue: treat linked dual-role accounts as one person
+(2026-09-17).** `api/cron-overdue-check.js` only. Reported: Sherine
+(`ops_admins` row `adm_1784122163153`, linked via her own `linkedUserId`
+to her `ops_users` row) was getting flagged inactive and counted twice by
+the "Notification hierarchy + escalation" block (tier 1 employee->manager
+rollup, tier 2 manager/admin->super-admin escalation, tier 3 inactivity —
+see the 2026-09-03 entry above), because that block accumulates every
+per-person signal (overdue count, session activity, completed work) keyed
+by whichever raw id happens to be on the record — her admin id and
+employee id are two separate keys for the same real person, so her data
+was silently split rather than merged.
+
+**New `buildCanonicalIdMap(users, admins)`/`canonicalId(id, canonMap)`**,
+mirroring `api/ops-auth.js`'s own login-resolution precedence exactly —
+the only real pairing field is `linkedUserId` on an `ops_admins` row
+(there is no reverse `linkedAdminId` on `ops_users`), and a pairing is
+only trusted when the linked user id actually resolves to a live row
+(matching `api/ops-auth.js`'s own "re-fetch the linked row by id... if
+(linked)" guard — a dangling/stale link is never treated as real).
+Canonical id = the EMPLOYEE id, matching `api/ops-auth.js`'s own session
+resolution (a real login through a linked pair always sets `session.id`
+to `employeeRow.id`, never the admin row's id) — so the merged totals
+agree with what that person's own real session already produces, and
+treating the admin id as an alias of it (not the reverse) is what
+correctly merges any HISTORICAL data still sitting under the bare admin
+id from before the accounts were linked, or from any other write path
+that used the raw admin identity.
+
+Applied everywhere a raw person id feeds one of these three signals:
+`bump()` (overdue-count accumulation, both tasks and services) now
+canonicalizes the assignee id before bumping the map, so a linked pair's
+counts land in one shared bucket; `activeSince`/`completedSince` (tier 3)
+canonicalize every raw `ops_session_activity.user_id`/task
+`completedAt`/service `lastDone` assignee id the same way; the
+`inactivePeople` roster loop skips a linked admin row entirely
+(`canonMap.has(p.id)`) so the person is only ever evaluated once, via
+their employee row. Two more spots needed the identical canonicalization
+to stay consistent with the merged map, found by tracing every read of
+`overdueCounts`/`activeSince`/`completedSince`, not just the writes: tier
+2's `escalatingAdmins` filter (`overdueCounts.get(a.id)` → `.get
+(canonicalId(a.id, canonMap))`, since a linked admin's OWN id is never
+the key the merged count actually lives under) — **and a real bug caught
+by the verification suite, not by inspection**: the filter was fixed
+first, but the section-body TEXT that displays each escalating admin's
+count (`escalatingAdmins.map(a => ... overdueCounts.get(a.id) ...)`) was
+still reading the raw, uncanonicalized count, so the alert would have
+shown a linked admin's PARTIAL count right next to the correctly-merged
+threshold decision that put her in the list at all — fixed to use the
+same `canonicalId()` call as the filter. Tier 1's rollup also
+canonicalizes `u.managerId` before bucketing — a natural extension of the
+same "report once, not twice" requirement: two different reports whose
+`managerId` happens to be stored as their dual-role manager's two
+different ids now merge into one rollup email instead of splitting one
+manager's summary into two.
+
+**Flagged, not fixed — explicitly out of scope for this ticket** (its own
+wording named "the inactivity + overdue-escalation logic," matching this
+one block specifically): the task-attention digest's self-reminder
+(`ownCounts`) and the focus-digest's per-person `focus` map (both earlier,
+separate blocks in this same file) accumulate overdue/due-soon/in-progress
+signals the identical raw-id way and could double-email a linked dual-role
+person one summary per id — not touched here, since this ticket's own
+acceptance criteria only covers the hierarchy-escalation block's overdue
+count, inactivity flag, and once-only reporting.
+
+Verified with a `node:test --experimental-test-module-mocks` suite
+against the real, byte-identical `api/cron-overdue-check.js` handler, no
+live DB access (rule #11) — 18/18, across three scenarios: (1) a
+comprehensive main case — Sherine's overdue split 3-under-employee-id/
+3-under-admin-id merges to a real 6, crossing the escalation threshold
+only once merged, shown as exactly one "Sherine Amin: 6 overdue" line
+(never two partial lines); her only session activity is recorded under
+her ADMIN id, and she's correctly NOT flagged inactive (proving the merge
+reaches activity, not just the count) while a genuinely inactive,
+unrelated person (Kyle) is still correctly flagged (proving the fix
+doesn't just silently stop flagging everyone); two different employees
+whose `managerId` points at her two different ids merge into one rollup
+email, not two; a plain unlinked super admin (David) is unaffected. (2) A
+second scenario isolates the OTHER half of "activity" — completed work
+(a task's `completedAt`) recorded under the admin id alone also correctly
+exempts her from inactivity via her employee id, with an unrelated,
+fully-inactive control person (Jordan) still correctly flagged. (3) A
+dangling-link admin (`linkedUserId` pointing at a nonexistent user)
+regression-checks `api/ops-auth.js`'s own "if (linked)" guard: her
+below-threshold count is never merged with anything, and she's still
+independently evaluated for inactivity under her own bare id — a stale
+link must never accidentally exempt anyone. `node --check` passed. The
+pre-existing `verify_cron_hierarchy_escalation.mjs` suite was confirmed,
+via `git stash` against unmodified `main`, to already fail identically
+outside the 11:00 UTC hour it assumes (it never mocks the wall clock, and
+one of its own assertions — a daily backup snapshot running inside this
+endpoint — predates that step moving to its own dedicated
+`api/cron-backup.js` cron) — a pre-existing test-fixture issue, not a
+regression from this change, and not fixed here (out of this ticket's own
+scope).
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this ticket's own explicit "needs preview +
+approval" instruction — touches real aggregation/notification logic in
+`api/cron-overdue-check.js`. Per the user's own sequencing instruction,
+the follow-up ticket ("nag people with 5+ overdue twice a day") is held
+until this PR merges.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

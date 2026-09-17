@@ -105,6 +105,36 @@ function taskIsDueToday(t, today) { return t.dueDate === today && t.status !== '
 // literal, unfiltered truth.
 function taskCountsAsOverdueBurden(t, today) { return taskIsOverdue(t, today) && !t.recurring; }
 
+// Linked dual-role identity merge (2026-09-17) — an ops_admins row may carry
+// linkedUserId, pointing at the ops_users row for the SAME real person (see
+// CLAUDE.md's dual-mode permission project; api/ops-auth.js is the only
+// other place this field is read, for login resolution). That is the ONLY
+// link that exists today — there is no reverse linkedAdminId on ops_users —
+// so a pair is always discovered from the admin side, mirroring
+// api/ops-auth.js's own precedence exactly (an admin row's linkedUserId is
+// checked first, and once a valid link exists the admin row is never a
+// separate person for that resolution).
+//
+// Canonical id = the EMPLOYEE (ops_users) id for a linked pair. This matches
+// api/ops-auth.js's own session resolution: a real login through a linked
+// pair always sets session.id to employeeRow.id, never the admin row's id
+// (see that file's dual-role branch) — so every write this app makes under
+// that person's real session (a task self-assign, session-ping activity,
+// etc.) already lands under this same id today. Treating the admin id as an
+// alias of it here, rather than the reverse, means the merged totals below
+// agree with what that person's own real session already produces, not an
+// arbitrary pick — and it's what makes a HISTORICAL record still sitting
+// under the admin id (e.g. from before a dual-role account was granted, or
+// from a write path that used the raw admin identity) merge correctly too.
+function buildCanonicalIdMap(users, admins) {
+  const map = new Map(); // adminId -> canonical employeeId, one entry per valid linked pair
+  admins.forEach(a => {
+    if (a.linkedUserId && users.some(u => u.id === a.linkedUserId)) map.set(a.id, a.linkedUserId);
+  });
+  return map;
+}
+function canonicalId(id, canonMap) { return id ? (canonMap.get(id) || id) : id; }
+
 // Notification hierarchy + escalation (2026-09-03) — "1 full working day" of
 // inactivity means since the START of the previous WEEKDAY, skipping back
 // over a weekend rather than a flat 24h (a Monday-morning run should compare
@@ -566,6 +596,13 @@ export default async function handler(req, res) {
       const cutoffDateStr = cutoffIso.slice(0, 10);
 
       const { users: hUsers, admins: hAdmins } = await loadDirectory(supabase);
+      // Linked dual-role pairing (2026-09-17) — see buildCanonicalIdMap()'s
+      // own comment above. Applied everywhere below a person's id is used to
+      // accumulate or check a per-person signal (overdue count, activity,
+      // completed work), so a dual-role person's admin-id-keyed and
+      // employee-id-keyed data merge into one total instead of two partial
+      // ones, and the inactivity roster reports them exactly once.
+      const canonMap = buildCanonicalIdMap(hUsers, hAdmins);
 
       const { data: hTaskRows, error: hTaskErr } = await supabase.from('ops_tasks').select('id, data');
       if (hTaskErr) warnings.push(`hierarchyEscalation tasks: ${hTaskErr.message}`);
@@ -578,9 +615,10 @@ export default async function handler(req, res) {
       // taskCountsAsOverdueBurden (2026-09-08) — a recurring task due again
       // on schedule never contributes to the escalation-threshold count
       // this tier-1/tier-2 logic is built on; services have no recurring
-      // concept, unaffected.
+      // concept, unaffected. bump() canonicalizes the raw assignee id first
+      // (2026-09-17) so a linked pair's counts land in one shared bucket.
       const overdueCounts = new Map();
-      const bump = (id) => { if (id) overdueCounts.set(id, (overdueCounts.get(id) || 0) + 1); };
+      const bump = (id) => { if (!id) return; const cid = canonicalId(id, canonMap); overdueCounts.set(cid, (overdueCounts.get(cid) || 0) + 1); };
       hTasks.forEach(t => { if (!t.mergedIntoId && taskCountsAsOverdueBurden(t, today2)) bump(t.assigneeId); });
       const scanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, today2)) bump(s.assigneeId); });
       (hClientRows || []).forEach(row => {
@@ -591,14 +629,23 @@ export default async function handler(req, res) {
 
       const hierarchyRows = [];
 
-      // Tier 1 — employee -> manager rollup.
+      // Tier 1 — employee -> manager rollup. u.id is already canonical for a
+      // linked employee row (canonical = the employee id, see
+      // buildCanonicalIdMap()), so overdueCounts.get(u.id) already reflects
+      // the merged total with no further lookup change needed here.
+      // u.managerId is canonicalized (2026-09-17) so a report whose manager
+      // happens to be stored as that manager's linked ADMIN id still merges
+      // into the SAME rollup bucket as a report stored against their
+      // employee id, instead of splitting one manager's summary into two.
       const byManager = new Map();
       hUsers.forEach(u => {
         const count = overdueCounts.get(u.id) || 0;
         if (count < OVERDUE_ESCALATION_THRESHOLD) return;
-        if (!u.managerId || u.managerId === u.id) return;
-        if (!byManager.has(u.managerId)) byManager.set(u.managerId, []);
-        byManager.get(u.managerId).push({ name: u.name || 'A team member', count });
+        if (!u.managerId) return;
+        const managerId = canonicalId(u.managerId, canonMap);
+        if (managerId === u.id) return;
+        if (!byManager.has(managerId)) byManager.set(managerId, []);
+        byManager.get(managerId).push({ name: u.name || 'A team member', count });
       });
       let managerSummariesSent = 0;
       byManager.forEach((reports, managerId) => {
@@ -615,17 +662,29 @@ export default async function handler(req, res) {
         managerSummariesSent++;
       });
 
-      // Tier 2 — manager/admin -> super-admin escalation.
-      const escalatingAdmins = hAdmins.filter(a => a.level !== 'super' && a.level !== 'owner' && (overdueCounts.get(a.id) || 0) >= OVERDUE_ESCALATION_THRESHOLD);
+      // Tier 2 — manager/admin -> super-admin escalation. a.id is
+      // canonicalized (2026-09-17) — a linked admin row's own id is an
+      // ALIAS in canonMap, so this now reads the same merged total
+      // overdueCounts bump() already accumulated under the person's
+      // employee id, instead of only ever seeing whatever fraction of their
+      // work happened to be assigned under the bare admin id.
+      const escalatingAdmins = hAdmins.filter(a => a.level !== 'super' && a.level !== 'owner' && (overdueCounts.get(canonicalId(a.id, canonMap)) || 0) >= OVERDUE_ESCALATION_THRESHOLD);
 
       // Tier 3 — inactivity: no session activity and no completed work since
-      // the previous working day.
+      // the previous working day. Every raw id is canonicalized the instant
+      // it's added to activeSince/completedSince (2026-09-17) — a real login
+      // through a linked pair always logs session-ping activity under the
+      // employee id already (api/ops-auth.js's dual-role branch always sets
+      // session.id to employeeRow.id), but canonicalizing here too is what
+      // correctly merges any HISTORICAL activity/completed-work still
+      // sitting under the admin id from before the accounts were linked, or
+      // from any other write path that used the bare admin identity.
       const { data: activityRows, error: activityErr } = await supabase.from('ops_session_activity').select('user_id').gte('created_at', cutoffIso);
       if (activityErr) warnings.push(`hierarchyEscalation activity: ${activityErr.message}`);
-      const activeSince = new Set((activityRows || []).map(r => r.user_id));
+      const activeSince = new Set((activityRows || []).map(r => canonicalId(r.user_id, canonMap)));
       const completedSince = new Set();
-      hTasks.forEach(t => { if (t.assigneeId && t.completedAt && t.completedAt >= cutoffIso) completedSince.add(t.assigneeId); });
-      const scanServiceCompleted = (list) => (list || []).forEach(s => { if (s?.assigneeId && s.lastDone && s.lastDone >= cutoffDateStr) completedSince.add(s.assigneeId); });
+      hTasks.forEach(t => { if (t.assigneeId && t.completedAt && t.completedAt >= cutoffIso) completedSince.add(canonicalId(t.assigneeId, canonMap)); });
+      const scanServiceCompleted = (list) => (list || []).forEach(s => { if (s?.assigneeId && s.lastDone && s.lastDone >= cutoffDateStr) completedSince.add(canonicalId(s.assigneeId, canonMap)); });
       (hClientRows || []).forEach(row => {
         const client = row.data; if (!client) return;
         scanServiceCompleted(client.services);
@@ -634,6 +693,11 @@ export default async function handler(req, res) {
       const inactivePeople = [];
       [...hUsers, ...hAdmins].forEach(p => {
         if (!p.id || p.id === 'primary-admin' || p.status === 'inactive') return;
+        // A linked admin row is never evaluated here as a second, separate
+        // person (2026-09-17) — canonMap.has(p.id) is true exactly for a
+        // valid-link admin id, and that person is already represented once,
+        // canonically, via their employee row's own iteration below.
+        if (canonMap.has(p.id)) return;
         if (activeSince.has(p.id) || completedSince.has(p.id)) return;
         inactivePeople.push(p.name || p.id);
       });
@@ -642,8 +706,13 @@ export default async function handler(req, res) {
       if (escalatingAdmins.length || inactivePeople.length) {
         const sections = [];
         if (escalatingAdmins.length) {
+          // overdueCounts.get(canonicalId(a.id, canonMap)) (2026-09-17) —
+          // same canonicalization as the escalatingAdmins filter itself
+          // above; must match it exactly, or a linked admin's DISPLAYED
+          // count would silently disagree with the merged total that
+          // decided she belongs in this section at all.
           sections.push(`Manager/admin overdue (${OVERDUE_ESCALATION_THRESHOLD}+):\n`
-            + escalatingAdmins.map(a => `• ${a.name}: ${overdueCounts.get(a.id)} overdue`).join('\n'));
+            + escalatingAdmins.map(a => `• ${a.name}: ${overdueCounts.get(canonicalId(a.id, canonMap))} overdue`).join('\n'));
         }
         if (inactivePeople.length) {
           sections.push(`Inactive since ${cutoffDateStr} (no login, no completed work):\n`
