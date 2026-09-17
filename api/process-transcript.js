@@ -3,6 +3,26 @@ import { logError } from '../lib/errorLog.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
 import { clampToWeekday } from '../lib/dateUtils.js';
+// Meeting-parse task/service auto-update+notify (2026-09-16) — only these
+// two exports are imported, deliberately never getDirectory()/
+// insertNotifications() directly (see their own call sites below):
+// getDirectory()'s module-level _directoryCache is a PER-REQUEST cache
+// that api/ops-sync.js's own handler resets at the top of every request
+// (line ~1454) — but that handler never runs inside this file's own
+// serverless function (api/process-transcript.js is a completely
+// separate Vercel function; the two never share a warm container), so
+// nothing would ever reset that cache here, risking a stale roster
+// persisting across many /api/process-transcript invocations on a warm
+// container. applyMeetingParseTaskStatusUpdate() and
+// fireMeetingParseNotifyEvents() both take an explicit {users, admins}
+// (this file's own already-fresh activeRoster(), split by kind — see the
+// call sites below) instead of fetching internally, so no cross-module
+// caching risk is introduced. insertNotifications() itself still calls
+// getDirectory() internally for its own quiet-hours team lookup — an
+// opts.directory override was added there (2026-09-16) specifically so
+// fireMeetingParseNotifyEvents() can pass this file's own fresh roster
+// through instead, sidestepping that one remaining internal call too.
+import { applyMeetingParseTaskStatusUpdate, fireMeetingParseNotifyEvents } from './ops-sync.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
 
@@ -91,8 +111,17 @@ Always return a real date — only return an empty string if the "subject" itsel
 
 If the text contains no actionable task at all, return an empty tasks array — do not invent one.
 
+Separately from "tasks" above (which is only for brand-new action items), also extract "existingItemMentions" — an array capturing any place the text reports on the STATUS of something that already exists, rather than assigning new work. For EACH such mention:
+- "itemType": "task" if it sounds like a specific work item someone was tracking (a to-do, a follow-up, a piece of work someone was assigned), or "service" if it sounds like an ongoing/recurring client service or deliverable (e.g. "the SEO package", "their monthly report", "hosting").
+- "mentionSubject": a short description of the item, as close as possible to how the original task/service is likely titled (e.g. "Homepage redesign", "Q3 report").
+- "clientName": if the item is clearly about work for one specific client from this list: ${JSON.stringify(clientNames)}, output that name EXACTLY as it appears in the list (same matching rules as "clientName" above). Empty string if unclear or not client-specific.
+- "personName": whose item this is — the person it's assigned to / responsible for it, matched against this same roster: ${JSON.stringify(rosterDisplayList)} (same matching rules as "ownerName" above, including phonetic/fuzzy tolerance and stripping any " — Title" suffix). Empty string if not stated or not identifiable.
+- "attributedTo": who is SPEAKING about this item's status in the text — who said it's done or in progress. Often the same person as "personName" (someone reporting on their own work), but can be a different person (e.g. a manager reporting on someone else's status). Matched against the same roster. Empty string if the speaker genuinely cannot be identified from the text at all.
+- "impliedStatus": "done" if the text says this item is finished/completed/shipped/wrapped up, "in-progress" if it says it's started/underway/in progress, empty string if the item is mentioned but no clear status is implied.
+Only include a mention here when a status is actually implied AND you're reasonably confident it refers to something that already exists (not a brand-new task) — skip anything vague, ambiguous, or where you can't tell whose item it is. It's fine for this array to be empty; most transcripts won't have any of these.
+
 Return ONLY valid JSON, no markdown, no explanation:
-{"assignedDate":"YYYY-MM-DD","attendees":"","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","clientName":"","ownerName":"","groupOwner":false,"alreadyDone":false}]}`;
+{"assignedDate":"YYYY-MM-DD","attendees":"","tasks":[{"subject":"...","notes":"...","tags":[],"category":"Production","priority":"Normal","dueDate":"","senderEmail":"","senderName":"","recipientEmail":"","recipientName":"","emailReceivedDate":"","emailThreadId":"","clientName":"","ownerName":"","groupOwner":false,"alreadyDone":false}],"existingItemMentions":[{"itemType":"task","mentionSubject":"...","clientName":"","personName":"","attributedTo":"","impliedStatus":"done"}]}`;
 }
 
 // A malformed or out-of-range date from the model must never reach storage
@@ -563,6 +592,94 @@ function dedupeWithinBatch(tasks) {
   return kept;
 }
 
+// ── Meeting parse -> existing-item detection (2026-09-16). Deterministic
+// matching/gating for "existingItemMentions" (see the prompt above) — the
+// model only supplies raw text signals (mentionSubject/clientName/
+// personName/attributedTo); the actual "is this confidently the same
+// item" decision is always computed here, never trusted from the model
+// directly, same conviction as matchClient()/matchOwner()/isSameTask()
+// above. ──
+
+// A task mention's candidate match, reusing isSameTask()'s own dual
+// subject-similarity threshold (0.6 with an agreeing client, 0.85
+// without one) by constructing a synthetic comparable task shape.
+// isSameTask() already enforces assigneeId equality, so this only ever
+// matches a task actually belonging to the identified personId — "match
+// confidently by subject + client + assignee" per this feature's own
+// instruction. No candidate found is a real, expected outcome (a
+// low-confidence or unrelated mention) — skip silently, never guess.
+function matchExistingTask(mentionSubject, personId, clientId, existingOpenTasks) {
+  const candidateShape = { subject: mentionSubject, clientId: clientId || null, assigneeId: personId };
+  return existingOpenTasks.find(ex => isSameTask(ex, candidateShape)) || null;
+}
+
+// Flattens every active client's NOT cancelled/archived services (top-
+// level + franchise locations[].services[]) into one matchable pool —
+// same exclusion rule index.html's own _chIsInactiveService()/
+// _activeServicesForAssessment() already establish, hand-duplicated here
+// per this codebase's zero-shared-code-between-frontends convention
+// (this is a server file, not one of the three frontends, but there is
+// no shared services-flattening helper anywhere in api/*.js either, so
+// the same small duplication applies).
+function activeServiceCandidates(activeClients) {
+  const out = [];
+  activeClients.forEach(c => {
+    (Array.isArray(c.services) ? c.services : []).forEach(s => {
+      if (s.status === 'cancelled' || s.status === 'archived') return;
+      out.push({ id: s.id, name: s.name || '', clientId: c.id, clientName: c.name || '', assigneeId: s.assigneeId || null, locationName: '' });
+    });
+    (Array.isArray(c.locations) ? c.locations : []).forEach(loc => {
+      (Array.isArray(loc.services) ? loc.services : []).forEach(s => {
+        if (s.status === 'cancelled' || s.status === 'archived') return;
+        out.push({ id: s.id, name: s.name || '', clientId: c.id, clientName: c.name || '', assigneeId: s.assigneeId || null, locationName: loc.name || '' });
+      });
+    });
+  });
+  return out;
+}
+
+// Services have no existing isSameTask()-style helper of their own (there
+// is no "merge into an existing service" feature to reuse) — this mirrors
+// that same dual-threshold pattern by hand: filtered first to the
+// identified person's own services (and the matched client, when one was
+// found), then the single best subjectSimilarity() match at or above the
+// applicable threshold. A near-miss that doesn't clear the bar is simply
+// not a match — never guessed at.
+function matchExistingService(mentionSubject, personId, clientId, serviceCandidates) {
+  const pool = serviceCandidates.filter(s => s.assigneeId === personId && (!clientId || s.clientId === clientId));
+  const threshold = clientId ? SUBJECT_SIMILARITY_THRESHOLD : SUBJECT_SIMILARITY_THRESHOLD_NO_CLIENT;
+  let best = null, bestScore = 0;
+  pool.forEach(s => {
+    const score = subjectSimilarity(s.name, mentionSubject);
+    if (score >= threshold && score > bestScore) { bestScore = score; best = s; }
+  });
+  return best;
+}
+
+// The write/notify gate, identical for both item types per this feature's
+// own explicit "same responsible-person-or-super-admin gate for both"
+// instruction. Three outcomes, not two: 'act' (the identified speaker is
+// either the item's own responsible person — a self-report — or a
+// super-admin reporting on someone else's behalf), 'skip' (a known,
+// but unauthorized, speaker — never write, never notify, per "otherwise
+// skip"), and 'notify' (the speaker could not be identified from the text
+// at all — "fall back to notify-only... don't auto-write on an unknown
+// speaker"). For a TASK, 'act' means auto-write and 'notify' means send
+// the review-it-yourself message instead; for a SERVICE, 'act' and
+// 'notify' both mean "send the notify message" (services are never
+// auto-changed regardless of who's confirmed to be speaking, per this
+// feature's own "never auto-change" instruction for services) — only
+// 'skip' actually differs in effect between the two outcomes there.
+// superAdminIds already includes the primary-admin sentinel by
+// construction (activeRoster() synthesizes her with level:'owner'), so no
+// separate special case is needed here for Sarah.
+function evaluateMeetingParseGate(attributedPersonId, responsiblePersonId, superAdminIds) {
+  if (!attributedPersonId) return 'notify';
+  if (attributedPersonId === responsiblePersonId) return 'act';
+  if (superAdminIds.has(attributedPersonId)) return 'act';
+  return 'skip';
+}
+
 // Salvages a well-formed prefix of the model's task JSON when the response
 // was cut off mid-array by hitting max_tokens — only ever attempted when
 // the SDK's own message.stop_reason confirms that's actually what happened
@@ -885,6 +1002,90 @@ export async function parseTaskEmailForSession(session, text) {
         mergeIntoSubject: match ? match.subject : '',
       };
     });
+
+    // ── Meeting parse -> existing-item detection (2026-09-16). A separate
+    // concern from finalTasks above (brand-new action items): this only
+    // ever touches an existing ops_tasks row's status, or fires a
+    // notify-only message about an existing service — never creates
+    // anything, and never affects the tasks/finalTasks response below.
+    // Runs best-effort; a failure here never fails the whole parse (the
+    // "tasks" extraction the caller is waiting on already succeeded). ──
+    const mentions = Array.isArray(parsed.existingItemMentions) ? parsed.existingItemMentions : [];
+    if (mentions.length) {
+      try {
+        const superAdminIds = new Set(roster.filter(p => p.kind === 'admin' && (p.level === 'super' || p.level === 'owner')).map(p => p.id));
+        const serviceCandidates = activeServiceCandidates(activeClients);
+        const taskUpdates = [];
+        const notifyEvents = [];
+        mentions.forEach(m => {
+          if (!m || typeof m !== 'object') return;
+          const itemType = m.itemType === 'service' ? 'service' : (m.itemType === 'task' ? 'task' : null);
+          const impliedStatus = m.impliedStatus === 'done' ? 'done' : (m.impliedStatus === 'in-progress' ? 'in-progress' : null);
+          const mentionSubject = typeof m.mentionSubject === 'string' ? m.mentionSubject.trim() : '';
+          if (!itemType || !impliedStatus || !mentionSubject) return; // nothing confidently actionable stated
+          const personMatch = matchOwnerWithAlias(m.personName, roster);
+          if (!personMatch) return; // can't confidently match without knowing whose item this is
+          const attributedMatch = matchOwnerWithAlias(m.attributedTo, roster);
+          const attributedId = attributedMatch ? attributedMatch.id : null;
+          const gate = evaluateMeetingParseGate(attributedId, personMatch.id, superAdminIds);
+          if (gate === 'skip') return;
+          const matchedClient = matchClientByName(m.clientName, activeClients);
+          const clientId = matchedClient ? matchedClient.id : null;
+          if (itemType === 'task') {
+            const match = matchExistingTask(mentionSubject, personMatch.id, clientId, existingOpenTasks);
+            if (!match) return; // low-confidence/unrelated mention — skip silently
+            const newStatus = impliedStatus === 'done' ? 'Done' : 'In progress';
+            if (gate === 'act') {
+              if (match.status !== newStatus) {
+                taskUpdates.push({
+                  task: match, newStatus,
+                  attributedPersonId: attributedId,
+                  attributedPersonName: attributedId === 'primary-admin' ? 'Sarah Samy' : (attributedMatch?.name || ''),
+                });
+              }
+            } else { // 'notify' — unidentified speaker, fall back to notify-only for tasks too
+              notifyEvents.push({ itemType: 'task', itemName: match.subject, personId: personMatch.id, clientId: match.clientId || null, taskId: match.id, impliedStatus });
+            }
+          } else {
+            const match = matchExistingService(mentionSubject, personMatch.id, clientId, serviceCandidates);
+            if (!match) return; // low-confidence/unrelated mention — skip silently
+            // Services are always notify-only here — 'act' and 'notify'
+            // both mean "send the message" ('skip' was already handled
+            // above); never auto-changed regardless of who's speaking,
+            // per this feature's own explicit instruction.
+            notifyEvents.push({ itemType: 'service', itemName: match.name + (match.locationName ? ` — ${match.locationName}` : ''), personId: personMatch.id, clientId: match.clientId || null, taskId: null, impliedStatus });
+          }
+        });
+        if (taskUpdates.length || notifyEvents.length) {
+          const meetingParseWarnings = [];
+          for (const u of taskUpdates) {
+            await applyMeetingParseTaskStatusUpdate(supabase, { task: u.task, newStatus: u.newStatus, attributedPersonId: u.attributedPersonId, attributedPersonName: u.attributedPersonName, meetingDate: assignedDate }, meetingParseWarnings);
+          }
+          if (notifyEvents.length) {
+            const directory = {
+              users: roster.filter(p => p.kind === 'user'),
+              // 'primary-admin' excluded — every consumer of {users,admins}
+              // in api/ops-sync.js (resolveMeetingParseRecipients,
+              // personOf, insertNotifications' quiet-hours lookup) already
+              // special-cases her by literal sentinel id, the same as
+              // every other notification resolver in that file; a
+              // synthetic admin row here would be harmless (deduped by id
+              // where it matters) but inconsistent with what those
+              // functions normally receive from getDirectory().
+              admins: roster.filter(p => p.kind === 'admin' && p.id !== 'primary-admin'),
+            };
+            await fireMeetingParseNotifyEvents(supabase, notifyEvents.map(ev => ({ ...ev, meetingDate: assignedDate })), meetingParseWarnings, directory);
+          }
+          if (meetingParseWarnings.length) {
+            await logError({ endpoint: 'process-transcript:taskEmail:meetingParse', error: meetingParseWarnings.join('; '), session });
+          }
+        }
+      } catch (meetingParseErr) {
+        // Never fails the parse the caller is waiting on — the "tasks"
+        // extraction above already succeeded and is what's being returned.
+        await logError({ endpoint: 'process-transcript:taskEmail:meetingParse', error: meetingParseErr, session });
+      }
+    }
 
     // truncated is only ever present (and true) when the repair path above
     // actually ran — additive field, ignored by any caller that doesn't

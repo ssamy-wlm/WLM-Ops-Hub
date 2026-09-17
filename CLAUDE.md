@@ -9586,6 +9586,201 @@ Held for the user's explicit approval on the Vercel preview before
 merge, per rule #10 and this task's own explicit "needs preview +
 approval" instruction — touches the real service-creation write path.
 
+**Meeting parse → auto-update matched TASKS (Done/In Progress);
+notify-only for matched SERVICES (2026-09-16).** `api/process-transcript.js`
++ `api/ops-sync.js`. Given as: detect a meeting/transcript's references to
+EXISTING tracked work and act by type — a confident task mention with an
+authorized speaker auto-writes the task's status with no confirmation and
+an audit stamp; a service mention (or a task whose speaker can't be
+authorized) only ever notifies, never auto-changes anything.
+
+**Entry-point ambiguity, resolved via AskUserQuestion before writing any
+code (rule #7 — never guess on ambiguous scope).** This file has TWO
+"meeting transcript" parsers: the original Roadmap `SYSTEM_PROMPT` mode
+(confirmed, by reading its real `index.html` caller, to send NO
+Authorization header at all — genuinely unauthenticated) and the
+session-authenticated `mode:'taskEmail'` parser
+(`parseTaskEmailForSession`), whose prompt already covers "an email or
+pasted transcript." Hanging real auto-writes off an unauthenticated
+endpoint would be a security hole; asked directly rather than guessing
+either way. **User confirmed: the authenticated task parser.** Everything
+below lives inside `parseTaskEmailForSession` — the Roadmap mode's own
+code is completely untouched.
+
+**New prompt field, `existingItemMentions[]`, additive alongside the
+existing `tasks[]` schema** (`buildTaskEmailSystemPrompt()`): per mention,
+`itemType` ('task'|'service'), `mentionSubject`, `clientName` (same
+roster-name matching rules as the existing `clientName` field),
+`personName` (whose item this is — matched against the same roster as
+`ownerName`), `attributedTo` (who is SPEAKING about the status — often
+the same as `personName`, but can genuinely differ, e.g. a manager
+reporting on a report's work), and `impliedStatus` ('done'|'in-progress').
+The model is told to only include a mention when a status is actually
+implied and it's reasonably confident which existing item is meant —
+"most transcripts won't have any of these."
+
+**Deterministic matching/gate layer — the model's own claim of a match is
+never trusted, same conviction `matchClient()`/`matchOwner()`/
+`isSameTask()` already established for the rest of this file:**
+- `matchExistingTask(mentionSubject, personId, clientId, existingOpenTasks)`
+  reuses `isSameTask()`'s own dual subject-similarity threshold (0.6 with
+  an agreeing client, 0.85 without) via a synthetic comparable task
+  shape — `isSameTask()` already enforces assignee equality, so this can
+  only ever match a task actually belonging to the identified person —
+  "match confidently by subject + client + assignee" per the task's own
+  wording, reused rather than reinvented.
+- `matchExistingService(mentionSubject, personId, clientId,
+  serviceCandidates)` — services have no existing `isSameTask()`-style
+  helper (no "merge into an existing service" feature to reuse), so this
+  hand-mirrors the identical dual-threshold pattern: filtered to the
+  person's own (and, when matched, the client's) services first, then the
+  single best `subjectSimilarity()` match at or above the threshold.
+  `activeServiceCandidates()` flattens every active client's NOT
+  cancelled/archived services (top-level + franchise
+  `locations[].services[]`) — the same exclusion rule `index.html`'s own
+  `_chIsInactiveService()` already establishes, hand-duplicated here since
+  there's no shared services-flattening helper anywhere in `api/*.js`.
+- `evaluateMeetingParseGate(attributedPersonId, responsiblePersonId,
+  superAdminIds)` — three outcomes, not two, per the task's own explicit
+  wording: **'act'** (the identified speaker is the item's own
+  responsible person — a self-report — OR a super-admin reporting on
+  someone else's behalf); **'skip'** (a known but UNAUTHORIZED speaker —
+  never write, never notify, per "otherwise skip"); **'notify'** (the
+  speaker couldn't be identified from the text at all — "fall back to
+  notify-only for tasks too... don't auto-write on an unknown speaker").
+  For a TASK, 'act' auto-writes (no notification at all — the task's own
+  wording never mentions notifying anyone for a successful auto-write)
+  and 'notify' sends the review-it-yourself message instead; for a
+  SERVICE, 'act' and 'notify' both mean "send the notify message"
+  (services are never auto-changed regardless of who's confirmed
+  speaking, per the task's explicit "never auto-change" instruction) —
+  only 'skip' actually differs in effect between the two item types.
+  `superAdminIds` already includes the primary-admin sentinel by
+  construction (`activeRoster()` synthesizes her with `level:'owner'`),
+  so no separate special case was needed for Sarah.
+- A mention with no resolvable `personName` at all is skipped before any
+  matching is even attempted — there's no confident candidate pool to
+  search without knowing whose item it is.
+
+**Two new exports in `api/ops-sync.js`, called directly as library
+functions — never through this file's own signed-session `handler()`
+below**, since the caller (a pasted transcript) has no session bound to
+the item's actual owner, only to whoever pasted the text; write-authority
+comes entirely from the gate decision made in `process-transcript.js`
+BEFORE either is ever called — neither re-derives or re-validates it.
+- `applyMeetingParseTaskStatusUpdate(supabase, {task, newStatus,
+  attributedPersonId, attributedPersonName, meetingDate}, warnings)` — a
+  genuine no-op guard (`task.status === newStatus` → returns null, no
+  write attempted) covers the double-mention/already-matching-status
+  cases. Clears `blockReason` (same "leaving Blocked clears the reason"
+  convention both portals' own status UI already applies), stamps
+  `completedAt` on a Done transition, and reuses `finalizeRecurring()`
+  as-is so a recurring task marked Done this way regenerates for its next
+  cycle exactly like it would via the UI rather than getting stuck
+  showing Done forever. Every change carries a NEW, dedicated
+  `lastMeetingParseUpdate: {fromStatus, toStatus, attributedPersonId,
+  attributedPersonName, meetingDate, appliedAt}` object — deliberately
+  NEVER overwrites the task's own `source` field (which already means
+  something else — 'parsed-email' vs. manually created) — the "auditable/
+  reversible" requirement is satisfied by this record, not by a new Undo
+  control (out of this feature's own stated server-file-only scope;
+  reversal is "an admin reads `lastMeetingParseUpdate` and edits status
+  back," same as fixing any other mis-set status today).
+- `resolveMeetingParseRecipients(personId, users, admins)` — same fixed-
+  rule shape as `resolveReportRecipients()` right above it: always the
+  primary-admin sentinel + every super/owner admin, PLUS the item's own
+  responsible person when resolvable, deduped.
+- `fireMeetingParseNotifyEvents(supabase, events, warnings, directory)` —
+  fires the notify-only message for both item types via the existing
+  `insertNotifications()`, worded per the task's own example: `Meeting on
+  [date] suggests [task/service] '[name]' may be done/have started —
+  please review.`
+
+**A real, non-obvious cross-module caching risk, found and closed before
+it could ship, not discovered after (rule #7):** `getDirectory()`'s
+module-level `_directoryCache` is a PER-REQUEST cache — but it's only
+ever reset at the top of `api/ops-sync.js`'s own `handler()` (this
+file's existing, established convention, documented on the cache
+variable itself). `api/ops-sync.js`'s `handler()` never runs inside
+`api/process-transcript.js`'s own serverless function — they're
+completely separate Vercel functions that never share a warm container —
+so if this feature had called `getDirectory()` (directly, or
+transitively via a plain `insertNotifications()` call) from
+`process-transcript.js`, nothing would ever reset that cache there,
+risking a stale roster silently persisting across many
+`/api/process-transcript` invocations on one warm container, for however
+long Vercel keeps it alive. Closed by having both new functions take an
+explicit `{users, admins}`/`directory` parameter instead of fetching
+internally, and by adding a new, purely additive `opts.directory`
+override to the existing `insertNotifications(supabase, rows, warnings,
+opts={})` — when provided, it's used instead of calling
+`getDirectory(supabase)` for that function's own quiet-hours team lookup.
+Every EXISTING caller in this file omits `opts.directory`, so
+`getDirectory(supabase)` still runs exactly as before for all of them —
+purely additive, zero behavior change to the ~20 existing call sites.
+`process-transcript.js` derives its own `{users, admins}` split from its
+own already-fresh `activeRoster()` (excluding the synthetic
+`primary-admin` entry, since every consumer in `ops-sync.js` already
+special-cases her by literal sentinel id, the same way every other
+notification resolver there already does) — no second fetch, no shared
+cache, no staleness window.
+
+Verified with a `node:test --experimental-test-module-mocks` run against
+the real, byte-identical `parseTaskEmailForSession` (with `@anthropic-ai/
+sdk` scripted, `lib/quietHours.js` mocked to always-open so the suite is
+deterministic regardless of the real day/time it happens to run) plus
+direct unit checks on the two new `ops-sync.js` exports — 48/48: a
+self-report auto-sets Done with a real audit stamp and fires zero
+notifications; a super-admin reporting on someone else's behalf
+auto-sets In Progress, correctly attributed to the super-admin, not the
+task owner; a known-but-unauthorized speaker changes nothing and
+notifies nobody; an unidentified speaker never auto-writes but still
+notifies the responsible person + every super/owner admin + the
+primary-admin sentinel, with a real email sent; a service mention leaves
+the service completely byte-identical regardless of gate outcome while
+still firing the notify message on a gate pass; a gate-failed service
+mention fires nothing; a low-confidence/unrelated mention (subject
+matching nothing real) is skipped silently with zero side effects; the
+no-op guard produces zero writes when the implied status already
+matches; a recurring task marked Done via this path genuinely
+regenerates (status back to 'Not started', dueDate/nextDate advanced,
+completedAt cleared) while the audit stamp still correctly records the
+real transition that happened; a Blocked task moving to Done clears
+`blockReason`; the ordinary `tasks[]` extraction is completely unaffected
+when `existingItemMentions` is empty/absent; the live prompt genuinely
+carries the new field names; and `resolveMeetingParseRecipients`'s own
+dedup (a responsible person who's already a super/owner admin, or who
+IS the primary-admin sentinel, is never double-listed) and
+`applyMeetingParseTaskStatusUpdate`'s own no-op/write-failure paths were
+checked directly. `node --check` passed on both files.
+
+Two pre-existing scratchpad suites (`verify_process_transcript_
+refactor.mjs`, `verify_process_transcript_weekend_clamp.mjs`) needed a
+one-line mock update, not a regression: both mock `lib/opsSession.js`
+with only `{requireSession, tierOf}`, which was already incomplete
+before this change but never mattered until `process-transcript.js`
+started transitively importing `ops-sync.js` (which also imports
+`canEditUsers` from the same module) — Node's `--experimental-test-
+module-mocks` enforces that a mocked module actually provides every
+named export the real import statement destructures. Added
+`canEditUsers: () => true` to both mocks; both re-run clean (8/8, 4/4)
+after the fix. Two more pre-existing suites
+(`verify_assignment_emails_hierarchy.mjs`,
+`verify_cron_hierarchy_escalation.mjs`) were confirmed, via `git stash`
+against unmodified `main`, to fail identically either way — pre-existing,
+unrelated (the latter already documented as flaky here before this
+task). `verify_process_transcript_clamp_composition.mjs` (7/7),
+`verify_due_date_change_request.mjs` (28/28), `verify_email_skipped_
+log.mjs` (8/8), and `verify_email_team_summaries.mjs` (21/21) all re-run
+clean and unmodified.
+
+Held for the user's explicit approval on the Vercel preview before
+merge, per rule #10 and this task's own explicit "needs preview +
+approval" instruction — a genuinely new class of change: server-initiated
+writes to `ops_tasks` with no session belonging to the record's owner,
+gated entirely on in-transcript attribution matched against the live
+roster.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
