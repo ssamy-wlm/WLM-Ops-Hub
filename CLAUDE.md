@@ -236,7 +236,10 @@ Don't relitigate them without an explicit decision from the user.
   anyone with a merged overdue count ≥5 gets emailed their own summary,
   quiet-hours respected via a newly-additive `insertNotifications()`
   `opts.directory` pass-through that closes a latent stale-cache risk;
-  no super/owner exemption — held for preview approval, see DECISIONS.md).
+  no super/owner exemption — held for preview approval, see DECISIONS.md),
+  "Added by you" fixed to be viewer-aware on self-assigned tasks in
+  `index.html` (2026-09-18 — was hardcoded regardless of who's looking;
+  `user.html` needed no change, confirmed — see DECISIONS.md).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
