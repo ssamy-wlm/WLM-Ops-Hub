@@ -11231,13 +11231,36 @@ function _taPersonName(id){
 // id, see api/ops-auth.js's PRIMARY_ADMIN_EMAIL branch) has no
 // ops_admins row, so she can never be found by a roster search. Checked
 // first here, same fix user.html's own _dtPersonName() already applies.
+//
 // A self-added task (assignedById === its own assigneeId — the same
 // field-equality check this file's "Self-assigned" badge already uses,
-// see _renderTaListTable()) reads "Added by you" rather than resolving
-// to a name, mirroring user.html's _dtAssignedByDisplay() verbatim per
-// this task's explicit "show it the same way in both files" instruction.
+// see _renderTaListTable()) is viewer-aware (2026-09-18) — index.html is
+// the admin portal, where one admin routinely views ANOTHER person's
+// tasks (the main Assigned Tasks list, By Person), so "Added by you" was
+// wrong whenever the viewer wasn't the assignee themselves. Only the
+// VIEWER who's actually the assignee (_currentAdminId() — the same
+// "is this task mine" comparison _taMyTasksOwnTasks() already uses) sees
+// "Added by you"; anyone else sees "Self-added by <name>". The
+// primary-admin sentinel is handled on BOTH sides of this comparison, not
+// just the assignedById one below: as the CURRENT VIEWER, her session id
+// really is the literal string 'primary-admin' (see _currentAdminId()'s
+// own storage at doLogin()), so she still correctly sees "Added by you"
+// on her own self-assigned tasks; as the TASK'S ASSIGNEE being displayed
+// to someone else, _taPersonName('primary-admin') would resolve to '—'
+// (she has no _timeOffRoster() row for a plain roster lookup to find),
+// so that case needs the identical hardcoded-name special case
+// assignedById already has just below.
+//
+// user.html's own _dtAssignedByDisplay() needed NO equivalent fix —
+// confirmed by tracing its only data source, _dtMyTasks(), which always
+// filters to `assigneeId===currentUser.id`: every task that file ever
+// renders already belongs to the person viewing it, so "Added by you" on
+// a self-assigned task there can never be wrong the way it was here.
 function _taAssignedByDisplay(t){
-  if(t.assignedById && t.assignedById===t.assigneeId) return 'Added by you';
+  if(t.assignedById && t.assignedById===t.assigneeId){
+    if(t.assigneeId===_currentAdminId()) return 'Added by you';
+    return `Self-added by ${t.assigneeId==='primary-admin' ? 'Sarah Samy' : _taPersonName(t.assigneeId)}`;
+  }
   if(t.assignedById==='primary-admin') return 'Sarah Samy';
   return _taPersonName(t.assignedById);
 }

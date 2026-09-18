@@ -9924,6 +9924,71 @@ merge, per rule #10 and this ticket's own explicit "needs preview +
 approval" instruction — touches real aggregation/notification logic and
 adds two new production cron schedules.
 
+**Fix "Added by you" on self-assigned tasks viewed by someone else
+(2026-09-18).** `index.html` only, display-only — `user.html` was
+investigated and confirmed to need no change.
+
+**Root cause:** `_taAssignedByDisplay(t)` returned the hardcoded literal
+`'Added by you'` for any self-assigned task (`assignedById===assigneeId`)
+regardless of who was actually looking at it. Since `index.html` is the
+admin portal, where one admin routinely views ANOTHER person's tasks (the
+main Assigned Tasks list, By Person), this was wrong for anyone except
+the assignee themselves — e.g. Sarah viewing Rana's self-assigned task
+incorrectly read "Added by you."
+
+**Fix:** compares the CURRENT VIEWER's id (`_currentAdminId()` — the
+exact same "is this task mine" comparison `_taMyTasksOwnTasks()` already
+uses) against `t.assigneeId`. Only the viewer who genuinely IS the
+assignee sees "Added by you"; anyone else sees "Self-added by
+&lt;name&gt;". The primary-admin sentinel needed handling on BOTH sides
+of this comparison, not just the pre-existing `assignedById==='primary-
+admin'` check: as the current VIEWER, her session id really is the
+literal string `'primary-admin'` (confirmed by reading `doLogin()`'s own
+`wl_admin_session` write), so she still correctly sees "Added by you" on
+her own self-assigned tasks; as the task's ASSIGNEE being displayed to
+someone ELSE, `_taPersonName('primary-admin')` would resolve to `'—'`
+(she has no `_timeOffRoster()` row for a plain roster lookup to find),
+so the new "Self-added by X" branch needed the identical hardcoded-name
+special case the assigner-side check already had.
+
+**`user.html` needed no equivalent fix, confirmed by tracing the code
+rather than trusting the ticket's own assumption (rule #7):** its
+`_dtAssignedByDisplay()` looks identical, but its only data source,
+`_dtMyTasks()`, unconditionally filters to `assigneeId===currentUser.id`
+— every task that file ever renders already belongs to the person
+viewing it, so "Added by you" on a self-assigned task there can never be
+wrong the way it was in `index.html`. Grepped both of
+`_dtAssignedByDisplay()`'s two call sites to confirm neither reaches any
+data outside that same self-scoped source.
+
+Verified two ways: (1) a Node script (`vm`) extracting the real, byte-
+identical `_taAssignedByDisplay()`/`_taPersonName()`/`_currentAdminId()`/
+`_timeOffRoster()` straight out of `index.html` against a fake
+`localStorage` (7/7) — the assignee viewing their own self-assigned task
+sees "Added by you"; a different admin viewing it sees "Self-added by
+&lt;real name&gt;" (the reported bug, reproduced and confirmed fixed);
+the primary-admin sentinel viewing her own self-assigned task still sees
+"Added by you"; a different admin viewing HER self-assigned task sees
+"Self-added by Sarah Samy" (the sentinel resolved correctly, not `'—'`);
+a normal admin-assigned (non-self-assigned) task is completely
+unaffected; a task assigned BY the sentinel (not self-assigned) still
+resolves via the pre-existing, untouched check. (2) A Playwright run
+against the real, live-rendered `index.html` UI (5/5) — a real admin
+(David) viewing Rana's self-assigned task sees "Self-added by Rana
+Ayman" in both the list-card subtitle AND the detail panel, never
+"Added by you"; the same admin viewing Sarah's (primary-admin) self-
+assigned task sees "Self-added by Sarah Samy" with no literal `'—'`
+leaking through. `node --check`-equivalent syntax check (`new
+Function()` per extracted `<script>` block) clean; comment-stripped
+div-balance unaffected (pure JS, zero `<div>`s touched); `git diff
+--stat -- user.html` confirms zero changes.
+
+Low-risk per rule #10: `index.html` only, pure display-layer fix, no
+data-write/sync/auth/permission logic touched — eligible for direct
+merge once CI is green, though sent for the user's own preview
+click-through regardless, per this ticket's own explicit "preview"
+instruction.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
