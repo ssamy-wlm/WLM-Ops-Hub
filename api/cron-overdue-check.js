@@ -755,8 +755,18 @@ export default async function handler(req, res) {
       // happens to be stored as that manager's linked ADMIN id still merges
       // into the SAME rollup bucket as a report stored against their
       // employee id, instead of splitting one manager's summary into two.
+      // Skip-if-linked (2026-09-19, Task 5): a dual-role person (linked via
+      // some admin row's linkedUserId, i.e. a VALUE in canonMap) already
+      // holds an admin/manager role, so leadership visibility is the right
+      // channel for their overdue load — Tier 2 already escalates them.
+      // Reporting them here too, in a Tier-1 manager rollup, would
+      // double-report the same merged total. Mirrors the skip-if-linked
+      // guard Tier 3 already uses (canonMap.has(p.id) there, against the
+      // admin row; this is the employee-row equivalent, against the value).
+      const linkedEmployeeIds = new Set(canonMap.values());
       const byManager = new Map();
       hUsers.forEach(u => {
+        if (linkedEmployeeIds.has(u.id)) return;
         const count = overdueCounts.get(u.id) || 0;
         if (count < OVERDUE_ESCALATION_THRESHOLD) return;
         if (!u.managerId) return;
