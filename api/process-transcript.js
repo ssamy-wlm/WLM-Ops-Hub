@@ -1134,6 +1134,13 @@ export async function parseTaskEmailForSession(session, text) {
                   task: match, newStatus,
                   attributedPersonId: attributedId,
                   attributedPersonName: attributedId === 'primary-admin' ? 'Sarah Samy' : (attributedMatch?.name || ''),
+                  // personId/clientId/impliedStatus (2026-09-19, Task 3) —
+                  // carried through only so a manual-correction detection
+                  // at write time (applyMeetingParseTaskStatusUpdate()
+                  // returning the 'human-correction' sentinel) can build a
+                  // real notifyEvent below, in the exact same shape the
+                  // 'notify' gate branch right below already uses.
+                  personId: personMatch.id, clientId, impliedStatus,
                 });
               }
             } else { // 'notify' — unidentified speaker, fall back to notify-only for tasks too
@@ -1158,7 +1165,19 @@ export async function parseTaskEmailForSession(session, text) {
         if (taskUpdates.length || notifyEvents.length) {
           const meetingParseWarnings = [];
           for (const u of taskUpdates) {
-            await applyMeetingParseTaskStatusUpdate(supabase, { task: u.task, newStatus: u.newStatus, attributedPersonId: u.attributedPersonId, attributedPersonName: u.attributedPersonName, meetingDate: assignedDate }, meetingParseWarnings);
+            const result = await applyMeetingParseTaskStatusUpdate(supabase, { task: u.task, newStatus: u.newStatus, attributedPersonId: u.attributedPersonId, attributedPersonName: u.attributedPersonName, meetingDate: assignedDate }, meetingParseWarnings);
+            // 'human-correction' (2026-09-19, Task 3) — the fresh row at
+            // write time no longer matches what THIS feature's own last
+            // update left it at, meaning a human corrected it since. Never
+            // flipped back; surfaced as a notify-only event instead, same
+            // treatment the unidentified-speaker gate already gets, reusing
+            // the identical notifyEvents/fireMeetingParseNotifyEvents path
+            // (added to notifyEvents here, before the notifyEvents.length
+            // check just below, so it's never missed even if this was the
+            // ONLY thing this parse produced).
+            if (result === 'human-correction') {
+              notifyEvents.push({ itemType: 'task', itemName: u.task.subject, personId: u.personId, clientId: u.clientId || null, taskId: u.task.id, impliedStatus: u.impliedStatus });
+            }
           }
           if (notifyEvents.length) {
             const directory = {
