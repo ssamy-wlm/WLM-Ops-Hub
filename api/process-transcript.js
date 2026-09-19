@@ -608,9 +608,32 @@ function dedupeWithinBatch(tasks) {
 // confidently by subject + client + assignee" per this feature's own
 // instruction. No candidate found is a real, expected outcome (a
 // low-confidence or unrelated mention) — skip silently, never guess.
+//
+// Unambiguous-winner requirement (2026-09-19) — mirrors matchClientByName()
+// above exactly: proceed only when there's exactly one qualifying
+// candidate, or the best-scoring one strictly beats the second-best. The
+// original version used a plain `.find()`, returning the FIRST task that
+// satisfied isSameTask() with no tie-break at all — if a person had two
+// open tasks for the same client whose subjects both cleared the
+// similarity threshold (e.g. "Update homepage copy" vs. "Update homepage
+// images"), it silently auto-updated whichever the array happened to
+// list first, which could easily be the wrong one. isSameTask() itself
+// only returns a boolean, so every candidate that passes it is re-scored
+// here by the same underlying subjectSimilarity() it thresholds
+// internally, purely to break ties between multiple qualifying
+// candidates — this never loosens or changes which candidates qualify in
+// the first place, only which one (if any) is confident enough to act on
+// alone. An ambiguous result (two or more equally-good candidates) is
+// treated exactly like "no candidate found" by the caller below — never
+// guessed.
 function matchExistingTask(mentionSubject, personId, clientId, existingOpenTasks) {
   const candidateShape = { subject: mentionSubject, clientId: clientId || null, assigneeId: personId };
-  return existingOpenTasks.find(ex => isSameTask(ex, candidateShape)) || null;
+  const scored = existingOpenTasks
+    .filter(ex => isSameTask(ex, candidateShape))
+    .map(ex => ({ ex, score: subjectSimilarity(ex.subject, mentionSubject) }))
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return null;
+  return (scored.length === 1 || scored[0].score > scored[1].score) ? scored[0].ex : null;
 }
 
 // Flattens every active client's NOT cancelled/archived services (top-
