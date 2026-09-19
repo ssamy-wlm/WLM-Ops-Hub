@@ -201,6 +201,17 @@ Don't relitigate them without an explicit decision from the user.
     a merged migration file alone is not enough (see the three outages this
     caused, documented below).
 
+13. **Data-path PRs require a post-merge integrity check.** Any PR touching
+    `api/ops-sync.js`, any `api/*` write path, auth/session, or a cron must
+    get a read-only Supabase data-integrity check after merge — not just
+    "app loads / no errors," but an assertion of actual correctness: counts,
+    orphans, and every field the PR writes. This closes the gap that let a
+    real bug (the meeting-parse auto-updater's ambiguous-task-match issue,
+    see DECISIONS.md) reach `main` unreviewed. **Any new automated write
+    path — a cron, webhook, or parser that mutates records with no human
+    clicking save — must be flagged for review BEFORE merge**, since these
+    are the highest-risk category and the hardest to catch after the fact.
+
 ## Current state (as of 2026-09-17)
 
 - Data (live-verified 2026-09-17): 89 clients, 9 users, 4 admins, ~589

@@ -1328,9 +1328,43 @@ export async function fireMeetingParseNotifyEvents(supabase, events, warnings, d
 // lastMeetingParseUpdate and edits status back," same as any other
 // mis-set status today.
 export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newStatus, attributedPersonId, attributedPersonName, meetingDate }, warnings) {
-  if (!task || task.status === newStatus) return null;
+  if (!task) return null;
+  // Re-fetch immediately before writing (2026-09-19) — `task` is the copy
+  // process-transcript.js selected once, BEFORE the Anthropic call, which
+  // can take seconds up to 30s+ on the chunk/merge path. This is not the
+  // #400 "key-absent" clobber class (task came from a live select, not a
+  // stale request body), but there was no re-fetch right before the write
+  // either — so a concurrent human edit to this same task (assignee,
+  // priority, notes, anything) during the parse window was silently
+  // reverted when this write landed, since it always spread the STALE
+  // pre-call snapshot as its base. Every field below now comes from `cur`
+  // (the fresh row) instead — only the status-driven fields this function
+  // is actually responsible for (status/blockReason/lastMeetingParseUpdate/
+  // completedAt/recurring rollover) are ever changed.
+  const { data: freshRow, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').eq('id', task.id).maybeSingle();
+  if (fetchErr) { warnings.push(`tasks(${task.id}) meeting-parse re-fetch: ${fetchErr.message}`); return null; }
+  if (!freshRow) return null; // deleted concurrently — nothing left to update
+  const cur = { id: freshRow.id, ...freshRow.data };
+  if (cur.status === newStatus) return null; // already at the target status by the time we got here (a human beat us to it, or a duplicate mention) — genuine no-op
+  // Respect a manual correction — never flip a human's fix back (2026-09-19,
+  // Task 3 of the fix hand-off). If a PRIOR meeting-parse write left this
+  // task at some status (cur.lastMeetingParseUpdate.toStatus), and the
+  // CURRENT status no longer matches that, something changed it since —
+  // almost certainly a human noticing a wrong auto-update and correcting
+  // it. Re-applying a new auto-update on top would silently discard that
+  // correction. Detected against the FRESH `cur` (not the stale `task`
+  // parameter), so this closes the exact same race Task 2 already closed
+  // for every other field. This is a real idempotency-key-style guard
+  // (Option A discussed for this feature, not the fuller "who/when changed
+  // status" tracking of Option B, which no field in this codebase records
+  // today) — narrower in scope, but requires no new schema. The literal
+  // string 'human-correction' (never `null` or a row object) lets the
+  // caller distinguish this specific case and notify a human instead of
+  // silently doing nothing, the same "don't guess, tell a human" treatment
+  // the unidentified-speaker gate already gets.
+  if (cur.lastMeetingParseUpdate && cur.status !== cur.lastMeetingParseUpdate.toStatus) return 'human-correction';
   let row = {
-    ...task,
+    ...cur,
     status: newStatus,
     // A task moving to Done/In progress via this path is, by definition,
     // no longer Blocked — same "clear blockReason the instant status
@@ -1338,7 +1372,7 @@ export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newSta
     // already applies (2026-08-21).
     blockReason: null,
     lastMeetingParseUpdate: {
-      fromStatus: task.status || '',
+      fromStatus: cur.status || '',
       toStatus: newStatus,
       attributedPersonId: attributedPersonId || null,
       attributedPersonName: attributedPersonName || '',
@@ -1347,9 +1381,17 @@ export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newSta
     },
   };
   if (newStatus === 'Done') row.completedAt = new Date().toISOString();
-  row = finalizeRecurring(task, row);
-  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', task.id);
-  if (error) { warnings.push(`tasks(${task.id}) meeting-parse update: ${error.message}`); return null; }
+  row = finalizeRecurring(cur, row);
+  // finalizeRecurring() can override row.status (e.g. Done -> Not started
+  // on a regenerated cycle) without touching lastMeetingParseUpdate.toStatus
+  // above, which would otherwise still claim the pre-regeneration value
+  // (e.g. 'Done'). Left unsynced, the very next meeting-parse write would
+  // see cur.status ('Not started', from THIS write's own regeneration)
+  // disagree with cur.lastMeetingParseUpdate.toStatus ('Done') and wrongly
+  // treat this feature's own recurring rollover as a human correction.
+  row.lastMeetingParseUpdate = { ...row.lastMeetingParseUpdate, toStatus: row.status };
+  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', cur.id);
+  if (error) { warnings.push(`tasks(${cur.id}) meeting-parse update: ${error.message}`); return null; }
   return row;
 }
 
