@@ -1328,9 +1328,26 @@ export async function fireMeetingParseNotifyEvents(supabase, events, warnings, d
 // lastMeetingParseUpdate and edits status back," same as any other
 // mis-set status today.
 export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newStatus, attributedPersonId, attributedPersonName, meetingDate }, warnings) {
-  if (!task || task.status === newStatus) return null;
+  if (!task) return null;
+  // Re-fetch immediately before writing (2026-09-19) — `task` is the copy
+  // process-transcript.js selected once, BEFORE the Anthropic call, which
+  // can take seconds up to 30s+ on the chunk/merge path. This is not the
+  // #400 "key-absent" clobber class (task came from a live select, not a
+  // stale request body), but there was no re-fetch right before the write
+  // either — so a concurrent human edit to this same task (assignee,
+  // priority, notes, anything) during the parse window was silently
+  // reverted when this write landed, since it always spread the STALE
+  // pre-call snapshot as its base. Every field below now comes from `cur`
+  // (the fresh row) instead — only the status-driven fields this function
+  // is actually responsible for (status/blockReason/lastMeetingParseUpdate/
+  // completedAt/recurring rollover) are ever changed.
+  const { data: freshRow, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').eq('id', task.id).maybeSingle();
+  if (fetchErr) { warnings.push(`tasks(${task.id}) meeting-parse re-fetch: ${fetchErr.message}`); return null; }
+  if (!freshRow) return null; // deleted concurrently — nothing left to update
+  const cur = { id: freshRow.id, ...freshRow.data };
+  if (cur.status === newStatus) return null; // already at the target status by the time we got here (a human beat us to it, or a duplicate mention) — genuine no-op
   let row = {
-    ...task,
+    ...cur,
     status: newStatus,
     // A task moving to Done/In progress via this path is, by definition,
     // no longer Blocked — same "clear blockReason the instant status
@@ -1338,7 +1355,7 @@ export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newSta
     // already applies (2026-08-21).
     blockReason: null,
     lastMeetingParseUpdate: {
-      fromStatus: task.status || '',
+      fromStatus: cur.status || '',
       toStatus: newStatus,
       attributedPersonId: attributedPersonId || null,
       attributedPersonName: attributedPersonName || '',
@@ -1347,9 +1364,9 @@ export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newSta
     },
   };
   if (newStatus === 'Done') row.completedAt = new Date().toISOString();
-  row = finalizeRecurring(task, row);
-  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', task.id);
-  if (error) { warnings.push(`tasks(${task.id}) meeting-parse update: ${error.message}`); return null; }
+  row = finalizeRecurring(cur, row);
+  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', cur.id);
+  if (error) { warnings.push(`tasks(${cur.id}) meeting-parse update: ${error.message}`); return null; }
   return row;
 }
 
