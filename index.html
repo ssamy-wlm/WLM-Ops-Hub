@@ -4478,7 +4478,7 @@ async function saveEditUser(){
     const res = await fetch(OPS_SYNC_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-      body: JSON.stringify({changes:{users:[updated]}})
+      body: JSON.stringify({changes:{users:_stripFunnelCommissionFields([updated])}})
     });
     const data = await res.json().catch(()=>({}));
     if(!res.ok || !(data.applied && data.applied.users >= 1)){
@@ -4609,7 +4609,7 @@ async function addUser(){
     const res = await fetch(OPS_SYNC_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-      body: JSON.stringify({changes:{users:[newUser]}})
+      body: JSON.stringify({changes:{users:_stripFunnelCommissionFields([newUser])}})
     });
     const data = await res.json().catch(()=>({}));
     if(!res.ok || !(data.applied && data.applied.users >= 1)){
@@ -8794,6 +8794,27 @@ function _applyServerValue(saveFn, value){
   if(value === null || value === undefined) return;
   saveFn(value);
 }
+// salesFunnelLevel/earnsCommission are set ONLY via the dedicated
+// salesFunnelGrants/commissionGrants endpoints in api/ops-sync.js — never
+// legitimately edited through the general Edit User/Edit Admin (or Add
+// User) forms. Strips both from a shallow CLONE of each row before it's
+// ever sent to the server, leaving the original object — and whatever's
+// already in local storage/rendered in the UI — completely untouched; the
+// point is only to make sure neither key can ever leave the browser via a
+// general users/admins write, not to blank them locally. Now that #400's
+// preserveMissingFields is live server-side, an omitted key is preserved
+// from the current stored row, so omitting these two here is finally
+// safe — this closes the last "stale-present" residual #401 couldn't
+// fully cover for these two fields specifically (a stale Edit-Admin modal
+// opened before a concurrent grant can no longer carry, and so can never
+// revert, that grant). Applied at the shared cloudPushAll() chokepoint
+// below (covers saveEditAdmin() and every other admin/user write that
+// goes through the generic dirty-diff push) AND at saveEditUser()'s/
+// addUser()'s own direct-fetch call sites (neither goes through
+// cloudPushAll() at all).
+function _stripFunnelCommissionFields(rows){
+  return (rows||[]).map(r=>{ const { salesFunnelLevel, earnsCommission, ...rest } = r; return rest; });
+}
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
   let snap = null;
@@ -9141,9 +9162,9 @@ async function cloudPushAll(silent=false){
   try {
     const changes = {};
     const usersDirty = _opsDirty('users', dbGet(DB_KEYS.users)||[]);
-    if(usersDirty.length) changes.users = usersDirty;
+    if(usersDirty.length) changes.users = _stripFunnelCommissionFields(usersDirty);
     const adminsDirty = _opsDirty('admins', dbGet(DB_KEYS.admins)||[]);
-    if(adminsDirty.length) changes.admins = adminsDirty;
+    if(adminsDirty.length) changes.admins = _stripFunnelCommissionFields(adminsDirty);
     const clientsDirty = _opsDirty('clients', _getClientDB());
     if(clientsDirty.length) changes.clients = clientsDirty;
     const goalsDirty = _opsDirty('goals', dbGet(DB_KEYS.goals)||[]);
@@ -16007,14 +16028,20 @@ async function saveEditAdmin(){
   // top of it — same discipline saveEditUser()/addUser() already use, and
   // for the identical reason: this form only ever touches name/initials/
   // email/title/team/level/managerId/assignedUsers/managedUserIds/password.
-  // Every OTHER field on this admin row (status, salesFunnelLevel,
-  // earnsCommission, linkedUserId) is simply carried through unchanged from
-  // whatever `admins[idx]` already holds — if that's this browser's own
-  // stale local cache (predating a grant/change made from a different tab
-  // or admin in the meantime), this save would silently push that stale
-  // value back and revert it, with no error, no rejection, no log entry.
-  // Re-pulling first means `admins[idx]` below is always the server's own
-  // current copy at the moment of save.
+  // Every OTHER field on this admin row (status, linkedUserId, etc.) is
+  // simply carried through unchanged from whatever `admins[idx]` already
+  // holds — if that's this browser's own stale local cache (predating a
+  // change made from a different tab or admin in the meantime), this save
+  // would silently push that stale value back and revert it, with no
+  // error, no rejection, no log entry. Re-pulling first means `admins[idx]`
+  // below is always the server's own current copy at the moment of save.
+  // salesFunnelLevel/earnsCommission specifically are no longer part of
+  // this risk at all (2026-09-19): cloudPushAll()'s own
+  // _stripFunnelCommissionFields() now omits both from every users/admins
+  // push regardless of what `admins[idx]` holds, so even the residual
+  // race between this re-pull and the push a few lines below can never
+  // revert either field — see that function's own comment for why
+  // omission is now safe (#400's preserveMissingFields).
   const btn = document.querySelector('#editAdminModal .btn-primary');
   if(btn){ btn.textContent='Saving…'; btn.disabled=true; }
   await cloudPullAll(true);
