@@ -1065,6 +1065,19 @@ export async function parseTaskEmailForSession(session, text) {
         const serviceCandidates = activeServiceCandidates(activeClients);
         const taskUpdates = [];
         const notifyEvents = [];
+        // Skip visibility (2026-09-19, Task 4 of the fix hand-off) — a
+        // no-match (and, once matchExistingTask() requires an unambiguous
+        // winner, an ambiguous tie too) was previously a completely silent
+        // `return` with no trace anywhere. Purely informational — logged
+        // via the same logError() mechanism every other best-effort notice
+        // in this block already uses, never surfaced as an error toast to
+        // the end user, and never changes matching behavior itself
+        // (candidateCount below is computed independently, at the log
+        // site, by re-running the exact same isSameTask()/pool filter each
+        // match function already applies internally — this file never
+        // reaches into matchExistingTask()/matchExistingService()'s own
+        // internals or changes their contract).
+        const skippedMentions = [];
         mentions.forEach(m => {
           if (!m || typeof m !== 'object') return;
           const itemType = m.itemType === 'service' ? 'service' : (m.itemType === 'task' ? 'task' : null);
@@ -1081,7 +1094,16 @@ export async function parseTaskEmailForSession(session, text) {
           const clientId = matchedClient ? matchedClient.id : null;
           if (itemType === 'task') {
             const match = matchExistingTask(mentionSubject, personMatch.id, clientId, existingOpenTasks);
-            if (!match) return; // low-confidence/unrelated mention — skip silently
+            if (!match) {
+              // Same isSameTask() filter matchExistingTask() applies
+              // internally — re-run here only to COUNT how many
+              // candidates were in play (0 = genuinely no match, 2+ =
+              // an ambiguous tie once Task 1 lands), never to decide
+              // anything about matching itself.
+              const candidateCount = existingOpenTasks.filter(ex => isSameTask(ex, { subject: mentionSubject, clientId: clientId || null, assigneeId: personMatch.id })).length;
+              skippedMentions.push({ itemType: 'task', mentionSubject, personId: personMatch.id, clientId, candidateCount });
+              return; // low-confidence/unrelated mention (or an ambiguous tie) — skip silently
+            }
             const newStatus = impliedStatus === 'done' ? 'Done' : 'In progress';
             if (gate === 'act') {
               if (match.status !== newStatus) {
@@ -1096,7 +1118,13 @@ export async function parseTaskEmailForSession(session, text) {
             }
           } else {
             const match = matchExistingService(mentionSubject, personMatch.id, clientId, serviceCandidates);
-            if (!match) return; // low-confidence/unrelated mention — skip silently
+            if (!match) {
+              // Same pool filter matchExistingService() applies
+              // internally, re-run only to count candidates.
+              const candidateCount = serviceCandidates.filter(s => s.assigneeId === personMatch.id && (!clientId || s.clientId === clientId)).length;
+              skippedMentions.push({ itemType: 'service', mentionSubject, personId: personMatch.id, clientId, candidateCount });
+              return; // low-confidence/unrelated mention — skip silently
+            }
             // Services are always notify-only here — 'act' and 'notify'
             // both mean "send the message" ('skip' was already handled
             // above); never auto-changed regardless of who's speaking,
@@ -1127,6 +1155,20 @@ export async function parseTaskEmailForSession(session, text) {
           if (meetingParseWarnings.length) {
             await logError({ endpoint: 'process-transcript:taskEmail:meetingParse', error: meetingParseWarnings.join('; '), session });
           }
+        }
+        // Logged independently of whether anything above ALSO matched —
+        // a parse can have both real matches and unrelated skips in the
+        // same batch. `assignedDate` (the meeting/transcript's own date,
+        // already threaded through this whole feature) stands in for a
+        // "meeting id" — this app has no other persistent identifier for
+        // a pasted transcript to log against.
+        if (skippedMentions.length) {
+          await logError({
+            endpoint: 'process-transcript:taskEmail:meetingParse:skipped',
+            error: `${skippedMentions.length} existing-item mention(s) had no confident match — skipped, never guessed`,
+            session,
+            extra: { meetingDate: assignedDate, skipped: skippedMentions },
+          });
         }
       } catch (meetingParseErr) {
         // Never fails the parse the caller is waiting on — the "tasks"
