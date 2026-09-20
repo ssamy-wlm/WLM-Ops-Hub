@@ -5304,7 +5304,7 @@ function _orgTombstoneLink(id){
   if(!arr.includes(id)){ arr.push(id); dbSet(DB_KEYS.deletedOrgLinkIds, arr); }
 }
 
-function orgSave(){
+function _orgSaveLocal(){
   const nk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgNodes : 'wl_org_nodes';
   const lk = (typeof DB_KEYS!=='undefined') ? DB_KEYS.orgLinks : 'wl_org_links';
   try{
@@ -5312,6 +5312,9 @@ function orgSave(){
     localStorage.setItem(lk, JSON.stringify(orgLinks));
     localStorage.setItem('wl_org_layout_ver', ORG_LAYOUT_VERSION);
   }catch(e){}
+}
+function orgSave(){
+  _orgSaveLocal();
   // Auto-sync every save so all admins see changes immediately
   if(typeof cloudAutoSync === 'function') cloudAutoSync(true);
 }
@@ -5645,7 +5648,15 @@ const ORG_EXCLUDED_KEY = 'wl_org_excluded_names';
 function _orgGetExcluded(){ try{ return JSON.parse(localStorage.getItem(ORG_EXCLUDED_KEY)||'[]'); }catch(e){ return []; } }
 function _orgAddExcluded(name){ const ex=_orgGetExcluded(); const n=name.trim().toLowerCase(); if(!ex.includes(n)){ ex.push(n); try{ localStorage.setItem(ORG_EXCLUDED_KEY,JSON.stringify(ex)); }catch(e){} } }
 
-function deleteOrgBubble(){
+function _orgUntombstoneNode(id){
+  const arr = (dbGet(DB_KEYS.deletedOrgNodeIds)||[]).filter(x=>x!==id);
+  dbSet(DB_KEYS.deletedOrgNodeIds, arr);
+}
+function _orgUntombstoneLink(id){
+  const arr = (dbGet(DB_KEYS.deletedOrgLinkIds)||[]).filter(x=>x!==id);
+  dbSet(DB_KEYS.deletedOrgLinkIds, arr);
+}
+async function deleteOrgBubble(){
   const id=document.getElementById('org-edit-id').value;
   const node=orgNodes.find(n=>n.id===id);
   if(node?.fixed){showToast('CEO position is fixed and cannot be removed');return;}
@@ -5659,9 +5670,24 @@ function deleteOrgBubble(){
   orgLinks=orgLinks.filter(l=>l.from!==id&&l.to!==id);
   _orgTombstoneNode(id);
   removedLinks.forEach(l=>_orgTombstoneLink(l.id));
-  orgSave();
+  _orgSaveLocal();
   renderOrgChart();
   document.getElementById('org-edit-panel').style.display='none';
+  const ok = await cloudAutoSync();
+  if(ok===false){
+    // Server write failed — revert so a node deleted only in this tab
+    // doesn't reappear "already gone" for every other viewer while it's
+    // actually still stored (or, worse, get silently orphaned locally
+    // while its tombstone never reaches the server).
+    orgNodes.push(node);
+    removedLinks.forEach(l=>orgLinks.push(l));
+    _orgUntombstoneNode(id);
+    removedLinks.forEach(l=>_orgUntombstoneLink(l.id));
+    _orgSaveLocal();
+    renderOrgChart();
+    showToast('❌ Could not remove the member — try again.');
+    return;
+  }
   showToast('Member removed');
 }
 
@@ -11903,7 +11929,7 @@ function _taReportedBlockHtml(t){
 // before saving — see the comment there); deleted from this local copy
 // too right after the push is fired, so it never lingers in this browser's
 // cache either.
-function _taDismissReport(id){
+async function _taDismissReport(id){
   const tasks = _taTasks();
   const t = tasks.find(x=>x.id===id);
   if(!t || !t.reportedMisassigned) return;
@@ -11912,7 +11938,16 @@ function _taDismissReport(id){
   t.reportedMisassigned = false;
   t.dismissReason = reason.trim().slice(0,500);
   _taSaveTasks(tasks);
-  cloudAutoSync();
+  const ok = await cloudAutoSync();
+  if(ok===false){
+    // Server write failed — revert so the report stays visible and Reported
+    // tab doesn't drop a row that was never actually cleared server-side.
+    t.reportedMisassigned = true;
+    delete t.dismissReason;
+    _taSaveTasks(tasks);
+    showToast('❌ Could not dismiss the report — try again.');
+    return;
+  }
   delete t.dismissReason;
   if(_taDetailTaskId===id) openTaDetailPanel(id);
   renderTaskAssignments();
@@ -11936,15 +11971,27 @@ function _taReassignFromDetail(id){
 // also fires the "report dismissed" courtesy notice — api/ops-sync.js's
 // own transition-detection only sends that when assigneeId did NOT
 // change in the same write.
-function _taReassignAndClearReport(id, newAssigneeId){
+async function _taReassignAndClearReport(id, newAssigneeId){
   const tasks = _taTasks();
   const t = tasks.find(x=>x.id===id);
   if(!t || !t.reportedMisassigned) return;
+  const prevAssigneeId = t.assigneeId;
+  const prevLastAssignedAt = t.lastAssignedAt;
   t.assigneeId = newAssigneeId || null;
   t.reportedMisassigned = false;
   t.lastAssignedAt = new Date().toISOString();
   _taSaveTasks(tasks);
-  cloudAutoSync();
+  const ok = await cloudAutoSync();
+  if(ok===false){
+    // Server write failed — revert so the assignee/report state shown
+    // locally never gets ahead of what's actually stored.
+    t.assigneeId = prevAssigneeId;
+    t.reportedMisassigned = true;
+    t.lastAssignedAt = prevLastAssignedAt;
+    _taSaveTasks(tasks);
+    showToast('❌ Could not reassign the task — try again.');
+    return;
+  }
   if(_taDetailTaskId===id) openTaDetailPanel(id);
   renderTaskAssignments();
   _taRefreshReportedIfActive();
@@ -13011,11 +13058,14 @@ function renderAdminTimeOff(){
   }).join('');
 }
 
-function reviewTimeOff(id, decision){
+async function reviewTimeOff(id, decision){
   const note = decision==='denied' ? prompt('Reason for denial (optional):') : '';
   const requests = dbGet('wl_timeoff_requests')||[];
   const idx = requests.findIndex(r=>r.id===id);
   if(idx<0){ showToast('Request not found'); return; }
+  const prevStatus = requests[idx].status;
+  const prevReviewedAt = requests[idx].reviewedAt;
+  const prevAdminNote = requests[idx].adminNote;
   requests[idx].status = decision;
   requests[idx].reviewedAt = new Date().toISOString();
   // reviewedBy/approvedBy are no longer set here (2026-09-17) — the
@@ -13027,7 +13077,19 @@ function reviewTimeOff(id, decision){
   if(note) requests[idx].adminNote = note;
   dbSet('wl_timeoff_requests', requests);
   renderAdminTimeOff();
-  cloudAutoSync(true);
+  const ok = await cloudAutoSync();
+  if(ok===false){
+    // Server write failed — revert so an approve/deny that never actually
+    // landed doesn't sit shown as decided (and let the employee re-request
+    // a decision that was never really made).
+    requests[idx].status = prevStatus;
+    requests[idx].reviewedAt = prevReviewedAt;
+    requests[idx].adminNote = prevAdminNote;
+    dbSet('wl_timeoff_requests', requests);
+    renderAdminTimeOff();
+    showToast(`❌ Could not ${decision==='approved'?'approve':'deny'} the request — try again.`);
+    return;
+  }
   showToast(`Time off request ${decision} ✓`);
   logActivity('admin','Admin',`Time off ${decision} for ${requests[idx].userName}`, requests[idx].startDate+' → '+requests[idx].endDate);
 }
