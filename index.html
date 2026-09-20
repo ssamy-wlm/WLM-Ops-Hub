@@ -6730,6 +6730,37 @@ function _pushUserAssignment(userId, title, body, icon){
   _emailUserAssignment(userId, title, body);
 }
 
+// Client-side send pacing (2026-09-20) — a bulk trigger (most notably
+// _checkServiceAlerts() below, which loops over every assigned user PLUS
+// their manager for every newly-due service in a single pass) used to fire
+// one independent fetch() per recipient with zero spacing between them —
+// the real, identified source of the Resend 429 bursts reported in
+// production (42 hits, 09-06→09-10). A simple FIFO queue, drained on a
+// fixed interval, is enough here: this endpoint sends exactly one email per
+// call, so "pace the sends" just means "don't fire them all in the same
+// tick." lib/resendClient.js's own retry-with-backoff on a 429
+// (server-side, shared by every Resend-sending code path in this app) is
+// the backstop for whatever still lands faster than Resend can accept it —
+// this queue is the first line of defense, reducing how often that backstop
+// is even needed. A normal, one-off single send (e.g. a single task
+// assignment) still fires on the very next tick — at most one interval's
+// worth of delay, never a change in behavior beyond that.
+const ASSIGNMENT_EMAIL_SEND_INTERVAL_MS = 300;
+let _assignmentEmailQueue = [];
+let _assignmentEmailQueueTimer = null;
+function _enqueueAssignmentEmail(sendFn){
+  _assignmentEmailQueue.push(sendFn);
+  if(_assignmentEmailQueueTimer) return;
+  _assignmentEmailQueueTimer = setInterval(()=>{
+    const next = _assignmentEmailQueue.shift();
+    if(next){ try{ next(); }catch(e){} }
+    if(!_assignmentEmailQueue.length){
+      clearInterval(_assignmentEmailQueueTimer);
+      _assignmentEmailQueueTimer = null;
+    }
+  }, ASSIGNMENT_EMAIL_SEND_INTERVAL_MS);
+}
+
 // ── Email assignment notification to a user (fire-and-forget, fails silently) ──
 // recipientId/recipientKind (2026-09-13): lets the server resolve THIS
 // user's own team and apply per-team weekend quiet hours (lib/quietHours.js)
@@ -6739,17 +6770,19 @@ function _emailUserAssignment(userId, title, body){
   try{
     const u = (dbGet(DB_KEYS.users)||[]).find(x=>x.id===userId);
     if(!u || !u.email) return;
-    fetch('/api/send-assignment-email', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+_opsToken()},
-      body: JSON.stringify({
-        to: u.email,
-        name: (u.name||'').split(' ')[0],
-        title, body,
-        link: window.location.origin + '/user',
-        recipientId: userId, recipientKind: 'user'
-      })
-    }).catch(()=>{});
+    _enqueueAssignmentEmail(()=>{
+      fetch('/api/send-assignment-email', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+_opsToken()},
+        body: JSON.stringify({
+          to: u.email,
+          name: (u.name||'').split(' ')[0],
+          title, body,
+          link: window.location.origin + '/user',
+          recipientId: userId, recipientKind: 'user'
+        })
+      }).catch(()=>{});
+    });
   }catch(e){}
 }
 

@@ -23,10 +23,14 @@
 // case Supabase itself is ever unavailable when a restore is needed. No
 // other table is ever written by this endpoint.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
-import { logError } from '../lib/errorLog.js';
+import { logError, pruneErrorLog } from '../lib/errorLog.js';
 import { resolveReportRecipients } from './ops-sync.js';
 import { buildBackupSnapshot, insertBackupRow, pruneOldDailyBackups, TABLE_READ_MAX_ATTEMPTS } from '../lib/opsBackup.js';
 import { sendResendEmail } from '../lib/resendClient.js';
+
+// Error-log retention window (2026-09-20) — see pruneErrorLog()'s own
+// comment in lib/errorLog.js for why this is a soft-archive, not a delete.
+const ERROR_LOG_RETENTION_DAYS = 90;
 
 // Retention (tightened 2026-09-13, from 120 to 28): the in-DB copy only ever
 // needs to cover a short fast-restore window on this constrained instance —
@@ -89,6 +93,23 @@ export default async function handler(req, res) {
     // eyeball which table counts look suspiciously like zero.
     if (!complete) {
       await logError({ endpoint: 'cron-backup', error: `snapshot INCOMPLETE — ${failedTables.length} table(s) failed to capture after retries: ${failedTables.join(', ')}`, extra: { backupId: id, failedTables, warnings: backupWarnings } });
+    }
+
+    // Error-log retention (2026-09-20) — own try/catch, never allowed to
+    // affect the backup response above (already succeeded) or the email
+    // step below. Piggybacks on this endpoint's existing every-6h schedule
+    // rather than a new cron/endpoint, matching this file's own established
+    // "housekeeping rides the existing schedule" convention — never runs on
+    // page load, capture-side only, touches nothing but ops_error_log (see
+    // pruneErrorLog()'s own comment in lib/errorLog.js for why this is a
+    // soft-archive, never a hard delete).
+    let errorLogPrune = { ok: false, archivedCount: 0 };
+    try {
+      const result = await pruneErrorLog(supabase, ERROR_LOG_RETENTION_DAYS);
+      errorLogPrune = { ok: true, ...result };
+    } catch (err) {
+      await logError({ endpoint: 'cron-backup:errorLogPrune', error: err });
+      errorLogPrune.error = err.message;
     }
 
     const json = JSON.stringify(snapshot);
@@ -164,6 +185,7 @@ export default async function handler(req, res) {
       ok: true,
       backup: { id, tableCounts: snapshot.meta.tableCounts, complete, failedTables, sizeBytes, warnings: backupWarnings, trimmed: prune.trimmed, pruneError: prune.error || null, keepCount: DAILY_AUTO_KEEP_COUNT },
       email,
+      errorLogPrune,
     });
   } catch (err) {
     await logError({ endpoint: 'cron-backup', error: err });
