@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { logError } from '../lib/errorLog.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
@@ -25,6 +24,119 @@ import { clampToWeekday } from '../lib/dateUtils.js';
 import { applyMeetingParseTaskStatusUpdate, fireMeetingParseNotifyEvents } from './ops-sync.js';
 
 const VALID_CATEGORIES = ['hr','finance','security','systems','production','clients','personal','operations','marketing','sales'];
+
+// ── Gemini (2026-09-21) — replaces Anthropic as this file's ONLY LLM
+// provider (both call sites below: parseTaskEmailForSession's taskEmail
+// mode and extractRoadmapTasks' meeting-transcript mode). Calls
+// gemini-2.5-flash-lite through Google's OpenAI-compatible endpoint (plain
+// fetch, no SDK — same "no framework, minimal deps" convention
+// lib/resendClient.js already established for Resend) rather than the
+// Google GenAI SDK's own request/response shape, so this stays a drop-in
+// swap: same system+user message split, same JSON-in-text response
+// contract, same truncation-detection convention (see finishReason below).
+// Key read from GEMINI_API_KEY, never ANTHROPIC_API_KEY (fully retired —
+// confirmed via grep that no other file in this repo calls Anthropic for
+// parsing or anything else).
+//
+// Free-tier constraints (~500 req/day, single-digit RPM on flash-lite) are
+// the reason this exists as a shared chokepoint rather than a bare fetch()
+// at each call site:
+//   - Retry-with-backoff on 429 (honors the response's Retry-After header
+//     when present, a fixed schedule otherwise), same shape as
+//     lib/resendClient.js's own Resend 429 handling. A non-429 failure
+//     still fails immediately — retrying those would just waste time.
+//   - Pacing: a serialized wait queue (_geminiCallChain) enforces a
+//     minimum spacing between consecutive calls, chained so concurrent
+//     callers queue up rather than racing to read the "last call" clock
+//     before either updates it. This matters specifically for
+//     extractRoadmapTasks' own chunk-and-merge fallback, which fires two
+//     half-transcript calls via Promise.all — without this they'd land in
+//     the same second and burn through the low RPM budget immediately.
+//   - On final failure after retries, this throws (never returns a
+//     silent/empty result) — every call site's own existing catch block
+//     already routes an unexpected throw into logError() with full
+//     context, so nothing here needs its own separate logError call; that
+//     would just double-log the same failure.
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+const GEMINI_MAX_ATTEMPTS = 4;
+const GEMINI_RETRY_BACKOFF_MS = [2000, 5000, 12000, 25000];
+// Free-tier RPM is low enough that back-to-back calls from the same warm
+// container (or two concurrent halves of a chunked transcript) risk a 429
+// even without a burst — this is deliberately generous (well under 60s, so
+// a single request never times out waiting on it) rather than tuned to a
+// specific documented RPM figure, since that figure isn't confirmable from
+// here (CLAUDE.md rule #11 — no live account/dashboard access).
+const GEMINI_MIN_INTERVAL_MS = 4000;
+let _lastGeminiCallAt = 0;
+let _geminiCallChain = Promise.resolve();
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// Chains onto the previous pacer wait rather than reading/writing
+// _lastGeminiCallAt directly — two concurrent callers (Promise.all) must
+// queue behind each other's wait, not both compute the same "elapsed since
+// last call" from a clock neither has updated yet.
+function paceGeminiCall() {
+  const turn = _geminiCallChain.then(async () => {
+    const elapsed = Date.now() - _lastGeminiCallAt;
+    if (elapsed < GEMINI_MIN_INTERVAL_MS) await sleep(GEMINI_MIN_INTERVAL_MS - elapsed);
+    _lastGeminiCallAt = Date.now();
+  });
+  _geminiCallChain = turn;
+  return turn;
+}
+
+function geminiRetryDelayMs(response, attemptIndex) {
+  const retryAfterHeader = response?.headers?.get?.('retry-after');
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) return retryAfterSeconds * 1000;
+  return GEMINI_RETRY_BACKOFF_MS[attemptIndex] ?? GEMINI_RETRY_BACKOFF_MS[GEMINI_RETRY_BACKOFF_MS.length - 1];
+}
+
+// Returns {text, finishReason} — finishReason is normalized to
+// 'max_tokens' when Gemini's own finish_reason is 'length', matching the
+// exact string every downstream truncation check in this file already
+// compares against (repairTruncatedTaskJson/repairTruncatedRoadmapJson call
+// sites), so nothing past this function needed to change to detect a
+// cut-off response.
+async function callGemini({ system, userMessage, maxTokens }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
+  const body = {
+    model: GEMINI_MODEL,
+    max_tokens: maxTokens,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: userMessage },
+    ],
+  };
+
+  let lastErr;
+  for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt++) {
+    await paceGeminiCall();
+    const r = await fetch(GEMINI_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      const data = await r.json().catch(() => ({}));
+      const choice = data.choices?.[0];
+      const text = choice?.message?.content || '{}';
+      const finishReason = choice?.finish_reason === 'length' ? 'max_tokens' : (choice?.finish_reason || 'stop');
+      return { text, finishReason };
+    }
+    const errBody = await r.json().catch(() => ({}));
+    lastErr = new Error(errBody?.error?.message || `Gemini API error (${r.status})`);
+    // Only a 429 (rate limit) is ever worth retrying — same conviction as
+    // lib/resendClient.js's own Resend retry logic. Anything else (a bad
+    // request, an auth error, a 5xx) fails on the first attempt.
+    if (r.status !== 429 || attempt === GEMINI_MAX_ATTEMPTS - 1) throw lastErr;
+    await sleep(geminiRetryDelayMs(r, attempt));
+  }
+  throw lastErr;
+}
 
 // ── Task Assignments / Daily Tasks email-parsing mode (mode:'taskEmail' in
 // the request body) — a completely separate feature from the Roadmap
@@ -845,9 +957,9 @@ async function handleTaskEmailMode(req, res) {
 // res.status(X).json(Y) call site below is now `return {status:X, body:Y}`
 // instead — no other behavior changed.
 export async function parseTaskEmailForSession(session, text) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    await logError({ endpoint: 'process-transcript:taskEmail', error: 'ANTHROPIC_API_KEY is not configured on the server.', session });
-    return { status: 500, body: { error: 'ANTHROPIC_API_KEY is not configured on the server.' } };
+  if (!process.env.GEMINI_API_KEY) {
+    await logError({ endpoint: 'process-transcript:taskEmail', error: 'GEMINI_API_KEY is not configured on the server.', session });
+    return { status: 500, body: { error: 'GEMINI_API_KEY is not configured on the server.' } };
   }
 
   let supabase;
@@ -885,47 +997,44 @@ export async function parseTaskEmailForSession(session, text) {
     return { status: 500, body: { error: err.message } };
   }
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   // Single clock read for this request — reused as both the prompt's
   // "today's real date" reference and the assignedDate fallback below, so
   // the two can never disagree across a millisecond boundary.
   const todayIso = new Date().toISOString().slice(0, 10);
 
   try {
-    const message = await client.messages.create({
-      model: 'claude-opus-4-7',
-      // Raised from 4096 (2026-08-27) — a large real-world batch (a
-      // multi-meeting paste, 20+ tasks) routinely exceeded the old ceiling
-      // and got cut off mid-array, which JSON.parse then reported as
-      // "invalid JSON" with no indication anything had been truncated.
-      // 16000 comfortably covers a realistic worst-case batch; the repair
-      // path right below this call is the backstop for whatever's left
-      // once a paste is large enough to still exceed even this.
-      max_tokens: 16000,
+    const result = await callGemini({
+      // 16000 (unchanged from the prior Anthropic ceiling, 2026-08-27) —
+      // comfortably covers a realistic worst-case batch (a multi-meeting
+      // paste, 20+ tasks); the repair path right below this call is the
+      // backstop for whatever's left once a paste is large enough to still
+      // exceed even this.
+      maxTokens: 16000,
       system: buildTaskEmailSystemPrompt(roster.map(p => {
         const title = p.title || p.level;
         return title ? `${p.name} — ${title}` : p.name;
       }), todayIso, activeClients.map(c => c.name)),
-      messages: [{ role: 'user', content: text.trim() }],
+      userMessage: text.trim(),
     });
 
-    const raw = message.content[0]?.text || '{}';
+    const raw = result.text;
     let parsed;
     try {
       const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
       // Only ever treated as a truncation — and only ever repaired — when
-      // the SDK itself confirms that's what happened (message.stop_reason
-      // === 'max_tokens'), never guessed from the parse failure alone; a
-      // genuinely malformed response for some other reason still falls
-      // through to the original raw-JSON-dump error below, which is real
-      // debugging signal for that case and shouldn't be replaced with a
-      // guess. A truncation that still leaves zero complete tasks (cut off
-      // before finishing even the first one) is not silently swallowed
-      // either — it gets the same clear, actionable message as an
-      // unrecoverable one, not a raw JSON dump.
-      const truncated = message.stop_reason === 'max_tokens';
+      // callGemini() itself confirms that's what happened (finishReason
+      // === 'max_tokens', normalized from Gemini's own 'length'), never
+      // guessed from the parse failure alone; a genuinely malformed
+      // response for some other reason still falls through to the original
+      // raw-JSON-dump error below, which is real debugging signal for that
+      // case and shouldn't be replaced with a guess. A truncation that
+      // still leaves zero complete tasks (cut off before finishing even the
+      // first one) is not silently swallowed either — it gets the same
+      // clear, actionable message as an unrecoverable one, not a raw JSON
+      // dump.
+      const truncated = result.finishReason === 'max_tokens';
       const repaired = truncated ? repairTruncatedTaskJson(raw) : null;
       if (repaired) {
         parsed = repaired;
@@ -935,7 +1044,7 @@ export async function parseTaskEmailForSession(session, text) {
         return { status: 422, body: { error: 'The list was too long to parse in one go — split it into two and try again.' } };
       } else {
         await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
-        return { status: 500, body: { error: 'Claude returned invalid JSON. Raw: ' + raw.slice(0, 300) } };
+        return { status: 500, body: { error: 'The model returned invalid JSON. Raw: ' + raw.slice(0, 300) } };
       }
     }
 
@@ -1225,9 +1334,9 @@ export async function parseTaskEmailForSession(session, text) {
     // later (e.g. a "some tasks may be missing" note in the UI).
     return { status: 200, body: { tasks: finalTasks, raw_count: rawTasks.length, ...(parsed._repaired ? { truncated: true } : {}) } };
   } catch (err) {
-    console.error('Anthropic API error (taskEmail):', err);
+    console.error('Gemini API error (taskEmail):', err);
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
-    return { status: 500, body: { error: err.message || 'Anthropic API call failed' } };
+    return { status: 500, body: { error: err.message || 'Gemini API call failed' } };
   }
 }
 
@@ -1278,8 +1387,9 @@ const ROADMAP_MAX_CHUNK_DEPTH = 2;
 // since together they cover the entire original transcript.
 //
 // When the response is confirmed truncated by max_tokens
-// (message.stop_reason === 'max_tokens' — never guessed from the parse
-// failure alone, same conviction as repairTruncatedTaskJson/
+// (callGemini()'s own finishReason === 'max_tokens', normalized from
+// Gemini's 'length' — never guessed from the parse failure alone, same
+// conviction as repairTruncatedTaskJson/
 // repairTruncatedRoadmapJson above) AND splitting further is still
 // possible, this recurses into the transcript's two halves and MERGES their
 // results — a full, clean re-run per half correctly captures everything
@@ -1290,29 +1400,28 @@ const ROADMAP_MAX_CHUNK_DEPTH = 2;
 // for some other reason (stop_reason !== 'max_tokens') is never chunked or
 // repaired — it's surfaced as-is, since guessing it's a size problem would
 // hide the real debugging signal.
-async function extractRoadmapTasks(client, transcriptText, meetingName, meetingDate, depth) {
+async function extractRoadmapTasks(transcriptText, meetingName, meetingDate, depth) {
   const userMessage = `Meeting: ${meetingName}
 Date: ${meetingDate}
 
 TRANSCRIPT:
 ${transcriptText}`;
 
-  const message = await client.messages.create({
-    model: 'claude-opus-4-7',
-    // Raised from 4096 — the identical, already-shipped 2026-08-27 fix for
-    // the sibling taskEmail endpoint above (same model) raised its own cap
-    // from 4096 to 16000 after a large real-world batch routinely got cut
-    // off mid-array; 16000 has already been proven safe there with no 400s.
-    // A dense/long meeting transcript hit the exact same failure here —
-    // "Unterminated string in JSON at position ~9,900" in the error log is
-    // consistent with a ~4096-token output cutoff, not a genuinely
-    // malformed response.
-    max_tokens: 16000,
+  const result = await callGemini({
+    // 16000 (unchanged from the prior Anthropic ceiling) — the identical,
+    // already-shipped 2026-08-27 fix for the sibling taskEmail endpoint
+    // above raised its own cap from 4096 to 16000 after a large real-world
+    // batch routinely got cut off mid-array; 16000 has already been proven
+    // safe there with no 400s. A dense/long meeting transcript hit the
+    // exact same failure here — "Unterminated string in JSON at position
+    // ~9,900" in the error log is consistent with a ~4096-token output
+    // cutoff, not a genuinely malformed response.
+    maxTokens: 16000,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
+    userMessage,
   });
 
-  const raw = message.content[0]?.text || '{}';
+  const raw = result.text;
   try {
     const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
     const parsed = JSON.parse(cleaned);
@@ -1324,9 +1433,9 @@ ${transcriptText}`;
       raw,
     };
   } catch (parseErr) {
-    const truncated = message.stop_reason === 'max_tokens';
+    const truncated = result.finishReason === 'max_tokens';
     if (!truncated) {
-      const err = new Error('Claude returned invalid JSON. Raw: ' + raw.slice(0, 300));
+      const err = new Error('The model returned invalid JSON. Raw: ' + raw.slice(0, 300));
       err._rawSnippet = raw.slice(0, 300);
       throw err;
     }
@@ -1335,8 +1444,8 @@ ${transcriptText}`;
     if (halves) {
       const [firstHalf, secondHalf] = halves;
       const [a, b] = await Promise.all([
-        extractRoadmapTasks(client, firstHalf, meetingName, meetingDate, depth + 1),
-        extractRoadmapTasks(client, secondHalf, meetingName, meetingDate, depth + 1),
+        extractRoadmapTasks(firstHalf, meetingName, meetingDate, depth + 1),
+        extractRoadmapTasks(secondHalf, meetingName, meetingDate, depth + 1),
       ]);
       return {
         tasks: [...a.tasks, ...b.tasks],
@@ -1392,12 +1501,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'transcript is required' });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    await logError({ endpoint: 'process-transcript', error: 'ANTHROPIC_API_KEY is not configured on the server.' });
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+  if (!process.env.GEMINI_API_KEY) {
+    await logError({ endpoint: 'process-transcript', error: 'GEMINI_API_KEY is not configured on the server.' });
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
   }
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const resolvedMeetingName = meeting_name || 'Untitled Meeting';
   const resolvedMeetingDate = meeting_date || new Date().toISOString().slice(0, 10);
   // Included on every logError call below so a parse/truncation failure is
@@ -1410,14 +1518,14 @@ export default async function handler(req, res) {
   try {
     let result;
     try {
-      result = await extractRoadmapTasks(client, transcript.trim(), resolvedMeetingName, resolvedMeetingDate, 0);
+      result = await extractRoadmapTasks(transcript.trim(), resolvedMeetingName, resolvedMeetingDate, 0);
     } catch (err) {
       if (err._truncatedEmpty) {
         await logError({ endpoint: 'process-transcript', error: 'Response truncated by max_tokens with nothing recoverable, even after splitting', extra: { ...logContext, raw: err._rawSnippet } });
         return res.status(422).json({ error: err.message });
       }
       await logError({ endpoint: 'process-transcript', error: err, extra: { ...logContext, raw: err._rawSnippet } });
-      return res.status(500).json({ error: err.message || 'Claude returned invalid JSON.' });
+      return res.status(500).json({ error: err.message || 'The model returned invalid JSON.' });
     }
 
     if (result.fallbackUsed) {
@@ -1456,8 +1564,8 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ tasks: valid, summary, raw_count: tasks.length, ...(result.truncated ? { truncated: true } : {}) });
   } catch (err) {
-    console.error('Anthropic API error:', err);
+    console.error('Gemini API error:', err);
     await logError({ endpoint: 'process-transcript', error: err, extra: logContext });
-    return res.status(500).json({ error: err.message || 'Anthropic API call failed' });
+    return res.status(500).json({ error: err.message || 'Gemini API call failed' });
   }
 }
