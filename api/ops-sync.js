@@ -2818,23 +2818,37 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'a task report requires a valid reportedMisassignedReason' });
             continue;
           }
+          // Admin-origin-only (2026-09-21 fix) — a genuine transition into
+          // reportedMisassigned is now actually rejected, not just silently
+          // accepted with no metadata, when cur.origin !== 'admin'. This
+          // used to be a comment-only claim: the metadata-stamping block
+          // further below already checked cur.origin === 'admin' before
+          // filling reportedMisassignedBy/ByName/At and firing the report
+          // notification, but nothing stopped `row.reportedMisassigned`
+          // itself from becoming true on a self-added task in the meantime
+          // — producing exactly the observed bug (reportedMisassigned:true
+          // with reporter metadata permanently null, since the stamping
+          // block never got a chance to run). openReportTaskModal()'s own
+          // client-side gate (user.html) was never the real protection;
+          // this is.
+          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && cur.origin !== 'admin') {
+            rejected.push({ table: 'tasks', id: inc.id, reason: 'reports can only be filed on an admin-assigned task' });
+            continue;
+          }
           // "Report task" (2026-09-01) — who reported it is always taken
           // from the caller's own session, never trusted from the client,
           // matching reviewedBy/reviewedByName's convention elsewhere in
           // this file. reportedMisassigned* falls back to cur when the
-          // incoming payload omits it (the same "never let an absent field
+          // incoming payload omits it (the same "never let an absent value
           // blank a real value" convention assignedById/clientEmails/etc.
           // already use elsewhere in this file) — a stale local copy
           // resaving an unrelated field (e.g. status) right after a report
           // action, before the next pull has echoed reportedMisassignedBy/
           // At back down to this client, must not wipe them. Only fires on
           // the actual transition into reportedMisassigned (never a resave
-          // that leaves it set), and only for a task actually assigned by
-          // an admin — the UI only shows the button there, but this is the
-          // real server-side guard: reportedMisassigned* is intentionally
-          // NOT in TASK_KEYS_MEMBER_MAY_NOT_TOUCH (a member must be able to
-          // write it on their own task), so without this a client could
-          // still set the flag on a self-added task.
+          // that leaves it set) — the admin-origin-only guard just above
+          // is what now actually stops a self-added task from reaching
+          // this at all, not just the UI.
           row = {
             ...inc,
             reportedMisassigned: typeof inc.reportedMisassigned === 'boolean' ? inc.reportedMisassigned : (cur.reportedMisassigned || false),
@@ -2856,6 +2870,11 @@ export default async function handler(req, res) {
             // isAdmin branch above.
             dueDateChangeRequest: cur.dueDateChangeRequest || null,
           };
+          // cur.origin === 'admin' is now redundant with the hard rejection
+          // above (a non-admin-origin transition never reaches here at
+          // all) — kept as defense-in-depth rather than removed, so this
+          // block still can't stamp metadata for an origin it doesn't
+          // recognize even if the guard above is ever changed.
           if (row.reportedMisassigned && !cur.reportedMisassigned && cur.origin === 'admin') {
             row = { ...row, reportedMisassignedBy: session.id, reportedMisassignedByName: session.name, reportedMisassignedAt: new Date().toISOString() };
             reportEvents.push({
