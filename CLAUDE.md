@@ -200,6 +200,19 @@ Don't relitigate them without an explicit decision from the user.
     production AND the Business Setup schema-drift panel shows 0 pending —
     a merged migration file alone is not enough (see the three outages this
     caused, documented below).
+    **Pipeline status (2026-09-21):** `apply-on-merge` has NEVER actually
+    run — `SUPABASE_DB_URL` was never set and the migration ledger was
+    never bootstrapped (see the "Open items" entry in DECISIONS.md), so
+    every push to `main` since this workflow was built has failed both its
+    steps for a reason unrelated to that commit's own changes. Both steps
+    now carry `continue-on-error: true` (same STEP-level treatment as
+    `check-prod-current`'s 2026-08-20 neutralization, and for the same
+    confirmed-live reason: job-level continue-on-error still reports the
+    job's conclusion as failure to the commit) — merges no longer produce
+    a false-red status or a failure email. This does **not** change the
+    rule above: migrations stay manual + hand-verified against production
+    until the pipeline is actually bootstrapped, and this agent still has
+    no live DB access (rule #11) to do that bootstrap itself.
 
 13. **Data-path PRs require a post-merge integrity check.** Any PR touching
     `api/ops-sync.js`, any `api/*` write path, auth/session, or a cron must

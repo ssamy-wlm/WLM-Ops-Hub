@@ -9989,6 +9989,50 @@ merge once CI is green, though sent for the user's own preview
 click-through regardless, per this ticket's own explicit "preview"
 instruction.
 
+**Stop false Supabase-migration failures on every merge (2026-09-21).**
+`apply-on-merge` in `.github/workflows/supabase-migrations.yml` had been
+failing on every single push to `main` since the migration-apply pipeline
+was built (2026-08-05) — a real red commit status plus a GitHub failure
+email, on every merge, regardless of what that commit actually changed.
+Root cause: the pipeline was never bootstrapped (`SUPABASE_DB_URL` was
+never set as a repo secret, and the migration ledger was never
+reconciled against what's actually live — see "Open items" below), the
+exact same root cause `check-prod-current` was neutralized for on
+2026-08-20. Production schema itself is fine — applied and verified by
+hand per rule #12 — this was pure CI noise about an un-bootstrapped
+pipeline, not a signal about any commit's own content.
+
+Fixed by adding `continue-on-error: true` to both steps of
+`apply-on-merge` ("Apply any pending migrations" and "Confirm production
+is now caught up"), matching `check-prod-current`'s existing treatment.
+Requested initially as job-level `continue-on-error`, but the
+`check-prod-current` job's own comment already documents (from a real,
+confirmed-live test) that job-level `continue-on-error` only keeps the
+overall *workflow run* from failing — the individual job's conclusion
+still reports as "failure" to the commit, so the check stays red.
+Step-level is what actually turns a failing step into a successful job
+conclusion. Flagged this back rather than implementing the literal
+job-level ask (rule #7) and used the verified-working step-level
+placement instead, to actually achieve the stated goal (stop the false
+red status + email) rather than reproducing a previously-tested
+non-fix. The `::error::` annotations inside each step are untouched, so
+a real problem is still visible in the run's annotations — it just no
+longer blocks the commit or fires an email. Both jobs' file-header
+comments and CLAUDE.md rule #12 updated to describe the now-fully-
+neutralized pipeline; the "Open items" entry below updated to note both
+jobs, not just `check-prod-current`, are pipeline-inert pending the
+same bootstrap step.
+
+No data/runtime impact — CI config only. Migrations stay manual +
+hand-verified against production until the pipeline is actually
+bootstrapped (still Sarah's action item, see "Open items" below); this
+agent still has no live DB access (rule #11) to do that bootstrap
+itself.
+
+Low-risk per rule #10: `.github/workflows/supabase-migrations.yml` only,
+no `api/`/`lib/`/`supabase/migrations/` or sync/auth/permission logic
+touched.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
@@ -10054,9 +10098,11 @@ instruction.
   GitHub secret and run the one-time `migration repair` + bootstrap
   `db push` per `supabase/MIGRATIONS.md` (see rule #12 and the
   Migration-apply pipeline entry above). Until this runs, the pipeline is
-  merged-but-inert and every PR's `check-prod-current` shows red by design
-  — that is expected, not a bug, and should not be re-investigated. This
-  same one bootstrap step also fully resolves the 4 migrations
+  merged-but-inert: both `check-prod-current` (neutralized 2026-08-20) and
+  `apply-on-merge` (neutralized 2026-09-21) fail every run for this same
+  reason, but neither shows red or blocks anything anymore — that is
+  expected, not a bug, and should not be re-investigated. This same one
+  bootstrap step also fully resolves the 4 migrations
   (`ops_session_activity`, `ops_backups`, `ops_payroll`, `ops_tasks`) that
   got hand-applied to production after this pipeline was built — verified
   locally (see `supabase/MIGRATIONS.md`'s step 7): no separate action

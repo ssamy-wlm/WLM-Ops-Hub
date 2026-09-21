@@ -19,9 +19,13 @@ name: Supabase migrations
 #
 #   apply-on-merge (on push to main only) — the only job that writes. Runs
 #   the real `supabase db push`, then immediately re-runs the same dry-run
-#   check to confirm prod is now caught up. If the apply itself fails, or the
-#   post-apply check still finds something pending, the job goes red on the
-#   commit — loud, not silent.
+#   check to confirm prod is now caught up. NEUTRALIZED as of 2026-09-21
+#   (continue-on-error: true on both steps) — same root cause as
+#   check-prod-current's 2026-08-20 neutralization: this job was failing on
+#   EVERY push to main regardless of what that commit actually changed,
+#   because the pipeline itself was never bootstrapped. See the comment on
+#   that job below for why; it no longer produces a red commit status or a
+#   failure email.
 #
 # `push: branches: [main]` never fires for a PR/branch push, which is what
 # triggers a Vercel PREVIEW build. Vercel previews and this workflow's write
@@ -92,9 +96,28 @@ jobs:
     name: Apply pending migrations to production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # NEUTRALIZED (2026-09-21): this pipeline was never bootstrapped — no
+    # SUPABASE_DB_URL secret configured, and the migration ledger was never
+    # reconciled against what's actually live (see the "Open items" entry in
+    # DECISIONS.md) — so both steps below have failed on EVERY
+    # push to main for a reason that has nothing to do with any individual
+    # commit's own changes. That's noise, not signal, but noise that was
+    # producing a real red commit status + failure email on every merge.
+    # Production schema is verified current by hand against the live
+    # Supabase project (CLAUDE.md rule #12 — the Business Setup schema-drift
+    # panel), so migrations stay manual + hand-verified until this pipeline
+    # is actually bootstrapped. Same treatment as check-prod-current's
+    # 2026-08-20 neutralization, and same reason it lives on the STEP, not
+    # the job: confirmed live there that job-level continue-on-error still
+    # reports the job's conclusion as "failure" to the commit (it only stops
+    # the overall *workflow run* from failing) — step-level is what actually
+    # turns a failing step into a successful job conclusion. To re-enable
+    # (once SUPABASE_DB_URL is set + the ledger is reconciled): remove
+    # continue-on-error from both steps below.
     steps:
       - uses: actions/checkout@v4
       - name: Apply any pending migrations
+        continue-on-error: true
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -105,6 +128,7 @@ jobs:
           fi
           npx --yes supabase@latest db push --yes --db-url "$SUPABASE_DB_URL"
       - name: Confirm production is now caught up
+        continue-on-error: true
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
