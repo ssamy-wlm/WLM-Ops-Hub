@@ -12009,16 +12009,36 @@ async function _taReassignAndClearReport(id, newAssigneeId){
   const t = tasks.find(x=>x.id===id);
   if(!t || !t.reportedMisassigned) return;
   const prevAssigneeId = t.assigneeId;
+  const prevAssigneeIds = Array.isArray(t.assigneeIds) ? t.assigneeIds.slice() : t.assigneeIds;
+  const prevOrigin = t.origin;
   const prevLastAssignedAt = t.lastAssignedAt;
   t.assigneeId = newAssigneeId || null;
   t.reportedMisassigned = false;
   t.lastAssignedAt = new Date().toISOString();
+  // Strip the outgoing reporter from the informational co-assignee list
+  // (2026-09-21 fix) — assigneeIds is a leftover of however this task was
+  // originally created (e.g. an "Everyone"/whole-team clone, see
+  // _taBuildEveryoneClones()) and was never touched by a reassign before
+  // this; a stale entry naming the person who was JUST reassigned away is
+  // exactly the kind of leftover that made "comes back to the reporter's
+  // plate" possible once this same task's `t` object later got fanned
+  // back out through the Everyone path again. Also resets `origin` to
+  // 'admin' — an admin actively reassigning a task (whatever it started
+  // as, including a self-added one) is now the one directing where it
+  // goes, so origin should reflect that going forward, same as any other
+  // admin-driven assignment.
+  if(Array.isArray(t.assigneeIds) && prevAssigneeId){
+    t.assigneeIds = t.assigneeIds.filter(aid=>aid!==prevAssigneeId);
+  }
+  t.origin = 'admin';
   _taSaveTasks(tasks);
   const ok = await cloudAutoSync();
   if(ok===false){
     // Server write failed — revert so the assignee/report state shown
     // locally never gets ahead of what's actually stored.
     t.assigneeId = prevAssigneeId;
+    t.assigneeIds = prevAssigneeIds;
+    t.origin = prevOrigin;
     t.reportedMisassigned = true;
     t.lastAssignedAt = prevLastAssignedAt;
     _taSaveTasks(tasks);
@@ -12244,6 +12264,22 @@ function saveTaskEdit(){
     // assignee actually changes, including a brand-new task created WITH
     // an assignee; otherwise preserved.
     lastAssignedAt: assigneeChanged ? nowIso : (existing.lastAssignedAt || existing.createdAt || nowIso),
+    // Report state clears on any real reassignment through THIS generic
+    // modal too (2026-09-21 fix) — not just through the Reported tab's own
+    // dedicated _taReassignAndClearReport(). Before this, `t = {...existing}`
+    // silently carried reportedMisassigned/metadata forward unchanged
+    // whenever an admin fixed a misassignment by just picking a new
+    // assignee here instead of using the Reported tab's buttons — the flag
+    // never actually got cleared. Worse for the "Everyone" conversion just
+    // below: _taBuildEveryoneClones() spreads this same `t` into one clone
+    // per roster member, so a stale true flag fanned out to every clone —
+    // including a fresh copy handed right back to the ORIGINAL reporter
+    // whenever they're on the active roster (always), which is the exact
+    // "report comes back to the reporter's plate" symptom this fixes.
+    // Left untouched (existing.* preserved via the spread above) when the
+    // assignee ISN'T changing — an unrelated resave (status, notes, etc.)
+    // must never blank an active report out from under the Reported tab.
+    ...(assigneeChanged ? { reportedMisassigned: false, reportedMisassignedBy: null, reportedMisassignedByName: null, reportedMisassignedAt: null, reportedMisassignedReason: null } : {}),
   };
   if(!t.subject){ showToast('Subject is required','warn'); return; }
   // Everyone (whole team) — same clone-at-commit-time approach as
