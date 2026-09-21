@@ -12,7 +12,6 @@
     "serve": "^14.2.6"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@supabase/supabase-js": "^2.45.4",
     "@vercel/analytics": "^2.0.1"
   }
