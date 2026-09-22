@@ -3350,6 +3350,29 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   </div>
 </div>
 
+<!-- "Find & merge duplicate" (2026-09-22) — a "Duplicated" Reported-tab
+     report ("this isn't real, it's a duplicate of an existing task") gets
+     a real resolution beyond just deleting it outright: search for the
+     ORIGINAL task it duplicates and merge the two, same additive/
+     reversible mergedIntoId mechanism the company-wide duplicate sweep
+     (_taFindDuplicatePairsCompanyWide()/mergeTaDuplicate()) already uses —
+     see openTaMergeDupModal()/_taRenderMergeDupResults()/
+     _taConfirmMergeDup() below. -->
+<div id="taMergeDupModal" class="modal-overlay">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div><div class="modal-title">Find &amp; merge duplicate</div></div>
+      <button class="modal-close" onclick="closeModal('taMergeDupModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="tmd-source-label" style="font-size:12px;color:var(--text-light);margin-bottom:10px;"></div>
+      <label class="form-label">Search for the original task this duplicates</label>
+      <input class="form-input" id="tmd-search-input" placeholder="Type a task subject…" oninput="_taRenderMergeDupResults()">
+      <div id="tmd-results" style="margin-top:10px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- "View all notifications" (2026-09-02) — every notification, not just
      the bell dropdown's most-recent-20, with type + read/unread filters.
      See openNotifViewAll()/renderNotifViewAll() above. -->
@@ -8621,6 +8644,29 @@ let _opsStateInFlight = null;
 let _opsStateChannel = null;
 let _opsStateLastRecord = null;
 let _opsStateLastRecordAt = 0;
+// Token-scoped (2026-09-22 fix — "Reported items vanish" bug). This
+// channel/claim-key pair is the exact same literal string in
+// index.html/user.html/client.html (by design, so a client.html iframe
+// embedded in either portal coalesces for free) — but nothing here used to
+// check that a cached/broadcast record came from the SAME session as the
+// caller asking for one. A background pull from THIS admin tab could
+// silently adopt a record actually fetched by a completely different,
+// lower-privileged token — e.g. a member's own user.html tab open in
+// another browser tab on the same origin — overwriting this tab's fuller
+// data with that member's tier-filtered one (in ops-state.js: a member
+// only ever sees tasks they're assigned to or created). Reproduced live:
+// an admin session showing reportedMisassigned tasks in the Reported tab
+// would have them silently vanish within OPS_STATE_FRESH_MS of ANY other
+// same-origin tab's own background pull landing on this channel, because
+// _lastViewerTier/the whole `tasks` array got replaced by that OTHER
+// session's narrower response with no token check at all. Every reuse
+// point below now requires the cached token to match this caller's own
+// token; a mismatch is simply ignored and this context does its own real
+// fetch instead — the coalescing optimization still works for two
+// contexts that genuinely share one token (e.g. this file plus its own
+// same-token embedded client.html iframes), it just can no longer cross a
+// session boundary.
+let _opsStateLastRecordToken = null;
 let _opsStateWaiters = [];
 (function _opsStateChannelInit(){
   if(typeof BroadcastChannel==='undefined') return;
@@ -8631,8 +8677,14 @@ let _opsStateWaiters = [];
       if(!msg || msg.type!=='pulled') return;
       _opsStateLastRecord = msg.record;
       _opsStateLastRecordAt = msg.ts;
-      const waiters = _opsStateWaiters; _opsStateWaiters = [];
-      waiters.forEach(w=>w.resolve(msg.record));
+      _opsStateLastRecordToken = msg.token || null;
+      // Only ever resolve a waiter with a broadcast from the SAME token it
+      // itself is waiting on — a non-matching broadcast is left ignored;
+      // that waiter's own safety-valve timeout (below) falls back to its
+      // own real, correctly-tokened fetch instead, so it can never hang.
+      const matching = _opsStateWaiters.filter(w=>w.token===msg.token);
+      _opsStateWaiters = _opsStateWaiters.filter(w=>w.token!==msg.token);
+      matching.forEach(w=>w.resolve(msg.record));
     };
   }catch(e){ _opsStateChannel = null; }
 })();
@@ -8650,7 +8702,8 @@ async function _opsStateRealFetch(token){
     const now = Date.now();
     _opsStateLastRecord = record;
     _opsStateLastRecordAt = now;
-    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record}); }catch(e){} }
+    _opsStateLastRecordToken = token;
+    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record, token}); }catch(e){} }
     return record;
   } finally {
     _opsStateInFlight = null;
@@ -8668,15 +8721,15 @@ async function _opsStateRealFetch(token){
 async function fetchOpsStateCoordinated(token, background){
   if(_opsStateInFlight) return _opsStateInFlight;
   const now = Date.now();
-  if(background && _opsStateLastRecord && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
+  if(background && _opsStateLastRecord && _opsStateLastRecordToken===token && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
     return _opsStateLastRecord;
   }
   if(background){
     let claim = null;
     try{ claim = JSON.parse(localStorage.getItem(OPS_STATE_CLAIM_KEY) || 'null'); }catch(e){}
-    if(claim && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
+    if(claim && claim.token===token && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
       _opsStateInFlight = new Promise((resolve)=>{
-        _opsStateWaiters.push({resolve});
+        _opsStateWaiters.push({resolve, token});
         setTimeout(()=>resolve(null), Math.max(500, OPS_STATE_CLAIM_MS - (now - claim.ts) + 500));
       }).then((record)=>{
         _opsStateInFlight = null;
@@ -8685,7 +8738,7 @@ async function fetchOpsStateCoordinated(token, background){
       return _opsStateInFlight;
     }
   }
-  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now})); }catch(e){}
+  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now, token})); }catch(e){}
   _opsStateInFlight = _opsStateRealFetch(token);
   return _opsStateInFlight;
 }
@@ -10808,18 +10861,82 @@ function renderTaReported(){
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.reason||'—')}</td>
             <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
             <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
-            <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">${it.kind==='reported' ? `
-              <div style="display:flex;gap:6px;align-items:center;">
+            <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                ${it.kind==='reported' ? `
                 <button class="btn btn-xs btn-outline" onclick="_taDismissReport('${it.taskId}')">✓ Keep assigned</button>
                 <select class="input" style="font-size:11px;padding:3px 6px;width:auto;" onchange="if(this.value){_taReassignAndClearReport('${it.taskId}',this.value);this.value='';}">
                   <option value="">Reassign to…</option>
                   ${_taAllAssignablePeople().filter(p=>p.id!==it.assigneeId).map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('')}
                 </select>
-              </div>` : ''}</td>
+                ${it.reason==='Duplicated' ? `<button class="btn btn-xs btn-outline" onclick="openTaMergeDupModal('${it.taskId}')">🧬 Find &amp; merge duplicate</button>` : ''}
+                ` : ''}
+                <button class="btn btn-xs btn-outline" style="color:var(--red,#c94a4a);border-color:rgba(201,74,74,.4);" onclick="deleteTaskInline('${it.taskId}')">🗑 Delete</button>
+              </div>
+            </td>
           </tr>`).join('')}</tbody>
       </table>
     </div>
   </div>`;
+}
+
+// "Find & merge duplicate" (2026-09-22) — entry point for a "Duplicated"
+// Reported-tab row (see the row markup in renderTaReported() above).
+// _taMergeDupSourceId tracks which reported task the modal is currently
+// resolving; deliberately NOT threaded through onclick attributes (same
+// reasoning as _taReportedItemsCache above) since the search results list
+// re-renders on every keystroke.
+let _taMergeDupSourceId = null;
+function openTaMergeDupModal(taskId){
+  const t = _taTasks().find(x=>x.id===taskId);
+  if(!t) return;
+  _taMergeDupSourceId = taskId;
+  document.getElementById('tmd-source-label').textContent = `Merging: "${t.subject||'(untitled task)'}" — pick the ORIGINAL task it duplicates. The original survives; this reported task's notes/tags/due date are folded into it, and this one is marked merged (removed from Reported, reversible from the Duplicates tab's Recent Merges).`;
+  const input = document.getElementById('tmd-search-input');
+  input.value = '';
+  document.getElementById('tmd-results').innerHTML = '';
+  openModal('taMergeDupModal');
+  setTimeout(()=>input.focus(), 50);
+}
+// Live-filtered as the admin types — requires at least 2 characters so
+// opening the modal never dumps the entire company-wide task list before
+// the admin has narrowed anything down. Excludes the reported task itself
+// and anything already merged away (same !mergedIntoId convention as
+// every other task view in this file).
+function _taRenderMergeDupResults(){
+  const wrap = document.getElementById('tmd-results');
+  if(!wrap) return;
+  const q = (document.getElementById('tmd-search-input').value||'').trim().toLowerCase();
+  if(q.length<2){ wrap.innerHTML = `<div style="font-size:12px;color:var(--text-light);font-style:italic;">Type at least 2 characters to search…</div>`; return; }
+  const matches = _taTasks().filter(t=>t.id!==_taMergeDupSourceId && !t.mergedIntoId && (t.subject||'').toLowerCase().includes(q)).slice(0,20);
+  if(!matches.length){ wrap.innerHTML = `<div style="font-size:12px;color:var(--text-light);font-style:italic;">No matching tasks found.</div>`; return; }
+  wrap.innerHTML = matches.map(t=>`
+    <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div>
+        <div style="font-weight:600;font-size:13px;">${escHtmlAdmin(t.subject||'')}</div>
+        <div style="font-size:11px;color:var(--text-light);">${escHtmlAdmin(t.clientName||'—')} · ${escHtmlAdmin(_taPersonNameFor(t.assigneeId))} · ${t.status||'Not started'}</div>
+      </div>
+      <button class="btn btn-xs btn-primary" style="width:auto;flex-shrink:0;" onclick="_taConfirmMergeDup('${t.id}')">Merge into this</button>
+    </div>`).join('');
+}
+// Confirms, then defers to the exact same mergeTaDuplicate(primary,
+// duplicate) the company-wide sweep already uses — the reported task is
+// the "duplicate" side (gets mergedIntoId set, dropped from Reported and
+// every other active-task view); the picked original is the "primary"
+// side (survives, absorbs notes/tags/due date/Done status per that
+// function's own existing rules). One real merge implementation, two
+// entry points. Explicitly refreshes Reported afterward (mergeTaDuplicate
+// itself only refreshes the Duplicates tab's own containers) so the
+// resolved report drops off this list immediately, same as every other
+// Reported-tab resolution action in this file.
+function _taConfirmMergeDup(originalId){
+  const source = _taTasks().find(x=>x.id===_taMergeDupSourceId);
+  const original = _taTasks().find(x=>x.id===originalId);
+  if(!source || !original) return;
+  if(!confirm(`Merge "${source.subject||'(untitled task)'}" into "${original.subject||'(untitled task)'}"?\n\nThe original survives; this reported task will be marked as a duplicate and removed from the active list.`)) return;
+  mergeTaDuplicate(originalId, _taMergeDupSourceId);
+  closeModal('taMergeDupModal');
+  _taRefreshReportedIfActive();
 }
 
 // ── Company-wide duplicate sweep (2026-09-03) — the admin-side port of

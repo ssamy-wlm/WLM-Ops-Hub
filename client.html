@@ -2505,6 +2505,23 @@ let _opsStateInFlight = null;
 let _opsStateChannel = null;
 let _opsStateLastRecord = null;
 let _opsStateLastRecordAt = 0;
+// Token-scoped (2026-09-22 fix — "Reported items vanish" bug, reported
+// against index.html but the identical unscoped-channel pattern was
+// hand-copied here too, so it's fixed here as well per CLAUDE.md rule #3).
+// This channel/claim-key pair is the exact same literal string in
+// index.html/user.html/client.html (by design, so this file coalesces for
+// free when embedded as an iframe in either portal) — but nothing here
+// used to check that a cached/broadcast record came from the SAME session
+// as the caller asking for one. A background pull from THIS context could
+// silently adopt a record actually fetched by a completely different
+// token — e.g. a sibling browser tab logged into a different portal/tier
+// on the same origin — overwriting this context's own data with that
+// other session's differently-scoped one. Every reuse point below now
+// requires the cached token to match this caller's own token; a mismatch
+// is simply ignored and this context does its own real fetch instead —
+// the coalescing optimization still works for two contexts that genuinely
+// share one token, it just can no longer cross a session boundary.
+let _opsStateLastRecordToken = null;
 let _opsStateWaiters = [];
 (function _opsStateChannelInit(){
   if(typeof BroadcastChannel==='undefined') return;
@@ -2515,8 +2532,14 @@ let _opsStateWaiters = [];
       if(!msg || msg.type!=='pulled') return;
       _opsStateLastRecord = msg.record;
       _opsStateLastRecordAt = msg.ts;
-      const waiters = _opsStateWaiters; _opsStateWaiters = [];
-      waiters.forEach(w=>w.resolve(msg.record));
+      _opsStateLastRecordToken = msg.token || null;
+      // Only ever resolve a waiter with a broadcast from the SAME token it
+      // itself is waiting on — a non-matching broadcast is left ignored;
+      // that waiter's own safety-valve timeout (below) falls back to its
+      // own real, correctly-tokened fetch instead, so it can never hang.
+      const matching = _opsStateWaiters.filter(w=>w.token===msg.token);
+      _opsStateWaiters = _opsStateWaiters.filter(w=>w.token!==msg.token);
+      matching.forEach(w=>w.resolve(msg.record));
     };
   }catch(e){ _opsStateChannel = null; }
 })();
@@ -2529,7 +2552,8 @@ async function _opsStateRealFetch(token){
     const now = Date.now();
     _opsStateLastRecord = record;
     _opsStateLastRecordAt = now;
-    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record}); }catch(e){} }
+    _opsStateLastRecordToken = token;
+    if(_opsStateChannel){ try{ _opsStateChannel.postMessage({type:'pulled', ts: now, record, token}); }catch(e){} }
     return record;
   } finally {
     _opsStateInFlight = null;
@@ -2539,15 +2563,15 @@ async function _opsStateRealFetch(token){
 async function fetchOpsStateCoordinated(token, background){
   if(_opsStateInFlight) return _opsStateInFlight;
   const now = Date.now();
-  if(background && _opsStateLastRecord && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
+  if(background && _opsStateLastRecord && _opsStateLastRecordToken===token && (now - _opsStateLastRecordAt) < OPS_STATE_FRESH_MS){
     return _opsStateLastRecord;
   }
   if(background){
     let claim = null;
     try{ claim = JSON.parse(localStorage.getItem(OPS_STATE_CLAIM_KEY) || 'null'); }catch(e){}
-    if(claim && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
+    if(claim && claim.token===token && claim.ts && (now - claim.ts) < OPS_STATE_CLAIM_MS){
       _opsStateInFlight = new Promise((resolve)=>{
-        _opsStateWaiters.push({resolve});
+        _opsStateWaiters.push({resolve, token});
         setTimeout(()=>resolve(null), Math.max(500, OPS_STATE_CLAIM_MS - (now - claim.ts) + 500));
       }).then((record)=>{
         _opsStateInFlight = null;
@@ -2556,7 +2580,7 @@ async function fetchOpsStateCoordinated(token, background){
       return _opsStateInFlight;
     }
   }
-  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now})); }catch(e){}
+  try{ localStorage.setItem(OPS_STATE_CLAIM_KEY, JSON.stringify({ts: now, token})); }catch(e){}
   _opsStateInFlight = _opsStateRealFetch(token);
   return _opsStateInFlight;
 }
