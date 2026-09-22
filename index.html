@@ -1638,7 +1638,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👥 Team's Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
-          <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported<span class="admin-msg-nav-badge" id="ta-reported-badge" style="display:none;">0</span></button>
           <button class="btn btn-sm btn-outline" id="taSubtabDupBtn" onclick="setTaSubtab('duplicates')" style="border-radius:8px 8px 0 0;">🧬 Duplicates</button>
         </div>
         <!-- .btn-primary sets width:100% (it's --btn, the same hex as
@@ -4028,6 +4028,7 @@ function showAdminApp(){
     else           localStorage.setItem('wl_admin_session', JSON.stringify({...existing, ts:Date.now()}));
   }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
+  setTimeout(()=>{ if(typeof updateTaReportedBadge==='function') updateTaReportedBadge(); }, 300);
   setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
 
@@ -8826,6 +8827,12 @@ function updateCloudStatusUI(){
 // never touching a row that isn't in the payload, not from this diff.
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Factored out of _opsDirty() below (2026-09-22) so _applyServerArray()'s
+// field-level merge can read the exact same snapshot without a second,
+// separately-maintained copy of this try/catch.
+function _opsReadSnapshot(table){
+  try{ const raw = localStorage.getItem(_opsSnapKey(table)); return raw!=null ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
 // Never let an empty/missing result from the server blank out real local
 // data — this is exactly what happened when Supabase was empty right after
 // the Phase 4 cutover: every pull returned empty arrays and every browser's
@@ -8876,6 +8883,51 @@ function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(tabl
 // task brought it right back. Excluding every ever-tombstoned id here,
 // unconditionally, closes this regardless of server-side timing — once
 // deleted locally, a task can never be merged back in again by ANY pull.
+//
+// Field-level merge (2026-09-22) — replaces the old WHOLE-RECORD
+// dirty-preference below. The old version, for any record _opsDirty()
+// flagged as differing from its own snapshot ANYWHERE, discarded the
+// ENTIRE fresh server row and substituted the entire stale local one back
+// in. That's correct for the one field the browser actually has a genuine
+// unpushed edit on, but wrong for every OTHER field on that same record —
+// including one this browser never touched at all. Confirmed live: an
+// admin's browser holding any genuinely-dirty (unpushed, or pushed-and-
+// rejected, or simply never successfully re-synced) field on a task
+// permanently masked that task's `reportedMisassigned` from ever reaching
+// the Reported tab, even though _taReportedItems()'s own filter was
+// always correct and ops-state.js was always sending the true value —
+// the fresh server row for that task was being thrown away wholesale on
+// every single pull, forever, for as long as the record stayed dirty on
+// this one field. There is no size to that window — a push that fails,
+// or one the server rejects (cloudPushAll() only checks res.ok; a 200
+// response carrying `rejected` still runs the post-push pull that snapshots
+// server truth while the local copy stays whatever was attempted), leaves
+// the record dirty with no further retry ever guaranteed, so the masking
+// was never bounded to "briefly, until the pending push lands."
+// Field-level merge instead asks, per FIELD: does the browser's own local
+// value differ from what THIS SAME BROWSER last snapshotted for that
+// field? If so, this is a genuine local edit — protect it, exactly as
+// before. If not, the field was never touched here, so there's nothing to
+// protect — take the server's current value, however it changed and
+// whoever changed it. This needs no new async/queue machinery (there's no
+// debounced push in this file to coordinate with, unlike user.html) and
+// needs no notion of "is a push currently in flight": it doesn't matter
+// WHY a record is dirty or for how long — only which fields the local
+// browser has actually diverged on ever gets preserved, so a field this
+// browser never edited can never be masked, no matter how stale/orphaned
+// the record's dirty state on some OTHER field has become.
+function _opsFieldLevelMerge(serverRow, localRow, snapshotRow){
+  if(!localRow) return serverRow;   // nothing local to protect at all
+  if(!snapshotRow) return localRow; // no prior baseline for this id — trust local fully, same as _opsDirty()'s own "no snapshot yet" convention
+  const merged = { ...serverRow };
+  const keys = new Set([...Object.keys(localRow), ...Object.keys(snapshotRow)]);
+  keys.forEach(k=>{
+    if(JSON.stringify(localRow[k]) !== JSON.stringify(snapshotRow[k])){
+      merged[k] = localRow[k]; // this field has a genuine local edit relative to this browser's own baseline — protect it
+    }
+  });
+  return merged;
+}
 function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
   const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
@@ -8883,9 +8935,12 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
   if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
-  // Keep the LOCAL copy of every still-dirty record instead of the server's
+  const snap = _opsReadSnapshot(table);
+  const snapById = new Map((snap||[]).map(r=>[r.id, r]));
+  const localById = new Map(local.map(r=>[r.id, r]));
+  // Field-level merge for every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
-  const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const merged = filtered.map(r => dirtyIds.has(r.id) ? _opsFieldLevelMerge(r, localById.get(r.id), snapById.get(r.id)) : r);
   const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
@@ -8929,8 +8984,7 @@ function _stripFunnelCommissionFields(rows){
 }
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
-  let snap = null;
-  try{ const raw = localStorage.getItem(_opsSnapKey(table)); snap = raw!=null ? JSON.parse(raw) : null; }catch(e){ snap = null; }
+  const snap = _opsReadSnapshot(table);
   if(snap === null) return localArr.slice(); // no snapshot yet — server-side upsert guards make this safe to send in full
   const byId = {};
   snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
@@ -10824,14 +10878,39 @@ function _taOpenReportedItem(i){
   if(!item) return;
   openTaDetailPanel(item.taskId);
 }
+// Count badge on the "🚩 Reported" subtab button (2026-09-22) — display
+// only, same "recompute from whatever's already loaded, never touch a
+// record" convention as updateAdminMsgBadge()'s identical unread-count
+// badge just above the Messages nav item; this one shares that exact CSS
+// class (admin-msg-nav-badge) for visual consistency. Uses the SAME
+// filter _taReportedItems() itself uses for the "reported" kind
+// specifically (reportedMisassigned && !mergedIntoId) — not
+// _taReportedItems()'s own combined return value, which also folds in
+// unrelated dueDateChange rows that have nothing to do with this count.
+// Never runs on page load unprompted on its own — always called FROM an
+// existing refresh point (see _taRefreshReportedIfActive() below, and the
+// post-login/post-pull call sites), so this is a pure re-render of
+// already-fetched state, not a new load-time scan (CLAUDE.md rule #2).
+function updateTaReportedBadge(){
+  const badge = document.getElementById('ta-reported-badge');
+  if(!badge) return;
+  const count = _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).length;
+  badge.textContent = count;
+  badge.style.display = count ? '' : 'none';
+}
 // Called after any task edit/delete that might affect the Reported list
 // (a report can be resolved by editing the task, or the task can be
 // deleted outright) — re-renders ta-reported-body IN PLACE only when
 // that subtab is actually the one showing, so working through a list of
 // reports one at a time never gets silently kicked back to Assigned
 // Tasks. Mirrors the identical guard cloudPullAll() already uses for
-// this same container on a live-sync pull.
+// this same container on a live-sync pull. The badge above updates
+// unconditionally on every call, regardless of which subtab is active —
+// unlike the list itself, the badge is always visible (it's a subtab
+// BUTTON, not the subtab's own body), so it must never depend on that
+// subtab happening to be the one currently showing.
 function _taRefreshReportedIfActive(){
+  updateTaReportedBadge();
   if(typeof renderTaReported==='function' && document.getElementById('ta-subtab-reported')?.style.display!=='none') renderTaReported();
 }
 function renderTaReported(){
