@@ -57,7 +57,15 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 //     already routes an unexpected throw into logError() with full
 //     context, so nothing here needs its own separate logError call; that
 //     would just double-log the same failure.
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+// Model is env-configurable (2026-09-22) — gemini-2.5-flash-lite started
+// returning a 404 ("not available to new users") on a freshly-created API
+// key once the 2.5 line was retired for new accounts, and the raw error
+// body that would have said so outright was being silently discarded (see
+// callGemini()'s own comment below). GEMINI_MODEL lets a future model
+// deprecation be a Vercel env var change, not a code deploy — falls back
+// to gemini-3.6-flash (the current generally-available flash model at the
+// time of this fix) when unset.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 const GEMINI_MAX_ATTEMPTS = 4;
 const GEMINI_RETRY_BACKOFF_MS = [2000, 5000, 12000, 25000];
@@ -127,11 +135,26 @@ async function callGemini({ system, userMessage, maxTokens }) {
       const finishReason = choice?.finish_reason === 'length' ? 'max_tokens' : (choice?.finish_reason || 'stop');
       return { text, finishReason };
     }
-    const errBody = await r.json().catch(() => ({}));
-    lastErr = new Error(errBody?.error?.message || `Gemini API error (${r.status})`);
+    // Raw text captured FIRST, always (2026-09-22) — a 404 "model not
+    // available to new users" style error, or any other edge/proxy error,
+    // often comes back as a plain-text or HTML body, not JSON; the old
+    // `.json().catch(() => ({}))` silently discarded exactly that body,
+    // leaving only a bare "Gemini API error (404)" with no indication of
+    // WHY. This is what made the 2.5-flash-lite deprecation take a live
+    // report to diagnose instead of being obvious from the error/log
+    // output alone. Truncated to keep a single bad response from bloating
+    // a thrown Error/log row (matches lib/errorLog.js's own capture-cap
+    // convention elsewhere in this codebase).
+    const rawErrText = await r.text().catch(() => '');
+    let errBody = {};
+    try { errBody = JSON.parse(rawErrText); } catch { /* not JSON — rawErrText itself is the diagnostic */ }
+    const rawSnippet = rawErrText.slice(0, 500);
+    lastErr = new Error(`${errBody?.error?.message || `Gemini API error (${r.status})`}${rawSnippet ? ` — raw: ${rawSnippet}` : ''}`);
     // Only a 429 (rate limit) is ever worth retrying — same conviction as
     // lib/resendClient.js's own Resend retry logic. Anything else (a bad
-    // request, an auth error, a 5xx) fails on the first attempt.
+    // request, an auth error, a 5xx, a 404 for an unavailable model) fails
+    // on the first attempt — retrying a 404 would just waste the pacing
+    // budget on an error that will never resolve itself.
     if (r.status !== 429 || attempt === GEMINI_MAX_ATTEMPTS - 1) throw lastErr;
     await sleep(geminiRetryDelayMs(r, attempt));
   }
