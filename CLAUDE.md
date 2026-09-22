@@ -345,6 +345,13 @@ call is transitively dead too.)
   corrupting). The post-merge check also asserts reports-flagged-but-
   missing-metadata, pending due-date-request integrity, and any new
   write-warning signatures.
+- **RLS:** enabled on all tables with zero policies BY DESIGN. The app
+  reaches the database only server-side via the service-role key (which
+  bypasses RLS); there is no client-direct DB access. Access control is
+  enforced in server code (role bands). Do NOT treat the empty-policy
+  state as a bug. Revisit and add RLS policies only if client-direct
+  database access (e.g. a browser using the anon/publishable key) is ever
+  introduced.
 - **"write warning(s)" are benign:** the server role-guard correctly
   dropping a manager-tier admin's unauthorized orgNodes/orgLinks/settings
   writes — not data loss.
