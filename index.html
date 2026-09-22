@@ -1638,7 +1638,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👥 Team's Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
-          <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabReportedBtn" onclick="setTaSubtab('reported')" style="border-radius:8px 8px 0 0;">🚩 Reported<span class="admin-msg-nav-badge" id="ta-reported-badge" style="display:none;">0</span></button>
           <button class="btn btn-sm btn-outline" id="taSubtabDupBtn" onclick="setTaSubtab('duplicates')" style="border-radius:8px 8px 0 0;">🧬 Duplicates</button>
         </div>
         <!-- .btn-primary sets width:100% (it's --btn, the same hex as
@@ -4005,6 +4005,7 @@ function showAdminApp(){
     else           localStorage.setItem('wl_admin_session', JSON.stringify({...existing, ts:Date.now()}));
   }catch(e){}
   setTimeout(()=>{ if(typeof updateAdminMsgBadge==='function') updateAdminMsgBadge(); }, 300);
+  setTimeout(()=>{ if(typeof updateTaReportedBadge==='function') updateTaReportedBadge(); }, 300);
   setTimeout(()=>{ if(typeof updateRoadmapNavVisibility==='function') updateRoadmapNavVisibility(); }, 200);
 }
 
@@ -10771,14 +10772,39 @@ function _taOpenReportedItem(i){
   if(!item) return;
   openTaDetailPanel(item.taskId);
 }
+// Count badge on the "🚩 Reported" subtab button (2026-09-22) — display
+// only, same "recompute from whatever's already loaded, never touch a
+// record" convention as updateAdminMsgBadge()'s identical unread-count
+// badge just above the Messages nav item; this one shares that exact CSS
+// class (admin-msg-nav-badge) for visual consistency. Uses the SAME
+// filter _taReportedItems() itself uses for the "reported" kind
+// specifically (reportedMisassigned && !mergedIntoId) — not
+// _taReportedItems()'s own combined return value, which also folds in
+// unrelated dueDateChange rows that have nothing to do with this count.
+// Never runs on page load unprompted on its own — always called FROM an
+// existing refresh point (see _taRefreshReportedIfActive() below, and the
+// post-login/post-pull call sites), so this is a pure re-render of
+// already-fetched state, not a new load-time scan (CLAUDE.md rule #2).
+function updateTaReportedBadge(){
+  const badge = document.getElementById('ta-reported-badge');
+  if(!badge) return;
+  const count = _taTasks().filter(t=>t.reportedMisassigned && !t.mergedIntoId).length;
+  badge.textContent = count;
+  badge.style.display = count ? '' : 'none';
+}
 // Called after any task edit/delete that might affect the Reported list
 // (a report can be resolved by editing the task, or the task can be
 // deleted outright) — re-renders ta-reported-body IN PLACE only when
 // that subtab is actually the one showing, so working through a list of
 // reports one at a time never gets silently kicked back to Assigned
 // Tasks. Mirrors the identical guard cloudPullAll() already uses for
-// this same container on a live-sync pull.
+// this same container on a live-sync pull. The badge above updates
+// unconditionally on every call, regardless of which subtab is active —
+// unlike the list itself, the badge is always visible (it's a subtab
+// BUTTON, not the subtab's own body), so it must never depend on that
+// subtab happening to be the one currently showing.
 function _taRefreshReportedIfActive(){
+  updateTaReportedBadge();
   if(typeof renderTaReported==='function' && document.getElementById('ta-subtab-reported')?.style.display!=='none') renderTaReported();
 }
 function renderTaReported(){
