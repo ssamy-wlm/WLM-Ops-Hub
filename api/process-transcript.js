@@ -41,14 +41,16 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // Free-tier constraints (~500 req/day, single-digit RPM on flash-lite) are
 // the reason this exists as a shared chokepoint rather than a bare fetch()
 // at each call site:
-//   - Retry-with-backoff on 429 (rate limit) and 503/UNAVAILABLE (transient
-//     model-overload — 2026-09-22, isTransientGeminiStatus() below) —
-//     honors the response's Retry-After header when present, a fixed
-//     schedule otherwise, same shape as lib/resendClient.js's own Resend
-//     429 handling. Every other failure (400/401/404/etc — a real config
-//     or request error, not a transient one) still fails immediately —
-//     retrying those would just waste time on an error that will never
-//     resolve itself.
+//   - Retry-with-backoff on 429 (rate limit) and any 5xx/UNAVAILABLE
+//     (transient server-side failure — 503 "high demand"/overload is the
+//     routine free-tier case, but 500/502/504 etc are just as transient
+//     and worth the same retry, widened 2026-09-22 from 503-only —
+//     isTransientGeminiStatus() below) — honors the response's Retry-After
+//     header when present, a fixed schedule otherwise, same shape as
+//     lib/resendClient.js's own Resend 429 handling. Every other failure
+//     (400/401/404/etc — a real config or request error, not a transient
+//     one) still fails immediately — retrying those would just waste time
+//     on an error that will never resolve itself.
 //   - Pacing: a serialized wait queue (_geminiCallChain) enforces a
 //     minimum spacing between consecutive calls, chained so concurrent
 //     callers queue up rather than racing to read the "last call" clock
@@ -106,18 +108,23 @@ function geminiRetryDelayMs(response, attemptIndex) {
   return GEMINI_RETRY_BACKOFF_MS[attemptIndex] ?? GEMINI_RETRY_BACKOFF_MS[GEMINI_RETRY_BACKOFF_MS.length - 1];
 }
 
-// 429 (rate limit) and 503 (server overload) are both genuinely transient —
-// worth retrying with backoff. Google's standard error envelope
+// 429 (rate limit) and any 5xx (500/502/503/504/etc — server-side failure,
+// not something a client-side fix can address) are both genuinely
+// transient — worth retrying with backoff. 503 "high demand"/overload is
+// the routine free-tier case, but every other 5xx is just as much Google's
+// side failing, not this request being wrong, so the same retry applies
+// (widened 2026-09-22 from 503-only). Google's standard error envelope
 // (`{error:{code,message,status}}`) also reports overload as the string
 // status `'UNAVAILABLE'`, which the OpenAI-compatible endpoint used here
 // has been observed to carry on the body even when the HTTP status itself
-// is already 503 — checked here too so this never depends on exactly which
-// of the two representations a given response happens to set. Deliberately
-// narrow: 400/401/404/etc are real config or request errors that retrying
-// would never fix, so they still fail on the first attempt (see the 404
-// "model not available to new users" case just above/below this).
+// is already a 5xx — checked here too so this never depends on exactly
+// which of the two representations a given response happens to set.
+// Deliberately narrow otherwise: 400/401/404/etc are real config or
+// request errors that retrying would never fix, so they still fail on the
+// first attempt (see the 404 "model not available to new users" case just
+// above/below this).
 function isTransientGeminiStatus(status, errBody) {
-  if (status === 429 || status === 503) return true;
+  if (status === 429 || (status >= 500 && status < 600)) return true;
   return errBody?.error?.status === 'UNAVAILABLE';
 }
 
@@ -169,12 +176,13 @@ async function callGemini({ system, userMessage, maxTokens }) {
     try { errBody = JSON.parse(rawErrText); } catch { /* not JSON — rawErrText itself is the diagnostic */ }
     const rawSnippet = rawErrText.slice(0, 500);
     lastErr = new Error(`${errBody?.error?.message || `Gemini API error (${r.status})`}${rawSnippet ? ` — raw: ${rawSnippet}` : ''}`);
-    // Only a transient failure (429 rate limit, 503/UNAVAILABLE overload —
-    // isTransientGeminiStatus() above) is ever worth retrying — same
-    // conviction as lib/resendClient.js's own Resend retry logic. Anything
-    // else (a bad request, an auth error, a 404 for an unavailable model)
-    // fails on the first attempt — retrying those would just waste the
-    // pacing budget on an error that will never resolve itself.
+    // Only a transient failure (429 rate limit, any 5xx/UNAVAILABLE
+    // server-side failure — isTransientGeminiStatus() above) is ever worth
+    // retrying — same conviction as lib/resendClient.js's own Resend retry
+    // logic. Anything else (a bad request, an auth error, a 404 for an
+    // unavailable model) fails on the first attempt — retrying those would
+    // just waste the pacing budget on an error that will never resolve
+    // itself.
     const transient = isTransientGeminiStatus(r.status, errBody);
     if (!transient || attempt === GEMINI_MAX_ATTEMPTS - 1) {
       // A transient failure that's STILL happening after every retry gets
