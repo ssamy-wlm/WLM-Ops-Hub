@@ -8826,6 +8826,12 @@ function updateCloudStatusUI(){
 // never touching a row that isn't in the payload, not from this diff.
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Factored out of _opsDirty() below (2026-09-22) so _applyServerArray()'s
+// field-level merge can read the exact same snapshot without a second,
+// separately-maintained copy of this try/catch.
+function _opsReadSnapshot(table){
+  try{ const raw = localStorage.getItem(_opsSnapKey(table)); return raw!=null ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
 // Never let an empty/missing result from the server blank out real local
 // data — this is exactly what happened when Supabase was empty right after
 // the Phase 4 cutover: every pull returned empty arrays and every browser's
@@ -8876,6 +8882,51 @@ function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(tabl
 // task brought it right back. Excluding every ever-tombstoned id here,
 // unconditionally, closes this regardless of server-side timing — once
 // deleted locally, a task can never be merged back in again by ANY pull.
+//
+// Field-level merge (2026-09-22) — replaces the old WHOLE-RECORD
+// dirty-preference below. The old version, for any record _opsDirty()
+// flagged as differing from its own snapshot ANYWHERE, discarded the
+// ENTIRE fresh server row and substituted the entire stale local one back
+// in. That's correct for the one field the browser actually has a genuine
+// unpushed edit on, but wrong for every OTHER field on that same record —
+// including one this browser never touched at all. Confirmed live: an
+// admin's browser holding any genuinely-dirty (unpushed, or pushed-and-
+// rejected, or simply never successfully re-synced) field on a task
+// permanently masked that task's `reportedMisassigned` from ever reaching
+// the Reported tab, even though _taReportedItems()'s own filter was
+// always correct and ops-state.js was always sending the true value —
+// the fresh server row for that task was being thrown away wholesale on
+// every single pull, forever, for as long as the record stayed dirty on
+// this one field. There is no size to that window — a push that fails,
+// or one the server rejects (cloudPushAll() only checks res.ok; a 200
+// response carrying `rejected` still runs the post-push pull that snapshots
+// server truth while the local copy stays whatever was attempted), leaves
+// the record dirty with no further retry ever guaranteed, so the masking
+// was never bounded to "briefly, until the pending push lands."
+// Field-level merge instead asks, per FIELD: does the browser's own local
+// value differ from what THIS SAME BROWSER last snapshotted for that
+// field? If so, this is a genuine local edit — protect it, exactly as
+// before. If not, the field was never touched here, so there's nothing to
+// protect — take the server's current value, however it changed and
+// whoever changed it. This needs no new async/queue machinery (there's no
+// debounced push in this file to coordinate with, unlike user.html) and
+// needs no notion of "is a push currently in flight": it doesn't matter
+// WHY a record is dirty or for how long — only which fields the local
+// browser has actually diverged on ever gets preserved, so a field this
+// browser never edited can never be masked, no matter how stale/orphaned
+// the record's dirty state on some OTHER field has become.
+function _opsFieldLevelMerge(serverRow, localRow, snapshotRow){
+  if(!localRow) return serverRow;   // nothing local to protect at all
+  if(!snapshotRow) return localRow; // no prior baseline for this id — trust local fully, same as _opsDirty()'s own "no snapshot yet" convention
+  const merged = { ...serverRow };
+  const keys = new Set([...Object.keys(localRow), ...Object.keys(snapshotRow)]);
+  keys.forEach(k=>{
+    if(JSON.stringify(localRow[k]) !== JSON.stringify(snapshotRow[k])){
+      merged[k] = localRow[k]; // this field has a genuine local edit relative to this browser's own baseline — protect it
+    }
+  });
+  return merged;
+}
 function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
   const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
@@ -8883,9 +8934,12 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
   if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
-  // Keep the LOCAL copy of every still-dirty record instead of the server's
+  const snap = _opsReadSnapshot(table);
+  const snapById = new Map((snap||[]).map(r=>[r.id, r]));
+  const localById = new Map(local.map(r=>[r.id, r]));
+  // Field-level merge for every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
-  const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
+  const merged = filtered.map(r => dirtyIds.has(r.id) ? _opsFieldLevelMerge(r, localById.get(r.id), snapById.get(r.id)) : r);
   const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
@@ -8929,8 +8983,7 @@ function _stripFunnelCommissionFields(rows){
 }
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
-  let snap = null;
-  try{ const raw = localStorage.getItem(_opsSnapKey(table)); snap = raw!=null ? JSON.parse(raw) : null; }catch(e){ snap = null; }
+  const snap = _opsReadSnapshot(table);
   if(snap === null) return localArr.slice(); // no snapshot yet — server-side upsert guards make this safe to send in full
   const byId = {};
   snap.forEach(r=>{ if(r && r.id!=null) byId[r.id]=r; });
