@@ -41,10 +41,14 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // Free-tier constraints (~500 req/day, single-digit RPM on flash-lite) are
 // the reason this exists as a shared chokepoint rather than a bare fetch()
 // at each call site:
-//   - Retry-with-backoff on 429 (honors the response's Retry-After header
-//     when present, a fixed schedule otherwise), same shape as
-//     lib/resendClient.js's own Resend 429 handling. A non-429 failure
-//     still fails immediately — retrying those would just waste time.
+//   - Retry-with-backoff on 429 (rate limit) and 503/UNAVAILABLE (transient
+//     model-overload — 2026-09-22, isTransientGeminiStatus() below) —
+//     honors the response's Retry-After header when present, a fixed
+//     schedule otherwise, same shape as lib/resendClient.js's own Resend
+//     429 handling. Every other failure (400/401/404/etc — a real config
+//     or request error, not a transient one) still fails immediately —
+//     retrying those would just waste time on an error that will never
+//     resolve itself.
 //   - Pacing: a serialized wait queue (_geminiCallChain) enforces a
 //     minimum spacing between consecutive calls, chained so concurrent
 //     callers queue up rather than racing to read the "last call" clock
@@ -102,6 +106,21 @@ function geminiRetryDelayMs(response, attemptIndex) {
   return GEMINI_RETRY_BACKOFF_MS[attemptIndex] ?? GEMINI_RETRY_BACKOFF_MS[GEMINI_RETRY_BACKOFF_MS.length - 1];
 }
 
+// 429 (rate limit) and 503 (server overload) are both genuinely transient —
+// worth retrying with backoff. Google's standard error envelope
+// (`{error:{code,message,status}}`) also reports overload as the string
+// status `'UNAVAILABLE'`, which the OpenAI-compatible endpoint used here
+// has been observed to carry on the body even when the HTTP status itself
+// is already 503 — checked here too so this never depends on exactly which
+// of the two representations a given response happens to set. Deliberately
+// narrow: 400/401/404/etc are real config or request errors that retrying
+// would never fix, so they still fail on the first attempt (see the 404
+// "model not available to new users" case just above/below this).
+function isTransientGeminiStatus(status, errBody) {
+  if (status === 429 || status === 503) return true;
+  return errBody?.error?.status === 'UNAVAILABLE';
+}
+
 // Returns {text, finishReason} — finishReason is normalized to
 // 'max_tokens' when Gemini's own finish_reason is 'length', matching the
 // exact string every downstream truncation check in this file already
@@ -150,12 +169,30 @@ async function callGemini({ system, userMessage, maxTokens }) {
     try { errBody = JSON.parse(rawErrText); } catch { /* not JSON — rawErrText itself is the diagnostic */ }
     const rawSnippet = rawErrText.slice(0, 500);
     lastErr = new Error(`${errBody?.error?.message || `Gemini API error (${r.status})`}${rawSnippet ? ` — raw: ${rawSnippet}` : ''}`);
-    // Only a 429 (rate limit) is ever worth retrying — same conviction as
-    // lib/resendClient.js's own Resend retry logic. Anything else (a bad
-    // request, an auth error, a 5xx, a 404 for an unavailable model) fails
-    // on the first attempt — retrying a 404 would just waste the pacing
-    // budget on an error that will never resolve itself.
-    if (r.status !== 429 || attempt === GEMINI_MAX_ATTEMPTS - 1) throw lastErr;
+    // Only a transient failure (429 rate limit, 503/UNAVAILABLE overload —
+    // isTransientGeminiStatus() above) is ever worth retrying — same
+    // conviction as lib/resendClient.js's own Resend retry logic. Anything
+    // else (a bad request, an auth error, a 404 for an unavailable model)
+    // fails on the first attempt — retrying those would just waste the
+    // pacing budget on an error that will never resolve itself.
+    const transient = isTransientGeminiStatus(r.status, errBody);
+    if (!transient || attempt === GEMINI_MAX_ATTEMPTS - 1) {
+      // A transient failure that's STILL happening after every retry gets
+      // a `.friendlyMessage` stamped onto the SAME error every call site
+      // already logs/throws — a real user pasting a transcript shouldn't
+      // see "raw: <html>...", just a plain "try again shortly." Every
+      // call site's own logError()/console.error() call reads `err`
+      // itself (message/stack), not this new property, so the FULL raw
+      // diagnostic still reaches ops_error_log unchanged; only each call
+      // site's HTTP response body needs to prefer `.friendlyMessage` over
+      // `.message` when present (see those `err.friendlyMessage ||
+      // err.message` call sites below). A non-transient failure (never
+      // retried, thrown on attempt 0) gets no such property — its real
+      // message/raw body is exactly the debugging signal a genuine config
+      // error needs, so it's shown to the user as-is, unchanged.
+      if (transient) lastErr.friendlyMessage = 'Gemini is busy right now — please try again in a minute.';
+      throw lastErr;
+    }
     await sleep(geminiRetryDelayMs(r, attempt));
   }
   throw lastErr;
@@ -1358,8 +1395,11 @@ export async function parseTaskEmailForSession(session, text) {
     return { status: 200, body: { tasks: finalTasks, raw_count: rawTasks.length, ...(parsed._repaired ? { truncated: true } : {}) } };
   } catch (err) {
     console.error('Gemini API error (taskEmail):', err);
+    // logError() reads err.message/err.stack (the real diagnostic) — the
+    // friendly swap below is only ever for the HTTP response body a user
+    // actually sees, never for what gets recorded in ops_error_log.
     await logError({ endpoint: 'process-transcript:taskEmail', error: err, session });
-    return { status: 500, body: { error: err.message || 'Gemini API call failed' } };
+    return { status: 500, body: { error: err.friendlyMessage || err.message || 'Gemini API call failed' } };
   }
 }
 
@@ -1547,8 +1587,11 @@ export default async function handler(req, res) {
         await logError({ endpoint: 'process-transcript', error: 'Response truncated by max_tokens with nothing recoverable, even after splitting', extra: { ...logContext, raw: err._rawSnippet } });
         return res.status(422).json({ error: err.message });
       }
+      // logError() reads err.message/err.stack (the real diagnostic) — the
+      // friendly swap below is only ever for the HTTP response body a
+      // user actually sees, never for what gets recorded in ops_error_log.
       await logError({ endpoint: 'process-transcript', error: err, extra: { ...logContext, raw: err._rawSnippet } });
-      return res.status(500).json({ error: err.message || 'The model returned invalid JSON.' });
+      return res.status(500).json({ error: err.friendlyMessage || err.message || 'The model returned invalid JSON.' });
     }
 
     if (result.fallbackUsed) {
@@ -1588,7 +1631,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ tasks: valid, summary, raw_count: tasks.length, ...(result.truncated ? { truncated: true } : {}) });
   } catch (err) {
     console.error('Gemini API error:', err);
+    // logError() reads err.message/err.stack (the real diagnostic) — the
+    // friendly swap below is only ever for the HTTP response body a user
+    // actually sees, never for what gets recorded in ops_error_log.
     await logError({ endpoint: 'process-transcript', error: err, extra: logContext });
-    return res.status(500).json({ error: err.message || 'Gemini API call failed' });
+    return res.status(500).json({ error: err.friendlyMessage || err.message || 'Gemini API call failed' });
   }
 }

@@ -10146,6 +10146,71 @@ though both features reuse existing endpoints) — held for the user's
 own preview click-through and explicit approval before merge, per this
 ticket's own instruction; not merged.
 
+**Parser: retry Gemini on 503/UNAVAILABLE with backoff (2026-09-22).**
+`callGemini()` in `api/process-transcript.js` (the shared chokepoint both
+the Task Assignments email-parsing mode and the Roadmap meeting-
+transcript mode call through — see the 2026-09-21 Gemini migration entry
+and the 2026-09-22 GEMINI_MODEL/raw-error-surfacing fix above) already
+had a real retry-with-backoff mechanism, but it only ever triggered on
+429 (rate limit) — a 503 ("model is overloaded," a routine, transient
+condition on Gemini's free tier) failed on the very first attempt and
+surfaced straight to the user, raw JSON/HTML body included.
+
+Extended the exact same, already-tuned mechanism (4 attempts, the
+existing 2s/5s/12s/25s backoff schedule, still honoring a real
+`Retry-After` header first) to also trigger on 503 and on Google's own
+`{error:{status:'UNAVAILABLE'}}` envelope — added a small
+`isTransientGeminiStatus(status, errBody)` helper so the "is this worth
+retrying" decision lives in one place, and deliberately narrow: 400/401/
+404/etc (real config/request errors, never transient) still fail
+immediately, exactly as before — retrying those would just waste the
+attempt budget on something that will never resolve itself. Reused the
+existing schedule rather than the ticket's own illustrative "e.g. 1s,
+3s, 6s" numbers — the current one is already tuned for this exact free-
+tier pacing/rate-limit budget (see the 2026-09-21 entry's own comment on
+why), and duplicating a second, slightly different retry mechanism next
+to it would just be two competing tunings of the same problem.
+
+Friendly-message requirement: when a transient failure is STILL
+happening after every retry is exhausted, the thrown error now carries
+a `.friendlyMessage` ("Gemini is busy right now — please try again in a
+minute.") that ONLY the HTTP response body at each of the two call sites
+prefers over `.message` — `logError()` (→ `ops_error_log`) and
+`console.error()` at both sites are completely untouched and still read
+the real underlying error (its full raw-body-included `.message` and
+`.stack`), so a genuine debugging need loses nothing; only what a real
+user sees changes, from a raw error dump to one clean sentence. A non-
+transient failure (400/401/etc, never retried) gets no `.friendlyMessage`
+at all, so its real message still surfaces as-is — that's exactly the
+signal a genuine config error needs, and hiding it behind a generic
+"busy" message would make a real outage harder to diagnose, not easier.
+
+Verified: `node --check` clean. Two dedicated Node integration suites
+(fake Supabase + a mocked global `fetch`, `node:test
+--experimental-test-module-mocks`, same no-live-access pattern as every
+other server-logic verification in this project — CLAUDE.md rule #11)
+against the real, unmodified `parseTaskEmailForSession()` and the
+default-exported roadmap `handler()` — 16/16 + 5/5. Covers: a transient
+503 (both the JSON `UNAVAILABLE` envelope shape and a plain-HTML 503
+body, the exact shape a prior fix on this same function had to handle)
+retries and recovers on a later attempt; a PERSISTENT 503 exhausts the
+full attempt budget (confirmed via the real fetch-call count, not just
+the outcome) and returns the clean friendly message, while `logError`
+still receives the real raw diagnostic; a 400 and a 401 each fail on
+the very first attempt with zero retries and their own real message
+intact; the pre-existing 429 retry path is unchanged (regression
+check). A real-time run of the persistent-retry scenario would take
+~20+ seconds (4 attempts × the real pacing/backoff schedule) — sped up
+in the test harness only, by wrapping `global.setTimeout` to fire
+near-instantly; this changes nothing about the production code's actual
+timing, only how fast the test observes the same sequence of calls.
+
+No data/runtime-model change beyond the retry trigger + the one message
+string — CI, PR is normal (not held-draft; the ticket itself only asked
+for `node --check` + preview), but `api/process-transcript.js` is a
+CODEOWNERS-gated path (rule #10) regardless, so it still needs the
+repo's own required review before it can merge.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
