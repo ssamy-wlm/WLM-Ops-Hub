@@ -10033,6 +10033,119 @@ Low-risk per rule #10: `.github/workflows/supabase-migrations.yml` only,
 no `api/`/`lib/`/`supabase/migrations/` or sync/auth/permission logic
 touched.
 
+**Fix Reported tab (items vanish) + inline delete + merge-duplicate
+(2026-09-22) — held for preview approval.** Ticket reported that the
+Task Assignments → Reported tab showed its 9 real `reportedMisassigned`
+tasks, then they vanished within ~a second, and offered two guesses:
+the re-render resets the active sub-tab, or the tasks merge/dirty-check
+drops `reportedMisassigned` (stale local `false` preserved over server
+`true`). Neither guess was the actual cause — investigated and
+disproved both by tracing `setTaSubtab()` (doesn't touch other
+sub-tabs' `display`) and `_applyServerArray()`'s dirty-preserving merge
+(a non-dirty record always takes the server's own value, never a stale
+local one), then reproduced the real bug live with Playwright instead
+of guessing further (rule #7).
+
+Root cause: the `/api/ops-state` polling coordinator
+(`OPS_STATE_SYNC_CHANNEL` in `index.html`/`user.html`/`client.html`,
+built 2026-09-12 to coalesce this file's own 30s live-sync poll with its
+own same-token embedded `client.html` iframes) uses the literal SAME
+`BroadcastChannel` name across all three portals, and its `onmessage`
+handler unconditionally accepted ANY `'pulled'` broadcast on that
+channel — with no check that it came from the SAME token/session as the
+consumer reusing it. A background pull (`fetchOpsStateCoordinated(token,
+background=true)`) would adopt a cached broadcast within 5s
+(`OPS_STATE_FRESH_MS`) regardless of whose token produced it. If the
+same browser also has a `user.html` tab open (a dual-role admin's own
+employee tab, or simply a second tab left open — WLM Ops Hub is a small
+team where this is a normal, everyday pattern, and Sherine/Assmaa, the
+two people whose reports were affected, are exactly the kind of
+dual-role/frequently-both-portals-open users this hits), that sibling
+tab's own live-sync tick fires a member-tier-filtered `/api/ops-state`
+response (per `api/ops-state.js`'s own tier filter: a member only ever
+sees tasks assigned to or created by them) onto the shared channel. The
+admin tab's own next background pull then silently adopted that
+narrower record wholesale — including `viewerTier` itself — losing
+every task outside that one member's own scope, `reportedMisassigned`
+ones included, with no server-side data loss at all (confirmed: the DB
+never lost anything, this was a pure client-side cache-adoption bug).
+
+Reproduced live before fixing, not just from static reading: a
+Playwright script mocks the admin's own `/api/ops-state` route, loads
+`index.html`, confirms the Reported tab correctly shows 2 planted
+`reportedMisassigned` rows, then posts a synthetic `'pulled'` message
+onto `wlm_ops_state_sync` from the page's own context carrying a
+different token and a member-tier-filtered record, then fires
+`cloudPullAll(true, true)` (the exact call `startLiveSync()`'s own tick
+makes) — confirmed this reliably vanished the rows and silently flipped
+`_lastViewerTier` to `'member'`, matching the report exactly.
+
+Fixed by threading `token` through the broadcast payload and the
+localStorage claim, and gating every reuse point (`onmessage`'s waiter
+resolution, the fresh-broadcast reuse check, and the claim-wait check)
+on token match — a mismatched broadcast/claim is simply ignored and
+the caller falls through to its own real, correctly-tokened fetch. The
+original coalescing optimization is fully preserved for the case it was
+actually built for (two contexts sharing one token, e.g. this file plus
+its own same-token embedded iframes) — verified via a second Playwright
+scenario confirming a same-token broadcast still coalesces with no
+extra network call. Hand-duplicated into all three files per rule #3,
+since `user.html` and `client.html` carried the byte-identical unscoped
+pattern too — fixing only `index.html` would have closed the symptom in
+the admin portal while leaving `user.html`/`client.html` just as able to
+both cause and suffer the same cross-session contamination.
+
+Feature 2 (inline delete) and Feature 3 ("Find & merge duplicate" for a
+"Duplicated"-reason report) both reuse existing, already-working write
+paths rather than inventing new ones: `deleteTaskInline()` →
+`_taDeleteTask()` (the same hard-delete + `tombstones.taskIds` path
+every other task-delete button in this file already uses) and
+`mergeTaDuplicate(primaryId, duplicateId)` (the same additive/reversible
+`mergedIntoId` merge the company-wide duplicate sweep already uses,
+including its recent-merges undo). The merge action adds a small search
+modal (`taMergeDupModal` — type a subject, pick the real original from a
+live-filtered, ≥2-character-gated list excluding the reported task
+itself and anything already merged away) that on confirm calls
+`mergeTaDuplicate(originalId, reportedTaskId)` — the reported task is
+always the "duplicate" side (gets `mergedIntoId` set, drops out of
+Reported), the picked task is always the "original" (survives, absorbs
+notes/tags/due date/Done status per that function's own existing
+rules) — then explicitly re-renders Reported (`mergeTaDuplicate()`
+itself only refreshes the Duplicates tab's own containers, so this
+wrapper calls `_taRefreshReportedIfActive()` itself, same pattern every
+other Reported-tab resolution action in this file already follows). No
+server-side (`api/ops-sync.js`) changes were needed for either feature —
+both reused write paths were already fully implemented and working.
+
+Verified: `node --check`-equivalent syntax check (`new Function()` per
+extracted `<script>` block) clean on all three files; comment-stripped
+div-balance unchanged vs. `main` for every file touched (only
+`index.html` gained real markup — the new `taMergeDupModal`, balanced
+delta unchanged at −3; `user.html`/`client.html` were script-only
+changes, deltas unchanged at −1/0 respectively). A dedicated Playwright
+suite (7/7) proves the fix: a mismatched-token broadcast is now ignored
+(a real second fetch fires with the admin's own token instead), rows
+and `_lastViewerTier` survive intact, and the same-token coalescing
+case still works with no extra fetch. A second dedicated Playwright
+suite (16/16) covers both features end-to-end against the real UI: the
+merge button only appears on a "Duplicated" report, search excludes the
+report itself, the actual `/api/ops-sync` write carries `mergedIntoId`
+pointing at the chosen original, the merged report disappears from
+Reported; Delete's actual write carries the task id under
+`tombstones.taskIds`, and the row disappears. Re-ran the three
+pre-existing Reported-tab Playwright suites
+(`verify_report_dismiss_reassign_ui`, `verify_report_reason_ui_admin`,
+`verify_due_date_change_request_ui` — 21/21 + 14/14 + 27/27) against the
+restructured row markup (wrapped the whole Actions cell in one flex
+`<div>` so Delete/merge sit alongside the pre-existing Dismiss/Reassign
+controls) to confirm no regression. Zero-error load check, all three
+portals, 3/3.
+
+Task-write risk tier per rule #10 (touches the sync/write paths, even
+though both features reuse existing endpoints) — held for the user's
+own preview click-through and explicit approval before merge, per this
+ticket's own instruction; not merged.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
