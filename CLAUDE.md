@@ -264,6 +264,21 @@ Don't relitigate them without an explicit decision from the user.
   "Added by you" fixed to be viewer-aware on self-assigned tasks in
   `index.html` (2026-09-18 — was hardcoded regardless of who's looking;
   `user.html` needed no change, confirmed — see DECISIONS.md).
+- Reported-tab data-integrity fix (2026-09-22 — held for preview
+  approval): root-caused "Reported items flash then vanish" to a
+  cross-session client-side cache leak, not the two re-render hypotheses
+  in the original report — the `/api/ops-state` polling BroadcastChannel
+  coordinator (`OPS_STATE_SYNC_CHANNEL`) is the exact same unscoped
+  channel name in `index.html`/`user.html`/`client.html`, and a
+  background pull could silently adopt a DIFFERENT session's (e.g. a
+  sibling `user.html` tab's member-tier-filtered) response with no token
+  check, overwriting the admin's fuller local task list. Fixed in all
+  three files (rule #3) by threading the token through the broadcast/
+  claim and gating every reuse point on token match — reproduced live,
+  then confirmed closed, via Playwright. Also added inline Delete and a
+  "Find & merge duplicate" action to each Reported row, both reusing
+  existing, already-working write paths (`deleteTaskInline`/
+  `mergeTaDuplicate`) rather than new ones — see DECISIONS.md.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
@@ -330,6 +345,13 @@ call is transitively dead too.)
   corrupting). The post-merge check also asserts reports-flagged-but-
   missing-metadata, pending due-date-request integrity, and any new
   write-warning signatures.
+- **RLS:** enabled on all tables with zero policies BY DESIGN. The app
+  reaches the database only server-side via the service-role key (which
+  bypasses RLS); there is no client-direct DB access. Access control is
+  enforced in server code (role bands). Do NOT treat the empty-policy
+  state as a bug. Revisit and add RLS policies only if client-direct
+  database access (e.g. a browser using the anon/publishable key) is ever
+  introduced.
 - **"write warning(s)" are benign:** the server role-guard correctly
   dropping a manager-tier admin's unauthorized orgNodes/orgLinks/settings
   writes — not data loss.
