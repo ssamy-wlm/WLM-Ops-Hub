@@ -279,6 +279,16 @@ Don't relitigate them without an explicit decision from the user.
   "Find & merge duplicate" action to each Reported row, both reusing
   existing, already-working write paths (`deleteTaskInline`/
   `mergeTaDuplicate`) rather than new ones — see DECISIONS.md.
+- Gemini parser retry hardening (2026-09-22 — held for review, `api/`
+  path): `callGemini()` in `api/process-transcript.js` now also retries
+  on 503/`UNAVAILABLE` (transient model overload), not just 429 — same
+  backoff schedule, same shared chokepoint. A persistent overload that
+  survives every retry now surfaces a clean "Gemini is busy right now —
+  please try again in a minute" message to the user instead of raw
+  JSON/HTML, via a `.friendlyMessage` property on the thrown error that
+  only the HTTP response body reads; `logError()`/`ops_error_log` still
+  gets the real diagnostic (`err.message`/`.stack`) unchanged — see
+  DECISIONS.md.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
