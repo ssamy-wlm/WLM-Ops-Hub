@@ -34,9 +34,9 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // Google GenAI SDK's own request/response shape, so this stays a drop-in
 // swap: same system+user message split, same JSON-in-text response
 // contract, same truncation-detection convention (see finishReason below).
-// Key read from GEMINI_API_KEY, never ANTHROPIC_API_KEY (fully retired —
-// confirmed via grep that no other file in this repo calls Anthropic for
-// parsing or anything else).
+// Key read from LLM_API_KEY (falling back to GEMINI_API_KEY), never
+// ANTHROPIC_API_KEY (fully retired — confirmed via grep that no other
+// file in this repo calls Anthropic for parsing or anything else).
 //
 // Free-tier constraints (~500 req/day, single-digit RPM on flash-lite) are
 // the reason this exists as a shared chokepoint rather than a bare fetch()
@@ -71,8 +71,20 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // deprecation be a Vercel env var change, not a code deploy — falls back
 // to gemini-3.6-flash (the current generally-available flash model at the
 // time of this fix) when unset.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+//
+// Provider-agnostic env override (2026-09-22) — this whole file calls
+// whatever OpenAI-compatible endpoint LLM_BASE_URL points at, not
+// necessarily Gemini. LLM_BASE_URL/LLM_API_KEY/LLM_MODEL are the
+// provider-neutral names to set going forward; the GEMINI_* names remain
+// as fallbacks purely so nothing already configured in Vercel breaks —
+// switching providers (e.g. off Gemini entirely) is then just setting the
+// three LLM_* vars, no code change. callGemini()/isTransientGeminiStatus()
+// etc keep their Gemini-era names (this file's actual behavior — retry-
+// on-5xx, the UNAVAILABLE envelope check, pacing — was built against and
+// verified against Gemini specifically; renaming those would be a much
+// larger, purely cosmetic diff with no functional benefit).
+const LLM_MODEL = process.env.LLM_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 const GEMINI_MAX_ATTEMPTS = 4;
 const GEMINI_RETRY_BACKOFF_MS = [2000, 5000, 12000, 25000];
 // Free-tier RPM is low enough that back-to-back calls from the same warm
@@ -135,10 +147,10 @@ function isTransientGeminiStatus(status, errBody) {
 // sites), so nothing past this function needed to change to detect a
 // cut-off response.
 async function callGemini({ system, userMessage, maxTokens }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
+  const apiKey = process.env.LLM_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('LLM_API_KEY (or GEMINI_API_KEY) is not configured on the server.');
   const body = {
-    model: GEMINI_MODEL,
+    model: LLM_MODEL,
     max_tokens: maxTokens,
     messages: [
       { role: 'system', content: system },
@@ -149,7 +161,7 @@ async function callGemini({ system, userMessage, maxTokens }) {
   let lastErr;
   for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt++) {
     await paceGeminiCall();
-    const r = await fetch(GEMINI_ENDPOINT, {
+    const r = await fetch(LLM_BASE_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1025,9 +1037,9 @@ async function handleTaskEmailMode(req, res) {
 // res.status(X).json(Y) call site below is now `return {status:X, body:Y}`
 // instead — no other behavior changed.
 export async function parseTaskEmailForSession(session, text) {
-  if (!process.env.GEMINI_API_KEY) {
-    await logError({ endpoint: 'process-transcript:taskEmail', error: 'GEMINI_API_KEY is not configured on the server.', session });
-    return { status: 500, body: { error: 'GEMINI_API_KEY is not configured on the server.' } };
+  if (!process.env.LLM_API_KEY && !process.env.GEMINI_API_KEY) {
+    await logError({ endpoint: 'process-transcript:taskEmail', error: 'LLM_API_KEY (or GEMINI_API_KEY) is not configured on the server.', session });
+    return { status: 500, body: { error: 'LLM_API_KEY (or GEMINI_API_KEY) is not configured on the server.' } };
   }
 
   let supabase;
@@ -1572,9 +1584,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'transcript is required' });
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    await logError({ endpoint: 'process-transcript', error: 'GEMINI_API_KEY is not configured on the server.' });
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
+  if (!process.env.LLM_API_KEY && !process.env.GEMINI_API_KEY) {
+    await logError({ endpoint: 'process-transcript', error: 'LLM_API_KEY (or GEMINI_API_KEY) is not configured on the server.' });
+    return res.status(500).json({ error: 'LLM_API_KEY (or GEMINI_API_KEY) is not configured on the server.' });
   }
 
   const resolvedMeetingName = meeting_name || 'Untitled Meeting';
