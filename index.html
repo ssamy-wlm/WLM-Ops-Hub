@@ -8827,6 +8827,52 @@ function updateCloudStatusUI(){
 // never touching a row that isn't in the payload, not from this diff.
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Monotonicity guard for `clients` (2026-09-25) — "Admin Tracker must not
+// push stale client data over server changes." This page's OWN independent
+// poll cycle (cloudPullAll(), below) and its embedded client.html iframe's
+// (adminTrackerFrame) OWN, completely separate poll cycle both read/write
+// the SAME wl_clients_db/wl_srv_snap_clients keys (same origin). The
+// existing dirty-check (_opsDirty(), below) only ever asks "does my current
+// local copy differ from my own last-known baseline" — it has NO notion of
+// whether the response it's about to apply is even the FRESHEST one either
+// context has seen. Reproduced directly: an admin deactivates a client
+// server-side; the iframe's own pull (issued slightly LATER, resolving
+// FIRST) correctly applies that. A SECOND, independent pull — issued
+// EARLIER by this parent frame's own separate poll, so it still reflects
+// the OLDER pre-deactivation state, but arrives AFTER — is then applied
+// with no protection at all: the record isn't "locally dirty" (both local
+// and snapshot already agree it's deactivated), so the stale response is
+// trusted verbatim, silently reverting it back to active locally — with NO
+// admin edit involved. The very next genuine edit to that SAME client (a
+// new service, a note, via the Tracker) then carries the reverted field
+// right back to the server for real, matching the reported symptom
+// (Leese/Shapiro/WebLight) exactly.
+//
+// Fixed with a per-table "applied as-of" timestamp: each caller captures
+// Date.now() right before issuing its own pull and passes it through as
+// `asOf`; a response whose `asOf` is OLDER than the most recently applied
+// one for that table is skipped outright, regardless of arrival order.
+// Client-side send-time, not server-side generation-time (this app has no
+// server-side updated_at field to compare instead) — an imperfect but
+// vastly better anchor than no ordering protection at all, and correct for
+// the overwhelming majority of real network-timing races. Opt-in per call
+// site (an omitted/undefined `asOf` behaves exactly as before) — only the
+// `clients` call site in cloudPullAll() actually passes one; every other
+// table here is unaffected. Hand-duplicated into client.html's own copy of
+// this same mechanism (zero-shared-code rule) — that file's `_pullClientsFromCloud()`
+// is the OTHER side of this exact race, so both sides need the guard.
+function _opsAppliedAtKey(table){ return 'wl_srv_applied_at_'+table; }
+function _opsIsStaleResponse(table, asOf){
+  if(asOf==null) return false;
+  try{
+    const last = Number(localStorage.getItem(_opsAppliedAtKey(table)));
+    return Number.isFinite(last) && asOf < last;
+  }catch(e){ return false; }
+}
+function _opsRecordApplied(table, asOf){
+  if(asOf==null) return;
+  try{ localStorage.setItem(_opsAppliedAtKey(table), String(asOf)); }catch(e){}
+}
 // Factored out of _opsDirty() below (2026-09-22) so _applyServerArray()'s
 // field-level merge can read the exact same snapshot without a second,
 // separately-maintained copy of this try/catch.
@@ -8928,13 +8974,17 @@ function _opsFieldLevelMerge(serverRow, localRow, snapshotRow){
   });
   return merged;
 }
-function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
+// asOf (2026-09-25, see _opsIsStaleResponse() above) — optional; when
+// provided, an out-of-order response older than the most recently applied
+// one for this table is skipped entirely, before anything else runs.
+function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds, asOf){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  if(_opsIsStaleResponse(table, asOf)) return; // a fresher response already landed — never regress
   const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
   if(!filtered.length) return; // everything present was tombstoned — same empty-guard, never wipe local
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
-  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
+  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); _opsRecordApplied(table, asOf); return; } // unchanged fast path
   const snap = _opsReadSnapshot(table);
   const snapById = new Map((snap||[]).map(r=>[r.id, r]));
   const localById = new Map(local.map(r=>[r.id, r]));
@@ -8952,6 +9002,7 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   // _opsDirty() check, so its pending debounced push still fires and the
   // edit actually persists instead of silently sitting local-only forever.
   _opsSetSnapshot(table, filtered);
+  _opsRecordApplied(table, asOf);
 }
 // Same principle for singleton settings — a value's key can be present in
 // the response with a null value (role-hidden for this caller, or simply no
@@ -9471,6 +9522,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
   _lastPullOk = false;
   setCloudStatus('Syncing…','syncing');
   try {
+    // Captured BEFORE the request goes out — see _applyServerArray()'s
+    // monotonicity guard (asOf) for why: this is the anchor that lets an
+    // out-of-order response from the embedded client.html iframe's own,
+    // independent poll be recognized and skipped instead of silently
+    // reverting `clients`.
+    const fetchStartedAt = Date.now();
     // background:true ONLY for the recurring 30s live-sync tick
     // (fromLiveSync) — every other caller of cloudPullAll (login, a manual
     // Refresh click, cloudAutoSync()'s own post-push confirmation pull, etc.)
@@ -9495,7 +9552,7 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
 
     _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
     _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[]);
-    _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr), _getClientDB);
+    _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr), _getClientDB, undefined, fetchStartedAt);
     _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
     _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
     // Dedicated, type-scoped feed for Overview's Recent Activity — see
