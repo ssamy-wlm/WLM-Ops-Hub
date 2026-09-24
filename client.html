@@ -2601,6 +2601,49 @@ function _opsToken(){
 }
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Monotonicity guard for `clients` (2026-09-25) — "Admin Tracker must not
+// push stale client data over server changes." This page is embedded as an
+// iframe in BOTH index.html (adminTrackerFrame) and user.html (trackerFrame)
+// — the SAME origin, so the SAME wl_clients_db/wl_srv_snap_clients keys are
+// shared with whichever parent frame embeds it, which runs its OWN,
+// completely independent poll cycle against those same keys. _opsDirty()'s
+// existing snapshot comparison only ever asks "does my current local copy
+// differ from my own last-known baseline" — it has NO notion of whether the
+// response it's about to apply is even the FRESHEST one anyone has seen.
+// Reproduced directly: client A deactivates a client; THIS context's own
+// pull (issued slightly LATER, but resolving FIRST) correctly applies that.
+// A SECOND, independent pull — issued EARLIER by a sibling context (e.g.
+// this file's own embedding parent frame's separate poll), reflecting the
+// OLDER pre-deactivation state, but arriving AFTER — is then applied by
+// _applyServerArray with no protection at all: the record isn't "locally
+// dirty" (both local and snapshot already agree it's deactivated), so the
+// stale response is trusted verbatim, silently reverting it — with NO
+// admin edit involved. The very next genuine edit to that SAME client (a
+// new service, a note) then carries the reverted field right back to the
+// server for real, matching the reported symptom exactly.
+//
+// Fixed with a per-table "applied as-of" timestamp: each caller captures
+// Date.now() right before issuing its own pull and passes it through as
+// `asOf`; a response whose `asOf` is OLDER than the most recently applied
+// one for that table is skipped outright, regardless of arrival order.
+// Client-side send-time, not server-side generation-time (this app has no
+// server-side updated_at field to compare instead) — an imperfect but vastly
+// better anchor than no ordering protection at all, and correct for the
+// overwhelming majority of real network-timing races. Opt-in per call site
+// (an omitted/undefined `asOf` behaves exactly as before) — only the
+// `clients` call site actually passes one; every other table is unaffected.
+function _opsAppliedAtKey(table){ return 'wl_srv_applied_at_'+table; }
+function _opsIsStaleResponse(table, asOf){
+  if(asOf==null) return false;
+  try{
+    const last = Number(localStorage.getItem(_opsAppliedAtKey(table)));
+    return Number.isFinite(last) && asOf < last;
+  }catch(e){ return false; }
+}
+function _opsRecordApplied(table, asOf){
+  if(asOf==null) return;
+  try{ localStorage.setItem(_opsAppliedAtKey(table), String(asOf)); }catch(e){}
+}
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
   let snap=null;
@@ -2627,11 +2670,15 @@ function _opsDirty(table, localArr){
 // getFn reads the CURRENT local array for this table (the same store
 // saveFn writes) — optional only for backward compatibility with any call
 // site that doesn't pass one; every call site in this file does.
-function _applyServerArray(table, serverArr, saveFn, getFn){
+// asOf (2026-09-25, see _opsIsStaleResponse() above) — optional; when
+// provided, an out-of-order response older than the most recently applied
+// one for this table is skipped entirely, before anything else runs.
+function _applyServerArray(table, serverArr, saveFn, getFn, asOf){
   if(!Array.isArray(serverArr) || !serverArr.length) return;          // unchanged empty-guard
+  if(_opsIsStaleResponse(table, asOf)) return; // a fresher response already landed — never regress
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
-  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); return; } // unchanged fast path
+  if(dirtyIds.size===0){ saveFn(serverArr); _opsSetSnapshot(table, serverArr); _opsRecordApplied(table, asOf); return; } // unchanged fast path
   // Keep the LOCAL copy of every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
   const merged = serverArr.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
@@ -2646,6 +2693,7 @@ function _applyServerArray(table, serverArr, saveFn, getFn){
   // pending debounced push still fires and the edit actually persists
   // instead of silently sitting local-only forever.
   _opsSetSnapshot(table, serverArr);
+  _opsRecordApplied(table, asOf);
 }
 // Same principle for a singleton value (not an array) — only null/undefined
 // counts as "nothing to apply" (see index.html's identical copy).
@@ -2798,6 +2846,12 @@ async function _pullClientsFromCloud(background){
   const token=_opsToken();
   if(!token){ console.warn('[WLM Tracker] No auth token found in this browser — cannot resolve viewer tier or pull client data.'); return false; }
   try{
+    // Captured BEFORE the request goes out — see _applyServerArray()'s
+    // monotonicity guard above (asOf) for why: this is the anchor that lets
+    // an out-of-order response from a sibling context (this file's own
+    // embedding parent frame, running its own independent poll) be
+    // recognized and skipped instead of silently reverting `clients`.
+    const fetchStartedAt = Date.now();
     const rec = await fetchOpsStateCoordinated(token, !!background);
     // The ONLY point admin capability is ever granted from — server-verified,
     // fresh on every pull (init, 30s poll, visibility change). Never derived
@@ -2814,7 +2868,7 @@ async function _pullClientsFromCloud(background){
     // console, without needing live DB access. Remove alongside that field
     // once the discrepancy is resolved.
     console.log('[WLM Tracker] resolved viewer — id:', rec.viewerId, '| tier:', rec.viewerTier, '| level:', rec.viewerLevel);
-    _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr), getClients);
+    _applyServerArray('clients', rec.clients, arr=>dbSave(CL_KEYS.clients, arr), getClients, fetchStartedAt);
     _applyServerArray('feed', rec.feed, arr=>dbSave(CL_KEYS.liveFeed, arr), ()=>db(CL_KEYS.liveFeed)||[]);
     _applyServerValue(v=>dbSave(CL_KEYS.tourFlags, v), rec.tourFlags);
     // orgExcluded is a JSON-encoded array string — '[]' is truthy but empty,

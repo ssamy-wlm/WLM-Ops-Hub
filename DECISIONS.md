@@ -10298,6 +10298,119 @@ employee plates and feeds workload metrics) — held for the user's own
 preview click-through and explicit approval before merge, per this
 ticket's own instruction; not merged.
 
+**Admin Tracker must not push stale client data over server changes
+(2026-09-25) — held for preview approval.** Reported repeatedly (Leese,
+Shapiro, WebLight services): a server-side client deactivation would get
+silently reverted whenever an admin had that client "loaded" in the
+Tracker — with no edit needed at all. The ticket asked for the same
+dirty-check/parity fix `user.html`'s own sync mechanism got, applied to
+the admin client sync path.
+
+Investigated the actual current state of the mechanism before assuming
+the ticket's framing was literally accurate (rule #7): `index.html` and
+`client.html` both ALREADY have a real, per-record dirty-check
+(`_opsDirty()`/`_applyServerArray()`) — index.html's own copy is
+actually the MORE sophisticated of the three (a field-level merge added
+2026-09-22, strictly newer than the whole-record version `user.html`
+got in the earlier `#355`-class fix). So the literal claim "pushes
+without a proper dirty-check" doesn't describe the current code — the
+real mechanism is subtler and specific to this file pair's own
+architecture, not a missing check.
+
+**Root cause, confirmed by direct reproduction, not just read:**
+`index.html`'s own independent poll cycle (`cloudPullAll()`) and its
+embedded `client.html` iframe's (`adminTrackerFrame`) own, completely
+separate poll cycle both read/write the exact same
+`wl_clients_db`/`wl_srv_snap_clients` localStorage keys (same origin).
+`_opsDirty()`'s snapshot comparison only ever asks "does my current
+local copy differ from my own last-known baseline" — it has NO notion
+of whether the response it's about to apply is even the FRESHEST one
+either context has seen. Concretely: someone deactivates a client
+server-side; the IFRAME's own pull (issued slightly LATER, but
+resolving FIRST — ordinary network timing variance, no adversarial
+setup needed) correctly applies the deactivation to the shared keys. A
+SECOND, independent pull — issued EARLIER by the PARENT frame's own
+separate poll, so its response still reflects the OLDER,
+pre-deactivation server state, but ARRIVES AFTER — is then applied with
+zero protection: the record isn't "locally dirty" (both local and
+snapshot already correctly agree it's deactivated, from the iframe's
+newer pull), so the stale, out-of-order response is trusted verbatim,
+silently reverting it back to active — purely locally, with NO admin
+edit involved. This alone doesn't reach the server yet (the snapshot
+regresses to match, so nothing looks dirty on its own) — but the VERY
+NEXT genuine edit to that SAME client for any unrelated reason (a new
+service, a note) carries the corrupted status field right along with
+it, and DOES reach the server for real. This matches "Leese/Shapiro/
+WebLight" exactly: clients admins keep actively editing (services,
+notes) around the same time they're being deactivated.
+
+Reproduced empirically before writing any fix, via a Node script
+(`vm.Script`) extracting the REAL, byte-identical
+`_opsSnapKey`/`_opsSetSnapshot`/`_opsDirty`/`_applyServerArray` (and,
+for `index.html`, `_opsReadSnapshot`/`_opsFieldLevelMerge` too) straight
+out of both files into a shared fake `localStorage` — confirmed the
+race reverts a deactivated client with zero edits, against BOTH files'
+CURRENT, real code (not a simplified stand-in), and confirmed the full
+two-step chain (race → later unrelated edit → the push payload itself
+carries the reverted status).
+
+**Fix:** a per-table "applied as-of" monotonicity guard —
+`_opsAppliedAtKey()`/`_opsIsStaleResponse()`/`_opsRecordApplied()`,
+hand-duplicated into both files (rule #3). Each caller captures
+`Date.now()` immediately before issuing its own pull and threads it
+through as a new, optional `asOf` parameter on `_applyServerArray()`; a
+response whose `asOf` is older than the most recently applied one for
+that table is skipped outright at the very top of the function, before
+anything else runs, regardless of which order the two independent
+fetches actually arrive in. Client-side send-time, not a server-side
+generation timestamp (`api/ops-state.js` has no `updated_at`-style
+field in its response to compare instead) — an admittedly imperfect
+anchor (it assumes send-order roughly tracks server-read-order, which
+network conditions could in principle violate) but a vastly better one
+than no ordering protection at all, and correct for the overwhelming
+majority of real-world timing races. Opt-in per call site by design:
+only the `clients` call sites in `cloudPullAll()`/`_pullClientsFromCloud()`
+pass `asOf` at all — every other table (users, admins, tasks, feed,
+notifications, etc.) leaves it `undefined`, which is a no-op
+(`_opsIsStaleResponse()` returns `false`), so every other table's
+behavior is byte-for-byte unchanged by this fix.
+
+**Deliberately left untouched, flagged not fixed:** `user.html` embeds
+this exact same `client.html` iframe too (`trackerFrame`), sharing the
+identical `wl_clients_db`/`wl_srv_snap_clients` keys, and its own
+`_applyServerArray()` call site for `clients` does not pass `asOf`
+either — so the identical race remains theoretically possible between
+`user.html`'s own parent frame and its embedded Tracker. Not fixed
+here: the ticket explicitly scopes this to "the admin Tracker," and
+`user.html`'s employee-side Tracker embed is a materially different
+(and much less write-heavy) usage pattern — worth a follow-up ticket if
+the user wants it closed too, not silently folded into this one.
+
+Verified: syntax check clean (extracted `<script>` blocks) on both
+files. Diff is JS-only in both — no HTML markup touched, div-balance
+trivially unaffected. A new Node integration suite (14/14) against the
+REAL, current functions in both files: a normal, single-context,
+in-order pull still applies correctly (regression check); the
+out-of-order race is rejected and the deactivated client stays
+deactivated, confirmed separately against `client.html`'s simpler
+whole-record merge AND `index.html`'s own newer field-level merge; a
+genuinely newer response still applies normally; a genuinely-dirty
+local edit still survives a pull exactly as before (the pre-existing
+protection this fix sits alongside is untouched); a table that never
+passes `asOf` is completely unaffected; `index.html`'s field-level
+merge (2026-09-22) still protects a genuinely-dirty field while still
+taking the server's fresh value for an untouched one, proven to coexist
+correctly with the new guard; the tombstone-only empty-guard for
+`tasks` still works with the new parameter present but unset; and the
+full real-world chain (race, then a later genuine services edit) now
+correctly produces a push payload with the TRUE (deactivated) status,
+never the reverted one, while still carrying the genuine edit through.
+Zero-error load check, all three portals, 3/3.
+
+Task-write-adjacent risk tier per rule #10 (touches the client sync
+path) — held for the user's own preview click-through and explicit
+approval before merge, per this ticket's own instruction; not merged.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

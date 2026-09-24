@@ -303,6 +303,24 @@ Don't relitigate them without an explicit decision from the user.
   battle-tested idiom the `user.html` fix now matches too (filter, not
   cascade — reactivating a client restores its services for free, no
   service-level field ever touched). See DECISIONS.md.
+- Admin Tracker no longer pushes stale client data over server changes
+  (2026-09-25 — held for preview approval): root-caused to an out-of-order
+  `/api/ops-state` response race between `index.html`'s own independent
+  poll cycle and its embedded `client.html` iframe's (adminTrackerFrame)
+  own, separate poll cycle — both read/write the same shared
+  `wl_clients_db`/`wl_srv_snap_clients` keys, and the existing dirty-check
+  had no notion of whether an incoming response was even the freshest one
+  either context had seen. Reproduced live (no admin edit required at
+  all) via a Node script extracting the real functions from both files.
+  Fixed with a per-table "applied as-of" monotonicity guard
+  (`_opsIsStaleResponse()`/`_opsRecordApplied()`) in BOTH `_applyServerArray()`
+  copies — an out-of-order response older than the most recently applied
+  one for that table is now skipped outright, regardless of arrival
+  order. Opt-in per call site (only `clients` passes `asOf`) — every other
+  table's behavior is byte-for-byte unchanged. `user.html`'s own embed of
+  the same iframe (`trackerFrame`) carries the identical latent risk but
+  was NOT touched here (out of scope for this admin-only ticket) — see
+  DECISIONS.md.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
