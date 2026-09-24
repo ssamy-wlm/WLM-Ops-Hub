@@ -10211,6 +10211,93 @@ for `node --check` + preview), but `api/process-transcript.js` is a
 CODEOWNERS-gated path (rule #10) regardless, so it still needs the
 repo's own required review before it can merge.
 
+**Deactivating a client must hide/deactivate its services (and exclude
+from workload) (2026-09-24) — held for preview approval.** Confirmed
+~40 active services across 5 inactive clients were still assigned out
+— an inactive client's services kept showing on employees' plates and
+counting in workload/metrics, because service VISIBILITY never actually
+followed the parent client's `status`.
+
+Investigated both files before touching either (an Explore agent mapped
+every place either portal collects a client's services for a view/
+metric, cross-checked directly against the live code): **`index.html`
+needed no fix at all.** Every admin-facing workload/metrics aggregator
+there already filters `c.status==='active'` before collecting services
+— `_activeServicesForAssessment()` (feeds Overview/Team Assessment/Team
+Production Analytics/By Person), `renderWorkloadDashboard()`, `renderMyTeamsWork()`,
+`renderClientHealthDashboard()`, `_ovServiceClientInfo()`, and the
+admin's own `renderMyRoadmapAdmin()` all already scope to active
+clients — a consistent, pre-existing, battle-tested idiom. (One initial
+false lead, ruled out on inspection: `refreshAdminOverview()`'s
+`computeProjectStats(allClients)` at line ~13047 passes the unfiltered
+list instead of the already-computed `activeClients` — but
+`document.getElementById('ov-total-reports')` doesn't exist anywhere in
+the current markup, so that whole stat computation is dead/orphaned
+code with zero live effect; not touched, out of scope for a client-
+status bug that has no visible symptom.)
+
+The real bug was isolated to **four functions in `user.html`**, all of
+which read the client list from an unfiltered source
+(`_getAssignClients()`, a bare `JSON.parse(localStorage.getItem(
+'wl_clients_db'))`) and never checked `c.status` before flattening/
+counting each client's services:
+- `loadMyAssignments()` — the actual "My Services" table (`#my-assignments-list`)
+- `updateAssignmentsBadge()` — the nav badge / due-soon-or-overdue count
+- `_collectMyWorkItems()` — feeds `renderRoadmap()`, "My Roadmap"'s 7/30/60-day buckets
+- `renderMyServiceSchedule()` — "My Service Schedule"; fixed for
+  correctness/consistency, but confirmed its own target container
+  (`#my-svc-schedule-list`) doesn't exist anywhere in the current
+  markup either — this one is ALSO currently dead/orphaned in the live
+  UI (a second, unrelated pre-existing orphaned-code finding, flagged
+  not fixed — out of scope to resurrect a missing UI section as part of
+  a status-filter bug fix).
+
+Fixed via the **filter approach** the ticket itself preferred over a
+cascade write: each function's own `clients` array gets
+`.filter(c=>c.status==='active')` inserted at the exact point it's
+first obtained — matching this file's own pre-existing, already-proven
+`c.status==='active'` idiom (`_dtActiveClients()`,
+`_populateUserMsgClientSelects()`), the same strict form (no `||
+'active'` fallback) already relied on elsewhere in this same file. This
+makes client status the single source of truth for service visibility:
+no service-level field is ever touched, so reactivating a client
+(`status` flips back to `'active'`) restores every one of its services
+everywhere, for free, with nothing to migrate or backfill. Client
+Directory (`_cdReloadData()`/`_getAssignClients()` used raw) was
+deliberately left untouched — it's a reference/browse view that
+intentionally still shows inactive clients (with a dimmed "Inactive"
+badge, confirmed via its own pre-existing Playwright suite), not an
+"assigned work" view, so filtering it would have removed a real,
+wanted capability rather than fixing a bug. The several single-service
+write-action handlers that also call `_getAssignClients()`
+(`userMarkServiceDone`, `userSetServiceStatus`,
+`openServiceSubitemsModal`, etc.) were left untouched too — each only
+looks up one already-known `clientId`/`svcId` from a button that, once
+the render functions above are fixed, can never be rendered for an
+inactive client's service in the first place.
+
+Verified: `node --check`-equivalent syntax check clean; diff is
+JS-only (no HTML markup touched), so div-balance is trivially
+unaffected. A new Playwright suite (9/9) against the real, live UI:
+seeds one active + one inactive client, each with one service assigned
+to the test employee — confirms My Services/the nav badge/My Roadmap
+all show ONLY the active client's service (never even the inactive
+client's name); then flips the inactive client back to `'active'` via
+a simulated pull and re-verifies all three surfaces now show BOTH
+services, with the badge count updating from 1 to 2 — the acceptance
+criterion's reactivation case, not just the initial hide. Re-ran two
+pre-existing `user.html` Playwright suites that share the same
+`_getAssignClients()` data source to confirm no regression: the My
+Roadmap Calendar/List suite (12/12) and the Client Directory suite
+(22/22, including its inactive-client-still-shown-dimmed assertions —
+confirms Client Directory was correctly left alone). Zero-error load
+check, all three portals, 3/3.
+
+Task-write-adjacent risk tier per rule #10 (touches what surfaces on
+employee plates and feeds workload metrics) — held for the user's own
+preview click-through and explicit approval before merge, per this
+ticket's own instruction; not merged.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

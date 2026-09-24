@@ -289,6 +289,20 @@ Don't relitigate them without an explicit decision from the user.
   only the HTTP response body reads; `logError()`/`ops_error_log` still
   gets the real diagnostic (`err.message`/`.stack`) unchanged — see
   DECISIONS.md.
+- Inactive-client services now hidden from employee views + workload
+  (2026-09-24 — held for preview approval): `user.html`'s
+  `loadMyAssignments()` (My Services), `updateAssignmentsBadge()` (nav
+  badge/overdue count), and `_collectMyWorkItems()` (feeds My Roadmap)
+  all collected a client's services from an UNFILTERED client list —
+  the parent client's `status` was never checked, only reachable via
+  `index.html`/`client.html` and never cascaded here. `index.html`
+  needed no fix — every admin-facing workload/metrics path there
+  (`_activeServicesForAssessment()`, Workload dashboard, My Team's
+  Work, Client Health, My Roadmap admin) already filters
+  `c.status==='active'` before collecting services; that's the existing,
+  battle-tested idiom the `user.html` fix now matches too (filter, not
+  cascade — reactivating a client restores its services for free, no
+  service-level field ever touched). See DECISIONS.md.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
