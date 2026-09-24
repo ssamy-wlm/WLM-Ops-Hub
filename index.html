@@ -6090,6 +6090,28 @@ function _activeServicesForAssessment(){
   });
   return services;
 }
+// Services-card frequency classification (2026-09-24 Overview redesign —
+// replaces the single Tasks-style "done/total" Services card with a 2x2
+// breakdown by frequency). Reads BOTH svc.freq (the canonical code most
+// services carry, e.g. 'monthly') and svc.freqLabel (usually a freeform
+// description like "Ongoing" or "3x/week", but some records carry the
+// frequency name there too) since the live export has inconsistently-cased
+// values for the same frequency (both "Monthly" and "monthly" confirmed in
+// production data) on either field. Normalizes case and collapses
+// whitespace/hyphens so "one-time"/"one time"/"onetime" all match the same
+// bucket. Exact-match only, never a substring search — a freeform
+// freqLabel like "additional posts monthly" must NOT false-match "monthly".
+// Returns null (unbucketed, but still counted in the card's "N total") for
+// every frequency with no dedicated mini-card: weekly, per-request, etc.
+function _ovSvcFreqBucket(svc){
+  const norm = v => (v||'').toString().trim().toLowerCase().replace(/[\s-]+/g,'');
+  const candidates = [norm(svc.freq), norm(svc.freqLabel)];
+  if(candidates.includes('monthly')) return 'monthly';
+  if(candidates.includes('yearly')) return 'yearly';
+  if(candidates.includes('quarterly')) return 'quarterly';
+  if(candidates.includes('onetime')) return 'onetime';
+  return null;
+}
 // Per-person tasks+services summary — pulled out of what used to be
 // refreshAdminOverview()'s own inline Team Assessment computation
 // (2026-08-20) so Task Assignments' new "By Person" roster can show the
@@ -8374,6 +8396,18 @@ function renderTeamProductionAnalytics(){
 
   const allServices=_activeServicesForAssessment();
   const allTasks=dbGet(DB_KEYS.tasks)||[];
+  // Services card (2026-09-24) — frequency breakdown over the SAME active-
+  // service corpus _activeServicesForAssessment() already returns (active
+  // clients' top-level + franchise-location services, excluding
+  // cancelled/archived), NOT scoped to who it's assigned to — deliberately
+  // a different universe than totals.servicesAssigned below (which sums
+  // only services assigned to someone on the current roster). "N total"
+  // counts every service in that corpus regardless of frequency (so
+  // Per Request/Weekly services are still counted in the total even though
+  // they have no dedicated mini-card).
+  const svcFreqCounts={monthly:0,yearly:0,quarterly:0,onetime:0};
+  allServices.forEach(s=>{ const b=_ovSvcFreqBucket(s); if(b) svcFreqCounts[b]++; });
+  const svcFreqTotal=allServices.length;
   const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
   const svcClientInfo=_ovServiceClientInfo();
   // Drill-down item lists for the stat cards (2026-09-01, gained dueToday
@@ -8488,7 +8522,6 @@ function renderTeamProductionAnalytics(){
   const totalDone=totals.tasksDone+totals.servicesDone;
   const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
   const tasksPct=totals.tasksAssigned?Math.round(totals.tasksDone/totals.tasksAssigned*100):null;
-  const servicesPct=totals.servicesAssigned?Math.round(totals.servicesDone/totals.servicesAssigned*100):null;
 
   // Every card is clickable — see openOvStatDrill()/openOvStatDrillKey
   // above. .ov-stat-card supplies cursor:pointer + a visible hover state;
@@ -8517,9 +8550,32 @@ function renderTeamProductionAnalytics(){
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
     <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">${pct==null?'—':pct+'% done'}</div>
   </div>`;
+  // Services card (2026-09-24) — replaces the old done/total ratio card
+  // with a 2x2 grid of frequency mini-cards (svcFreqCounts/svcFreqTotal
+  // computed above). Deliberately no onclick/drill — this is a pure
+  // read-only display over a different data slice than the per-person
+  // "servicesAssigned" drill list, so wiring the old drillKey here would
+  // show the wrong item set. spans 2 grid columns (double width) to fit
+  // the 2x2 layout at the same row height as the other stat cards.
+  const svcFreqMiniCard=(label,count)=>`<div style="background:var(--bg);border-radius:8px;padding:7px 10px;">
+    <div style="font-size:16px;font-weight:800;color:var(--text-dark);line-height:1.1;">${count}</div>
+    <div style="font-size:10px;color:var(--text-light);margin-top:2px;">${label}</div>
+  </div>`;
+  const servicesFreqCard=`<div class="card" style="grid-column:span 2;padding:12px 14px;margin:0;">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:12.5px;font-weight:800;color:var(--text-dark);">Services</div>
+      <div style="font-size:10.5px;color:var(--text-light);">${svcFreqTotal} total</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      ${svcFreqMiniCard('Monthly', svcFreqCounts.monthly)}
+      ${svcFreqMiniCard('Yearly', svcFreqCounts.yearly)}
+      ${svcFreqMiniCard('Quarterly', svcFreqCounts.quarterly)}
+      ${svcFreqMiniCard('One-time', svcFreqCounts.onetime)}
+    </div>
+  </div>`;
   statsEl.innerHTML=[
     ratioStatCard('Tasks', totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
-    ratioStatCard('Services', totals.servicesDone, totals.servicesAssigned, servicesPct, 'servicesAssigned'),
+    servicesFreqCard,
     statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null, 'overdue'),
     statCard('Due Today', totals.dueToday, totals.dueToday?'var(--orange)':null, 'dueToday'),
     statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
