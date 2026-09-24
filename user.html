@@ -4088,7 +4088,13 @@ function _findServiceById(c, svcId){
 function _collectMyWorkItems(){
   if(!currentUser) return [];
   const myId=currentUser.id, myName=currentUser.name;
-  const clients = _getAssignClients();
+  // c.status==='active' (2026-09-24 fix) — a deactivated client's services/
+  // recurring services/projects must never surface on anyone's plate, same
+  // client-status-is-the-single-source-of-truth idiom this file's own
+  // _dtActiveClients()/_populateUserMsgClientSelects() already use for a
+  // client picker. Reactivating a client cleanly brings its work back for
+  // free — no service-level field to touch, nothing to migrate.
+  const clients = _getAssignClients().filter(c=>c.status==='active');
   const items = [];
   clients.forEach(c=>{
     _allServicesForClient(c).forEach(s=>{
@@ -4282,7 +4288,11 @@ function renderMyServiceSchedule(){
   // Collect ALL assigned services (both schemas)
   let items = [];
   try{
-    const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
+    // c.status==='active' (2026-09-24 fix) — same client-status-is-the-
+    // single-source-of-truth idiom as _collectMyWorkItems()'s own comment
+    // above; a deactivated client's services must never show on My Service
+    // Schedule.
+    const clients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]').filter(c=>c.status==='active');
     clients.forEach(c=>{
       // c.services[] — tracker schema (assigneeId / assigneeName / assignee),
       // plus every franchise location's own services[] (see _allServicesForClient)
@@ -5061,7 +5071,10 @@ function updateAssignmentsBadge(){
   try{
     const myId   = currentUser?.id||'';
     const myName = currentUser?.name||'';
-    const clients= _getAssignClients();
+    // c.status==='active' (2026-09-24 fix) — a deactivated client's
+    // overdue/due-soon services must never inflate this badge count; same
+    // idiom as _collectMyWorkItems()'s own comment above.
+    const clients= _getAssignClients().filter(c=>c.status==='active');
     const todayStr = new Date().toISOString().slice(0,10);
     const in7 = new Date(); in7.setDate(in7.getDate()+7); const in7s=in7.toISOString().slice(0,10);
     const ns = getNotifSettings();
@@ -5262,7 +5275,11 @@ function loadMyAssignments(){
   // Favorited clients float to the top here too (Feature 6) — same
   // per-viewer favorites list as the Tracker; never affects anyone else's
   // ordering since it's read fresh from this person's own localStorage key.
-  const clients= [..._getAssignClients()].sort((a,b)=>{
+  // c.status==='active' (2026-09-24 fix) — the actual "My Services" table;
+  // a deactivated client's services/recurring services/bundles must never
+  // show here. Same idiom as _collectMyWorkItems()'s own comment above —
+  // reactivating a client brings its work back for free, nothing to migrate.
+  const clients= _getAssignClients().filter(c=>c.status==='active').sort((a,b)=>{
     const af=isEmployeeFavorite(a.id), bf=isEmployeeFavorite(b.id);
     if(af&&!bf) return -1; if(!af&&bf) return 1;
     return 0;
