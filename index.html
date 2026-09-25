@@ -334,7 +334,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .admin-topbar-right{display:flex;align-items:center;gap:12px;}
 .admin-level-badge{font-size:11px;font-weight:600;padding:4px 11px;border-radius:20px;white-space:nowrap;}
 .admin-notif-btn{width:34px;height:34px;border-radius:50%;background:var(--bg);border:1px solid var(--border);color:var(--text-dark);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;position:relative;flex-shrink:0;}
-.admin-notif-dot{width:8px;height:8px;background:var(--red,#e05555);border-radius:50%;position:absolute;top:5px;right:5px;border:2px solid var(--card);display:none;}
+.admin-notif-dot{min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;background:var(--red,#e05555);border-radius:999px;position:absolute;top:-4px;right:-4px;border:2px solid var(--card);display:none;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:800;color:#fff;font-family:Arial,sans-serif;}
 .admin-notif-panel{display:none;position:absolute;top:44px;right:0;width:340px;max-height:420px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:200;color:var(--text-dark);text-align:left;}
 .admin-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#2E5DA6,#5B84C4);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 /* Permanent "?" help panel (Help System PR 3) — same round-button look as
@@ -9897,10 +9897,55 @@ const NOTIF_TYPE_LABELS_ADMIN = {
   meetingParseNotify:'Meeting parse: review suggested',
   overdueNag:'Overdue reminder',
 };
+// Notification "bing" sound (2026-09-25) — synthesized via Web Audio
+// rather than an embedded audio file, so there's no binary asset to ship in
+// this single-file app. Gated on a real user gesture (click/keydown/
+// touchstart, once) before the first play, since browsers block audio
+// (including AudioContext playback) started with no prior interaction —
+// _notifSoundUnlocked just records that a gesture already happened;
+// creating the AudioContext itself is also deferred to first use for the
+// same reason.
+let _notifSoundUnlocked = false;
+let _notifAudioCtx = null;
+function _unlockNotifSound(){ _notifSoundUnlocked = true; }
+document.addEventListener('click', _unlockNotifSound, {once:true});
+document.addEventListener('keydown', _unlockNotifSound, {once:true});
+document.addEventListener('touchstart', _unlockNotifSound, {once:true});
+function _playNotifBing(){
+  if(!_notifSoundUnlocked) return;
+  try{
+    if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const ctx = _notifAudioCtx;
+    if(ctx.state==='suspended') ctx.resume();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(1320, now+0.09);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now+0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now+0.28);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(now); osc.stop(now+0.3);
+  }catch(e){}
+}
+// _adminNotifBaselineSet — false only until this function's very first call
+// (page load), so the sound never fires for notifications that were already
+// unread before this session opened; only a genuine increase after that
+// point counts.
+let _adminNotifBaselineSet = false;
+let _adminNotifLastUnread = 0;
 function refreshAdminNotifBadge(){
   const unread = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!n.read).length;
   const dot = document.getElementById('admin-notif-dot');
-  if(dot) dot.style.display = unread>0 ? 'block' : 'none';
+  if(dot){
+    if(unread>0){ dot.textContent = unread>99?'99+':String(unread); dot.style.display='flex'; }
+    else { dot.textContent=''; dot.style.display='none'; }
+  }
+  if(_adminNotifBaselineSet && unread>_adminNotifLastUnread) _playNotifBing();
+  _adminNotifBaselineSet = true;
+  _adminNotifLastUnread = unread;
 }
 function toggleAdminNotifPanel(){
   const p = document.getElementById('admin-notif-panel');

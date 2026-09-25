@@ -321,6 +321,21 @@ Don't relitigate them without an explicit decision from the user.
   the same iframe (`trackerFrame`) carries the identical latent risk but
   was NOT touched here (out of scope for this admin-only ticket) — see
   DECISIONS.md.
+- Notification bell: red unread-count badge + always-on sound
+  (2026-09-25 — low-risk, display-only): both portals' bells now show a
+  numeric unread-count badge ("99+" cap, hidden at 0) instead of a plain
+  dot, and play a synthesized "bing" (Web Audio, no embedded audio file)
+  when the unread count increases, gated behind a one-time user gesture
+  for the autoplay policy. `index.html`'s `#admin-notif-dot` was
+  converted in place (single, unambiguous call site,
+  `refreshAdminNotifBadge()`). `user.html`'s `#notifDot` was NOT
+  repurposed — it was already overloaded across three unrelated signals
+  (announcement banner, assignment-due total, notif-unread), so a new
+  dedicated `#notifCountBadge` element carries the unread count and the
+  old dot was narrowed to only its other two, non-notification signals
+  (no longer double-counts with the new badge). See DECISIONS.md for the
+  full investigation and the rationale for not folding the three signals
+  together.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
