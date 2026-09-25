@@ -1375,6 +1375,23 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            renderTeamProductionAnalytics() already is. -->
       <div class="roadmap-section" id="admin-my-roadmap-section" style="margin-bottom:20px;"></div>
 
+      <!-- Services frequency filter (2026-09-25) — ONE chip row drives the
+           Services summary card (inside #tpa-team-stats above), the
+           Services-by-Urgency donut, and the new Services-per-person list
+           below, all three computed DIRECTLY off the same filtered corpus
+           in renderTeamProductionAnalytics() rather than derived from the
+           per-person roster loop — see that function's own comments for
+           why. Tasks have no frequency concept at all and are completely
+           unaffected — the caption says so explicitly rather than leaving
+           it to be inferred from what doesn't move. Chips are populated by
+           _ovRenderSvcFreqChips() (labeled with their own live count, e.g.
+           "Monthly 116") so the row doubles as the at-a-glance breakdown;
+           read-only, selecting a chip only re-renders this same function. -->
+      <div style="margin-bottom:14px;">
+        <div id="ov-svc-freq-chips" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;"></div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:6px;">Tasks have no frequency, so the filter only drives services.</div>
+      </div>
+
       <!-- Split into two donuts, one per work type (2026-09-07) — was a
            single combined "Open Work by Urgency" donut; see
            _renderOverviewUrgencyDonut()'s own comment for why a shared
@@ -1398,7 +1415,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="card-header">
             <div>
               <div class="card-title">Services by Urgency</div>
-              <div class="card-sub">Open (not done) services — hover a slice or row for the count</div>
+              <div class="card-sub">Open (not done) services <span id="ov-svc-urgency-freq-sub"></span>— hover a slice or row for the count</div>
             </div>
           </div>
           <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
@@ -1406,6 +1423,24 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div style="flex:1;min-width:180px;" id="ov-services-urgency-list"></div>
           </div>
         </div>
+      </div>
+
+      <!-- Services per person (2026-09-25) — a THIRD view onto the same
+           frequency-filtered corpus the summary card + donut above read,
+           NOT derived from the Per-Person Breakdown table below (which
+           stays fully untouched — it shows the combined, unfiltered
+           tasks+services burden, out of this feature's scope). Bars,
+           sorted descending; a dedicated "Unassigned" row so
+           sum(bars)+Unassigned reconciles against the summary's "M open"
+           instead of silently coming up short. -->
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Services per person <span id="ov-svc-per-person-freq-sub" style="font-weight:400;color:var(--text-light);"></span></div>
+            <div class="card-sub">A co-assigned service counts once for each person — bars can sum above the summary's "open" total.</div>
+          </div>
+        </div>
+        <div class="card-body" id="ov-svc-per-person-list"></div>
       </div>
 
       <!-- Per-Person Breakdown (Team Production Analytics), then a compact
@@ -6090,6 +6125,27 @@ function _activeServicesForAssessment(){
   });
   return services;
 }
+// Services frequency classification (2026-09-25 — folded in from the
+// unmerged PR #431, do not re-derive). Reads BOTH svc.freq (the canonical
+// code most services carry, e.g. 'monthly') and svc.freqLabel (usually a
+// freeform description like "Ongoing" or "3x/week", but some records carry
+// the frequency name there too) since the live export has inconsistently-
+// cased values for the same frequency (both "Monthly" and "monthly"
+// confirmed in production data) on either field. Normalizes case and
+// collapses whitespace/hyphens so "one-time"/"one time"/"onetime" all match
+// the same bucket. Exact-match only, never a substring search — a freeform
+// freqLabel like "additional posts monthly" must NOT false-match "monthly".
+// Returns null (unbucketed — weekly, per-request, etc.) for anything with
+// no dedicated frequency chip.
+function _ovSvcFreqBucket(svc){
+  const norm = v => (v||'').toString().trim().toLowerCase().replace(/[\s-]+/g,'');
+  const candidates = [norm(svc.freq), norm(svc.freqLabel)];
+  if(candidates.includes('monthly')) return 'monthly';
+  if(candidates.includes('yearly')) return 'yearly';
+  if(candidates.includes('quarterly')) return 'quarterly';
+  if(candidates.includes('onetime')) return 'onetime';
+  return null;
+}
 // Per-person tasks+services summary — pulled out of what used to be
 // refreshAdminOverview()'s own inline Team Assessment computation
 // (2026-08-20) so Task Assignments' new "By Person" roster can show the
@@ -8366,6 +8422,51 @@ function renderMyRoadmapAdmin(){
     </div>
     ${_myrmView==='calendar' ? _myRoadmapCalendarHtml(items) : listHtml}`;
 }
+// Services frequency filter (2026-09-25) — ONE piece of UI state, read by
+// renderTeamProductionAnalytics() only. Selecting a chip just re-runs that
+// same idempotent, read-only render (same convention as
+// setMyRoadmapTypeFilter()/_myrmTypeFilter above) — no separate partial-
+// render path, so the Services summary/donut/per-person list can never
+// drift out of sync with each other or with a stale filter value.
+let _ovSvcFreqFilter = 'all';
+function setOvSvcFreqFilter(freq){ _ovSvcFreqFilter = freq; renderTeamProductionAnalytics(); }
+const OV_SVC_FREQ_LABELS = { all:'All', monthly:'Monthly', yearly:'Yearly', quarterly:'Quarterly', onetime:'One-time' };
+// Chip row — each chip is labeled with its OWN live count (e.g. "Monthly
+// 116"), so the row doubles as the at-a-glance frequency breakdown that
+// used to live in PR #431's separate 2x2 mini-card grid; that grid is
+// superseded by this chip row + the "N total · M open" summary card below,
+// not kept alongside it.
+function _ovSvcFreqChipsHtml(freqCounts, total, active){
+  return ['all','monthly','yearly','quarterly','onetime'].map(key=>{
+    const count = key==='all' ? total : (freqCounts[key]||0);
+    const isActive = active===key;
+    return `<button type="button" class="btn btn-sm btn-outline${isActive?' btn-toggle-active':''}" onclick="setOvSvcFreqFilter('${key}')">${OV_SVC_FREQ_LABELS[key]} <strong>${count}</strong></button>`;
+  }).join('');
+}
+// Services per person — a bar per roster person with at least one matching
+// service (_wlSvcAssignedTo(), unchanged predicate) in the FILTERED set,
+// sorted descending, plus an explicit "Unassigned" bar (_chSvcIsUnassigned(),
+// unchanged) so sum(bars) + Unassigned reconciles against the summary's "M
+// open" — a co-assigned service still counts once per person, so the bars
+// themselves can legitimately sum to more than "M open"; the caption in the
+// HTML explains that rather than leaving it to look like a bug.
+function _ovSvcPerPersonHtml(filteredServices, roster){
+  const rows = roster.map(person=>({
+    name: person.name||'(unnamed)',
+    count: filteredServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name)).length,
+  })).filter(r=>r.count>0).sort((a,b)=>b.count-a.count);
+  const unassignedCount = filteredServices.filter(_chSvcIsUnassigned).length;
+  if(!rows.length && !unassignedCount) return `<div style="font-size:13px;color:var(--text-light);padding:8px 0;">No services match this filter.</div>`;
+  const maxCount = Math.max(1, ...rows.map(r=>r.count), unassignedCount);
+  const bar=(label,count,muted)=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;">
+    <div style="width:130px;flex-shrink:0;font-size:12.5px;font-weight:600;color:${muted?'var(--text-light)':'var(--text-dark)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlAdmin(label)}</div>
+    <div style="flex:1;background:var(--bg);border-radius:6px;height:16px;">
+      <div style="width:${Math.max(2,Math.round(count/maxCount*100))}%;height:100%;background:${muted?'var(--text-light)':'var(--accent)'};border-radius:6px;"></div>
+    </div>
+    <div style="width:32px;flex-shrink:0;text-align:right;font-size:12.5px;font-weight:700;color:var(--text-dark);">${count}</div>
+  </div>`;
+  return rows.map(r=>bar(r.name, r.count, false)).join('') + (unassignedCount ? bar('Unassigned', unassignedCount, true) : '');
+}
 function renderTeamProductionAnalytics(){
   const statsEl=document.getElementById('tpa-team-stats');
   const tbody=document.getElementById('tpa-person-table');
@@ -8376,6 +8477,58 @@ function renderTeamProductionAnalytics(){
   const allTasks=dbGet(DB_KEYS.tasks)||[];
   const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
   const svcClientInfo=_ovServiceClientInfo();
+
+  // Services frequency filter (2026-09-25) — computed ONCE, directly off
+  // allServices, completely independent of the per-person roster loop
+  // below. This is the core fix: the OLD Services summary/donut were both
+  // *sums of per-person, roster-scoped results*, which silently excluded
+  // any unassigned service or one assigned to someone outside the active
+  // roster — so their totals could never be trusted to equal "all active
+  // services." Computing directly off the filtered list instead means the
+  // summary's total, the donut's open total, and the per-person bars below
+  // all read from the SAME set and reconcile by construction, not by
+  // coincidence. The roster loop further down is UNCHANGED and still reads
+  // the unfiltered allServices — it feeds the combined Overdue/Blocked/
+  // Due-Today/Team-%-Done tiles and the existing Per-Person Breakdown
+  // table, neither of which is in scope for this filter (tasks have no
+  // frequency at all, and those tiles blend tasks+services burden, a
+  // different, unrelated question from "state of the services book").
+  const svcFreqCounts = { monthly:0, yearly:0, quarterly:0, onetime:0 };
+  allServices.forEach(s=>{ const b=_ovSvcFreqBucket(s); if(b) svcFreqCounts[b]++; });
+  const filteredServices = _ovSvcFreqFilter==='all' ? allServices : allServices.filter(s=>_ovSvcFreqBucket(s)===_ovSvcFreqFilter);
+  const svcTotal = filteredServices.length;
+  const svcDoneCount = filteredServices.filter(s=>_svcStatus(s)==='done').length;
+  const svcOpenCount = svcTotal - svcDoneCount;
+
+  const chipsEl=document.getElementById('ov-svc-freq-chips');
+  if(chipsEl) chipsEl.innerHTML = _ovSvcFreqChipsHtml(svcFreqCounts, allServices.length, _ovSvcFreqFilter);
+  const freqSubText = _ovSvcFreqFilter==='all' ? '· all ' : `· ${OV_SVC_FREQ_LABELS[_ovSvcFreqFilter]} `;
+  const urgencyFreqSubEl=document.getElementById('ov-svc-urgency-freq-sub');
+  if(urgencyFreqSubEl) urgencyFreqSubEl.textContent = freqSubText;
+  const perPersonFreqSubEl=document.getElementById('ov-svc-per-person-freq-sub');
+  if(perPersonFreqSubEl) perPersonFreqSubEl.textContent = freqSubText.trim();
+  const perPersonListEl=document.getElementById('ov-svc-per-person-list');
+  if(perPersonListEl) perPersonListEl.innerHTML = _ovSvcPerPersonHtml(filteredServices, _timeOffRoster());
+
+  // Services-by-Urgency donut buckets — computed DIRECTLY over
+  // filteredServices, reusing the same two predicates the per-person loop
+  // below has always used (_chSvcDueStatus for overdue,
+  // _ovDueWindowBucket for the due-date window), unchanged. Deliberately
+  // does NOT carry over that loop's stuck/due-today EXCLUSION from the
+  // remainder bucket: that exclusion existed only because a person's
+  // stuck/due-today service still had the separate Blocked/Stuck and Due
+  // Today tiles to be counted in instead. This standalone services donut
+  // has no such sibling tiles, so every open (not-done) service must land
+  // in exactly one of the four buckets — overdue, else bucketed by due
+  // date — which is what guarantees the donut's total equals svcOpenCount
+  // above (the summary's own "M open") by construction, not coincidence.
+  let svcUrgOverdue=0, svcUrgDueThisWeek=0, svcUrgDueThisMonth=0, svcUrgUpcoming=0;
+  filteredServices.forEach(s=>{
+    if(_svcStatus(s)==='done') return;
+    if(_chSvcDueStatus(s)==='overdue'){ svcUrgOverdue++; return; }
+    const bucket=_ovDueWindowBucket(s.due, endOfWeek, endOfMonth);
+    if(bucket==='dueThisWeek') svcUrgDueThisWeek++; else if(bucket==='dueThisMonth') svcUrgDueThisMonth++; else svcUrgUpcoming++;
+  });
   // Drill-down item lists for the stat cards (2026-09-01, gained dueToday
   // 2026-09-07) — populated DURING the same per-person filter passes below
   // that produce each tile's count, never from a separate query, so a
@@ -8488,7 +8641,6 @@ function renderTeamProductionAnalytics(){
   const totalDone=totals.tasksDone+totals.servicesDone;
   const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
   const tasksPct=totals.tasksAssigned?Math.round(totals.tasksDone/totals.tasksAssigned*100):null;
-  const servicesPct=totals.servicesAssigned?Math.round(totals.servicesDone/totals.servicesAssigned*100):null;
 
   // Every card is clickable — see openOvStatDrill()/openOvStatDrillKey
   // above. .ov-stat-card supplies cursor:pointer + a visible hover state;
@@ -8517,9 +8669,23 @@ function renderTeamProductionAnalytics(){
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
     <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">${pct==null?'—':pct+'% done'}</div>
   </div>`;
+  // Services summary (2026-09-25) — replaces the old ratioStatCard(
+  // 'Services', totals.servicesDone, totals.servicesAssigned, ...) with
+  // "N total · M open" read DIRECTLY off filteredServices (svcTotal/
+  // svcOpenCount above), not the roster-scoped totals.servicesAssigned/
+  // servicesDone sum — this IS the reconciliation anchor the donut and
+  // per-person list below are checked against. No onclick/drill: this is a
+  // different, frequency-filterable data slice than the old
+  // 'servicesAssigned' drill list, so reusing that drill key would show
+  // stale/wrong items.
+  const svcSummaryCard=`<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" title="Services matching the current frequency filter">
+    <div style="font-size:20px;font-weight:800;color:var(--text-dark);">${svcTotal}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Services</div>
+    <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">${svcOpenCount} open</div>
+  </div>`;
   statsEl.innerHTML=[
     ratioStatCard('Tasks', totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
-    ratioStatCard('Services', totals.servicesDone, totals.servicesAssigned, servicesPct, 'servicesAssigned'),
+    svcSummaryCard,
     statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null, 'overdue'),
     statCard('Due Today', totals.dueToday, totals.dueToday?'var(--orange)':null, 'dueToday'),
     statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
@@ -8529,7 +8695,13 @@ function renderTeamProductionAnalytics(){
 
   if(typeof _renderOverviewUrgencyDonut==='function'){
     _renderOverviewUrgencyDonut('tasks', {overdue:totals.tasksOverdue, dueThisWeek:totals.tasksDueThisWeek, dueThisMonth:totals.tasksDueThisMonth, upcoming:totals.tasksUpcoming});
-    _renderOverviewUrgencyDonut('services', {overdue:totals.servicesOverdue, dueThisWeek:totals.servicesDueThisWeek, dueThisMonth:totals.servicesDueThisMonth, upcoming:totals.servicesUpcoming});
+    // Services donut (2026-09-25) — fed by svcUrgOverdue/svcUrgDueThisWeek/
+    // svcUrgDueThisMonth/svcUrgUpcoming (computed above, directly off
+    // filteredServices), NOT totals.servicesOverdue/servicesDueThisWeek/etc
+    // (still computed a few lines up for the UNCHANGED combined Overdue/
+    // Blocked tiles and Per-Person Breakdown table — deliberately left
+    // alone, out of this filter's scope).
+    _renderOverviewUrgencyDonut('services', {overdue:svcUrgOverdue, dueThisWeek:svcUrgDueThisWeek, dueThisMonth:svcUrgDueThisMonth, upcoming:svcUrgUpcoming});
   }
 
   // Per-person table — no totalAssigned>0 filter, same acceptance criterion
