@@ -10813,6 +10813,140 @@ corrections were pushed to the same branch/PR (#437) rather than
 opening a new one, since the PR was never reviewed or approved before
 they landed.
 
+### 2026-09-25 — Parser crashes on Gemini retries: raise maxDuration + keep backoff under the limit
+
+Ticket: the transcript parser was returning a raw, non-JSON "An error
+occurred" to the client ("Unexpected token 'A'…" on parse), with
+nothing at all in `ops_error_log` — meaning the failure never reached
+this app's OWN code, since every existing catch block in
+`api/process-transcript.js` already logs and returns clean JSON on a
+Gemini failure (see the 2026-09-22 Gemini-retry-hardening entry above).
+
+**Root cause, confirmed by reading the actual retry math.** Vercel
+serverless functions default to a 30s `maxDuration`, and
+`api/process-transcript.js` had no `vercel.json` entry overriding it —
+confirmed by reading `vercel.json` before this fix, only
+`api/ops-state.js` had a functions-level override. The Gemini
+503/429/UNAVAILABLE retry loop in `callGemini()`
+(`GEMINI_MAX_ATTEMPTS=4`, unchanged) had a backoff schedule of
+`[2000,5000,12000,25000]` — the LAST entry is never actually slept (the
+final attempt throws immediately, no sleep after it — confirmed by
+reading the `if (!transient || attempt === GEMINI_MAX_ATTEMPTS - 1) {
+...throw }` branch, which sits BEFORE the `await sleep(...)` line), so
+the real guaranteed sleep total across a full exhaustion is the first
+three entries: 2000+5000+12000 = 19000ms. On top of that: up to
+`GEMINI_MIN_INTERVAL_MS` (4000ms) of pacing wait before each of the 4
+attempts (bounded in practice since later backoff entries already
+exceed 4000ms, so the pacer rarely has to add its own wait on top), and
+4 real network round-trips to Gemini with no upper bound on their own
+duration. 19s of guaranteed backoff alone, plus any nontrivial network
+latency across 4 calls, comfortably exceeds a 30s ceiling — and when it
+does, Vercel kills the function process outright, mid-`await`, before
+the surrounding `try/catch` ever gets a chance to run its
+`logError()`/JSON-response code. The "Unexpected token 'A'…" the client
+saw is literally the start of Vercel's own generic platform crash page
+HTML, not anything this app's own code produced — which is exactly why
+nothing showed up in `ops_error_log`: this app's error-logging code
+never got to execute.
+
+**Fix.** Two coordinated changes, exactly as the ticket specified:
+
+1. `vercel.json` — added a `functions` entry for
+   `api/process-transcript.js` with `"maxDuration": 90` (Vercel Pro
+   supports up to 300s; 90s was the ticket's own stated target,
+   generous relative to the trimmed retry budget below without being
+   excessive).
+2. `api/process-transcript.js` — `GEMINI_RETRY_BACKOFF_MS` trimmed from
+   `[2000,5000,12000,25000]` to `[1000,2000,3000,6000]` (guaranteed
+   sleep total across the first three: 6000ms, down from 19000ms — a
+   deliberate cut, not just relying on the higher ceiling alone, per the
+   ticket's own explicit "trim/cap the backoff" instruction). Documented
+   worst-case budget in the constant's own comment: 4 calls × an assumed
+   (not measured — rule #11, no live telemetry) worst-case ~15s each +
+   6000ms backoff + ~6000ms worst-case pacing overhead ≈ 72s, leaving
+   ~18s of margin under the new 90s ceiling for the rest of the
+   handler's own post-processing (JSON parse/repair, DB writes,
+   response serialization) and general platform overhead.
+
+**A second, independently-found "guarantee" gap, also closed.** While
+computing the worst-case budget, found that `geminiRetryDelayMs()`
+honors a Gemini-sent `Retry-After` header completely unbounded — an
+upstream value large enough (Gemini's own signal, not something this
+app controls) could alone exceed any budget no matter how the fixed
+schedule was tuned, which would have undermined the very "guarantee"
+the ticket asks for. Added `GEMINI_MAX_RETRY_DELAY_MS = 8000`, applied
+as a hard `Math.min()` ceiling to EVERY value `geminiRetryDelayMs()`
+returns, whether from the fixed schedule (already ≤ 8000 by
+construction) or from a `Retry-After` header (previously unbounded).
+
+**Investigated and deliberately NOT fixed, flagged instead (rule #7).**
+A per-call `fetch()` timeout via `AbortController` would close the one
+remaining true gap — an individual Gemini call that hangs or responds
+unusually slowly still has no hard bound of its own, backoff trimming
+can't help with that. Not added: this endpoint's `maxTokens` is 16000
+for both call sites, and a genuinely large, healthy (non-overloaded)
+generation at that size could legitimately take a meaningful number of
+seconds to stream back — with no live telemetry to calibrate a safe
+per-call cutoff (CLAUDE.md rule #11, no live Gemini dashboard/account
+access), guessing a timeout risks aborting and needlessly retrying a
+slow-but-successful response, which would make reliability WORSE, not
+better, for exactly the large-transcript case this app's `maxTokens`
+was already raised to 16000 to support (see the 2026-08-27 fix
+referenced in this file's own retry-hardening comment). Flagged in
+`CLAUDE.md`'s Current State and in the PR description for the user's
+awareness, not silently left unmentioned.
+
+Also investigated and confirmed NOT a compounding risk worth changing
+here: `extractRoadmapTasks()`'s own chunk-and-merge recursion
+(`ROADMAP_MAX_CHUNK_DEPTH=2`, up to 4 leaf `callGemini()` calls for one
+transcript) COULD in principle chain multiple full retry-exhaustion
+cycles sequentially (one per recursion depth) if every level
+independently hit transient failures AND needed chunking — a
+theoretically larger worst case than a single `callGemini()` cycle.
+This is a separate, rarer, compound-bad-luck scenario from the one the
+ticket actually reported (a single-cycle 503-retry overrun) and fully
+closing it would require threading a shared wall-clock deadline through
+the recursive `extractRoadmapTasks()` calls — a materially bigger
+change than the ticket's stated scope ("raise maxDuration... trim/cap
+the backoff"). Flagged here as a known, unaddressed residual rather
+than silently expanding this PR to cover it.
+
+**Verification** (no live Supabase/Gemini access, rule #11): reused
+this repo's own established pattern for this exact file (the
+2026-09-22 Gemini-retry-hardening entry's own test suites) —
+`node:test`'s `mock.module` (`--experimental-test-module-mocks`) fakes
+`lib/supabaseAdmin.js`/`lib/opsSession.js`/`lib/errorLog.js`/
+`lib/resendClient.js`/`lib/quietHours.js`, `global.fetch` is mocked
+directly (not imported, so no module-mock needed for it), and
+`global.setTimeout` is intercepted to run near-instantly while
+recording every requested delay — production timing is never actually
+exercised, only observed. New 9-check suite specific to this fix: a
+full 4-attempt exhaustion's real requested delays are classified into
+backoff-vs-pacing by VALUE (a real pacing wait lands a few ms short of
+the nominal 4000ms due to real-clock jitter between mocked-instant
+calls, so a magnitude band works reliably where exact equality
+wouldn't) and asserted to exactly match the new trimmed schedule
+(`[1000,2000,3000]` — the three that are ever actually slept — summing
+to 6000ms, not the old 19000ms), with the total of every delay
+requested (backoff + pacing combined) asserted well under a 30s sanity
+bound; a 120-second `Retry-After` header is proven clamped to exactly
+8000ms on every attempt; a real, reasonable 3-second `Retry-After` is
+proven honored as-is (the cap only ever engages on an excessive value,
+never overrides a sane one). Both of this file's PRE-EXISTING
+Gemini-retry suites (`parseTaskEmailForSession`, 16 checks; the
+roadmap `handler()`, 5 checks) re-ran clean with no changes needed —
+confirms the trim didn't regress any of the already-covered
+403/401/429/503/non-JSON-200 behavior. 30 checks total. `node --check`
+clean on every touched file; `vercel.json` re-validated as JSON.
+
+Data-write-adjacent tier is arguable here (this endpoint writes to
+`ops_tasks` via `parseTaskEmailForSession`, and touches `api/` +
+`vercel.json`) — held for the user's own preview confirmation and
+explicit approval before merge, per rule #10 and the ticket's own
+"needs preview + approval" instruction, even though the actual diff is
+narrowly scoped to retry timing and a platform config value, not the
+write logic itself.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

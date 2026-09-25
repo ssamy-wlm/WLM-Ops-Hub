@@ -3,6 +3,9 @@
   "functions": {
     "api/ops-state.js": {
       "maxDuration": 30
+    },
+    "api/process-transcript.js": {
+      "maxDuration": 90
     }
   },
   "routes": [
