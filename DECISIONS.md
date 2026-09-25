@@ -10716,6 +10716,103 @@ this PR adds no `supabase/migrations/` file and touches no existing
 write path's data shape, so no schema/migration gate and no additional
 post-merge Supabase integrity check apply beyond the usual review.
 
+### 2026-09-25 — David email overhaul: same-day corrections (scope, wording, true DST-aware timing)
+
+Four corrections landed the same day, before the PR was merged — still
+held for preview approval, same PR:
+
+1. **Email-only suppression, confirmed already correct.** No code
+   change needed — `insertNotifications()`'s in-app
+   `ops_notifications` insert already runs unconditionally, before the
+   email-suppression check even executes (it's inside the same
+   function's later `if (process.env.RESEND_API_KEY)` block). Re-ran
+   the existing suite to confirm: both a suppressed-for-email
+   `assignment` row and an allowed `timeOffSubmitted` row land in the
+   in-app table identically; only the email side differs.
+
+2. **Weekly report scope corrected to services only.**
+   `api/cron-weekly-team-completion.js` no longer reads `ops_tasks` at
+   all — the `taskRows` query and the whole task-scanning block were
+   deleted outright, not just filtered out, so there's no residual
+   dead code pretending to still consider tasks. Body line prefixes
+   dropped their `Task: `/`Service: ` split (now services-only, so the
+   prefix was redundant) — a completed item now reads as just
+   `<service name> — <client name>`. Every existing services-side
+   behavior (franchise locations, inactive-client work still counted,
+   multi-assignee credit, name-only fallback) is unchanged, since none
+   of that logic lived in the task-scanning code that was removed.
+
+3. **PTO report always sends, with the period spelled out per person.**
+   This was ALREADY unconditional (no "skip if empty" branch existed in
+   the original version either) — the actual gap was wording: a
+   zero-PTO person read as `"Michael: no PTO taken in this period."`
+   with no dates. Changed to
+   `"Michael Eruzione: No PTO taken during 2026-09-01 – 2026-09-15."`,
+   spelling out the real computed window inline for every person, every
+   time, whether they took PTO or not. Verified with a dedicated
+   all-three-zero fixture (previously only a single-person-zero case
+   was tested).
+
+4. **True America/New_York local time, DST-aware — the significant
+   fix.** The original version used a single fixed UTC cron per report
+   (`"0 17 * * 5"` for Friday noon, `"0 12 1,16 * *"` for 7 AM), chosen
+   as "12:00 PM EST"/"7:00 AM EST" under a FIXED UTC-5 offset — this
+   directly reused this codebase's own pre-existing "EST means fixed
+   UTC-5, not DST-adjusted" convention (`cron-overdue-check.js`'s
+   twice-daily overdue self-nag uses the identical pattern). That
+   convention is fine for a nag whose exact landing hour doesn't matter
+   much, but wrong for a report the ticket explicitly requires to land
+   at a stated wall-clock time: on 2026-09-25 itself (during EDT,
+   UTC-4), `"0 17 * * 5"` would actually have fired the weekly report
+   at 1:00 PM ET, not noon — a full hour of drift, live and
+   demonstrated by the test suite (see below). The user's follow-up
+   explicitly asked for real `America/New_York` local time, DST-aware,
+   year-round — a deliberate, explicit deviation from the fixed-offset
+   precedent for this one feature, not a rule #7 guess.
+   Implementation: `vercel.json`'s two cron entries became HOURLY
+   (`"0 * * * *"` for the weekly report; `"0 * 1,16 * *"` for the PTO
+   report, still restricted to UTC days 1/16 for efficiency — safe
+   because New York is always behind UTC, so a 7 AM New York moment on
+   calendar day N always falls within UTC calendar day N too, never
+   crossing a day boundary the other way). Each handler now starts by
+   computing real local time via a newly-exported
+   `localPartsInTz(date, timeZone)` from `lib/quietHours.js` (the exact
+   same real-IANA-tz-database `Intl.DateTimeFormat` technique quiet
+   hours has used since 2026-09-13 — extended, additively, to also
+   return `day`/`month`/`year`, not just `weekday`/`hour`/`minute`,
+   since every existing caller only ever reads the three fields it
+   already had) and returns a cheap no-op for every invocation that
+   isn't the exact target local moment (Friday 12:00 PM / hour 7 on the
+   1st-or-16th). `cron-pto-report.js`'s `computeHalfMonthWindow()` was
+   refactored from taking a `Date` (whose UTC-based `getUTCDate()` etc.
+   was the OLD, implicitly-UTC path) to taking already-resolved
+   `(year, month, day)` integers — the caller now always passes the
+   real NY-local calendar components, and the function itself has zero
+   timezone awareness of its own, which is what keeps it trivially
+   unit-testable in isolation.
+   Verified with instants precomputed via a direct `Intl.DateTimeFormat`
+   probe (not guessed): 2026-09-25T16:00:00Z genuinely is Friday 12:00
+   PM America/New_York (EDT) and correctly fires; 2026-09-25T17:00:00Z
+   (the OLD schedule's exact fire instant) is genuinely 1:00 PM ET
+   during EDT and now correctly no-ops — the two checks together are a
+   live, reproducible demonstration of the bug the correction fixes,
+   not just an assertion that the new code "looks right." A winter
+   instant (2026-12-04T17:00:00Z / 2026-12-01T12:00:00Z, both EST,
+   UTC-5) confirms the SAME code path also fires correctly once DST
+   ends, with no separate winter-only branch anywhere.
+
+**Verification**: suite count grew from 65 to 76 checks (9 new PTO-report
+checks: 2 DST-boundary instants + 1 off-hour no-op + the all-zero
+wording case; 6 new weekly-report checks: 3 DST-boundary instants + 1
+non-Friday no-op + the services-only content assertions folded into
+the existing full-run check; the David-suppression and
+send-assignment-email suites are unchanged and re-ran clean, 15/15 and
+4/4). `node --check` clean on every touched file, including
+`lib/quietHours.js`. Still held as draft — not merged; these
+corrections were pushed to the same branch/PR (#437) rather than
+opening a new one, since the PR was never reviewed or approved before
+they landed.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

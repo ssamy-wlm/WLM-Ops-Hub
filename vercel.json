@@ -42,11 +42,11 @@
     },
     {
       "path": "/api/cron-weekly-team-completion",
-      "schedule": "0 17 * * 5"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron-pto-report",
-      "schedule": "0 12 1,16 * *"
+      "schedule": "0 * 1,16 * *"
     }
   ]
 }

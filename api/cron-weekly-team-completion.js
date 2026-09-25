@@ -1,33 +1,50 @@
 // Vercel Cron: weekly team-completion report — David's Friday-noon digest
-// of the whole team's completed work (tasks + services marked done) in the
-// trailing 7 days, grouped by person. One of only three email types David
-// still receives after the "David email overhaul" ticket (2026-09-25) —
-// see api/ops-sync.js's isEmailSuppressedForDavid()/DAVID_EMAIL_ALLOWED_TYPES
-// for the other two and the full suppression rationale.
+// of the whole team's completed SERVICES (not tasks — see the 2026-09-25
+// correction below) in the trailing 7 days, grouped by person. One of only
+// three email types David still receives after the "David email overhaul"
+// ticket (2026-09-25) — see api/ops-sync.js's
+// isEmailSuppressedForDavid()/DAVID_EMAIL_ALLOWED_TYPES for the other two
+// and the full suppression rationale.
 //
 // Auth: same CRON_SECRET Bearer-token pattern every other cron endpoint in
 // this app already uses (see cron-overdue-check.js's own header comment).
 //
-// Schedule: vercel.json "0 17 * * 5" — Friday 17:00 UTC = Friday 12:00 PM
-// EST (fixed UTC-5, not DST-adjusted — matching cron-overdue-check.js's
-// own established "EST means a fixed UTC-5 offset in this codebase"
-// convention for its twice-daily overdue self-nag, not real wall-clock ET,
-// which is UTC-4 for most of the year).
+// Scope correction (2026-09-25, same day as the original ticket): the
+// first version of this report also included completed TASKS. Corrected
+// to services only, per explicit follow-up instruction — "combined report
+// of all services marked done that week across the team." Tasks are no
+// longer read from ops_tasks at all.
+//
+// Schedule (2026-09-25 DST correction): vercel.json "0 * * * *" — runs
+// EVERY hour, every day. The actual send only happens when the current
+// moment is genuinely Friday 12:00 PM America/New_York LOCAL time, checked
+// via lib/quietHours.js's localPartsInTz() (real IANA tz database
+// conversion, DST-aware) — every other invocation this hourly schedule
+// produces is a fast, cheap no-op. This replaces an earlier version that
+// used a single fixed "0 17 * * 5" UTC cron matching only EST (UTC-5) —
+// which is wrong for roughly 8 months of the year while the US observes
+// EDT (UTC-4): that schedule would have actually fired at 1:00 PM ET, not
+// noon, for exactly the class of dates this repo's own DST comment already
+// warns about (see CLAUDE.md's "Cron / utcHour lockstep" rule). An hourly
+// cron is the only way to hit an exact LOCAL time year-round without
+// Vercel-side timezone support (which doesn't exist) — every US DST
+// transition happens to land exactly on a UTC hour boundary, so this never
+// needs sub-hour granularity to stay correct.
 //
 // Recipient: David only, resolved fresh against the live ops_admins table
 // by email — never a hardcoded id, same discipline api/inbound-email.js's
 // resolveInboundSender() already established for him.
 //
 // "Completed" reuses the exact same signal cron-overdue-check.js's own
-// hierarchy-escalation "completedSince" scan already uses for this same
-// underlying concept (a task's completedAt timestamp, a service's lastDone
-// date, both stamped the instant something is actually marked Done/done —
-// see markServiceDone() in client.html and the completedAt-on-Done
-// convention shared by every task-status-change path) — reused here rather
-// than inventing a second definition of "done" for the same fields.
-// Multiple assignees on one item (assigneeIds[]) credit every one of them,
-// same "everyone named owns it" convention already applied elsewhere in
-// this app (e.g. api/process-transcript.js's multi-name task parsing).
+// hierarchy-escalation "completedSince" scan already uses for this
+// underlying concept — a service's lastDone date, stamped the instant it's
+// actually marked done (see markServiceDone() in client.html, the ONLY
+// code path that ever sets workStatus:'done' — setServiceStatus() always
+// routes a 'done' transition through it rather than setting the flag
+// directly).  Multiple assignees on one service (assigneeIds[]) credit
+// every one of them, same "everyone named owns it" convention already
+// applied elsewhere in this app (e.g. api/process-transcript.js's
+// multi-name task parsing).
 //
 // Includes every client regardless of active/inactive status — this is a
 // retrospective record of what actually happened this week, not a live
@@ -39,13 +56,15 @@
 //
 // Idempotency: read-based, same shape as cron-work-anniversaries.js — a
 // 'weeklyTeamCompletion' notification whose context.weekEnding already
-// matches today's run (UTC date) is treated as already sent, so a
-// duplicate/retried invocation on the same Friday never double-sends.
+// matches this run's local NY calendar date is treated as already sent,
+// so a duplicate/retried invocation within the same target hour never
+// double-sends.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
+import { localPartsInTz } from '../lib/quietHours.js';
 import { insertNotifications, DAVID_EMAIL } from './ops-sync.js';
 
-function todayIsoUtc() { return new Date().toISOString().slice(0, 10); }
+function dateStr(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
 
 // Exported for direct unit testing (CLAUDE.md rule #9).
 export function itemAssigneeIds(item) {
@@ -61,12 +80,18 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  const now = new Date();
+  const ny = localPartsInTz(now, 'America/New_York');
+  if (ny.weekday !== 'Fri' || ny.hour !== 12) {
+    return res.status(200).json({ ok: true, sent: false, reason: 'not Friday 12:00 PM America/New_York (this hourly invocation is a no-op)' });
+  }
+
   let supabase;
   try { supabase = getSupabaseAdmin(); }
   catch (err) { await logError({ endpoint: 'cron-weekly-team-completion', error: err }); return res.status(500).json({ error: err.message }); }
 
   try {
-    const weekEnding = todayIsoUtc();
+    const weekEnding = dateStr(ny.year, ny.month, ny.day);
 
     const { data: existingRows, error: nErr } = await supabase.from('ops_notifications')
       .select('id, data').eq('data->>type', 'weeklyTeamCompletion');
@@ -75,27 +100,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, sent: false, reason: 'already sent for this week' });
     }
 
-    const cutoff = new Date();
+    const cutoff = new Date(now);
     cutoff.setUTCDate(cutoff.getUTCDate() - 7);
-    const cutoffIso = cutoff.toISOString();
-    const cutoffDateStr = cutoffIso.slice(0, 10);
+    const cutoffDateStr = cutoff.toISOString().slice(0, 10);
 
-    const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: taskRows, error: tErr }, { data: clientRows, error: cErr }] = await Promise.all([
+    const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: clientRows, error: cErr }] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
-      supabase.from('ops_tasks').select('id, data'),
       supabase.from('ops_clients').select('id, data'),
     ]);
     if (uErr) throw new Error(uErr.message);
     if (aErr) throw new Error(aErr.message);
-    if (tErr) throw new Error(tErr.message);
     if (cErr) throw new Error(cErr.message);
 
     const users = (userRows || []).map(r => ({ id: r.id, ...r.data }));
     const admins = (adminRows || []).map(r => ({ id: r.id, ...r.data }));
     const nameForId = (id) => (users.find(p => p.id === id) || admins.find(p => p.id === id))?.name || '';
 
-    // Display name -> list of one-line completed-item descriptions.
+    // Display name -> list of one-line completed-service descriptions.
     const byPerson = new Map();
     const addItem = (item, label) => {
       const ids = itemAssigneeIds(item);
@@ -108,19 +130,12 @@ export default async function handler(req, res) {
       });
     };
 
-    (taskRows || []).forEach(r => {
-      const t = r.data; if (!t) return;
-      if (t.status !== 'Done' || !t.completedAt || t.completedAt < cutoffIso) return;
-      const clientPart = t.clientName ? ` — ${t.clientName}` : '';
-      addItem(t, `Task: ${t.subject || '(untitled task)'}${clientPart}`);
-    });
-
     (clientRows || []).forEach(r => {
       const c = r.data; if (!c) return;
       const scan = (list, locName) => (list || []).forEach(s => {
         if (!s || s.workStatus !== 'done' || !s.lastDone || s.lastDone < cutoffDateStr) return;
         const forName = locName ? `${c.name} — ${locName}` : c.name;
-        addItem(s, `Service: ${s.name || '(unnamed service)'} — ${forName}`);
+        addItem(s, `${s.name || '(unnamed service)'} — ${forName}`);
       });
       scan(c.services, null);
       (c.locations || []).forEach(loc => scan(loc.services, loc.name));
@@ -129,7 +144,7 @@ export default async function handler(req, res) {
     const people = [...byPerson.keys()].sort((a, b) => a.localeCompare(b));
     const bodyLines = people.length
       ? people.map(name => `${name} (${byPerson.get(name).length}):\n${byPerson.get(name).map(l => `  • ${l}`).join('\n')}`).join('\n\n')
-      : 'No tasks or services were marked done this week.';
+      : 'No services were marked done this week.';
 
     const david = admins.find(a => String(a.email || '').toLowerCase() === DAVID_EMAIL);
     if (!david) {
@@ -139,7 +154,7 @@ export default async function handler(req, res) {
 
     const warnings = [];
     // bypassQuietHours: this is a precisely-scheduled report (Friday noon
-    // EST, per its own acceptance criteria), same "lands exactly when
+    // ET, per its own acceptance criteria), same "lands exactly when
     // promised" reasoning cron-overdue-check.js's own digest/nag sends
     // already use opts.bypassQuietHours for — not the "no same-day
     // urgency" case cron-work-anniversaries.js deliberately leaves subject
