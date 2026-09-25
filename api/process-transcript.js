@@ -171,6 +171,35 @@ async function callGemini({ system, userMessage, maxTokens }) {
       const choice = data.choices?.[0];
       const text = choice?.message?.content || '{}';
       const finishReason = choice?.finish_reason === 'length' ? 'max_tokens' : (choice?.finish_reason || 'stop');
+      // A 200 OK response whose CONTENT isn't parseable JSON at all (2026-
+      // 09-25) — e.g. a bare "An error occurred" string, seen in
+      // production — is a real Gemini-side failure that happens to arrive
+      // with a 200 status, not a formatting problem in this app's own
+      // prompt/schema. Retried through this SAME loop/backoff schedule as
+      // a 429/5xx, rather than failing on the first attempt and surfacing
+      // a confusing "invalid JSON" error for what's actually a transient
+      // upstream error. Never attempted for a truncated response
+      // (finishReason==='max_tokens') — that's #406's own salvage-or-
+      // chunk path at the CALLER level, which needs the raw
+      // (possibly-cut-off-mid-object) text passed through untouched, not
+      // retried away here. Uses extractJsonBlock() (#435) for the same
+      // reason every other parse attempt in this file does: a real,
+      // valid response wrapped in prose must not be mistaken for this
+      // failure mode.
+      if (finishReason !== 'max_tokens') {
+        try { JSON.parse(extractJsonBlock(text)); }
+        catch {
+          if (attempt < GEMINI_MAX_ATTEMPTS - 1) {
+            await sleep(geminiRetryDelayMs(r, attempt));
+            continue;
+          }
+          // Final attempt still unparseable — hand back to the caller
+          // exactly as before (same {text, finishReason} contract); each
+          // caller's own existing catch block logs the raw text via
+          // logError() and shows a clean, non-raw message (see those call
+          // sites' own comments).
+        }
+      }
       return { text, finishReason };
     }
     // Raw text captured FIRST, always (2026-09-22) — a 404 "model not
@@ -1154,8 +1183,18 @@ export async function parseTaskEmailForSession(session, text) {
         await logError({ endpoint: 'process-transcript:taskEmail', error: 'Response truncated by max_tokens with nothing recoverable', session, extra: { raw: raw.slice(0, 300) } });
         return { status: 422, body: { error: 'The list was too long to parse in one go — split it into two and try again.' } };
       } else {
+        // Not a formatting problem in our own prompt/schema — callGemini()
+        // already retried this exact condition internally (2026-09-25, same
+        // loop/backoff as its 429/5xx handling) up to GEMINI_MAX_ATTEMPTS
+        // times before ever returning here, so reaching this branch means
+        // the model kept returning non-JSON content (e.g. a bare "An error
+        // occurred") across every retry — a real upstream error, not
+        // something a client-side retry would fix. The raw body is still
+        // fully captured in ops_error_log via `extra.raw` below; only the
+        // user-facing message changes — never the raw JSON.parse exception
+        // or the raw body itself, just a plain, actionable message.
         await logError({ endpoint: 'process-transcript:taskEmail', error: parseErr, session, extra: { raw: raw.slice(0, 300) } });
-        return { status: 500, body: { error: 'The model returned invalid JSON. Raw: ' + raw.slice(0, 300) } };
+        return { status: 500, body: { error: 'The model returned an error — please try again.' } };
       }
     }
 
@@ -1549,7 +1588,16 @@ ${transcriptText}`;
   } catch (parseErr) {
     const truncated = result.finishReason === 'max_tokens';
     if (!truncated) {
-      const err = new Error('The model returned invalid JSON. Raw: ' + raw.slice(0, 300));
+      // Not a formatting problem in our own prompt/schema — callGemini()
+      // already retried this exact condition internally (2026-09-25, same
+      // loop/backoff as its 429/5xx handling) up to GEMINI_MAX_ATTEMPTS
+      // times before ever returning here, so reaching this branch means the
+      // model kept returning non-JSON content across every retry — a real
+      // upstream error, not something a client-side retry would fix. The
+      // message never carries the raw body — that's still fully captured
+      // via _rawSnippet below, read by handler()'s own logError() call
+      // further down (see that call site's comment).
+      const err = new Error('The model returned an error — please try again.');
       err._rawSnippet = raw.slice(0, 300);
       throw err;
     }
