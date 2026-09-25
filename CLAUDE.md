@@ -336,6 +336,50 @@ Don't relitigate them without an explicit decision from the user.
   (no longer double-counts with the new badge). See DECISIONS.md for the
   full investigation and the rationale for not folding the three signals
   together.
+- David email overhaul (2026-09-25 — held for preview approval, `api/`
+  path): David now only receives three email types — a time-off
+  SUBMISSION notification (`timeOffSubmitted`, he's an approver), the new
+  weekly team-completion report, and the new bi-monthly PTO report; every
+  other email type (assignment, overdue/escalation, nags, daily digest,
+  team-summaries, review routing, workAnniversary, etc.) is suppressed
+  for him specifically — email-only, his in-app notification bell is
+  unaffected. Implemented as a single allowlist predicate,
+  `isEmailSuppressedForDavid(toEmail, type)` (exported from
+  `api/ops-sync.js`), checked inside `insertNotifications()` — the one
+  choke point nearly every notification email in this codebase already
+  passes through — plus the same check added to
+  `api/send-assignment-email.js`'s own separate direct-send path (the
+  "assignment" type never goes through `insertNotifications()`), scoped
+  to automated sends only (`recipientId` present) so the Admin Controls
+  "Send Test Email" diagnostic is never affected, matching that
+  endpoint's own pre-existing quiet-hours carve-out for the same case.
+  Deliberately NOT touched: `api/cron-backup.js`'s off-site backup email
+  (every super/owner admin, David included) — flagged rather than
+  silently suppressed, since it's a disaster-recovery safety net, not a
+  routine notification, and wasn't named in the ticket's own examples;
+  `api/inbound-email.js`'s confirmation replies (a direct reply to
+  David's own action, not a notification reaching him passively). New:
+  `api/cron-weekly-team-completion.js` (Friday 12:00 PM EST fixed
+  UTC-5 — `vercel.json` `"0 17 * * 5"` — the whole team's tasks+services
+  marked done in the trailing 7 days, grouped by person, reusing the
+  exact same "completed" signal `api/cron-overdue-check.js`'s own
+  hierarchy-escalation block already established for this concept) and
+  `api/cron-pto-report.js` (1st & 16th at 7:00 AM EST fixed UTC-5 —
+  `"0 12 1,16 * *"` — Jacob/Abby/Michael's *approved* time off
+  overlapping the just-completed half-month, resolved by first name
+  against the live roster since the three span both `ops_users` and
+  `ops_admins`; a name matching 0 or 2+ people is flagged, never
+  guessed). Both are read-based idempotent (a duplicate/retried
+  invocation for the same period never double-sends) and bypass quiet
+  hours (precisely-scheduled reports, same reasoning as
+  `cron-overdue-check.js`'s own digest/nag sends). See DECISIONS.md for
+  the full data-model investigation (recurringServices[] has no
+  completion concept at all and was correctly excluded; the "16th
+  covers 1st–15th, 1st covers 16th–end of prior month" window math; the
+  partial-overlap judgment call) and the 65-check Node verification
+  suite (a fake in-memory PostgREST-over-fetch layer, calibrated against
+  real `@supabase/supabase-js` request shapes, exercising the actual
+  exported handlers end-to-end — no live Supabase access per rule #11).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

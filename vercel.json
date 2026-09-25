@@ -39,6 +39,14 @@
     {
       "path": "/api/cron-work-anniversaries",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron-weekly-team-completion",
+      "schedule": "0 17 * * 5"
+    },
+    {
+      "path": "/api/cron-pto-report",
+      "schedule": "0 12 1,16 * *"
     }
   ]
 }
