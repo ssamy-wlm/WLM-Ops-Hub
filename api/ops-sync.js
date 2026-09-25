@@ -2630,6 +2630,26 @@ export default async function handler(req, res) {
           // the "Make recurring" UI applied before the very first save), so
           // this must not skip validation just because there's no `cur` yet.
           row.recurring = sanitizeRecurringField(row.recurring, row.dueDate);
+          // Report fields never trusted from `inc` on CREATION (2026-09-25)
+          // — #419's two guards (required reason, admin-origin-only) both
+          // live in the UPDATE branches below, gated on `!cur.reportedMisassigned`,
+          // so neither one ever runs for a brand-new row: the `row = {
+          // ...inc, ... }` spreads just above passed reportedMisassigned/
+          // reportedMisassignedReason/By/ByName/At through completely
+          // unvalidated, and nothing here ever stamped the metadata either
+          // (that only happens in the update branch's own stamping block).
+          // A report can only ever be filed against an EXISTING admin-
+          // assigned task via the update path — creation must never accept
+          // a pre-flagged report, whatever `inc` happens to carry — so
+          // these are unconditionally forced here, for both the admin and
+          // member insert sub-cases above, regardless of what the client
+          // sent. No legitimate UI flow ever intends to create a
+          // pre-flagged task, so this needs no client-side change.
+          row.reportedMisassigned = false;
+          row.reportedMisassignedBy = null;
+          row.reportedMisassignedByName = null;
+          row.reportedMisassignedAt = null;
+          row.reportedMisassignedReason = null;
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else if (isAdmin) {
