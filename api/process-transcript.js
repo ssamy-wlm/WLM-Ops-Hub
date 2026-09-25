@@ -895,6 +895,37 @@ function evaluateMeetingParseGate(attributedPersonId, responsiblePersonId, super
   return 'skip';
 }
 
+// Narrows a raw model response down to just its JSON value before
+// JSON.parse ever sees it (2026-09-25) — Gemini sometimes prefixes a
+// response with conversational prose ("Let me analyze the transcript...")
+// before the actual JSON, or trails commentary after it, despite the
+// system prompt asking for JSON only; a ```json fence (with or without
+// surrounding prose) is the other common wrapper. Strips a fence first,
+// then — ONLY if the fenced/trimmed text isn't already valid JSON on its
+// own — slices from the first '{' or '[' to its OWN matching last '}'/']'
+// (whichever bracket type opens first), a plain first-to-last slice, not a
+// real depth-balanced parse; that's deliberately as far as this goes; it
+// never attempts to REPAIR malformed JSON itself (that's still
+// repairTruncatedTaskJson/repairTruncatedRoadmapJson's job below, gated on
+// a confirmed max_tokens truncation, never guessed from a parse failure
+// alone). Returns the original fenced/trimmed text unchanged when there's
+// no bracket at all, or when parsing it as-is already succeeds — so a
+// clean, prose-free response is never touched by the slicing step and
+// takes the exact same path as before this change.
+function extractJsonBlock(raw) {
+  const fenced = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+  try { JSON.parse(fenced); return fenced; } catch { /* fall through to prose-stripping below */ }
+  const firstBrace = fenced.indexOf('{');
+  const firstBracket = fenced.indexOf('[');
+  const candidates = [firstBrace, firstBracket].filter(i => i !== -1);
+  if (!candidates.length) return fenced; // nothing bracket-like — let JSON.parse fail with the real, undoctored error
+  const start = Math.min(...candidates);
+  const closeChar = fenced[start] === '{' ? '}' : ']';
+  const end = fenced.lastIndexOf(closeChar);
+  if (end <= start) return fenced;
+  return fenced.slice(start, end + 1);
+}
+
 // Shared by every truncated-JSON salvage path below (both the taskEmail
 // endpoint's own repairTruncatedTaskJson and the Roadmap meeting-transcript
 // extractor's repairTruncatedRoadmapJson) — walks a raw response looking
@@ -1100,7 +1131,7 @@ export async function parseTaskEmailForSession(session, text) {
     const raw = result.text;
     let parsed;
     try {
-      const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+      const cleaned = extractJsonBlock(raw);
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
       // Only ever treated as a truncation — and only ever repaired — when
@@ -1506,7 +1537,7 @@ ${transcriptText}`;
 
   const raw = result.text;
   try {
-    const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+    const cleaned = extractJsonBlock(raw);
     const parsed = JSON.parse(cleaned);
     return {
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
