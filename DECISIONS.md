@@ -10411,6 +10411,118 @@ Task-write-adjacent risk tier per rule #10 (touches the client sync
 path) — held for the user's own preview click-through and explicit
 approval before merge, per this ticket's own instruction; not merged.
 
+### 2026-09-25 — Notification bell: red unread-count badge + always-on sound (index.html + user.html)
+
+Ticket: replace the existing 8px red dot on each portal's notification
+bell with a red circular badge showing the actual unread count (capped
+"99+" past two digits, hidden at 0, must surface the super admin's real
+count correctly), and play a short "bing" when the unread count
+increases on the notification poll — always on, autoplay-policy-safe
+(only after the user's first interaction), in-app only, display-only,
+no data writes.
+
+Investigation before touching anything (rule #7): the two portals'
+bells turned out to be structurally different, not just two copies of
+the same thing.
+
+- **`index.html`**: `#admin-notif-dot` (inside `#admin-notif-btn`) is
+  driven solely by `refreshAdminNotifBadge()`, which has exactly three
+  call sites — the `cloudPullAll()` poll (after `notifications` is
+  applied), `readAdminNotif()` (marks one read), and
+  `markAllAdminNotifsRead()` (marks all read) — all three recompute the
+  same canonical `unread` count from `dbGet(DB_KEYS.notifications)`, so
+  centralizing the increase-detection inside `refreshAdminNotifBadge()`
+  itself is correct and safe: the only call site where the count can
+  actually go UP is the poll. A separate, older, completely unwired
+  `.notif-btn`/`.notif-dot` pair also exists in the file (line ~684,
+  inside a legacy `.main`/`.topbar` structure that predates the current
+  `admin-sidebar`/`admin-topbar` layout) — no `id`, no `onclick`, no JS
+  reference anywhere; confirmed dead/orphaned and left untouched, same
+  as the pre-existing `#ov-total-reports` dead-code finding from the
+  inactive-client-services ticket.
+- **`user.html`**: `#notifDot` (inside `#notifBtn`) turned out to be
+  overloaded across THREE unrelated concerns sharing one element —
+  `checkAnnouncements()` shows it for an active announcement banner,
+  and `updateAssignmentsBadge()` shows it for `(unread notifications > 0
+  OR total assignment count > 0)`. Folding "unread notification count"
+  into that same dot as a number would have been wrong on its own terms
+  (a badge showing a number derived from assignment-due-counts, not
+  notifications, doesn't match "unread count" or the acceptance
+  criterion's plain reading), and would have made the dot show a
+  nonzero number even with zero unread notifications. Fixed by adding a
+  dedicated new element, `#notifCountBadge`, sitting alongside the
+  existing `#notifDot` inside the same `#notifBtn`, driven purely by
+  `_getAssignNotifs().filter(n=>!n.read).length` (the same source
+  `updateAssignmentsBadge()` already computed as `unread` for the old
+  dot). The old `#notifDot` is kept, but demoted to a fallback cue for
+  its other two (still real) signals — its own expression changed from
+  `(unread>0||total>0)` to `(unread===0 && total>0)`, i.e. it only shows
+  when there's something else to flag (announcement, or a nonzero
+  assignment total) and the new count badge isn't already showing,
+  avoiding two overlapping indicators in the same corner. Verified via
+  Playwright: at 26 unread (the ticket's own super-admin example) the
+  new badge shows, the old dot is suppressed; `checkAnnouncements()`'s
+  own announcement-only path was not touched and still drives the old
+  dot exactly as before.
+
+Both files got the identical (hand-duplicated per rule #3) badge markup
+pattern — `min-width:16px;height:16px;padding:0 3px;border-radius:999px`
+circle, `top:-4px;right:-4px` overlapping the bell's top-right corner,
+red background, bold white text — and the identical cap logic:
+`unread>99 ? '99+' : String(unread)`. (Note: `user.html`'s
+`_getAssignNotifs()` already caps its own merged/deduped feed at 30
+most-recent entries — a pre-existing constraint unrelated to this
+ticket — so a real unread count there can never actually reach 100+
+through that helper; the 99+ cap is still correct defensive code, just
+verified in isolation by stubbing `_getAssignNotifs()` in the test
+rather than through a real 150-notification seed.)
+
+Sound: synthesized via the Web Audio API (`OscillatorNode` + `GainNode`,
+two quick rising tones ~880Hz→1320Hz, ~300ms) rather than an embedded
+audio file — this is a single-file app with no asset pipeline, and a
+few lines of Web Audio code avoids shipping a base64 binary blob in the
+page source. Gated by `_notifSoundUnlocked`, a flag set by a one-time
+`click`/`keydown`/`touchstart` listener on `document` — `_playNotifBing()`
+no-ops silently if that flag isn't set yet, satisfying the browser
+autoplay policy (which blocks audio, including a fresh `AudioContext`,
+started with no prior user gesture) without needing to catch/ignore a
+rejected `.play()` promise. Increase-detection uses a per-file baseline
+pair (`_adminNotifBaselineSet`/`_adminNotifLastUnread` in `index.html`,
+`_notifBaselineSet`/`_notifLastUnread` in `user.html`) that starts
+`false`/`0` and is set on the badge function's very first call — this
+is deliberate: it means the sound never fires for notifications that
+were already unread before the session opened (e.g. the super admin's
+pre-existing 26 on load), only for a genuine increase seen after that
+baseline is established, matching "plays while the app is open" from
+the acceptance criteria rather than "plays once on every login."
+
+Not touched: no mute toggle (explicitly out of scope — "always on"),
+no browser/OS-level `Notification` API (explicitly out of scope —
+"in-app only"), `client.html` (explicitly out of scope — it has no
+notification bell of its own).
+
+Verification: `node --check`-equivalent on both files' extracted
+`<script>` blocks (6 blocks in `index.html`, 2 in `user.html`, all
+parse clean); div-balance check against `origin/main` — `index.html`
+unchanged at -2/-2 (no markup touched, CSS/JS only); `user.html` -1/-1
+both before and after (one new self-closing `<div>` added, balanced).
+New 21-check Playwright suite against the real pages (both portals'
+`.app` login-gated visibility simulated via `.classList.add('visible')`
+to match real post-login DOM state, since `.app{display:none}` hides
+everything including the bell until then): exact "26" display and
+visibility at the ticket's own admin-count example, "99+" cap, hidden
+at 0, genuinely on-screen (`checkVisibility()`, not just `display`) —
+not just present-but-covered by a hidden ancestor, per rule #9's own
+documented false-positive trap — sound-locked-then-unlocked-by-a-click,
+sound fires exactly once per genuine increase and not on a same-count
+recheck, user.html's old dot correctly suppressed once the count badge
+is showing. Zero-JS-error load check re-run clean across all three
+portals, 3/3.
+
+Low-risk tier per rule #10: display-only, no data writes, doesn't touch
+`api/`/`lib/`/`supabase/migrations/` — eligible for auto-merge once CI
+is green.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

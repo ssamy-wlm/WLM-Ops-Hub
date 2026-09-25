@@ -190,6 +190,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 .header-signout-btn{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:7px 14px;font-size:12px;}
 .notif-btn{width:36px;height:36px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;position:relative;}
 .notif-dot{width:8px;height:8px;background:var(--red);border-radius:50%;position:absolute;top:6px;right:6px;border:2px solid var(--card);}
+.notif-count-badge{min-width:16px;height:16px;padding:0 3px;box-sizing:border-box;background:var(--red);border-radius:999px;position:absolute;top:-4px;right:-4px;border:2px solid var(--card);display:none;align-items:center;justify-content:center;font-size:10px;line-height:1;font-weight:800;color:#fff;font-family:Arial,sans-serif;}
 .notif-dropdown{position:absolute;top:44px;right:0;width:320px;max-width:90vw;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.15);z-index:500;cursor:default;text-align:left;}
 .notif-dropdown-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);}
 .notif-dropdown-list{max-height:340px;overflow-y:auto;}
@@ -652,7 +653,7 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       </div>
       <div class="topbar-right">
         <div class="notif-btn" id="help-btn" onclick="toggleHelpPanel()" title="Help">?</div>
-        <div class="notif-btn" id="notifBtn" onclick="toggleNotifDropdown(event)">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div>
+        <div class="notif-btn" id="notifBtn" onclick="toggleNotifDropdown(event)">🔔<div class="notif-dot" id="notifDot" style="display:none;"></div><div class="notif-count-badge" id="notifCountBadge" style="display:none;"></div>
           <div id="notifDropdownPanel" class="notif-dropdown" style="display:none;" onclick="event.stopPropagation()">
             <div class="notif-dropdown-header">
               <span>Notifications</span>
@@ -5067,6 +5068,41 @@ function _notifClickThrough(clientId, serviceId){
   showSection('tracker', document.getElementById('nav-tracker'));
 }
 
+// Notification "bing" sound (2026-09-25) — synthesized via Web Audio rather
+// than an embedded audio file, so there's no binary asset to ship in this
+// single-file app. Gated on a real user gesture (click/keydown/touchstart,
+// once) before the first play, since browsers block audio (including
+// AudioContext playback) started with no prior interaction —
+// _notifSoundUnlocked just records that a gesture already happened;
+// creating the AudioContext itself is also deferred to first use for the
+// same reason.
+let _notifSoundUnlocked = false;
+let _notifAudioCtx = null;
+function _unlockNotifSound(){ _notifSoundUnlocked = true; }
+document.addEventListener('click', _unlockNotifSound, {once:true});
+document.addEventListener('keydown', _unlockNotifSound, {once:true});
+document.addEventListener('touchstart', _unlockNotifSound, {once:true});
+function _playNotifBing(){
+  if(!_notifSoundUnlocked) return;
+  try{
+    if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const ctx = _notifAudioCtx;
+    if(ctx.state==='suspended') ctx.resume();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.setValueAtTime(1320, now+0.09);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now+0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now+0.28);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(now); osc.stop(now+0.3);
+  }catch(e){}
+}
+let _notifBaselineSet = false;
+let _notifLastUnread = 0;
 function updateAssignmentsBadge(){
   try{
     const myId   = currentUser?.id||'';
@@ -5118,8 +5154,26 @@ function updateAssignmentsBadge(){
     const badge = document.getElementById('assignments-badge');
     if(badge){ badge.textContent=total; badge.style.display=total>0?'inline-flex':'none'; }
     const unread = _getAssignNotifs().filter(n=>!n.read).length;
+    // notifCountBadge (2026-09-25) shows the actual unread-notification
+    // count now, so notifDot's plain dot is only needed as a fallback cue
+    // for the two OTHER, unrelated things it's always signaled (an active
+    // announcement — see checkAnnouncements() — and a nonzero assignment
+    // total) — dropped from this expression since the count badge already
+    // covers the unread-notification case more precisely.
     const dot = document.getElementById('notifDot');
-    if(dot) dot.style.display=(unread>0||total>0)?'block':'none';
+    if(dot) dot.style.display = (unread===0 && total>0) ? 'block' : 'none';
+    const countBadge = document.getElementById('notifCountBadge');
+    if(countBadge){
+      if(unread>0){ countBadge.textContent = unread>99?'99+':String(unread); countBadge.style.display='flex'; }
+      else { countBadge.textContent=''; countBadge.style.display='none'; }
+    }
+    // _notifBaselineSet — false only until this function's first call (page
+    // load), so the sound never fires for notifications that were already
+    // unread before this session opened; same reasoning as index.html's
+    // refreshAdminNotifBadge().
+    if(_notifBaselineSet && unread>_notifLastUnread) _playNotifBing();
+    _notifBaselineSet = true;
+    _notifLastUnread = unread;
   }catch(e){}
 }
 
