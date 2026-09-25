@@ -336,6 +336,71 @@ Don't relitigate them without an explicit decision from the user.
   (no longer double-counts with the new badge). See DECISIONS.md for the
   full investigation and the rationale for not folding the three signals
   together.
+- David email overhaul (2026-09-25, corrected same day — held for preview
+  approval, `api/` path): David now only receives three email types — a
+  time-off SUBMISSION notification (`timeOffSubmitted`, he's an
+  approver), the new weekly team-completion report, and the new
+  bi-monthly PTO report; every other email type (assignment, overdue/
+  escalation, nags, daily digest, team-summaries, review routing,
+  workAnniversary, etc.) is suppressed for him specifically —
+  **email-only**, his in-app notification bell/`ops_notifications` rows
+  are completely unaffected (the in-app insert in `insertNotifications()`
+  always runs unconditionally; suppression only ever touches the email
+  half that runs after it). Implemented as a single allowlist predicate,
+  `isEmailSuppressedForDavid(toEmail, type)` (exported from
+  `api/ops-sync.js`), checked inside `insertNotifications()` — the one
+  choke point nearly every notification email in this codebase already
+  passes through — plus the same check added to
+  `api/send-assignment-email.js`'s own separate direct-send path (the
+  "assignment" type never goes through `insertNotifications()`), scoped
+  to automated sends only (`recipientId` present) so the Admin Controls
+  "Send Test Email" diagnostic is never affected, matching that
+  endpoint's own pre-existing quiet-hours carve-out for the same case.
+  Deliberately NOT touched: `api/cron-backup.js`'s off-site backup email
+  (every super/owner admin, David included) — flagged rather than
+  silently suppressed, since it's a disaster-recovery safety net, not a
+  routine notification, and wasn't named in the ticket's own examples;
+  `api/inbound-email.js`'s confirmation replies (a direct reply to
+  David's own action, not a notification reaching him passively). New:
+  `api/cron-weekly-team-completion.js` (Friday 12:00 PM, and
+  `api/cron-pto-report.js` (the 1st and 16th at 7:00 AM) — both true
+  **America/New_York local time, DST-aware, year-round** (corrected same
+  day from an initial fixed-UTC-offset version that drifted an hour
+  during EDT — see below). Both crons now run HOURLY
+  (`vercel.json`: `"0 * * * *"` for the weekly report, `"0 * 1,16 * *"`
+  for the PTO report, the latter restricted to UTC days 1/16 since New
+  York is always behind UTC so the target local morning always falls on
+  the matching UTC calendar day too) and gate the actual send inside the
+  handler via `lib/quietHours.js`'s newly-exported `localPartsInTz()`
+  (the same real-IANA-timezone-database technique quiet hours already
+  uses) — every other hourly invocation is a fast no-op. The weekly
+  report is **services only** (corrected same day — tasks were dropped
+  entirely, `ops_tasks` isn't even queried anymore); "completed" reuses
+  the exact same signal `api/cron-overdue-check.js`'s own
+  hierarchy-escalation block already established (a service's `lastDone`
+  date). The PTO report **always sends**, every run, even when all three
+  of Jacob/Abby/Michael took zero PTO that period — a person with
+  nothing to report gets an explicit `"<Name>: No PTO taken during
+  <start> – <end>."` line (corrected same day from a vaguer "no PTO taken
+  in this period" with no dates) rather than being omitted or the whole
+  email being skipped; there is no "skip if empty" branch anywhere in
+  that file. Jacob/Abby/Michael are resolved by first name against the
+  live roster since the three span both `ops_users` and `ops_admins`; a
+  name matching 0 or 2+ people is flagged, never guessed. Both crons stay
+  read-based idempotent (a duplicate/retried invocation for the same
+  period never double-sends) and bypass quiet hours (precisely-scheduled
+  reports, same reasoning as `cron-overdue-check.js`'s own digest/nag
+  sends). See DECISIONS.md for the full data-model investigation
+  (`recurringServices[]` has no completion concept at all and was
+  correctly excluded from the weekly report; the "16th covers 1st–15th,
+  1st covers 16th–end of prior month" window math; the partial-overlap
+  judgment call; the DST-drift bug the correction fixed, demonstrated
+  live in the test suite) and the 76-check Node verification suite (a
+  fake in-memory PostgREST-over-fetch layer, calibrated against real
+  `@supabase/supabase-js` request shapes, exercising the actual exported
+  handlers end-to-end — no live Supabase access per rule #11 — including
+  explicit EDT-vs-EST instants proving the old fixed-offset schedule
+  would have fired an hour late/early for roughly 8 months of the year).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

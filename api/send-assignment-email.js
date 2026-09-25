@@ -6,6 +6,7 @@ import { logError } from '../lib/errorLog.js';
 import { requireSession, tierOf } from '../lib/opsSession.js';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { isWithinQuietHours } from '../lib/quietHours.js';
+import { DAVID_EMAIL } from './ops-sync.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -47,6 +48,17 @@ export default async function handler(req, res) {
   }
   if (!title || typeof title !== 'string') {
     return res.status(400).json({ error: '"title" is required' });
+  }
+
+  // David email overhaul (2026-09-25) — assignment emails are one of the
+  // routine types suppressed for David (see api/ops-sync.js's
+  // isEmailSuppressedForDavid() for the full rationale); scoped to
+  // recipientId, the same "automated send" signal the quiet-hours check
+  // right below already uses to distinguish this from the Admin Controls
+  // "Send Test Email" diagnostic (no recipientId, never suppressed either
+  // way — a deliberate on-demand action, not a scheduled notification).
+  if (recipientId && String(to).toLowerCase() === DAVID_EMAIL) {
+    return res.status(200).json({ ok: true, suppressed: true });
   }
 
   if (recipientId && (recipientKind === 'user' || recipientKind === 'admin')) {

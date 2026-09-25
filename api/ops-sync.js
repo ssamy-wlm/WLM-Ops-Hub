@@ -1566,6 +1566,29 @@ async function fireMessageNotification(supabase, message, warnings, notices) {
   }], warnings);
 }
 
+// David email overhaul (2026-09-25) — David was getting every routine
+// notification/reminder email this codebase sends (assignment, overdue/
+// escalation, nags, daily digest, team-summaries, review routing,
+// workAnniversary, etc.). He only actually needs three things by email
+// going forward: a time-off SUBMISSION notification (he's an approver —
+// type 'timeOffSubmitted', never the decision-side 'timeOff' type), the
+// new weekly team-completion report, and the new bi-monthly PTO report
+// (see api/cron-weekly-team-completion.js and api/cron-pto-report.js).
+// Email-only — his in-app ops_notifications row is untouched either way,
+// since this is checked only inside insertNotifications()'s email half,
+// after the in-app insert above it already ran unconditionally.
+//
+// Matched by recipientEmail, exported for api/send-assignment-email.js's
+// own separate send path (the "assignment" email type this ticket also
+// names — that endpoint never goes through insertNotifications() at all,
+// see its own header comment) rather than duplicating the literal email
+// address in two files with a chance of the two silently drifting apart.
+export const DAVID_EMAIL = 'david@weblightmedia.com';
+const DAVID_EMAIL_ALLOWED_TYPES = new Set(['timeOffSubmitted', 'weeklyTeamCompletion', 'biMonthlyPtoReport']);
+export function isEmailSuppressedForDavid(toEmail, type) {
+  return String(toEmail || '').toLowerCase() === DAVID_EMAIL && !DAVID_EMAIL_ALLOWED_TYPES.has(type);
+}
+
 export async function insertNotifications(supabase, rows, warnings, opts = {}) {
   if (!rows.length) return;
   const payload = rows.map(r => ({ id: genNotifId(), data: { ...r, read: false, createdAt: new Date().toISOString() } }));
@@ -1635,6 +1658,12 @@ export async function insertNotifications(supabase, rows, warnings, opts = {}) {
     for (const row of payload) {
       const to = row.data.recipientEmail;
       if (!to) continue;
+      // David email overhaul (2026-09-25) — see isEmailSuppressedForDavid()'s
+      // own comment above for the full rationale. Checked first, ahead of
+      // quiet hours, since this is an unconditional per-recipient policy,
+      // not a time-of-day gate — the in-app ops_notifications row for a
+      // suppressed item was already inserted above, unaffected either way.
+      if (isEmailSuppressedForDavid(to, row.data.type)) continue;
       if (!opts.bypassQuietHours && isWithinQuietHours(teamOf(row.data.recipientId, row.data.recipientKind), now)) continue;
       if (!byEmail.has(to)) byEmail.set(to, []);
       byEmail.get(to).push(row.data);

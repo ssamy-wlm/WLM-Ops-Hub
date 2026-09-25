@@ -10523,6 +10523,296 @@ Low-risk tier per rule #10: display-only, no data writes, doesn't touch
 `api/`/`lib/`/`supabase/migrations/` — eligible for auto-merge once CI
 is green.
 
+### 2026-09-25 — David email overhaul: suppress routine emails; add weekly team-completion + bi-monthly PTO reports
+
+Ticket: David was getting flooded with every routine notification/
+reminder email this codebase sends. He should only get three things by
+email going forward — a time-off submission notification (he's an
+approver), a new weekly team-completion report, and a new bi-monthly
+PTO report for three specific people.
+
+**Investigation before touching anything (rule #7).** First mapped
+every place an email can actually reach David:
+
+- `insertNotifications()` in `api/ops-sync.js` is the single choke
+  point nearly every notification email in this codebase already
+  passes through (task/service/time-off/message/digest/nag/escalation/
+  workAnniversary — everything built as an `ops_notifications` row).
+  Confirmed via its own header comment and by tracing every call site.
+- `api/send-assignment-email.js` is a SEPARATE, direct-send endpoint
+  (index.html's `_emailUserAssignment()` posts straight to it) — the
+  "assignment" email type the ticket explicitly names never goes
+  through `insertNotifications()` at all, so it needed its own,
+  separate suppression check.
+- `api/cron-overdue-check.js`'s "weekday morning log your tasks"
+  reminder sends directly via `sendResendEmail()` too, but its
+  recipient list (`DAILY_TASK_REMINDER_RECIPIENTS`) is a hardcoded
+  3-person list that has never included David — confirmed by reading
+  it, no change needed there.
+- `api/cron-backup.js`'s off-site backup email (every super/owner
+  admin, David included, with the actual JSON snapshot attached) is a
+  disaster-recovery safety net, not a routine notification — it wasn't
+  named in the ticket's own list of examples ("assignment, overdue/
+  escalation, nags, daily digest, team-summaries, review routing"),
+  and silently dropping one of what may be very few off-site backup
+  recipients is exactly the kind of consequential, unstated inference
+  rule #7 says to flag rather than guess. Left untouched; flagged here
+  and in the PR description for the user to confirm one way or the
+  other if they actually want it suppressed too.
+- `api/inbound-email.js`'s confirmation replies (when David emails
+  task@/service@) are a direct reply to David's OWN action, not a
+  passive notification reaching him — left untouched, out of scope.
+
+**Suppression mechanism.** A single exported predicate in
+`api/ops-sync.js`:
+```js
+export const DAVID_EMAIL = 'david@weblightmedia.com';
+const DAVID_EMAIL_ALLOWED_TYPES = new Set(['timeOffSubmitted', 'weeklyTeamCompletion', 'biMonthlyPtoReport']);
+export function isEmailSuppressedForDavid(toEmail, type) {
+  return String(toEmail || '').toLowerCase() === DAVID_EMAIL && !DAVID_EMAIL_ALLOWED_TYPES.has(type);
+}
+```
+Checked inside `insertNotifications()`, ahead of the existing quiet-
+hours gate, right where `byEmail` is being built — email-only, since
+the in-app `ops_notifications` row for every one of these was already
+inserted, unconditionally, before this function's email half ever
+runs. Matched by `recipientEmail`, not by admin id, so this can never
+depend on David's row/id ever being looked up correctly by any given
+caller (some notification types resolve recipients differently — this
+way none of them need to change). The allowlist is deliberately
+`timeOffSubmitted` only, NOT the `timeOff` type — that's the
+DECISION notification sent to the requester, a different concern the
+ticket's own parenthetical ("he's an approver") doesn't cover; David
+would only ever receive a `timeOff` row if he submitted his own
+request, and that stays suppressed like everything else not on the
+list.
+
+`api/send-assignment-email.js` got the identical email-address check,
+scoped to `recipientId` present (i.e. only the real, automated
+assignment-email caller) — mirroring the EXACT distinction this same
+file already draws for its own quiet-hours check one block below: a
+request with no `recipientId` is the Admin Controls "Send Test Email"
+diagnostic, a deliberate on-demand action typed by an admin, never
+suppressed either way (same as that diagnostic already bypasses quiet
+hours). `DAVID_EMAIL` is exported from `api/ops-sync.js` and imported
+here rather than re-declaring the literal address in two files with a
+chance of them silently drifting apart later.
+
+**Weekly team-completion report** (`api/cron-weekly-team-completion.js`,
+new). "Completed" reuses the EXACT signal
+`api/cron-overdue-check.js`'s own hierarchy-escalation
+`completedSince` scan already established for this same underlying
+concept — a task's `completedAt` timestamp (stamped the instant
+`status` becomes `'Done'`, confirmed consistent across all three
+frontends and the server), a service's `lastDone` date (stamped by
+`markServiceDone()` in `client.html`, the ONLY code path that ever
+sets `workStatus:'done'` — confirmed by tracing `setServiceStatus()`,
+which always routes a `'done'` transition through `markServiceDone()`
+rather than setting the flag directly). Walks both `client.services[]`
+and every franchise `location.services[]`, matching the same iteration
+shape `cron-overdue-check.js`'s own `scanServiceCompleted()` already
+uses.
+
+`recurringServices[]` (the separate, legacy index.html-authored
+service schema — `assignedUserIds`/`nextDueDate`) was investigated and
+confirmed to have NO completion concept at all — no "mark done"
+action, no `workStatus`, no `lastDone`-equivalent field anywhere in
+any of the three frontends. Correctly excluded from this report
+entirely rather than guessed at.
+
+Multiple assignees on one item (`assigneeIds[]`, which both tasks —
+the "Whole team" pill — and services support) credit EVERY one of
+them, same "everyone named owns it" convention already applied
+elsewhere in this app (`api/process-transcript.js`'s multi-name task
+parsing). An item with no id at all, only a name string
+(`assigneeName`/`assignee`), still gets its own section in the report
+rather than being silently dropped — a deliberately more inclusive
+choice than `cron-overdue-check.js`'s own narrower `s.assigneeId`-only
+scan (which only needs a yes/no signal for ITS purpose, inactivity
+detection; a human-facing completion report should not under-report
+real work just because of a missing id).
+
+Includes completed work for INACTIVE clients too — a deliberate,
+different call from the 2026-09-24 "hide a deactivated client's
+services from live employee views" fix: that fix is about future/
+pending work no longer surfacing; this report is retrospective (what
+actually happened this week), so a client deactivated mid-week must
+never silently erase real completed work from the record.
+
+**Bi-monthly PTO report** (`api/cron-pto-report.js`, new). One
+handler, two fire dates (`vercel.json`: `"0 12 1,16 * *"`) —
+`computeHalfMonthWindow()` picks the covered period from the UTC
+calendar date directly (safe here, unlike a midnight-boundary cron,
+because 7 AM EST is still the same calendar date everywhere this app
+cares about). "Taken" = `status === 'approved'` only — a pending or
+denied request was never actually PTO taken. A request is INCLUDED if
+its `[startDate, endDate]` range overlaps the window AT ALL, not only
+if fully contained — a stretch that starts before or ends after the
+half-month boundary still gets reported, with its own real dates
+shown, rather than silently dropped at the boundary. This wasn't
+specified in the ticket; flagged here as a judgment call, same
+"flagged in the PR description for review" precedent
+`cron-work-anniversaries.js`'s own header comment already set for an
+unstated call.
+
+Jacob, Abby, and Michael are resolved by FIRST NAME against the live
+`ops_users` + `ops_admins` roster combined — never a hardcoded id,
+same "resolve fresh" discipline `api/inbound-email.js`'s
+`resolveInboundSender()` already established for David himself — because
+this exact trio spans BOTH tables (Jacob Joslin and Abby Conklin are
+admins; Michael Eruzione is a user, `u_1783268590854` — see this file's
+own earlier entries). A first name matching zero or 2+ roster entries
+is NOT guessed at (rule #7): the report body itself says so by name
+for that person, and a `logError()` entry surfaces it in Business
+Setup's error viewer, rather than silently picking one candidate or
+dropping the person from the report. All three are always listed in
+the report, even with zero PTO taken that period ("Michael: no PTO
+taken in this period.") — reads as a reliable checklist rather than
+only showing who happened to take time off.
+
+Both new crons are read-based idempotent, identical shape to
+`cron-work-anniversaries.js` — a notification whose own `context`
+already matches the computed period is treated as already sent, so a
+duplicate/retried invocation never double-sends. Both pass
+`opts.bypassQuietHours: true` to `insertNotifications()` — these are
+precisely-scheduled reports with an exact promised landing time (Friday
+noon EST; 7 AM EST on the 1st/16th), same "lands exactly when promised"
+reasoning `cron-overdue-check.js`'s own digest/nag sends already use
+that same option for, not `cron-work-anniversaries.js`'s "no same-day
+urgency" case (which deliberately stays subject to quiet hours).
+
+**Verification** (no live Supabase access, rule #11): `node --check`
+clean on every touched/new file. A reusable fake in-memory
+PostgREST-over-fetch layer (`fake_postgrest.mjs`), calibrated by
+directly probing real `@supabase/supabase-js` request shapes (exact
+query-string encoding for `.select()`/`.eq()`/`.like()`, exact POST
+body shape for `.insert()`) rather than guessed at, lets every test run
+the REAL exported handler functions end-to-end with zero mocking of
+this codebase's own code — only the network boundary is faked. 65
+checks total across four suites: `isEmailSuppressedForDavid()`'s own
+predicate (10 checks) and a real `insertNotifications()` call proving
+an assignment email to David is suppressed while a same-request
+`timeOffSubmitted` email to him still sends, and that a non-David
+recipient is completely unaffected (5 checks); `send-assignment-
+email.js`'s handler invoked with a real signed session token, covering
+the automated-suppressed / manual-test-bypassed / non-David-unaffected
+three-way split, the last case self-aware against the real live
+quiet-hours function so it can never be flaky depending on when the
+suite happens to run (4 checks); the PTO report's date-math across a
+30-day month, a December→January year rollover, a non-leap and a leap
+February, plus a full end-to-end run proving in-window/out-of-window/
+pending/denied/boundary-spanning/wrong-person filtering all correctly
+partition the fixture data, plus idempotency and auth (24 checks); the
+weekly report's assignee-resolution helper plus a full end-to-end run
+covering done/not-done/in-window/out-of-window/multi-assignee/name-
+fallback/franchise-location/inactive-client-still-counted, plus the
+empty-week and idempotency cases (22 checks).
+
+Data-write-adjacent tier per rule #10 (touches `api/ops-sync.js`'s
+shared notification chokepoint and `api/send-assignment-email.js`) —
+held for the user's own preview confirmation and explicit approval
+before merge, exactly as the ticket itself requested. Per rule #12/#13,
+this PR adds no `supabase/migrations/` file and touches no existing
+write path's data shape, so no schema/migration gate and no additional
+post-merge Supabase integrity check apply beyond the usual review.
+
+### 2026-09-25 — David email overhaul: same-day corrections (scope, wording, true DST-aware timing)
+
+Four corrections landed the same day, before the PR was merged — still
+held for preview approval, same PR:
+
+1. **Email-only suppression, confirmed already correct.** No code
+   change needed — `insertNotifications()`'s in-app
+   `ops_notifications` insert already runs unconditionally, before the
+   email-suppression check even executes (it's inside the same
+   function's later `if (process.env.RESEND_API_KEY)` block). Re-ran
+   the existing suite to confirm: both a suppressed-for-email
+   `assignment` row and an allowed `timeOffSubmitted` row land in the
+   in-app table identically; only the email side differs.
+
+2. **Weekly report scope corrected to services only.**
+   `api/cron-weekly-team-completion.js` no longer reads `ops_tasks` at
+   all — the `taskRows` query and the whole task-scanning block were
+   deleted outright, not just filtered out, so there's no residual
+   dead code pretending to still consider tasks. Body line prefixes
+   dropped their `Task: `/`Service: ` split (now services-only, so the
+   prefix was redundant) — a completed item now reads as just
+   `<service name> — <client name>`. Every existing services-side
+   behavior (franchise locations, inactive-client work still counted,
+   multi-assignee credit, name-only fallback) is unchanged, since none
+   of that logic lived in the task-scanning code that was removed.
+
+3. **PTO report always sends, with the period spelled out per person.**
+   This was ALREADY unconditional (no "skip if empty" branch existed in
+   the original version either) — the actual gap was wording: a
+   zero-PTO person read as `"Michael: no PTO taken in this period."`
+   with no dates. Changed to
+   `"Michael Eruzione: No PTO taken during 2026-09-01 – 2026-09-15."`,
+   spelling out the real computed window inline for every person, every
+   time, whether they took PTO or not. Verified with a dedicated
+   all-three-zero fixture (previously only a single-person-zero case
+   was tested).
+
+4. **True America/New_York local time, DST-aware — the significant
+   fix.** The original version used a single fixed UTC cron per report
+   (`"0 17 * * 5"` for Friday noon, `"0 12 1,16 * *"` for 7 AM), chosen
+   as "12:00 PM EST"/"7:00 AM EST" under a FIXED UTC-5 offset — this
+   directly reused this codebase's own pre-existing "EST means fixed
+   UTC-5, not DST-adjusted" convention (`cron-overdue-check.js`'s
+   twice-daily overdue self-nag uses the identical pattern). That
+   convention is fine for a nag whose exact landing hour doesn't matter
+   much, but wrong for a report the ticket explicitly requires to land
+   at a stated wall-clock time: on 2026-09-25 itself (during EDT,
+   UTC-4), `"0 17 * * 5"` would actually have fired the weekly report
+   at 1:00 PM ET, not noon — a full hour of drift, live and
+   demonstrated by the test suite (see below). The user's follow-up
+   explicitly asked for real `America/New_York` local time, DST-aware,
+   year-round — a deliberate, explicit deviation from the fixed-offset
+   precedent for this one feature, not a rule #7 guess.
+   Implementation: `vercel.json`'s two cron entries became HOURLY
+   (`"0 * * * *"` for the weekly report; `"0 * 1,16 * *"` for the PTO
+   report, still restricted to UTC days 1/16 for efficiency — safe
+   because New York is always behind UTC, so a 7 AM New York moment on
+   calendar day N always falls within UTC calendar day N too, never
+   crossing a day boundary the other way). Each handler now starts by
+   computing real local time via a newly-exported
+   `localPartsInTz(date, timeZone)` from `lib/quietHours.js` (the exact
+   same real-IANA-tz-database `Intl.DateTimeFormat` technique quiet
+   hours has used since 2026-09-13 — extended, additively, to also
+   return `day`/`month`/`year`, not just `weekday`/`hour`/`minute`,
+   since every existing caller only ever reads the three fields it
+   already had) and returns a cheap no-op for every invocation that
+   isn't the exact target local moment (Friday 12:00 PM / hour 7 on the
+   1st-or-16th). `cron-pto-report.js`'s `computeHalfMonthWindow()` was
+   refactored from taking a `Date` (whose UTC-based `getUTCDate()` etc.
+   was the OLD, implicitly-UTC path) to taking already-resolved
+   `(year, month, day)` integers — the caller now always passes the
+   real NY-local calendar components, and the function itself has zero
+   timezone awareness of its own, which is what keeps it trivially
+   unit-testable in isolation.
+   Verified with instants precomputed via a direct `Intl.DateTimeFormat`
+   probe (not guessed): 2026-09-25T16:00:00Z genuinely is Friday 12:00
+   PM America/New_York (EDT) and correctly fires; 2026-09-25T17:00:00Z
+   (the OLD schedule's exact fire instant) is genuinely 1:00 PM ET
+   during EDT and now correctly no-ops — the two checks together are a
+   live, reproducible demonstration of the bug the correction fixes,
+   not just an assertion that the new code "looks right." A winter
+   instant (2026-12-04T17:00:00Z / 2026-12-01T12:00:00Z, both EST,
+   UTC-5) confirms the SAME code path also fires correctly once DST
+   ends, with no separate winter-only branch anywhere.
+
+**Verification**: suite count grew from 65 to 76 checks (9 new PTO-report
+checks: 2 DST-boundary instants + 1 off-hour no-op + the all-zero
+wording case; 6 new weekly-report checks: 3 DST-boundary instants + 1
+non-Friday no-op + the services-only content assertions folded into
+the existing full-run check; the David-suppression and
+send-assignment-email suites are unchanged and re-ran clean, 15/15 and
+4/4). `node --check` clean on every touched file, including
+`lib/quietHours.js`. Still held as draft — not merged; these
+corrections were pushed to the same branch/PR (#437) rather than
+opening a new one, since the PR was never reviewed or approved before
+they landed.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
