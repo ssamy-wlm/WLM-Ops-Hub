@@ -401,6 +401,38 @@ Don't relitigate them without an explicit decision from the user.
   handlers end-to-end — no live Supabase access per rule #11 — including
   explicit EDT-vs-EST instants proving the old fixed-offset schedule
   would have fired an hour late/early for roughly 8 months of the year).
+- Parser crash on Gemini retries fixed (2026-09-25 — held for preview
+  approval, `api/`+`vercel.json`): a real production failure showed the
+  transcript parser returning Vercel's own raw platform-crash page
+  ("Unexpected token 'A'… An error occurred", not anything this app
+  returns) with nothing in `ops_error_log` — root cause: `api/process-
+  transcript.js`'s Gemini 503/retry backoff schedule
+  (`[2000,5000,12000,25000]`, 19s of guaranteed sleep) plus pacing plus
+  real network calls could exceed the platform's 30s default
+  `maxDuration`, and Vercel killed the function mid-retry, before this
+  file's own try/catch/logError/JSON-response code ever got to run.
+  Fixed by raising `maxDuration` to 90s for this one function in
+  `vercel.json` AND trimming `GEMINI_RETRY_BACKOFF_MS` to
+  `[1000,2000,3000,6000]` (6s of guaranteed sleep, down from 19s) so the
+  same 4-attempt retry budget fits with wide margin under the new
+  ceiling — not just "raise the ceiling and hope," a deliberate,
+  documented worst-case budget (~72s, see the constant's own comment for
+  the full math and its stated assumptions). Also closed a real
+  "guarantee" gap found during investigation: a `Retry-After` header
+  from Gemini itself used to be honored completely unbounded — now
+  hard-capped at `GEMINI_MAX_RETRY_DELAY_MS` (8000ms) so an
+  upstream-controlled value can never itself blow the budget. A per-call
+  fetch timeout (`AbortController`) was considered and deliberately NOT
+  added — flagged, not fixed, in DECISIONS.md, since this endpoint's own
+  16000-token `maxTokens` means a genuinely large, healthy generation
+  could legitimately take a nontrivial number of seconds, and there's no
+  live telemetry (rule #11) to calibrate a safe per-call cutoff without
+  risking false-positive aborts on slow-but-successful responses.
+  Verified with a new 9-check suite (the trimmed schedule's real requested
+  delays, position/value-classified against the pacer's own wait;
+  `Retry-After` clamping both when it needs to engage and when it
+  shouldn't) plus the two pre-existing Gemini-retry suites re-run clean
+  (16/16, 5/5) — 30/30 total, `node --check` clean.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

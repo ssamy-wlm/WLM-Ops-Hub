@@ -86,7 +86,50 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 const LLM_MODEL = process.env.LLM_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 const GEMINI_MAX_ATTEMPTS = 4;
-const GEMINI_RETRY_BACKOFF_MS = [2000, 5000, 12000, 25000];
+// Backoff + maxDuration lockstep (2026-09-25) — this endpoint's
+// vercel.json maxDuration is 90s (raised from the platform default 30s
+// specifically for this). A real production failure hit the OLD 30s
+// ceiling mid-retry: the old schedule [2000,5000,12000,25000] alone summed
+// to 19s of guaranteed backoff (the last entry is never actually slept —
+// see the final-attempt throw below, which skips the sleep) plus pacing
+// plus 4 real network calls, and Vercel killed the function BEFORE this
+// file's own try/catch/logError/JSON-response code ever ran — the
+// "Unexpected token 'A'… An error occurred" the client saw was Vercel's
+// own platform crash page, not anything this app returned. Trimmed here to
+// [1000,2000,3000,6000] (sum of the first three — the only ones ever
+// actually slept — is 6000ms, down from 19000ms) so the same 4-attempt
+// retry budget fits with a wide safety margin under the new 90s ceiling,
+// leaving headroom for the rest of the handler's own post-processing (JSON
+// parse/repair, the DB writes in parseTaskEmailForSession, response
+// serialization) plus general platform/runtime overhead — not just
+// "happens to fit," but fits with margin to spare even under a pessimistic
+// assumption of each individual network call taking up to ~15s (this
+// file's own real per-call duration isn't confirmable from here — CLAUDE.md
+// rule #11 — so, same discipline as GEMINI_MIN_INTERVAL_MS's own comment
+// below, this is a deliberately generous assumption, not a measured one):
+// 4×15000 (calls) + 6000 (backoff) + ~6000 (worst-case pacing overhead,
+// see paceGeminiCall() below) ≈ 72s, comfortably under 90s. Deliberately
+// keeps every entry clear of 4000ms (GEMINI_MIN_INTERVAL_MS below) so a
+// backoff sleep is never magnitude-ambiguous with a pacing wait. A
+// per-call fetch timeout (AbortController) was considered and deliberately
+// NOT added — this file's own maxTokens is 16000, and a genuinely large,
+// healthy (non-overloaded) generation at that size could legitimately take
+// a nontrivial number of seconds; with no live telemetry to calibrate a
+// safe per-call cutoff (rule #11 again), an unverified timeout risks
+// aborting and needlessly retrying a slow-but-successful response instead
+// of just letting it finish — a real residual gap (an unusually slow or
+// hung individual call still isn't hard-bounded) flagged in DECISIONS.md
+// rather than guessed at.
+const GEMINI_RETRY_BACKOFF_MS = [1000, 2000, 3000, 6000];
+// Hard ceiling applied to EVERY retry delay in geminiRetryDelayMs() below,
+// regardless of source — including a Retry-After header Gemini itself
+// sends, which used to be honored completely unbounded. An upstream
+// Retry-After large enough (Gemini's own signal, not something this app
+// controls) could otherwise single-handedly blow the maxDuration budget
+// this whole trim is meant to guarantee; every entry in
+// GEMINI_RETRY_BACKOFF_MS above is already ≤ this cap by construction, so
+// this only ever actually clamps a Retry-After value in practice.
+const GEMINI_MAX_RETRY_DELAY_MS = 8000;
 // Free-tier RPM is low enough that back-to-back calls from the same warm
 // container (or two concurrent halves of a chunked transcript) risk a 429
 // even without a burst — this is deliberately generous (well under 60s, so
@@ -116,8 +159,9 @@ function paceGeminiCall() {
 function geminiRetryDelayMs(response, attemptIndex) {
   const retryAfterHeader = response?.headers?.get?.('retry-after');
   const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) return retryAfterSeconds * 1000;
-  return GEMINI_RETRY_BACKOFF_MS[attemptIndex] ?? GEMINI_RETRY_BACKOFF_MS[GEMINI_RETRY_BACKOFF_MS.length - 1];
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) return Math.min(retryAfterSeconds * 1000, GEMINI_MAX_RETRY_DELAY_MS);
+  const fixed = GEMINI_RETRY_BACKOFF_MS[attemptIndex] ?? GEMINI_RETRY_BACKOFF_MS[GEMINI_RETRY_BACKOFF_MS.length - 1];
+  return Math.min(fixed, GEMINI_MAX_RETRY_DELAY_MS);
 }
 
 // 429 (rate limit) and any 5xx (500/502/503/504/etc — server-side failure,
