@@ -69,8 +69,15 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // body that would have said so outright was being silently discarded (see
 // callGemini()'s own comment below). GEMINI_MODEL lets a future model
 // deprecation be a Vercel env var change, not a code deploy — falls back
-// to gemini-3.6-flash (the current generally-available flash model at the
-// time of this fix) when unset.
+// to gemini-3.8-flash (updated 2026-09-28, confirmed both free-tier and
+// generally-available as of that date — Google's currently newest stable
+// Flash release, superseding the 3.6-flash default this fell back to
+// before; a prior "-lite" tier was deliberately avoided as the default
+// specifically because the Roadmap mode's own weak-extraction bug this
+// same change fixes was traced to prompt quality, not raw model
+// intelligence, but a lighter/cheaper-tier model has less headroom to
+// compensate for an imperfect prompt on genuinely ambiguous conversational
+// input) when unset.
 //
 // Provider-agnostic env override (2026-09-22) — this whole file calls
 // whatever OpenAI-compatible endpoint LLM_BASE_URL points at, not
@@ -83,7 +90,7 @@ const VALID_CATEGORIES = ['hr','finance','security','systems','production','clie
 // on-5xx, the UNAVAILABLE envelope check, pacing — was built against and
 // verified against Gemini specifically; renaming those would be a much
 // larger, purely cosmetic diff with no functional benefit).
-const LLM_MODEL = process.env.LLM_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const LLM_MODEL = process.env.LLM_MODEL || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const LLM_BASE_URL = process.env.LLM_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 const GEMINI_MAX_ATTEMPTS = 4;
 // Backoff + maxDuration lockstep (2026-09-25) — this endpoint's
@@ -1537,11 +1544,21 @@ export async function parseTaskEmailForSession(session, text) {
   }
 }
 
-const SYSTEM_PROMPT = `You are a planning assistant for a small business called Weblight Media. Read this meeting transcript and extract every task, action item, goal, or idea mentioned.
+const SYSTEM_PROMPT = `You are a planning assistant for a small business called Weblight Media. Read this meeting transcript and extract EVERY task, action item, commitment, or follow-up mentioned — including casual, conversational, embedded, or future-tense ones, not just items that are explicitly flagged as an "action item."
 
-IMPORTANT — SKIP the following entirely (do not include them as tasks):
-- Personal notes, personal reminders, or personal to-dos (e.g. "I need to buy groceries", "remind me to call my dentist")
-- Off-topic side comments unrelated to Weblight Media business
+Real meeting transcripts are ordinary back-and-forth conversation, not a bulleted list — a task is just as real when it's buried inside a longer sentence or aside as when it's its own clearly-stated line. Treat ALL of these phrasings as real tasks to extract:
+- A first-person commitment: "I'll send that over today," "I'm going to follow up with him this week," "Let me take care of the invoice."
+- A request or assignment directed at someone else: "David, can you check on that?", "Sarah, would you mind reaching out to the client?", "Someone needs to update the deck."
+- A shared/team commitment: "We need to fix the onboarding flow," "Let's make sure the report goes out by Friday."
+- An implied follow-up mentioned only in passing, not its own bullet point: e.g. "Yeah that reminds me, I still haven't renewed the SSL cert, I'll get to that this week" contains one real task even though most of the sentence is conversational filler.
+- A decision that implies future work still needs doing: "We decided to switch providers" implies someone still has to actually do the switch — extract that as a task, not just a decision that happened.
+
+Do NOT wait for a formal "action items" section or a clearly-flagged task — conversational transcripts bury real commitments inside ordinary dialogue constantly, and missing these is the single most common way this extraction fails. When genuinely in doubt whether something counts, err toward INCLUDING it rather than omitting it — a task that turns out not to matter can be deleted later, but a real commitment missed here is never recovered. Returning an empty tasks array should be rare — only when the transcript truly contains no discussion of any pending work at all.
+
+IMPORTANT — still SKIP the following entirely (do not include them as tasks):
+- Personal notes, personal reminders, or personal to-dos with nothing to do with the business (e.g. "I need to buy groceries", "remind me to call my dentist")
+- Off-topic side comments unrelated to Weblight Media business (small talk, weather, etc.)
+- Something the speaker says is ALREADY fully done ("I already sent that yesterday") — that's a status update, not a new task; don't invent a task just because a finished piece of work was mentioned.
 
 Sort each item into one of these buckets based on urgency:
 - "7": critical or overdue, must happen within the week
@@ -1550,7 +1567,11 @@ Sort each item into one of these buckets based on urgency:
 - "90": longer runway, no immediate pressure
 - "dream": big picture, long-term vision, someday goals
 
-Identify who owns each task. Use the person's first name in lowercase (e.g. "sarah", "david", "emily", "jacob", "rania"). Use "both" only if Sarah AND David share responsibility. If someone else on the team owns it, use their first name in lowercase. Never leave owner blank.
+Identify who OWNS each task — the person actually responsible for doing it, not just whoever happened to bring it up. Use these signals, in order of how explicit they are:
+- Direct assignment or address: "David, can you handle X" → david; "Sarah's going to look into Y" → sarah.
+- A first-person commitment belongs to whoever is speaking, even if their own name isn't restated in that sentence — use the surrounding conversation (who's talking) to attribute it correctly.
+- Use "both" ONLY when Sarah AND David explicitly share responsibility for the very same task together.
+Use the person's first name in lowercase (e.g. "sarah", "david", "emily", "jacob", "rania" — these are examples of real team members on this transcript, not an exhaustive list; use whichever first name the transcript actually names for anyone else). Never leave owner blank — if genuinely no one is identifiable for a real task, make your best inference from who is speaking or who the task was addressed to, rather than dropping the task.
 
 Assign one category to each task from this list:
 - "hr" — hiring, compensation, onboarding, team management
@@ -1564,6 +1585,16 @@ Assign one category to each task from this list:
 - "sales" — leads, pipelines, proposals, follow-ups
 
 Always spell these names and terms correctly: Servpro, Wuzzuf, Rania, Weblight Media, Candidates, GoHighLevel.
+
+Here are two examples of how casual, conversational lines map to extracted tasks — use these as a pattern, not a literal list to look for:
+
+Example 1 — a first-person commitment, embedded in casual dialogue, no formal action-item framing at all:
+Transcript line: "David: Oh also, I keep forgetting — I really need to renew the SSL cert this week before it lapses again."
+→ {"bucket":"7","text":"Renew the SSL certificate","owner":"david","category":"systems"}
+
+Example 2 — a request addressed to someone else, mid-conversation:
+Transcript line: "Sarah: David, when you get a chance, can you follow up with the Johnson account about their late invoice? It's been like three weeks."
+→ {"bucket":"30","text":"Follow up with Johnson account on late invoice","owner":"david","category":"finance"}
 
 Return ONLY valid JSON, no markdown, no explanation:
 {"tasks":[{"bucket":"30","text":"Concise task description under 10 words","owner":"sarah","category":"hr"}],"summary":"One sentence about what this meeting covered."}`;
