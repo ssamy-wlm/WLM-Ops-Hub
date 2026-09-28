@@ -11366,9 +11366,8 @@ unaffected by this prompt/model edit. `node --check` clean on
 `api/process-transcript.js`.
 
 Held per rule #10 and the ticket's own explicit "needs preview +
-approval" instruction — sends no email itself, but is squarely a
-change to a live parsing path with no local way to fully confirm the
-real-world extraction-quality improvement.
+approval" instruction — previewed and merged by the user directly
+(PR #443), same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 

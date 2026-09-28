@@ -527,7 +527,7 @@ Don't relitigate them without an explicit decision from the user.
   extracted-script syntax check and div-balance both clean (new modal's
   divs open=close, matching origin/main's own baseline delta).
 - Gemini parser: stronger extraction prompt + solid free model
-  (2026-09-28 — held for preview approval, `api/`): root-caused a
+  (2026-09-28 — **merged**, PR #443, `api/`): root-caused a
   reported failure (a task-rich real meeting transcript returning 0
   extracted tasks) to the Roadmap mode's `SYSTEM_PROMPT` in
   `api/process-transcript.js` — a short, generic "extract every task,
