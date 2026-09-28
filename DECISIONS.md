@@ -10947,6 +10947,140 @@ explicit approval before merge, per rule #10 and the ticket's own
 narrowly scoped to retry timing and a platform config value, not the
 write logic itself.
 
+### 2026-09-28 — Backup email bypasses David's suppression + audit all direct send paths
+
+Ticket: `api/cron-backup.js`'s off-site backup email still reached
+David, even after the 2026-09-25 "David email overhaul" — plus an
+explicit ask to audit every OTHER direct `sendResendEmail()` call site
+and centralize the check so nothing can leak to him again.
+
+**Confirmed the reported bug first.** Re-read `cron-backup.js`'s email
+loop (~line 162): it resolves recipients via `resolveReportRecipients(null,
+admins)` (the primary-admin sentinel + every real super/owner admin —
+David included, since he's a real super/owner admin) and calls
+`sendResendEmail()` directly, per recipient, with no suppression check
+at all. The 2026-09-25 fix only ever touched two places:
+`insertNotifications()` (its own per-row filter) and
+`api/send-assignment-email.js` (its own pre-check) — `cron-backup.js`
+was never one of them, confirmed by re-reading that PR's own diff.
+
+**Full audit of every direct `sendResendEmail()` call site** (`grep -rn
+"sendResendEmail(" api/ lib/`, six real call sites, matching the exact
+same audit already run once during the original 2026-09-25 ticket —
+re-run fresh since two new files, `cron-weekly-team-completion.js`/
+`cron-pto-report.js`, had been added since, though neither calls it
+directly — both go through `insertNotifications()`):
+
+1. `api/send-assignment-email.js` — already had its own pre-check
+   (2026-09-25); unaffected by this ticket except for the new
+   `bypassDavidSuppression` plumbing (see below).
+2. `api/cron-overdue-check.js`'s daily task reminder — a direct send to
+   a hardcoded 3-person list (`DAILY_TASK_REMINDER_RECIPIENTS`: Rana,
+   Sherine, Assmaa) that has never included David. Confirmed via
+   reading the constant — not a live bug today, but exactly the kind of
+   list someone could edit later with no reason to remember David's
+   allowlist. Hardened defensively.
+3. `api/cron-backup.js` — **the actual reported bug**, fixed.
+4. `api/ops-sync.js`'s two internal `sendResendEmail()` calls, both
+   inside `maybeEmailNotification()` — already fully protected by
+   `insertNotifications()`'s own per-row filter one level up (nothing
+   suppressed ever reaches this function to begin with).
+5. `api/inbound-email.js`'s confirmation reply — a direct reply to
+   whatever the sender (who CAN be David — he's one of the two
+   `SERVICE_ALLOWED_SENDERS`) just emailed in. Deliberately exempt, per
+   the original 2026-09-25 investigation's own conclusion: this is a
+   direct confirmation of David's OWN action, not a passive notification
+   reaching him, the same category as the Admin Controls "Send Test
+   Email" diagnostic's own carve-out in `send-assignment-email.js`.
+
+**Centralization, not just a second scattered fix.** Ticket's own
+suggestion — "ideally... inside the shared send wrapper, with callers
+passing the notification type" — is exactly right, and is now what this
+does: `DAVID_EMAIL`/`isEmailSuppressedForDavid()` moved from
+`api/ops-sync.js` into `lib/resendClient.js` (the one file EVERY direct
+send in this codebase already imports `sendResendEmail()` from), with
+`api/ops-sync.js` re-exporting both names unchanged so none of its own
+existing importers (`send-assignment-email.js`,
+`cron-weekly-team-completion.js`, `cron-pto-report.js`) needed an
+import-path change. `sendResendEmail({ to, subject, html, attachments,
+type, bypassDavidSuppression })` now runs the check itself, at the very
+top, before ever touching `fetch()`:
+```js
+if (!bypassDavidSuppression && isEmailSuppressedForDavid(to, type)) return { suppressed: true };
+```
+The critical design choice: omitting BOTH `type` and
+`bypassDavidSuppression` is the SAFE default — it gets suppressed for
+David the same as any unrecognized type would. A brand-new future
+direct-send call site that forgets to think about David at all is
+suppressed by construction, not silently exposed; the caller has to
+make an active choice (pass a real allowlisted `type`, or explicitly
+set `bypassDavidSuppression: true` with a comment explaining why) to
+reach him. This is the structural fix the "no path can leak to David
+again" acceptance criterion actually needed — a second, scattered
+per-file check (the ticket's fallback "or") would have left the exact
+same class of gap open for the NEXT new cron/endpoint.
+
+Every existing call site updated to state its intent explicitly rather
+than rely on the default silently:
+- `cron-backup.js`: `type: 'backup'` — not allowlisted, correctly
+  suppressed for David; the loop's own `sent`/`suppressed` counters
+  updated to read `result?.suppressed` so the response body's count
+  stays accurate (previously `sent++` fired unconditionally on any
+  non-throwing call).
+- `cron-overdue-check.js`'s daily reminder: `type: 'dailyTaskReminder'`
+  — same counter-accuracy fix, reusing the loop's existing
+  `suppressed` counter (already there for the quiet-hours case).
+- `insertNotifications()`'s two `maybeEmailNotification()` calls:
+  `bypassDavidSuppression: true` — a combined multi-notification batch
+  has no single `type` of its own to check a second time, and every
+  notif in it was already vetted by the OUTER per-row filter (unchanged,
+  still lives in `insertNotifications()` itself, immediately before the
+  `byEmail` map is built) — re-checking here with no type would have
+  wrongly re-suppressed an already-approved batch.
+- `send-assignment-email.js`: `bypassDavidSuppression: true` — this
+  endpoint's own pre-check (recipientId-scoped) already runs first and
+  returns early for the automated+David case; by the time this call is
+  reached, `to===DAVID_EMAIL` can only mean the deliberate manual
+  "Send Test Email" exception, which must NOT be suppressed. Its own
+  stale comment ("the same way api/cron-backup.js's own backup email is
+  never suppressed") was corrected — that's now the opposite case.
+- `inbound-email.js`'s confirmation reply: `bypassDavidSuppression: true`
+  — the deliberate exception, documented inline.
+
+**Verification** (no live Supabase/Resend access, rule #11): new
+20-check suite — the centralized predicate exercised directly through
+the real `sendResendEmail()` (David+non-allowlisted-type suppressed
+with zero `fetch()` calls; David+allowlisted-type sends; David+explicit
+bypass sends; non-David completely unaffected regardless of
+type/bypass; David with NEITHER type nor bypass — the unsafe-default
+case — correctly suppressed, proving the safe-by-default design);
+`api/ops-sync.js`'s re-export proven to be the literal same function
+reference, not a re-implementation that could drift; `cron-backup.js`'s
+real reported bug reproduced against a fake 2-super-admin roster
+(David + Jacob) and proven fixed — David excluded from every actual
+Resend call, Sarah (the primary-admin sentinel) and Jacob both still
+receive it, `email.sent`/`email.suppressed` counts correct, the
+`ops_backups` DB row written regardless; the daily-task-reminder
+regression (its 3 real recipients still all send); the confirmation-
+reply bypass proven end-to-end against the REAL, unmocked
+`sendResendEmail()` (not the wholesale mock this file's own
+pre-existing webhook-plumbing suite uses) — a genuine `fetch()` call to
+`api.resend.com/emails` targeting David is observed directly. Every
+pre-existing suite in this area re-run clean with NO changes needed:
+David-suppression predicate/insertNotifications (15/15),
+send-assignment-email (4/4), inbound-email webhook plumbing
+(70/70 + 42/42 + 52/52), weekly-team-completion (25/25), PTO report
+(32/32) — 260 checks total across the full sweep. `node --check` clean
+on every touched file (`api/cron-backup.js`, `api/cron-overdue-check.js`,
+`api/inbound-email.js`, `api/ops-sync.js`, `api/send-assignment-email.js`,
+`lib/resendClient.js`).
+
+Data-write-adjacent tier per rule #10 (touches `lib/resendClient.js`,
+the shared low-level chokepoint every email send in this codebase now
+runs through, plus several `api/*` files) — held for the user's own
+preview confirmation and explicit approval before merge, per the
+ticket's own "needs preview + approval" instruction.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

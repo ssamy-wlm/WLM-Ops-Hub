@@ -938,10 +938,17 @@ export default async function handler(req, res) {
     // other notification path in this codebase now follows.
     if (isWithinQuietHours(sender.team, new Date())) return;
     try {
+      // bypassDavidSuppression (2026-09-28) — David is one of the two
+      // SERVICE_ALLOWED_SENDERS, so `sender` can genuinely be him; this
+      // reply is a direct confirmation of something HE just emailed in,
+      // never a passive notification reaching him, and is deliberately
+      // exempt from his 3-type email allowlist (see lib/resendClient.js's
+      // own isEmailSuppressedForDavid() comment) for that reason.
       await sendResendEmail({
         to: sender.email,
         subject: confirmationSubject(kind, ok),
         html: buildEmailHtml({ name: sender.name, title: ok ? `✅ Added your ${kind}` : `⚠️ Couldn't process your ${kind} email`, body, link: process.env.APP_URL }),
+        bypassDavidSuppression: true,
       });
     } catch (err) {
       await logError({ endpoint: 'inbound-email:confirmation', error: err, session: sender, extra: { emailId } });

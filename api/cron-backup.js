@@ -159,19 +159,33 @@ export default async function handler(req, res) {
           + `<p style="font-size:11px;color:#aaa;margin-top:20px;">Attached as ${filename}. This is an automated off-site copy of the same snapshot already stored in Supabase (ops_backups).</p>`
           + `</div>`;
         let sent = 0;
+        let suppressed = 0;
         for (const r of recipients) {
           const isPrimary = r.id === 'primary-admin';
           const to = isPrimary ? 'ssamy@weblightmedia.com' : (admins.find(a => a.id === r.id)?.email || '');
           if (!to) continue;
           try {
-            await sendResendEmail({ to, subject, html, attachments: [attachment] });
-            sent++;
+            // David email overhaul audit (2026-09-28) — this loop was the
+            // one real gap found: it sends directly via sendResendEmail(),
+            // bypassing the check that (at the time) only lived in
+            // insertNotifications()/api/send-assignment-email.js. The
+            // backup email is not one of David's 3 allowlisted types
+            // (see lib/resendClient.js) — Sarah (ssamy@) and every other
+            // super/owner admin still get it unaffected; the DB backup
+            // itself (already written above this block) is untouched
+            // either way. `type: 'backup'` — sendResendEmail()'s own
+            // centralized check suppresses this for David specifically;
+            // every other recipient is unaffected regardless of `type`.
+            const result = await sendResendEmail({ to, subject, html, attachments: [attachment], type: 'backup' });
+            if (result?.suppressed) suppressed++;
+            else sent++;
           } catch (err) {
             await logError({ endpoint: 'cron-backup:email', error: err, extra: { backupId: id, recipient: to } });
             (email.errors ||= []).push(`${to}: ${err.message}`);
           }
         }
         email.sent = sent;
+        email.suppressed = suppressed;
         email.ok = sent > 0;
       } catch (err) {
         // Anything unexpected while resolving recipients/building the email —
