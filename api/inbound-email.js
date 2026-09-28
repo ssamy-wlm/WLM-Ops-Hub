@@ -130,7 +130,7 @@ function verifySvixSignature(rawBody, headers, secret) {
 
 // ops_settings is the same generic key-value table (`key text primary key,
 // data jsonb`) every other small piece of server-side state in this app
-// already lives in (lastTeamSummaryEmailAt, notificationSettings, etc.) —
+// already lives in (lastTeamBroadcastEmailAt, notificationSettings, etc.) —
 // no new table for this. One row per processed email_id (rather than one
 // growing array) so a dedup check is a single indexed lookup, not an
 // ever-larger array scan, and a rate-limit counter keyed by sender+day.

@@ -471,6 +471,62 @@ Don't relitigate them without an explicit decision from the user.
   send-assignment-email 4/4, inbound-email plumbing 70/70+42/42+52/52,
   weekly-completion 25/25, PTO-report 32/32) — 260 checks total,
   `node --check` clean on every touched file.
+- Overview "Email the Team" composer replaces the old one-click "Email
+  team summaries" (2026-09-28 — held for preview approval, sends real
+  email): the Overview button (still `#emailTeamSummariesBtn`, super/
+  owner-only + the existing 3h cooldown unchanged) now reads "📤 Email
+  the Team" and opens a composer modal instead of firing immediately.
+  Recipients: a checklist of every active user + admin (`_taAllAssignablePeople()`,
+  which — unlike `_timeOffRoster()` — doesn't silently drop admin-only
+  accounts) plus the primary-admin sentinel (Sarah), with a "Select all"
+  toggle and a live selected-count label. Message: a template dropdown
+  (`ETT_TEMPLATES`) pre-fills an editable subject+body for "Overdue work
+  reminder," "Update your statuses," "Check your overdue items," or
+  "Your work summary" (per-recipient breakdown — subject editable, body
+  intentionally DISABLED with an explanatory note since there's no single
+  shared body to edit for content that's generated per person), or starts
+  fully blank on "Custom" — every template's text can be hand-edited
+  before send. New generic `[X]` mail-merge token: any template's body
+  can include the literal string `[X]` and each recipient gets it
+  substituted with their own real "% incomplete" (`100 - pctDone`, with
+  an explicit `0` special-case for a zero-assigned-item recipient — my
+  own test caught this defaulting to a wrong "100% incomplete" before the
+  fix). Server: the entire old `email-team-summaries` action in
+  `api/ops-sync.js` was replaced (not duplicated) by `email-team-broadcast` —
+  fresh Supabase-backed recipient resolution (client-supplied `{id,kind}`
+  pairs only pick WHICH ids were checked; name/email/stats are always
+  re-resolved server-side, never trusted from the request), the extracted
+  `personStats()` helper reused for both the workSummary body and the
+  `[X]` substitution, and a renamed cooldown key
+  (`lastTeamBroadcastEmailAt`, replacing `lastTeamSummaryEmailAt` — a
+  harmless one-time cooldown reset on deploy). Sent via a new
+  `lib/resendClient.js` `buildPlainEmailHtml()` template (deliberately
+  minimal — no colored header/button/border-radius card like the branded
+  `buildEmailHtml()` every other notification uses) to favor Gmail's
+  Primary tab over Promotions, from a dedicated
+  `notifications@opshub.wlmsend.com` sender with reply-to Sarah — both
+  now plumbed as new optional `from`/`replyTo` override params on
+  `sendResendEmail()` itself, additive and backward-compatible (every
+  existing caller keeps the env-driven defaults). This broadcast's new
+  `type:'teamBroadcast'` is deliberately NOT on David's 3-item
+  allowlist from the 2026-09-25/2026-09-28 suppression work, so he's
+  automatically excluded from any team broadcast (reported to the admin
+  via `suppressedForDavidCount` in the response, not a silent lower send
+  count) — consistent with "David only gets 3 specific things by email."
+  Verified with a new 28-check Node suite against the real exported
+  handler (fake in-memory PostgREST layer, no live Supabase per rule
+  #11 — tier gate, all 4 validation cases, cooldown, the happy path's
+  exact from/reply-to/minimal-HTML/unresolved-id handling, the `[X]`
+  token's real per-recipient values including the zero-assigned fix,
+  workSummary's empty-plate skip, David's exclusion) plus a 26-check
+  Playwright UI suite (modal open, recipient rendering/select-all, all
+  5 templates' pre-fill/editable/disabled behavior, a full mocked send
+  asserting the exact outgoing request shape and recipient list, the
+  button's exact new label, zero JS errors) — 54 checks total, all
+  passing; `node --check` clean on `api/ops-sync.js`/`lib/resendClient.js`/
+  `api/inbound-email.js` (one stale comment fixed there); index.html's
+  extracted-script syntax check and div-balance both clean (new modal's
+  divs open=close, matching origin/main's own baseline delta).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

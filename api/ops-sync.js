@@ -42,7 +42,7 @@
 import crypto from 'crypto';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { requireSession, tierOf, canEditUsers } from '../lib/opsSession.js';
-import { sendResendEmail, buildEmailHtml, DAVID_EMAIL, isEmailSuppressedForDavid } from '../lib/resendClient.js';
+import { sendResendEmail, buildEmailHtml, buildPlainEmailHtml, DAVID_EMAIL, isEmailSuppressedForDavid } from '../lib/resendClient.js';
 
 // Re-exported so this file's own existing importers (api/send-assignment-
 // email.js, api/cron-weekly-team-completion.js, api/cron-pto-report.js)
@@ -1870,32 +1870,76 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── "Email everyone their work summary" (2026-09-03) — Super Admin/Owner
-  // only, same top-level `action` dispatch convention as the password-
-  // cutover block above (a guarded administrative action, never a per-
-  // record sync write). Reuses insertNotifications() — the same
-  // established "build one row per recipient, it resolves the email and
-  // sends via Resend, batched one email per distinct recipientEmail"
-  // mechanism every other notification type in this file already uses —
-  // rather than writing a second, parallel email-sending path.
-  if (req.body?.action === 'email-team-summaries') {
+  // ── "Email the Team" composer (2026-09-28, replaces the old "Email
+  // everyone their work summary" one-click action, 2026-09-03) —
+  // Super Admin/Owner only, same top-level `action` dispatch convention as
+  // the password-cutover block above (a guarded administrative action,
+  // never a per-record sync write). The admin now picks WHO gets it (a
+  // client-supplied recipient list, resolved fresh against the live
+  // directory below — never trusted for name/email, only for which ids
+  // were checked) and WHAT it says (a template pre-fill or fully custom
+  // text, edited client-side before this request is ever sent).
+  //
+  // Sent DIRECTLY via sendResendEmail() (bypassing insertNotifications())
+  // for two reasons: (1) the ticket requires plain/minimal HTML
+  // (buildPlainEmailHtml(), not the branded buildEmailHtml() every other
+  // notification type uses) and a distinct from-address
+  // (notifications@opshub.wlmsend.com) — insertNotifications()'s own
+  // maybeEmailNotification() has no per-call override for either; (2) this
+  // is a one-off, admin-reviewed broadcast, not an event-driven
+  // notification tied to an in-app record — it has no natural
+  // ops_notifications row of its own the way an assignment/time-off/etc.
+  // event does, so no in-app bell entry is created for it either.
+  //
+  // David email overhaul (2026-09-25/28) still applies exactly as for
+  // every other email path: `type` passed to sendResendEmail() below is
+  // never on his 3-item allowlist (routine team reminders/summaries are
+  // precisely what he asked to stop receiving), so if an admin selects him
+  // as a recipient he's silently excluded from the actual email — every
+  // other selected recipient is unaffected — surfaced back to the admin
+  // via a `suppressedForDavid` count in the response rather than a
+  // mysteriously-lower sentCount with no explanation.
+  //
+  // Quiet hours deliberately NOT applied here — same "deliberate,
+  // on-demand admin action" precedent api/cron-backup.js's off-site email
+  // and the Admin Controls "Send Test Email" diagnostic already establish
+  // (CLAUDE.md's own "Digest timing" durable rule: quiet hours are for
+  // automated/scheduled sends, not something a human just explicitly
+  // clicked Send on after reviewing the exact text).
+  if (req.body?.action === 'email-team-broadcast') {
     if (tier !== 'super') return res.status(403).json({ error: 'Super Admin/Owner only' });
 
-    // Server-enforced cooldown (~3h) — the client's confirm() dialog is a
-    // UX nicety, not a guarantee; this is the real guard against a
-    // spam-clicked repeat blast, checked and stamped here regardless of
-    // what the client does. Stored in ops_settings (the same key-value
-    // table notificationSettings/teamNotifPrefs_* already live in), not a
-    // new table.
+    // Server-enforced cooldown (~3h, unchanged from the old action) — the
+    // client's confirm() dialog is a UX nicety, not a guarantee; this is
+    // the real guard against a spam-clicked repeat blast, checked and
+    // stamped here regardless of what the client does. Renamed key
+    // (lastTeamBroadcastEmailAt, was lastTeamSummaryEmailAt) since the old
+    // action name is fully retired — a one-time, harmless cooldown reset
+    // on deploy, not a data-shape concern (ops_settings is a plain
+    // key-value store).
     const COOLDOWN_MS = 3 * 60 * 60 * 1000;
     const warnings = [];
     try {
-      const { data: lastRow } = await supabase.from('ops_settings').select('data').eq('key', 'lastTeamSummaryEmailAt').maybeSingle();
+      const { data: lastRow } = await supabase.from('ops_settings').select('data').eq('key', 'lastTeamBroadcastEmailAt').maybeSingle();
       const lastAt = lastRow?.data ? new Date(lastRow.data).getTime() : 0;
       const elapsed = Date.now() - lastAt;
       if (lastAt && elapsed < COOLDOWN_MS) {
         const waitMin = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
-        return res.status(429).json({ error: `Team summaries were already sent recently — please wait ${waitMin} more minute(s) before sending again.` });
+        return res.status(429).json({ error: `A team email was already sent recently — please wait ${waitMin} more minute(s) before sending again.` });
+      }
+
+      const { recipients: reqRecipients, template, subject: reqSubject, body: reqBody } = req.body || {};
+      if (!Array.isArray(reqRecipients) || !reqRecipients.length) {
+        return res.status(400).json({ error: 'At least one recipient is required.' });
+      }
+      const VALID_TEMPLATES = new Set(['custom', 'overdueReminder', 'updateStatuses', 'checkOverdue', 'workSummary']);
+      if (!VALID_TEMPLATES.has(template)) return res.status(400).json({ error: 'Invalid template.' });
+      const subject = String(reqSubject || '').trim();
+      const bodyText = String(reqBody || '').trim();
+      // workSummary's own body is generated per-recipient below, never
+      // from the client — only the other four need real subject/body text.
+      if (template !== 'workSummary' && !subject && !bodyText) {
+        return res.status(400).json({ error: 'Enter a subject or message.' });
       }
 
       const today = new Date().toISOString().slice(0, 10);
@@ -1905,9 +1949,9 @@ export default async function handler(req, res) {
       // isDoneThisCycle/isOverdue/taskIsOverdue — duplicated here rather than
       // imported (that file is a handler, not a shared library, and
       // importing back into this one would be a circular dependency; this
-      // file already already imports FROM it nowhere and is imported BY it),
-      // same "kept in sync deliberately" convention this codebase already
-      // uses between client.html and that same cron file.
+      // file already imports FROM it nowhere and is imported BY it), same
+      // "kept in sync deliberately" convention this codebase already uses
+      // between client.html and that same cron file.
       const isInactiveService = (s) => s.status === 'cancelled' || s.status === 'archived';
       const isDoneThisCycle = (s) => !!(s.lastDone && !(s.due && s.due < today));
       const isOverdueService = (s) => !isInactiveService(s) && !isDoneThisCycle(s) && !!s.due && s.due < today;
@@ -1937,16 +1981,33 @@ export default async function handler(req, res) {
       // her literal id (same special case resolveReportRecipients()/
       // resolveReviewRecipients() already establish elsewhere in this file
       // — she has no real ops_admins row, but can genuinely have work
-      // assigned to her like anyone else).
+      // assigned to her like anyone else). This is the REAL, authoritative
+      // directory the client's recipient selection is resolved against
+      // below — a client-supplied id that isn't in here (a stale/removed
+      // account) is silently skipped, never trusted for a name/email the
+      // request body happened to also send.
       const people = [
         { id: 'primary-admin', kind: 'admin', name: 'Sarah Samy', email: 'ssamy@weblightmedia.com' },
         ...(userRows || []).filter(r => r.data?.status !== 'inactive').map(r => ({ id: r.id, kind: 'user', name: r.data?.name || '', email: r.data?.email || '' })),
         ...(adminRows || []).filter(r => r.data?.status !== 'inactive').map(r => ({ id: r.id, kind: 'admin', name: r.data?.name || '', email: r.data?.email || '' })),
       ];
+      const peopleById = new Map(people.map(p => [p.id, p]));
 
-      const rows = [];
-      let skippedCount = 0;
-      for (const person of people) {
+      const resolvedPeople = [];
+      let unresolvedCount = 0;
+      for (const r of reqRecipients) {
+        const person = peopleById.get(r?.id);
+        if (!person || !person.email) { unresolvedCount++; continue; }
+        resolvedPeople.push(person);
+      }
+      if (!resolvedPeople.length) return res.status(400).json({ error: 'None of the selected recipients could be resolved — try refreshing and selecting again.' });
+
+      // Per-person tasks/services breakdown — reused for BOTH the
+      // "Your work summary" template's own full breakdown body AND the
+      // [X]% incomplete mail-merge token every other template's body may
+      // contain (see below) — one computation, two uses, same numbers
+      // either way.
+      function personStats(person) {
         const tasksForPerson = tasks.filter(t => t.assigneeId === person.id);
         const tasksAssigned = tasksForPerson.length;
         const tasksDone = tasksForPerson.filter(t => t.status === 'Done').length;
@@ -1956,11 +2017,7 @@ export default async function handler(req, res) {
         const servicesAssigned = servicesForPerson.length;
         const servicesDone = servicesForPerson.filter(s => s.workStatus === 'done').length;
         const totalAssigned = tasksAssigned + servicesAssigned;
-        // "Genuinely empty plate" -> skip entirely, no email, no row.
-        if (!totalAssigned) { skippedCount++; continue; }
-        if (!person.email) { skippedCount++; continue; }
-
-        const pctDone = Math.round((tasksDone + servicesDone) / totalAssigned * 100);
+        const pctDone = totalAssigned ? Math.round((tasksDone + servicesDone) / totalAssigned * 100) : 0;
         const overdueItems = [
           ...tasksForPerson.filter(isOverdueTask).map(t => t.subject || 'Untitled task'),
           ...servicesForPerson.filter(isOverdueService).map(s => s.name || 'Untitled service'),
@@ -1972,31 +2029,75 @@ export default async function handler(req, res) {
         const DUE_SOON_LIMIT = 5;
         const dueSoonLines = dueSoonItems.slice(0, DUE_SOON_LIMIT).map(x => `• ${x}`);
         if (dueSoonItems.length > DUE_SOON_LIMIT) dueSoonLines.push(`…and ${dueSoonItems.length - DUE_SOON_LIMIT} more`);
-
         const bodyLines = [
           `Tasks: ${tasksAssigned} assigned · ${tasksDone} done · ${tasksNotStarted} not started · ${tasksInProgress} in progress (${pctDone}% done)`,
           `Services: ${servicesAssigned} assigned · ${servicesDone} done`,
           '',
           `Overdue: ${overdueItems.length}`,
         ];
-        if (dueSoonLines.length) {
-          bodyLines.push('', 'Due this week:', ...dueSoonLines);
-        }
-
-        rows.push({
-          type: 'workSummary', recipientId: person.id, recipientKind: person.kind,
-          recipientName: person.name, recipientEmail: person.email,
-          title: "Here's your work summary",
-          body: bodyLines.join('\n'),
-          link: '', context: {},
-        });
+        if (dueSoonLines.length) bodyLines.push('', 'Due this week:', ...dueSoonLines);
+        return { totalAssigned, pctDone, bodyLines };
       }
 
-      await insertNotifications(supabase, rows, warnings);
-      const { error: stampErr } = await supabase.from('ops_settings').upsert({ key: 'lastTeamSummaryEmailAt', data: new Date().toISOString() }, { onConflict: 'key' });
-      if (stampErr) warnings.push(`lastTeamSummaryEmailAt: ${stampErr.message}`);
+      const FROM = 'WebLight Ops Hub <notifications@opshub.wlmsend.com>';
+      const REPLY_TO = 'ssamy@weblightmedia.com';
+      let sentCount = 0;
+      let suppressedForDavidCount = 0;
+      let emptyPlateSkippedCount = 0;
+      for (const person of resolvedPeople) {
+        let title, emailBody;
+        if (template === 'workSummary') {
+          const stats = personStats(person);
+          // Same "genuinely empty plate -> no email" rule the old
+          // auto-broadcast always applied — the admin picked this person
+          // via "Select all" (or individually) without knowing in advance
+          // whether they have anything assigned; an empty breakdown isn't
+          // useful content to actually send.
+          if (!stats.totalAssigned) { emptyPlateSkippedCount++; continue; }
+          title = subject || "Here's your work summary";
+          emailBody = stats.bodyLines.join('\n');
+        } else {
+          title = subject || '(no subject)';
+          // [X] mail-merge token (2026-09-28) — the "Overdue work reminder"
+          // template's own default text includes "[X]% incomplete",
+          // resolved per-recipient here from the SAME personStats() used
+          // for the work-summary template. Generic, not template-specific:
+          // any template's (possibly hand-edited) body may contain the
+          // literal token and gets it substituted the same way, including
+          // a fully Custom message. A person with nothing assigned reads
+          // as 0% incomplete (vacuously true), not skipped — unlike
+          // workSummary, the admin explicitly chose this recipient for a
+          // broadcast message, so their own empty plate is never a reason
+          // to silently drop them from an admin-curated send.
+          let pctIncomplete = null;
+          if (bodyText.includes('[X]')) {
+            const stats = personStats(person);
+            // Zero assigned -> 0% incomplete (nothing to be behind on), NOT
+            // 100 — personStats()'s own pctDone is 0 for this case only to
+            // avoid a NaN from dividing by zero, not because "0 done out of
+            // 0" means "fully incomplete"; that inversion would read as
+            // clearly wrong ("100% incomplete" for someone with no work at
+            // all) if it ever landed in a real sent email.
+            pctIncomplete = stats.totalAssigned ? (100 - stats.pctDone) : 0;
+          }
+          emailBody = pctIncomplete === null ? bodyText : bodyText.split('[X]').join(String(pctIncomplete));
+        }
 
-      return res.status(200).json({ ok: true, sentCount: rows.length, skippedCount, warnings });
+        try {
+          const html = buildPlainEmailHtml({ body: emailBody });
+          const result = await sendResendEmail({ to: person.email, subject: title, html, type: 'teamBroadcast', from: FROM, replyTo: REPLY_TO });
+          if (result?.suppressed) suppressedForDavidCount++;
+          else sentCount++;
+        } catch (err) {
+          await logError({ endpoint: 'ops-sync:email-team-broadcast', error: err, session, extra: { recipient: person.email } });
+          warnings.push(`email-team-broadcast (${person.email}): ${err.message}`);
+        }
+      }
+
+      const { error: stampErr } = await supabase.from('ops_settings').upsert({ key: 'lastTeamBroadcastEmailAt', data: new Date().toISOString() }, { onConflict: 'key' });
+      if (stampErr) warnings.push(`lastTeamBroadcastEmailAt: ${stampErr.message}`);
+
+      return res.status(200).json({ ok: true, sentCount, suppressedForDavidCount, unresolvedCount, emptyPlateSkippedCount, warnings });
     } catch (err) {
       await logError({ endpoint: 'ops-sync', error: err, session });
       return res.status(500).json({ error: err.message });
