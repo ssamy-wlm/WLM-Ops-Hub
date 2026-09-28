@@ -12876,6 +12876,24 @@ function _onTaParseFilesChosen(event){
   });
 }
 
+// Defensive JSON parsing for /api/process-transcript responses (2026-09-28)
+// — shared by runTaskEmailParse() and rmExtractTranscript() below, this
+// endpoint's two call sites. A Vercel platform-level failure (e.g. the
+// function hitting its real timeout and being killed mid-request) returns
+// the PLATFORM's own non-JSON crash page, never anything
+// api/process-transcript.js's own code produces — a bare `res.json()`
+// throws a raw, cryptic SyntaxError on that body ("Unexpected token 'A',
+// 'An error o...' is not valid JSON") which used to surface directly to
+// the user as-is. Reads the raw text first and only ever throws a clean,
+// actionable message — never the raw JSON.parse exception — when the
+// body genuinely isn't JSON; a real (well-formed) server error response
+// still parses fine here and is handled exactly as before by each
+// caller's own `if(!res.ok)` check right after.
+async function _ptSafeJson(res){
+  const raw = await res.text();
+  try { return JSON.parse(raw); }
+  catch { throw new Error('Parsing failed — please try again.'); }
+}
 async function runTaskEmailParse(){
   const token = _opsToken();
   if(!token) return;
@@ -12892,7 +12910,7 @@ async function runTaskEmailParse(){
       headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
       body: JSON.stringify({ mode: 'taskEmail', text: allText }),
     });
-    const data = await res.json();
+    const data = await _ptSafeJson(res);
     if(!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
     const extracted = Array.isArray(data.tasks) ? data.tasks : [];
     if(!extracted.length){
@@ -17932,7 +17950,7 @@ async function rmExtractTranscript(){
         meeting_date:meetingDate||new Date().toISOString().slice(0,10),
       })
     });
-    const data=await res.json();
+    const data=await _ptSafeJson(res);
     if(!res.ok) throw new Error(data.error||`Server error ${res.status}`);
 
     const all=dbGet(DB_KEYS.roadmapTasks)||[];
