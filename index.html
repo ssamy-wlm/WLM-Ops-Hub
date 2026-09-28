@@ -8210,23 +8210,51 @@ function _renderOverviewUrgencyDonut(group, bucketTotals){
     return seg;
   });
 
-  const circles=segs.map(s=>{
-    const dash=`${s.arc} ${c-s.arc}`;
+  // Circles built from only the NON-ZERO segments (2026-09-28 polish) — a
+  // zero-value bucket's own arc="0" circle drew nothing anyway, but still
+  // left an extra element and an extra seam for the browser to rasterize,
+  // one real source of the reported jagged/misaligned look. The LAST
+  // visible segment's arc is set to the exact remainder (c - its own
+  // offset) rather than its own pct*c value, so the segments always sum
+  // to EXACTLY the full circumference and the ring closes with no
+  // floating-point hairline gap or overlap at the seam where it meets the
+  // first segment (12 o'clock, after the -90deg rotation below) —
+  // pct*c across 4 independently-rounded fractions doesn't reliably
+  // re-sum to c to the sub-pixel precision SVG actually rasterizes at.
+  // stroke-linecap="butt" is now explicit (was relying on the SVG
+  // default, which IS butt, but left unstated) so adjacent segments meet
+  // with a clean flat edge — never a rounded overhang that would bulge
+  // into its neighbor at the boundary, the "clean modern donut" look
+  // asked for here.
+  const visibleSegs=segs.filter(s=>s.val>0);
+  const circles=visibleSegs.map((s,i)=>{
+    const isLast=i===visibleSegs.length-1;
+    const arc=isLast?(c-s.offset):s.arc;
+    const dash=`${arc} ${c-arc}`;
     return `<circle class="ov-urgency-seg" data-group="${group}" data-key="${s.key}" cx="${size/2}" cy="${size/2}" r="${r}"
-      fill="none" stroke="${s.color}" stroke-width="${stroke}"
+      fill="none" stroke="${s.color}" stroke-width="${stroke}" stroke-linecap="butt"
       stroke-dasharray="${dash}" stroke-dashoffset="${-s.offset}"
       style="transition:stroke-width .15s;cursor:pointer;"
       onmouseenter="_ovUrgencyHover('${group}','${s.key}','${escHtmlAdmin(s.label)}',${s.val})"
       onmouseleave="_ovUrgencyUnhover('${group}')"><title>${s.val} · ${escHtmlAdmin(s.label)}</title></circle>`;
   }).join('');
 
+  // Center overlay (2026-09-28 polish) — explicitly sized/positioned to
+  // the donut's actual INNER diameter (size - 2*stroke = 110px here, not
+  // the full 150px wrap) and centered with negative margins from the
+  // middle, so the count/label can never visually extend into the ring's
+  // own stroke band regardless of digit count — the reported "center
+  // count overlaps the ring." overflow:hidden + white-space:nowrap keep a
+  // 3+ digit count or a long label from growing past that circle instead
+  // of silently spilling outward.
+  const innerDiameter=size-stroke*2;
   wrap.innerHTML=`
     <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="transform:rotate(-90deg);">
-      ${total?circles:`<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}"></circle>`}
+      ${total?circles:`<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}" stroke-linecap="butt"></circle>`}
     </svg>
-    <div id="ov-${group}-urgency-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none;">
-      <div id="ov-${group}-urgency-center-val" style="font-size:24px;font-weight:800;color:var(--text-dark);">${total}</div>
-      <div id="ov-${group}-urgency-center-label" style="font-size:10px;color:var(--text-light);font-weight:600;">open ${group}</div>
+    <div id="ov-${group}-urgency-center" style="position:absolute;top:50%;left:50%;width:${innerDiameter}px;height:${innerDiameter}px;margin:-${innerDiameter/2}px 0 0 -${innerDiameter/2}px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;pointer-events:none;">
+      <div id="ov-${group}-urgency-center-val" style="font-size:24px;font-weight:800;color:var(--text-dark);line-height:1.1;white-space:nowrap;">${total}</div>
+      <div id="ov-${group}-urgency-center-label" style="font-size:10px;color:var(--text-light);font-weight:600;line-height:1.2;white-space:nowrap;">open ${group}</div>
     </div>`;
   // Stashed so _ovUrgencyUnhover() can restore the exact default text on
   // mouseleave without re-deriving it from rendered DOM (fragile — arc
