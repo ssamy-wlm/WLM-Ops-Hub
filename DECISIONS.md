@@ -11081,6 +11081,169 @@ runs through, plus several `api/*` files) — held for the user's own
 preview confirmation and explicit approval before merge, per the
 ticket's own "needs preview + approval" instruction.
 
+### 2026-09-28 — Overview "Email the Team" composer with templates
+
+**Ticket:** replace the Overview page's one-click "Email team summaries"
+button (which silently fired the same auto-generated per-person summary
+to every active team member with no way to change the message or the
+audience) with a composer: pick any subset of recipients, pick one of
+four fixed reminder templates or "Your work summary" (the old
+behavior) or a blank Custom message, edit the subject/body, then send —
+keeping the existing super/owner-only gate and cooldown.
+
+**Design questions resolved before implementing (rule #7-style
+judgment calls, not literal ambiguous-source-data cases but genuine
+architecture decisions worth recording):**
+- *Is "every template is fully editable" compatible with "Your work
+  summary" being inherently per-recipient content?* No single shared
+  body text exists for that template — each recipient's email body is
+  generated from their own task/service data. Resolved by keeping the
+  subject editable (a real, single, admin-typed string) while disabling
+  the body textarea and showing an inline note explaining why, rather
+  than pretending there's a "body" to edit or silently ignoring
+  whatever the admin typed there.
+- *What does the literal `[X]` in "Overdue work reminder"'s canned text
+  mean?* The ticket's own template text — "Your assigned work is about
+  [X]% incomplete" — is a mail-merge placeholder, not a typo or a
+  generic variable name. Implemented as a genuinely generic
+  substitution mechanism (any template's body, including a hand-typed
+  Custom one, gets `[X]` replaced with that recipient's own
+  `100 - pctDone`), not hardcoded to fire only for that one template.
+  Found and fixed a real bug while writing my own test for it: a
+  recipient with zero assigned items got `pctDone` defaulted to `0`
+  purely to avoid a divide-by-zero, which without a special case
+  would've substituted "100% incomplete" for someone with literally
+  nothing assigned — clearly wrong. Fixed to explicitly substitute `0`
+  when `totalAssigned` is falsy.
+- *Keep the old `email-team-summaries` action as a parallel path, or
+  replace it outright?* Replaced entirely — the new composer's
+  "Select all" + "Your work summary" template combination reproduces
+  the old one-click behavior exactly (including its "skip a genuinely
+  empty plate" rule, preserved as `emptyPlateSkippedCount`), so keeping
+  both would just be dead-weight duplication with no behavioral gap to
+  justify it.
+- *Should David be reachable via this composer if an admin explicitly
+  checks him as a recipient?* No — the existing centralized,
+  safe-by-default suppression from the 2026-09-25/2026-09-28 work
+  (`isEmailSuppressedForDavid`, enforced inside `sendResendEmail()`
+  itself) applies unchanged: this broadcast's new `type:'teamBroadcast'`
+  is deliberately not added to David's 3-item allowlist
+  (`timeOffSubmitted`, `weeklyTeamCompletion`, `biMonthlyPtoReport`).
+  Consistent with "David only gets 3 specific things by email" — a
+  routine team reminder/nag is exactly the category he asked to stop
+  receiving, and an admin manually checking his name in a recipient
+  list shouldn't be a backdoor around that. The admin isn't left
+  guessing why the count looks short: the response reports
+  `suppressedForDavidCount` explicitly.
+
+**Implementation:**
+- `lib/resendClient.js`: `sendResendEmail()` gained two new optional,
+  backward-compatible override params, `from`/`replyTo` (every existing
+  call site omits them and keeps the env-driven defaults unchanged).
+  New exported `buildPlainEmailHtml({body, link})` — a deliberately
+  minimal HTML template with no colored header, no button, no
+  `border-radius` card, unlike the branded `buildEmailHtml()` every
+  other notification type uses — chosen specifically to read as
+  transactional mail rather than marketing mail, favoring Gmail's
+  Primary tab over Promotions (the ticket's own explicit ask).
+- `api/ops-sync.js`: the entire old `email-team-summaries` action block
+  was replaced wholesale by a new `email-team-broadcast` action. Tier
+  gate unchanged (super/owner only). Cooldown key renamed
+  `lastTeamSummaryEmailAt` → `lastTeamBroadcastEmailAt` in
+  `ops_settings` (same 3h `COOLDOWN_MS`) since the old action name is
+  fully retired — a harmless one-time cooldown reset on deploy, not a
+  behavior change. Request validation: recipients array can't be
+  empty, `template` must be one of the 5 known keys, and a `custom`
+  template needs at least a subject or a body (not both blank).
+  Recipient resolution is entirely server-side and re-derived fresh on
+  every request — the client sends only `{id, kind}` pairs saying WHICH
+  boxes were checked; name, email, and task/service stats are always
+  re-pulled from live Supabase state inside the same request, never
+  trusted from the payload (id present but unresolvable → silently
+  skipped, counted in `unresolvedCount`, not a crash). New
+  `personStats(person)` helper computes `{totalAssigned, pctDone,
+  bodyLines}` per recipient, shared by both the "Your work summary"
+  body generator and the `[X]` token substitution (`stats.totalAssigned
+  ? 100 - stats.pctDone : 0`). Sends go directly through
+  `sendResendEmail()` per resolved recipient — not through
+  `insertNotifications()` — since this needs the plain-HTML template
+  and a distinct from-address `insertNotifications()`'s own
+  `maybeEmailNotification()` has no per-call override for, and it's a
+  one-off admin-composed broadcast with no natural `ops_notifications`
+  row of its own. `from: 'WebLight Ops Hub <notifications@opshub.wlmsend.com>'`,
+  `replyTo: 'ssamy@weblightmedia.com'`, `type: 'teamBroadcast'` (David
+  suppression applies). Response shape: `{ok, sentCount,
+  suppressedForDavidCount, unresolvedCount, emptyPlateSkippedCount,
+  warnings}`. Quiet hours deliberately NOT applied — matches the
+  existing "deliberate, on-demand admin action" precedent already
+  documented under "Digest timing" (`cron-backup.js`'s off-site email,
+  the "Send Test Email" diagnostic).
+- `api/inbound-email.js`: one stale comment fixed (an example
+  `ops_settings` key list still named the old `lastTeamSummaryEmailAt`
+  key) — comment-only, no behavior change.
+- `index.html`: the Overview button's visible label changed to "📤
+  Email the Team" and its `onclick` now opens a new modal
+  (`openEmailTheTeamModal()`) instead of firing an email directly; the
+  element id (`emailTeamSummariesBtn`) was deliberately left unchanged
+  since `refreshAdminOverview()`'s existing visibility-toggle code
+  already targets it correctly and renaming would be a pure risk with
+  no benefit. New: `ETT_TEMPLATES` (the 5 template subject/body pairs,
+  verbatim from the ticket), `openEmailTheTeamModal()`,
+  `_populateEttRecipients()` (built from `_taAllAssignablePeople()`,
+  chosen over `_timeOffRoster()` because the latter silently drops
+  admin-only accounts, plus the primary-admin sentinel prepended with a
+  name-collision guard), `_ettToggleSelectAll()`,
+  `_getEttSelectedRecipients()`, `_ettUpdateCount()`,
+  `_ettApplyTemplate()` (swaps subject/body, toggles the body
+  textarea's `disabled` state and the explanatory note/token-hint
+  visibility per template), `_sendEmailTheTeam()`. New modal markup
+  `#emailTeamModal`, built entirely from this codebase's existing modal/
+  form-control CSS conventions (`.modal-overlay`, `.form-select`,
+  `.form-textarea`, etc.) and the generic `openModal()`/`closeModal()`
+  helpers — no new shared styling introduced.
+
+**Verification** (no live Supabase/Resend access, rule #11; no
+browser-facing app besides this one to test against, rule #9): a new
+28-check Node suite (`verify_email_the_team.mjs`) exercises the real,
+unmodified `api/ops-sync.js` handler end-to-end via a fake in-memory
+PostgREST-over-fetch layer (calibrated against real
+`@supabase/supabase-js` request shapes) and real `signSession()`
+tokens — tier gate (403 non-super), all 4 validation failure cases
+(empty recipients, invalid template, empty custom subject+body,
+cooldown-active 429), the happy-path custom-template send (correct
+`from`/`reply_to`, genuinely minimal HTML with none of the branded
+header/button/border-radius markers, an unresolved recipient id
+skipped not crashed on and reported in `unresolvedCount`), the `[X]`
+token's real values for both a 50%-incomplete and a genuinely
+0-assigned recipient (including the zero-assigned bug fix found and
+fixed during this same test run) with no literal `[X]` ever leaking
+into a sent email, the `workSummary` template's empty-plate skip
+(`emptyPlateSkippedCount`) and default-subject fallback, and David's
+exclusion from a routine broadcast with other recipients unaffected —
+28/28 passing. A separate 26-check Playwright suite
+(`verify_email_the_team_ui.mjs`) drives the real `index.html` served
+statically (no mocked DOM) — modal open, exact recipient-list
+rendering (4 people: the primary-admin sentinel + 2 seeded users + 1
+seeded admin), select-all/deselect-all with correct count-label
+updates, each template's pre-fill/editable/disabled/note-visibility
+behavior (including proving the Overdue Reminder body is genuinely
+hand-editable, not just `disabled=false`), a full send flow through a
+mocked `/api/ops-sync` route asserting the exact outgoing request
+shape (action name, the 2 checked recipient ids + kinds, template,
+hand-typed subject/body) and the modal auto-closing on success, the
+button's exact new visible label (the ticket's own stated acceptance
+criterion), and zero JS errors across the whole scenario — 26/26
+passing. `node --check` clean on `api/ops-sync.js`, `lib/resendClient.js`,
+`api/inbound-email.js`; index.html's extracted-`<script>`-block syntax
+check (vm.Script, 6 blocks) and div-balance check (open=2213/close=2215,
+matching origin/main's own -2/-2 baseline exactly — the new modal's
+own divs are internally balanced) both clean.
+
+Data-write-adjacent + sends real email — held for the user's own
+preview confirmation and explicit approval before merge, per the
+ticket's own "needs preview + approval (sends email)" instruction and
+rule #10.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

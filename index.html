@@ -1354,7 +1354,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                this file already uses. This is UX scoping only — the real
                boundary is server-side (tier!=='super' -> 403), same as every
                other admin-only action in this file. -->
-          <button id="emailTeamSummariesBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="emailTeamSummaries()">📤 Email team summaries</button>
+          <button id="emailTeamSummariesBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="openEmailTheTeamModal()">📤 Email the Team</button>
           <button class="btn btn-outline btn-sm" onclick="refreshAdminOverviewFromCloud()">↺ Refresh</button>
         </div>
       </div>
@@ -3444,6 +3444,49 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <button class="modal-close" onclick="closeModal('ovDrillModal')">✕</button>
     </div>
     <div class="modal-body" id="ovDrillModalBody" style="max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- Email the Team — composer modal (2026-09-28) -->
+<div id="emailTeamModal" class="modal-overlay">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Email the Team</div>
+        <div class="modal-sub">Pick recipients and a message — everything is editable before you send.</div>
+      </div>
+      <button class="modal-close" onclick="closeModal('emailTeamModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Recipients</span>
+          <span style="font-weight:600;font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer;">
+            <input type="checkbox" id="ett-select-all" onchange="_ettToggleSelectAll(this.checked)"> Select all
+          </span>
+        </label>
+        <div id="ett-recipients" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px;"></div>
+        <div id="ett-recipient-count" style="font-size:11px;color:var(--text-light);margin-top:4px;">No recipients selected</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Message</label>
+        <select class="form-select" id="ett-template" style="width:100%;margin-bottom:8px;" onchange="_ettApplyTemplate()">
+          <option value="custom">Custom</option>
+          <option value="overdueReminder">Overdue work reminder</option>
+          <option value="updateStatuses">Update your statuses</option>
+          <option value="checkOverdue">Check your overdue items</option>
+          <option value="workSummary">Your work summary</option>
+        </select>
+        <input class="form-input" id="ett-subject" placeholder="Subject" style="width:100%;margin-bottom:8px;box-sizing:border-box;">
+        <textarea class="form-textarea" id="ett-body" rows="6" placeholder="Message body" style="width:100%;box-sizing:border-box;"></textarea>
+        <div id="ett-workSummaryNote" style="display:none;font-size:11px;color:var(--text-light);margin-top:4px;">Each recipient gets their own tasks/services breakdown, generated automatically — there's no single shared body to edit for this one. The subject above still sends as typed.</div>
+        <div id="ett-tokenHint" style="font-size:11px;color:var(--text-light);margin-top:4px;">Tip: include <code>[X]</code> anywhere in the message to insert each recipient's own % incomplete.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('emailTeamModal')">Cancel</button>
+      <button class="btn btn-primary" id="ett-send-btn" onclick="_sendEmailTheTeam()">📤 Send</button>
+    </div>
   </div>
 </div>
 
@@ -13269,40 +13312,128 @@ async function refreshAdminOverviewFromCloud(){
     refreshAdminOverview();
   }
 }
-// "Email everyone their work summary" (2026-09-03) — Super Admin/Owner
-// only (button itself is already hidden otherwise; this is a second,
-// belt-and-suspenders check, same as every other admin-only action here).
-// The confirm dialog's "(N recipients)" count is a client-side ESTIMATE
-// only, via the exact same _timeOffRoster()/_personWorkSummary() pair
-// Team Production Analytics already uses (so it can never wildly disagree
-// with what the team roster actually looks like) — the real, authoritative
-// skip-empty-plate decision happens server-side in api/ops-sync.js, which
-// is the only place with a fresh, complete tasks+services scan. The
-// ~3-hour cooldown against a spam-clicked repeat blast is enforced
-// server-side (see that action's own comment) — this button only disables
-// itself for the run in progress, it is not the real guard.
-function emailTeamSummaries(){
+// "Email the Team" composer (2026-09-28, replaces the old one-click
+// "Email everyone their work summary" action, 2026-09-03) — Super
+// Admin/Owner only (button itself is already hidden otherwise; this is a
+// second, belt-and-suspenders check, same as every other admin-only
+// action here). Opens a modal to pick recipients + a message template
+// (or fully custom text) rather than immediately sending — the real
+// send happens from _sendEmailTheTeam() below, once the admin reviews
+// and clicks Send. Server-side (api/ops-sync.js's 'email-team-broadcast'
+// action) is still the sole source of truth for who's real/active and
+// what their own tasks/services actually look like; this only builds
+// the picker's options and the request body.
+const ETT_TEMPLATES = {
+  custom: { subject: '', body: '' },
+  overdueReminder: { subject: 'Overdue work reminder', body: "Your assigned work is about [X]% incomplete and we're near the end of the month. Please log into the Ops Hub and update/finish your overdue tasks." },
+  updateStatuses: { subject: 'Update your statuses', body: 'Please log into the Ops Hub and update the status of your tasks and services so your progress is accurate.' },
+  checkOverdue: { subject: 'Check your overdue items', body: 'You have overdue items in the Ops Hub — please review and clear them, or request a due-date change if needed.' },
+  workSummary: { subject: "Here's your work summary", body: '' },
+};
+function openEmailTheTeamModal(){
   if(_adminLevel!=='super' && _adminLevel!=='owner'){ showToast('Super Admin only'); return; }
-  const allTasks = dbGet(DB_KEYS.tasks)||[];
-  const allServices = _activeServicesForAssessment();
-  const roster = _timeOffRoster();
-  const recipientEstimate = roster.filter(p=>_personWorkSummary(p, allTasks, allServices).totalAssigned>0).length;
-  if(!confirm(`Send each person their work summary? (${recipientEstimate} recipient${recipientEstimate===1?'':'s'})`)) return;
-  _sendTeamSummaries();
+  _populateEttRecipients();
+  const templateSel = document.getElementById('ett-template');
+  if(templateSel) templateSel.value = 'custom';
+  _ettApplyTemplate();
+  openModal('emailTeamModal');
 }
-async function _sendTeamSummaries(){
+// Recipients: every active user + admin (_taAllAssignablePeople(), the
+// same more-complete roster helper Task Assignments' own assignee picker
+// already established — unlike _timeOffRoster(), it doesn't silently drop
+// an admin-only account whose status field was never explicitly written,
+// see that function's own comment), PLUS the primary-admin sentinel
+// (Sarah) by her literal id, matching the OLD auto-broadcast's own
+// special-cased inclusion of her (she has no real ops_admins row but can
+// genuinely have work assigned to her like anyone else). checkbox value
+// is the person's id; data-kind carries 'user'/'admin' so the request
+// body can tell the server which table to resolve each one against —
+// the server re-resolves name/email fresh from Supabase regardless, this
+// is only routing.
+function _populateEttRecipients(){
+  const container = document.getElementById('ett-recipients');
+  if(!container) return;
+  const people = [
+    { id:'primary-admin', name:'Sarah Samy', kind:'admin', label:'Admin' },
+    ..._taAllAssignablePeople().filter(p=>(p.name||'').trim().toLowerCase()!=='sarah samy').map(p=>({ id:p.id, name:p.name, kind:p.kind==='Admin'?'admin':'user', label:p.kind })),
+  ];
+  if(!people.length){
+    container.innerHTML = '<div style="font-size:12px;color:var(--text-light);padding:6px 4px;">No active team members.</div>';
+    return;
+  }
+  container.innerHTML = people.map(p=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:13px;cursor:pointer;border-radius:6px;">
+      <input type="checkbox" class="ett-recipient-cb" value="${escHtmlAdmin(p.id)}" data-kind="${p.kind}" onchange="_ettUpdateCount()">
+      <span style="flex:1;">${escHtmlAdmin(p.name||'(unnamed)')}</span>
+      <span style="font-size:10px;color:var(--text-light);">${p.label}</span>
+    </label>`).join('');
+  _ettUpdateCount();
+}
+function _ettToggleSelectAll(checked){
+  document.querySelectorAll('#ett-recipients input.ett-recipient-cb').forEach(cb=>{ cb.checked = checked; });
+  _ettUpdateCount();
+}
+function _getEttSelectedRecipients(){
+  return [...document.querySelectorAll('#ett-recipients input.ett-recipient-cb:checked')].map(cb=>({ id:cb.value, kind:cb.dataset.kind }));
+}
+function _ettUpdateCount(){
+  const n = _getEttSelectedRecipients().length;
+  const countEl = document.getElementById('ett-recipient-count');
+  if(countEl) countEl.textContent = n ? `${n} recipient${n===1?'':'s'} selected` : 'No recipients selected';
+  const all = document.querySelectorAll('#ett-recipients input.ett-recipient-cb');
+  const allCb = document.getElementById('ett-select-all');
+  if(allCb) allCb.checked = all.length>0 && n===all.length;
+}
+// Template picker: pre-fills subject+body, fully editable afterward — the
+// admin can always hand-edit any template's text (including Custom's own
+// blank start) before sending; nothing here locks the text in. "Your work
+// summary" is the one exception: its content is inherently per-recipient
+// (each person's own tasks/services breakdown, generated server-side —
+// see api/ops-sync.js), so there's no single shared body text to edit —
+// the body field is disabled with an explanatory note instead, while the
+// subject line stays editable (it's the same for everyone's email either
+// way).
+function _ettApplyTemplate(){
+  const key = document.getElementById('ett-template')?.value || 'custom';
+  const t = ETT_TEMPLATES[key] || ETT_TEMPLATES.custom;
+  const subjectEl = document.getElementById('ett-subject');
+  const bodyEl = document.getElementById('ett-body');
+  if(subjectEl) subjectEl.value = t.subject;
+  if(bodyEl) bodyEl.value = t.body;
+  const isWorkSummary = key==='workSummary';
+  if(bodyEl){
+    bodyEl.disabled = isWorkSummary;
+    bodyEl.placeholder = isWorkSummary ? 'Generated automatically per recipient — see the note below.' : 'Message body';
+  }
+  const note = document.getElementById('ett-workSummaryNote');
+  if(note) note.style.display = isWorkSummary ? '' : 'none';
+  const tokenHint = document.getElementById('ett-tokenHint');
+  if(tokenHint) tokenHint.style.display = isWorkSummary ? 'none' : '';
+}
+async function _sendEmailTheTeam(){
+  const recipients = _getEttSelectedRecipients();
+  if(!recipients.length){ showToast('Select at least one recipient', 'warn'); return; }
+  const template = document.getElementById('ett-template')?.value || 'custom';
+  const subject = (document.getElementById('ett-subject')?.value||'').trim();
+  const body = (document.getElementById('ett-body')?.value||'').trim();
+  if(template!=='workSummary' && !subject && !body){ showToast('Enter a subject or message', 'warn'); return; }
+  if(!confirm(`Send this email to ${recipients.length} recipient${recipients.length===1?'':'s'}?`)) return;
   const token = _opsToken(); if(!token) return;
-  const btn = document.getElementById('emailTeamSummariesBtn');
+  const btn = document.getElementById('ett-send-btn');
   if(btn){ btn.disabled = true; btn.textContent = '📤 Sending…'; }
   try{
-    const res = await fetch(OPS_SYNC_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({action:'email-team-summaries'}) });
+    const res = await fetch(OPS_SYNC_URL, { method:'POST', headers:{'Content-Type':'application/json',Authorization:'Bearer '+token}, body: JSON.stringify({ action:'email-team-broadcast', recipients, template, subject, body }) });
     const data = await res.json();
     if(!res.ok) throw new Error(data?.error || ('HTTP '+res.status));
-    showToast(`✅ Sent ${data.sentCount} work summar${data.sentCount===1?'y':'ies'}`);
+    const parts = [`✅ Sent ${data.sentCount} email${data.sentCount===1?'':'s'}`];
+    if(data.suppressedForDavidCount) parts.push(`${data.suppressedForDavidCount} suppressed (David's email preferences)`);
+    if(data.emptyPlateSkippedCount) parts.push(`${data.emptyPlateSkippedCount} skipped (nothing assigned)`);
+    showToast(parts.join(' — '));
+    closeModal('emailTeamModal');
   }catch(e){
     showToast('❌ '+e.message, 'warn');
   }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '📤 Email team summaries'; }
+    if(btn){ btn.disabled = false; btn.textContent = '📤 Send'; }
   }
 }
 function refreshAdminOverview(){
