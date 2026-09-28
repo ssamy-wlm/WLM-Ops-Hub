@@ -472,8 +472,7 @@ Don't relitigate them without an explicit decision from the user.
   weekly-completion 25/25, PTO-report 32/32) — 260 checks total,
   `node --check` clean on every touched file.
 - Overview "Email the Team" composer replaces the old one-click "Email
-  team summaries" (2026-09-28 — held for preview approval, sends real
-  email): the Overview button (still `#emailTeamSummariesBtn`, super/
+  team summaries" (2026-09-28 — **merged**, PR #441): the Overview button (still `#emailTeamSummariesBtn`, super/
   owner-only + the existing 3h cooldown unchanged) now reads "📤 Email
   the Team" and opens a composer modal instead of firing immediately.
   Recipients: a checklist of every active user + admin (`_taAllAssignablePeople()`,

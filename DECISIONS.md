@@ -11239,10 +11239,8 @@ check (vm.Script, 6 blocks) and div-balance check (open=2213/close=2215,
 matching origin/main's own -2/-2 baseline exactly — the new modal's
 own divs are internally balanced) both clean.
 
-Data-write-adjacent + sends real email — held for the user's own
-preview confirmation and explicit approval before merge, per the
-ticket's own "needs preview + approval (sends email)" instruction and
-rule #10.
+Data-write-adjacent + sends real email — previewed and merged by the
+user directly (PR #441), same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
