@@ -252,14 +252,21 @@ export default async function handler(req, res) {
                   body: "Quick reminder to log today's workload/tasks in the Ops Hub before the morning meeting.",
                   link: process.env.APP_URL || 'https://opshub.weblightmedia.com/user',
                 });
-                await sendResendEmail({ to: r.email, subject: 'Good morning — add your tasks for today.', html });
-                sent++;
+                // David email overhaul audit (2026-09-28) — DAILY_TASK_REMINDER_RECIPIENTS
+                // above has never included David, so this `type` has no
+                // observable effect today; passed anyway as defense-in-depth
+                // so this hardcoded list could never silently start
+                // reaching him if it's ever edited later with no one
+                // remembering to re-check that against his allowlist.
+                const result = await sendResendEmail({ to: r.email, subject: 'Good morning — add your tasks for today.', html, type: 'dailyTaskReminder' });
+                if (result?.suppressed) suppressed++;
+                else sent++;
               } catch (err) {
                 await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err, extra: { recipient: r.email } });
                 warnings.push(`dailyTaskReminder send (${r.email}): ${err.message}`);
               }
             }
-            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}${suppressed ? ` (${suppressed} suppressed — quiet hours)` : ''}`;
+            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}${suppressed ? ` (${suppressed} suppressed — quiet hours/David allowlist)` : ''}`;
           }
         } else {
           summary.dailyTaskReminder = 'not a Cairo weekday (safety-net check — the cron schedule itself already restricts to weekdays)';

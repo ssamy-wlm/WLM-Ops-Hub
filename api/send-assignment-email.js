@@ -39,9 +39,12 @@ export default async function handler(req, res) {
   // by the Admin Controls "Send Test Email" diagnostic tool
   // (sendTestAssignmentEmail() in index.html), which sends to an arbitrary
   // typed address with no linked record at all — team is genuinely not
-  // resolvable there, so a request with no recipientId is NEVER suppressed,
-  // the same way api/cron-backup.js's own backup email is never suppressed:
-  // a deliberate, on-demand action, not a scheduled/automatic notification.
+  // resolvable there, so a request with no recipientId is NEVER suppressed:
+  // a deliberate, on-demand action, not a scheduled/automatic notification
+  // (api/cron-backup.js's own backup email, by contrast, IS suppressed for
+  // David as of 2026-09-28 — it's the opposite case, a fully-automatic
+  // cron send with no equivalent "someone deliberately typed this address
+  // right now" signal).
   const { to, name, title, body, link, recipientId, recipientKind } = req.body || {};
   if (!to || typeof to !== 'string' || !to.includes('@')) {
     return res.status(400).json({ error: 'A valid "to" email address is required' });
@@ -51,7 +54,7 @@ export default async function handler(req, res) {
   }
 
   // David email overhaul (2026-09-25) — assignment emails are one of the
-  // routine types suppressed for David (see api/ops-sync.js's
+  // routine types suppressed for David (see lib/resendClient.js's
   // isEmailSuppressedForDavid() for the full rationale); scoped to
   // recipientId, the same "automated send" signal the quiet-hours check
   // right below already uses to distinguish this from the Admin Controls
@@ -79,8 +82,16 @@ export default async function handler(req, res) {
 
   const html = buildEmailHtml({ name, title, body, link });
 
+  // bypassDavidSuppression — this endpoint already ran its own David check
+  // above (the automated/recipientId-scoped case returns early before
+  // ever reaching here; the manual-test-email case, recipientId absent,
+  // deliberately allows David through, mirroring the exact quiet-hours
+  // exception this same request already gets). sendResendEmail()'s own
+  // 2026-09-28 centralized check has no notion of that distinction — a
+  // bare `type: 'assignment'` here would wrongly re-suppress the manual
+  // test-email case too.
   try {
-    const data = await sendResendEmail({ to, subject: title, html });
+    const data = await sendResendEmail({ to, subject: title, html, bypassDavidSuppression: true });
     return res.status(200).json({ ok: true, id: data?.id });
   } catch (err) {
     await logError({ endpoint: 'send-assignment-email', error: err, extra: { to } });

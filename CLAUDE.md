@@ -433,6 +433,44 @@ Don't relitigate them without an explicit decision from the user.
   `Retry-After` clamping both when it needs to engage and when it
   shouldn't) plus the two pre-existing Gemini-retry suites re-run clean
   (16/16, 5/5) — 30/30 total, `node --check` clean.
+- David email-suppression audit closed a real gap (2026-09-28 — held for
+  preview approval, `api/`+`lib/`): `api/cron-backup.js`'s off-site
+  backup email sent directly via `sendResendEmail()` to every super/
+  owner admin, David included — completely bypassing the 2026-09-25
+  suppression, which at the time only lived inside
+  `insertNotifications()`/`api/send-assignment-email.js`. Fixed AND
+  centralized: `DAVID_EMAIL`/`isEmailSuppressedForDavid()` moved from
+  `api/ops-sync.js` into `lib/resendClient.js` (re-exported from
+  `ops-sync.js` unchanged, so no existing importer needed a path
+  change), and `sendResendEmail()` itself — the ONE low-level function
+  every Resend-sending path in this codebase already goes through — now
+  enforces the check directly: a new optional `type` param is checked
+  against David's 3-item allowlist, and omitting both `type` AND the new
+  explicit `bypassDavidSuppression` escape hatch is the SAFE DEFAULT
+  (suppressed), not an opt-in a future new call site could forget. Every
+  direct `sendResendEmail()` call site audited and fixed: `cron-backup.js`
+  (`type:'backup'`, the reported bug — Sarah/other admins unaffected,
+  the DB backup itself untouched either way), `cron-overdue-check.js`'s
+  daily task reminder (`type:'dailyTaskReminder'` — David was never
+  actually in that hardcoded 3-person list, fixed defensively so it
+  can't silently start reaching him if that list is ever edited),
+  `api/inbound-email.js`'s confirmation reply (`bypassDavidSuppression:
+  true` — a direct reply to David's own action when he emails
+  task@/service@, deliberately exempt, not a passive notification), and
+  `insertNotifications()`'s own two internal calls (`bypassDavidSuppression:
+  true` — already vetted by its own per-row filter one level up; a
+  combined multi-notification batch has no single `type` of its own to
+  check a second time). Verified with a new 20-check suite (the
+  centralized predicate's 5 on/off combinations directly; the re-export
+  identity; `cron-backup.js`'s real reported bug reproduced and fixed —
+  David excluded, Sarah/Jacob still receive it, response counts correct,
+  DB backup unaffected; the daily-reminder regression; the confirmation-
+  reply bypass proven end-to-end against the REAL, unmocked
+  `sendResendEmail()`) plus every pre-existing suite in this area
+  re-run clean with no changes needed (David-suppression 15/15,
+  send-assignment-email 4/4, inbound-email plumbing 70/70+42/42+52/52,
+  weekly-completion 25/25, PTO-report 32/32) — 260 checks total,
+  `node --check` clean on every touched file.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
