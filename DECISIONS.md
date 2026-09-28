@@ -11242,6 +11242,134 @@ own divs are internally balanced) both clean.
 Data-write-adjacent + sends real email — previewed and merged by the
 user directly (PR #441), same day.
 
+### 2026-09-28 — Gemini parser: stronger extraction prompt + solid free model
+
+**Ticket:** the free-tier Gemini transcript parser was returning "no
+tasks" on task-rich meeting transcripts — reported example: a real Sep
+25 David/Sarah meeting transcript with roughly 10+ action items came
+back with 0 extracted tasks. Keep Gemini (free tier), fix extraction
+quality: rewrite the extraction prompt to reliably catch casual/
+embedded/future-tense commitments with a few-shot example or two, and
+confirm the configured model string is a valid, solid free-tier model.
+
+**Root-cause investigation:** `api/process-transcript.js` has two
+independent extraction prompts feeding the same shared `callGemini()`
+chokepoint — `buildTaskEmailSystemPrompt()` (the taskEmail mode, for
+parsing a pasted email/.eml into tasks) and a separate, much shorter
+`SYSTEM_PROMPT` constant (the Roadmap mode, for parsing a named
+`meeting_name`/`meeting_date` + `TRANSCRIPT:` block — this is the mode
+a "David/Sarah transcript" maps to, and its own owner-extraction
+instruction's example list — "sarah", "david", "emily", "jacob",
+"rania" — literally names them). Comparing the two prompts side by
+side made the quality gap obvious: `buildTaskEmailSystemPrompt()`
+already has extensive prose-pattern AND structured-marker guidance for
+owner-matching (a whole worked example section for markdown-table rows
+and labeled "Assignee:" fields), while the Roadmap mode's `SYSTEM_PROMPT`
+had one generic sentence — "Read this meeting transcript and extract
+every task, action item, goal, or idea mentioned" — with zero examples
+of what a real, casual, conversational commitment looks like buried in
+ordinary dialogue. A real meeting transcript is not a bulleted list of
+clearly-flagged action items; it is two people talking, where a genuine
+commitment is very often phrased as "I'll get to that this week" or "hey,
+can you check on X" mid-sentence, easy for a generic, example-free
+instruction to under-extract, especially on a smaller/free-tier model
+without concrete patterns to anchor to. This is the most plausible root
+cause for a real transcript with 10+ genuine action items returning
+zero — not a JSON-parsing/truncation bug (the #406/#427/#439 retry and
+chunk-and-merge machinery around this prompt was already solid and is
+untouched here), and not an obviously-invalid model string (see below).
+
+**Fix — prompt rewrite (`SYSTEM_PROMPT` in `api/process-transcript.js`):**
+rewrote the extraction instructions to explicitly enumerate the shapes a
+real task commonly takes in conversational transcripts — a first-person
+commitment ("I'll send that over today"), a request addressed to
+someone else ("David, can you check on that?"), a shared/team
+commitment ("we need to fix X"), and an implied follow-up mentioned only
+in passing inside a longer sentence — with an explicit instruction to
+err toward INCLUDING a borderline item rather than omitting it, and that
+an empty tasks array should be rare. Added two few-shot examples
+directly in the prompt: a first-person commitment buried in casual
+dialogue (an SSL-certificate renewal), and a request addressed to
+someone else mid-conversation (a late-invoice follow-up) — both modeled
+on the kind of ordinary back-and-forth language a real meeting
+transcript actually contains, not a formal action-item list. Everything
+else in the prompt — the 7/30/60/90/dream bucket definitions, the
+category list, the "skip personal notes/off-topic content" instruction,
+the "skip something already marked fully done" instruction, the fixed
+name-spelling list, and the exact JSON return schema — is byte-identical
+to before; this was a targeted rewrite of the extraction-sensitivity and
+owner-attribution guidance only, not a rebuild of the whole prompt.
+
+**Fix — model string:** confirmed via web search (no live Gemini
+account/API access here, rule #11) that the existing configured
+fallback, `gemini-3.6-flash`, is genuinely still a valid, free-tier,
+generally-available model as of today — so the reported bug was never
+actually caused by an invalid/deprecated model string. Bumped the
+default anyway to `gemini-3.8-flash`, Google's currently newest stable
+Flash release (shipped September 2, 2026, confirmed both free-tier and
+generally available, and now the default Flash model across several of
+Google's own products per the same search) — a stronger model gives
+the rewritten prompt more headroom on genuinely ambiguous conversational
+input than staying on the older 3.6 line for no reason. Deliberately did
+NOT drop to a "-lite" tier model as the new default: the root cause here
+was traced to prompt quality, not raw model capability, and a lighter/
+cheaper model has less room to compensate for an imperfect prompt on
+this exact kind of task. `LLM_MODEL`/`GEMINI_MODEL` remain fully
+env-overridable, so this is a default-only change, not a new required
+config; both prompts (Roadmap and taskEmail) and both callers share this
+one constant, so the bump benefits both — the taskEmail mode's own
+prompt/logic was not touched otherwise.
+
+**Explicitly out of scope, left alone, and why:** the Roadmap mode's
+`SYSTEM_PROMPT` still asks for a hardcoded example list of first names
+("sarah", "david", "emily", "jacob", "rania") rather than the taskEmail
+mode's live-roster-built list (`buildTaskEmailSystemPrompt()`'s own
+`rosterDisplayList`, fetched fresh from `ops_users`/`ops_admins` every
+request via `activeRoster()`) — a comment already in the file (just
+above `activeRoster()`) flags this exact pattern as a known staleness
+risk. Not fixed here: the ticket's own reported symptom was "0 tasks
+extracted," not "a real team member's name went unmatched," so this
+wasn't the root cause of the reported bug, and wiring a live-roster
+fetch into the Roadmap mode's request path (which currently uses a
+static API key, not a signed session, and has no existing Supabase call
+at all) would be a materially larger, separately-scoped change. Flagged
+here for a future ticket rather than folded in silently.
+
+**Verification** (no live Gemini API key or Supabase access available in
+this environment, rule #11 — and per rule #7, this session could not
+fabricate or guess at the real "Sep 25 David/Sarah transcript" named in
+the ticket's own acceptance criterion, since it isn't stored anywhere in
+this repo; the ticket's own "needs preview + approval" instruction makes
+the user's own live check against that real transcript on the Vercel
+preview the actual gate for that specific acceptance criterion, not
+something this session could self-certify): a new 27-check Node suite
+(`verify_gemini_parser_fix.mjs`) exercises the real, unmodified
+default-exported `handler()` end-to-end with `global.fetch` mocked to
+capture the exact outgoing request body and script scenario responses —
+confirms the new prompt's key phrases and both few-shot examples are
+genuinely present in the system message actually sent (not just present
+in the source file), confirms the model field defaults to
+`gemini-3.8-flash`, and confirms the bucket/category/JSON-schema
+portions of the prompt are still present unchanged. A second scenario
+feeds a synthetic but realistic David/Sarah-style conversational
+transcript (a first-person commitment, a mid-conversation request, a
+shared "both"-owner task, a casual aside) through the full pipeline with
+a scripted model response, proving end-to-end that this exact
+conversational task shape survives extraction and that the handler's
+own pre-existing downstream validation (blank text, an invalid bucket,
+the excluded `personal` category, a multi-word owner failing the
+`/^[a-z]{2,30}$/` schema) still correctly drops exactly what it always
+dropped — nothing in that filtering logic was touched. A third scenario
+regression-tests the pre-existing #427/#439 transient-retry path (a 503
+response followed by a successful retry) to confirm it's completely
+unaffected by this prompt/model edit. `node --check` clean on
+`api/process-transcript.js`.
+
+Held per rule #10 and the ticket's own explicit "needs preview +
+approval" instruction — sends no email itself, but is squarely a
+change to a live parsing path with no local way to fully confirm the
+real-world extraction-quality improvement.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

@@ -526,6 +526,62 @@ Don't relitigate them without an explicit decision from the user.
   `api/inbound-email.js` (one stale comment fixed there); index.html's
   extracted-script syntax check and div-balance both clean (new modal's
   divs open=close, matching origin/main's own baseline delta).
+- Gemini parser: stronger extraction prompt + solid free model
+  (2026-09-28 — held for preview approval, `api/`): root-caused a
+  reported failure (a task-rich real meeting transcript returning 0
+  extracted tasks) to the Roadmap mode's `SYSTEM_PROMPT` in
+  `api/process-transcript.js` — a short, generic "extract every task,
+  action item, goal, or idea" instruction with no few-shot examples,
+  much thinner than the sibling taskEmail-mode prompt
+  (`buildTaskEmailSystemPrompt()`, untouched) which already has rich
+  prose-pattern/structured-marker owner-matching guidance. Real meeting
+  transcripts are ordinary conversation, not a bulleted action-item
+  list — a commitment stated casually ("I'll get to that this week") or
+  addressed to someone else mid-conversation ("David, can you check on
+  that?") was very plausibly the exact shape the old prompt's terse
+  instruction, with nothing to anchor it, under-extracted on a
+  free-tier Flash model. Rewrote `SYSTEM_PROMPT` to explicitly enumerate
+  first-person commitments, requests addressed to someone else, shared/
+  team commitments, and implied follow-ups buried in longer sentences,
+  with an explicit "err toward including, not omitting" instruction, and
+  added 2 few-shot examples (a first-person SSL-cert-renewal commitment;
+  a mid-conversation request about a late invoice) — the bucket/
+  category/name-spelling/JSON-schema instructions are otherwise
+  byte-identical to before. Also bumped the shared `LLM_MODEL` fallback
+  default from `gemini-3.6-flash` to `gemini-3.8-flash` (confirmed via
+  web search both free-tier and generally-available as of 2026-09-28 —
+  Google's newest stable Flash release, effectively the new default
+  across Google's own products since its Sept 2 2026 release) —
+  env-overridable via `LLM_MODEL`/`GEMINI_MODEL` as before, so this is a
+  default-only change. This model constant and `callGemini()` are shared
+  by BOTH the Roadmap mode and the taskEmail mode, so the model bump
+  applies to both; the taskEmail mode's own prompt/logic was otherwise
+  completely untouched. The already-shipped #427/#439 retry+timeout+
+  JSON-error-handling logic (`GEMINI_RETRY_BACKOFF_MS`,
+  `isTransientGeminiStatus()`, `.friendlyMessage`, the 90s
+  `vercel.json` `maxDuration`) is unchanged — verified by a regression
+  check that a 503 still retries and recovers exactly as before. Could
+  NOT verify directly against the real "Sep 25 David/Sarah transcript"
+  named in the ticket's own acceptance criterion — no live Gemini API
+  key or Supabase access in this environment (rule #11) to fetch that
+  real transcript or make a real model call; the ticket's own "needs
+  preview + approval" instruction makes the user's own live check on
+  the Vercel preview (pasting that real transcript in) the actual gate
+  for this specific acceptance criterion, not something this session
+  could self-certify. Verified everything within reach with a new
+  27-check Node suite against the real, unmodified default-exported
+  `handler()` (global.fetch mocked to capture the exact outgoing
+  request and script scenario responses, no live access per rule #11):
+  the new prompt's key phrases and both few-shot examples are actually
+  present in the system message sent; the model field defaults to
+  `gemini-3.8-flash`; a synthetic but realistic David/Sarah-style
+  conversational transcript (first-person commitments, a mid-
+  conversation request, a shared task, an aside) end-to-end produces
+  the correct filtered/mapped tasks while the pre-existing validation
+  (blank text, invalid bucket, `personal` category, a multi-word owner
+  failing the `/^[a-z]{2,30}$/` schema) still correctly drops what it
+  always dropped; the 503-retry-then-succeed path still works
+  unchanged. `node --check` clean.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
