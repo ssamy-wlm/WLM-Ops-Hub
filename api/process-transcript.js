@@ -147,6 +147,50 @@ const GEMINI_MIN_INTERVAL_MS = 4000;
 let _lastGeminiCallAt = 0;
 let _geminiCallChain = Promise.resolve();
 
+// Hard wall-clock ceiling on the ENTIRE parse (2026-09-28) — guarantees
+// both handler() and handleTaskEmailMode() below always send a clean JSON
+// response before Vercel's platform timeout can kill the function
+// mid-request. A platform kill returns Vercel's own non-JSON crash page,
+// never anything this file's try/catch/logError code produces — which is
+// exactly the reported "Unexpected token 'A', 'An error o...'" bug, and
+// why it never reached ops_error_log (the kill happens before any of this
+// file's own code gets a chance to run).
+// Deliberately NOT sized against vercel.json's configured
+// maxDuration:90 — that ceiling only actually applies on a Vercel plan
+// tier that supports functions running that long; on a lower tier the
+// platform can silently clamp to a smaller real limit, and which tier is
+// actually in effect can't be confirmed from here (CLAUDE.md rule #11, no
+// live deploy/billing access). 55s is comfortably under the smallest
+// plausible real ceiling (Vercel's own baseline is 60s) with margin left
+// for request parsing and response serialization, rather than trusting
+// the configured value at face value. This also covers the chunk-and-
+// merge fallback (extractRoadmapTasks splitting a huge transcript into two
+// halves that each run their own full retry budget) — no matter how deep
+// or slow the internal retry/chunk logic gets, this outer deadline fires
+// a clean response regardless.
+export const GEMINI_HARD_DEADLINE_MS = 55000;
+export const GEMINI_HARD_DEADLINE_SENTINEL = Symbol('geminiHardDeadline');
+// Exported at an explicit-ms level (2026-09-28) purely so a test can
+// exercise the REAL race logic against a short deadline instead of
+// waiting out the real 55s ceiling — every actual call site in this file
+// only ever calls hardDeadlineRace() below, which always uses the fixed
+// GEMINI_HARD_DEADLINE_MS; the ms is never client- or env-configurable.
+export function raceAgainstDeadline(promise, ms) {
+  // Swallow a LATE rejection from the loser of the race below — the
+  // underlying Gemini call/chunking work may still be in flight when the
+  // deadline below fires first (Promise.race doesn't cancel it); without
+  // this, an eventual real failure from that orphaned promise would
+  // surface as an unhandled rejection in the server logs with nothing
+  // left to do about it, since the response the user gets is already
+  // decided by the time it happens.
+  promise.catch(() => {});
+  const deadline = new Promise(resolve => setTimeout(() => resolve(GEMINI_HARD_DEADLINE_SENTINEL), ms));
+  return Promise.race([promise, deadline]);
+}
+function hardDeadlineRace(promise) {
+  return raceAgainstDeadline(promise, GEMINI_HARD_DEADLINE_MS);
+}
+
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 // Chains onto the previous pacer wait rather than reading/writing
@@ -1129,7 +1173,11 @@ async function handleTaskEmailMode(req, res) {
     return res.status(400).json({ error: 'text is required' });
   }
 
-  const result = await parseTaskEmailForSession(session, text);
+  const result = await hardDeadlineRace(parseTaskEmailForSession(session, text));
+  if (result === GEMINI_HARD_DEADLINE_SENTINEL) {
+    await logError({ endpoint: 'process-transcript:taskEmail', error: `Hard deadline (${GEMINI_HARD_DEADLINE_MS}ms) reached before the model responded — returning a clean timeout instead of risking a platform-level kill`, session });
+    return res.status(504).json({ error: 'This is taking longer than expected — please try again.' });
+  }
   return res.status(result.status).json(result.body);
 }
 
@@ -1755,7 +1803,12 @@ export default async function handler(req, res) {
   try {
     let result;
     try {
-      result = await extractRoadmapTasks(transcript.trim(), resolvedMeetingName, resolvedMeetingDate, 0);
+      const raced = await hardDeadlineRace(extractRoadmapTasks(transcript.trim(), resolvedMeetingName, resolvedMeetingDate, 0));
+      if (raced === GEMINI_HARD_DEADLINE_SENTINEL) {
+        await logError({ endpoint: 'process-transcript', error: `Hard deadline (${GEMINI_HARD_DEADLINE_MS}ms) reached before the model responded — returning a clean timeout instead of risking a platform-level kill`, extra: logContext });
+        return res.status(504).json({ error: 'This is taking longer than expected — please try again.' });
+      }
+      result = raced;
     } catch (err) {
       if (err._truncatedEmpty) {
         await logError({ endpoint: 'process-transcript', error: 'Response truncated by max_tokens with nothing recoverable, even after splitting', extra: { ...logContext, raw: err._rawSnippet } });
