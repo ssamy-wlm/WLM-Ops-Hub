@@ -404,6 +404,20 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
    to .td-actions only — doesn't touch .btn-sm elsewhere in the app. */
 .td-actions .btn{height:34px;min-width:84px;justify-content:center;box-sizing:border-box;}
 
+/* Row-level "Actions ▾" dropdown (table rows with a Grant/Revoke +
+   Deactivate menu, e.g. the Users table) — same panel look as
+   .admin-notif-panel (border/radius/shadow) so it reads as the app's one
+   dropdown style, just anchored under its own toggle button instead of
+   the bell. display:none by default; opened per-row via
+   _toggleRowActionsMenu(), closed by the shared outside-click/Escape
+   listeners below so only one can be open across the whole table. */
+.row-actions-dropdown{position:relative;display:inline-block;}
+.row-actions-menu{display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:190px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:60;padding:6px;}
+.row-actions-menu button{display:block;width:100%;text-align:left;padding:8px 10px;border:none;background:none;cursor:pointer;font-size:12.5px;font-weight:600;border-radius:7px;color:var(--text-dark);}
+.row-actions-menu button:hover,.row-actions-menu button:focus-visible{background:var(--bg);outline:none;}
+.row-actions-menu button.row-actions-menu-danger{color:var(--red);}
+.row-actions-menu button.row-actions-menu-success{color:var(--green);}
+
 /* ── MODAL ── */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.35);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
 .modal-overlay.open{display:flex;}
@@ -4789,9 +4803,13 @@ function renderUserTable(){
     const dualBadge = isDualRole
       ? `<span class="status-badge" style="background:${_getLevelInfo(linkedAdmin.level).color}18;color:${_getLevelInfo(linkedAdmin.level).color};border:1px solid ${_getLevelInfo(linkedAdmin.level).color}44;margin-left:4px;" title="Also holds a Manager role">Also: ${escHtml(_getLevelInfo(linkedAdmin.level).label)}</span>`
       : '';
-    const managerRoleBtn = !isSuperAdminViewer ? '' : isDualRole
-      ? `<button class="btn btn-sm btn-outline" onclick="revokeManagerRole('${u.id}')">Revoke Manager Role</button>`
-      : `<button class="btn btn-sm btn-outline" onclick="openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
+    const managerRoleMenuItem = isDualRole
+      ? `<button role="menuitem" onclick="_closeAllRowActionsMenus();revokeManagerRole('${u.id}')">Revoke Manager Role</button>`
+      : `<button role="menuitem" onclick="_closeAllRowActionsMenus();openGrantManagerModal('${u.id}')">Grant Manager Role</button>`;
+    const statusMenuItem = isInactive
+      ? `<button role="menuitem" class="row-actions-menu-success" onclick="_closeAllRowActionsMenus();activateUser(null,'${u.id}')">Activate</button>`
+      : `<button role="menuitem" class="row-actions-menu-danger" onclick="_closeAllRowActionsMenus();deactivateUser(null,'${u.id}')">Deactivate</button>`;
+    const rowMenuId = `rowActionsMenu-u-${u.id}`;
     return `<tr>
       <td style="${isInactive?'opacity:.6;':''}"><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${escHtml(initials)}</div>
@@ -4807,15 +4825,13 @@ function renderUserTable(){
       <td><div class="td-actions">
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}',true)">View</button>
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>`:''}
-        ${managerRoleBtn}
-        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
-        ${isSuperAdminViewer
-          ? (isInactive
-              ? `<button class="btn btn-sm btn-success" onclick="activateUser(null,'${u.id}')">Activate</button>`
-              : `<button class="btn btn-sm btn-danger" onclick="deactivateUser(null,'${u.id}')">Deactivate</button>`)
-          : ''}
-        ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere('${u.id}',null,'${escHtml(u.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
-        ${isSuperAdminViewer?`<button class="btn btn-sm btn-danger" onclick="removeUser(this,'${u.name}')">Remove</button>`:''}
+        ${isSuperAdminViewer?`<div class="row-actions-dropdown">
+          <button class="btn btn-sm btn-outline" data-row-actions-toggle aria-haspopup="menu" aria-expanded="false" onclick="_toggleRowActionsMenu(event,'${rowMenuId}')">Actions ▾</button>
+          <div class="row-actions-menu" id="${rowMenuId}" role="menu">
+            ${managerRoleMenuItem}
+            ${statusMenuItem}
+          </div>
+        </div>`:''}
       </div></td>
     </tr>`;
   }).join('');
@@ -10187,6 +10203,31 @@ document.addEventListener('click', (e)=>{
   const panel = document.getElementById('admin-notif-panel');
   const btn = document.getElementById('admin-notif-btn');
   if(panel && panel.style.display==='block' && !panel.contains(e.target) && !btn?.contains(e.target)) panel.style.display='none';
+});
+
+// Row-level "Actions ▾" dropdown (Users table row menu — Grant/Revoke
+// Manager Role + Deactivate). Only one open at a time across the table;
+// closed by clicking anywhere outside it, Escape, or picking an item.
+function _closeAllRowActionsMenus(){
+  document.querySelectorAll('.row-actions-menu').forEach(m=>{ m.style.display='none'; });
+  document.querySelectorAll('[data-row-actions-toggle]').forEach(b=>b.setAttribute('aria-expanded','false'));
+}
+function _toggleRowActionsMenu(e, menuId){
+  e.stopPropagation();
+  const menu = document.getElementById(menuId);
+  if(!menu) return;
+  const opening = getComputedStyle(menu).display==='none';
+  _closeAllRowActionsMenus();
+  if(opening){
+    menu.style.display='block';
+    e.currentTarget.setAttribute('aria-expanded','true');
+  }
+}
+document.addEventListener('click', (e)=>{
+  if(!e.target.closest('.row-actions-dropdown')) _closeAllRowActionsMenus();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape') _closeAllRowActionsMenus();
 });
 
 // ── Notification settings toggles (Super Admin/CEO only, same visibility as
@@ -16495,12 +16536,9 @@ window._renderAdminTableImpl = function(){
         <div class="td-actions">
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}',true)">View</button>
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}')">Edit</button>
-          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Invalidate every existing login session for this account">Sign out everywhere</button>`:''}
           ${isInactive
             ? `<button class="btn btn-sm btn-success" onclick="activateAdmin(null,'${escHtml(a.id)}')">Activate</button>`
             : `<button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Deactivate</button>`}
-          ${_adminLevel==='super'||_adminLevel==='owner'?`<button class="btn btn-sm btn-outline" onclick="signOutAccountEverywhere(null,'${escHtml(a.id)}','${escHtml(a.name)}')" title="Sign out everywhere — invalidate every existing login session for this account">Sign out</button>`:''}
-          <button class="btn btn-sm btn-danger" onclick="removeAdmin(null,'${escHtml(a.id)}')">Remove</button>
         </div>
       </td>`;
     tbody.appendChild(tr);
