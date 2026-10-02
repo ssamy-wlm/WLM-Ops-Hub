@@ -11369,6 +11369,89 @@ Held per rule #10 and the ticket's own explicit "needs preview +
 approval" instruction — previewed and merged by the user directly
 (PR #443), same day.
 
+### 2026-10-02 — PTO report misses Ledger entries
+
+**Ticket:** `api/cron-pto-report.js` (the bi-monthly PTO digest David
+receives) reads only `ops_time_off_requests`, so any PTO logged directly
+by an admin through `index.html`'s "Log Time Off" ledger tool
+(`ops_time_off_ledger`) never appears — reported live: Abby's Sept 23–25
+was ledger-only and the report said "No PTO taken." Fix: read both
+tables, merge for Jacob/Abby/Michael in the period, dedupe overlaps
+(Jacob's Sept 21 existed in both tables for the identical date range).
+
+**Investigation:** read `logTimeOffEntry()` (`index.html`) to confirm the
+ledger's real entry shape — `{id, employeeId, employeeName, type:
+'sick'|'vacation', startDate, endDate, days, daysManuallySet, note,
+loggedBy, loggedAt, status:'approved', isReversal?, reversalOf?,
+correctionOf?}` — a genuinely different shape from
+`ops_time_off_requests`' `{userId?, userName, startDate, endDate, days,
+type, reason, status, submittedAt}` (no `userId` on a browser-submitted
+request at all; matched by `userName` there, same as the existing code
+already did). Confirmed the ledger entry's reversal mechanism by reading
+`renderAdminTimeOffLedger()`'s own `isReversed = !!entries.find(x =>
+x.reversalOf === e.id)` check and `logTimeOffEntry()`'s Undo/Edit flow
+(Undo appends a NEW entry with `days` negated and `isReversal:true,
+reversalOf:<originalId>`; Edit does the same plus a fresh corrected entry
+tagged `correctionOf:<originalId>` — the original row is never mutated,
+per the table's own append-only DB trigger).
+
+**Fix — `collectApprovedPtoItems(person, requests, ledgerEntries,
+window)`, a new pure, directly-testable helper:**
+- Request-side matching/overlap logic is unchanged from before (status
+  `'approved'`, matched by `userId` or `userName`, window-overlap
+  inclusive of a partial-overlap stretch — same as the pre-existing
+  code).
+- Ledger-side: matched by `employeeId` or `employeeName`, same
+  window-overlap rule. Two exclusions, both load-bearing: an
+  `isReversal:true` row is never itself shown as "PTO taken" (it's a
+  correction, not real time off), and a row that HAS BEEN reversed (some
+  other row's `reversalOf` points at it) is excluded too — its PTO was
+  cancelled/corrected, not actually taken. This exactly mirrors
+  `index.html`'s own admin ledger view, so this report can never show an
+  entry as "taken" that the ledger's own UI already displays as
+  superseded/struck-through. A `correctionOf` entry (the real replacement
+  after an edit) is a completely ordinary, non-reversal row by this
+  point, so it's correctly included with no special-casing needed.
+- Dedupe: a request and a ledger entry for the SAME person with the
+  EXACT same `startDate`+`endDate` are treated as the same real-world PTO
+  event (an admin separately hand-logging something an employee already
+  had approved as a request) — the request's own version wins (its
+  `reason` field is shown), the ledger counterpart is dropped rather than
+  shown as a second line. Deliberately NOT a looser overlap-based dedupe:
+  the ticket's own named case is an exact-date duplicate, and collapsing
+  two merely-overlapping-but-different ranges risks discarding a real,
+  distinct day of PTO that happens to sit next to another entry — flagged
+  here as a conservative, explicit choice per CLAUDE.md rule #7, not a
+  silently-assumed one.
+
+Everything else in the file is unchanged: the window-computation math,
+the idempotency check, the "always sends, even when a person has zero
+PTO" behavior, the first-name roster resolution and its ambiguous-match
+flagging, and David's own recipient resolution.
+
+**Verification** (no live Supabase access, rule #11): a new Node suite
+(`node:test` with `--experimental-test-module-mocks`, `getSupabaseAdmin`
+mocked to a fake in-memory client, `Date` frozen to exercise the real
+window-computation path) exercises the real, byte-identical exported
+`collectApprovedPtoItems()` directly (ledger-only PTO appears with the
+right dates/reason; an exact-date duplicate across both tables collapses
+to one line with the request's reason winning; a merely-overlapping,
+non-identical range stays as two separate lines; a reversed entry and its
+own reversal row are both excluded; a real `correctionOf` entry still
+counts; out-of-window and other-person ledger entries are excluded) and
+the full default-exported `handler()` end-to-end (Abby's ledger-only
+Sept 23–25 PTO appears in the generated email body with her real reason;
+Jacob's cross-table Sept 21 duplicate collapses to exactly one line;
+Michael's genuine zero-PTO case still reads the honest "No PTO taken"
+line) — all passing. `node --check` clean on `api/cron-pto-report.js`.
+
+Held per rule #10 and the ticket's own explicit "needs preview +
+approval" instruction — sends a real email to David on its next
+scheduled run; the user's own click-through confirming the real Abby/
+Jacob ledger data resolves correctly in production still needs to happen
+before merge, same caveat as every other server-side feature in this
+codebase verified without live Supabase access.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
