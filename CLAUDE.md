@@ -582,6 +582,32 @@ Don't relitigate them without an explicit decision from the user.
   failing the `/^[a-z]{2,30}$/` schema) still correctly drops what it
   always dropped; the 503-retry-then-succeed path still works
   unchanged. `node --check` clean.
+- PTO report missed ledger-only entries (2026-10-02 — held for preview
+  approval, `api/`): `api/cron-pto-report.js` read only
+  `ops_time_off_requests`, so any PTO Sarah/David log directly through
+  `index.html`'s "Log Time Off" ledger tool (`ops_time_off_ledger`, a
+  separate admin-only entry path with no corresponding request row) never
+  appeared — reported live: Abby's Sept 23–25 was ledger-only and showed
+  as "No PTO taken." Now reads both tables and merges per person via a
+  new `collectApprovedPtoItems()`. Ledger-side exclusions: an
+  `isReversal:true` correction entry, and any entry that's itself been
+  reversed (`reversalOf` points at it from another row), are both
+  excluded — mirrors `index.html`'s own admin ledger view exactly, so a
+  superseded/cancelled entry can never show as "taken." Dedupe is
+  EXACT-date-range only (the reported case: Jacob's Sept 21 existed in
+  both tables for the identical range) — a request always wins that tie
+  and the ledger counterpart is dropped; a merely-overlapping-but-not-
+  identical range is deliberately left as two separate lines (flagged,
+  not guessed — rule #7). Verified with a Node suite against the real,
+  byte-identical handler (fake in-memory Supabase client, no live access
+  per rule #11): the pure merge/dedupe helper directly (ledger-only PTO
+  appears; exact-date duplicates collapse to one line with the request's
+  reason winning; overlapping-not-identical dates stay separate; a
+  reversed entry and its own reversal are both excluded; a real
+  correction entry still counts) plus the full handler end-to-end
+  (Abby's ledger-only PTO appears with dates+reason, Jacob's cross-table
+  duplicate collapses to one line, Michael's genuine zero-PTO case still
+  reads "No PTO taken"). `node --check` clean.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
