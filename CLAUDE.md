@@ -582,8 +582,8 @@ Don't relitigate them without an explicit decision from the user.
   failing the `/^[a-z]{2,30}$/` schema) still correctly drops what it
   always dropped; the 503-retry-then-succeed path still works
   unchanged. `node --check` clean.
-- PTO report missed ledger-only entries (2026-10-02 — held for preview
-  approval, `api/`): `api/cron-pto-report.js` read only
+- PTO report missed ledger-only entries (2026-10-02 — **merged**, PR
+  #448, `api/`): `api/cron-pto-report.js` read only
   `ops_time_off_requests`, so any PTO Sarah/David log directly through
   `index.html`'s "Log Time Off" ledger tool (`ops_time_off_ledger`, a
   separate admin-only entry path with no corresponding request row) never

@@ -11446,11 +11446,8 @@ Michael's genuine zero-PTO case still reads the honest "No PTO taken"
 line) — all passing. `node --check` clean on `api/cron-pto-report.js`.
 
 Held per rule #10 and the ticket's own explicit "needs preview +
-approval" instruction — sends a real email to David on its next
-scheduled run; the user's own click-through confirming the real Abby/
-Jacob ledger data resolves correctly in production still needs to happen
-before merge, same caveat as every other server-side feature in this
-codebase verified without live Supabase access.
+approval" instruction — previewed and merged by the user directly
+(PR #448), same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
