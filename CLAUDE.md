@@ -608,6 +608,53 @@ Don't relitigate them without an explicit decision from the user.
   (Abby's ledger-only PTO appears with dates+reason, Jacob's cross-table
   duplicate collapses to one line, Michael's genuine zero-PTO case still
   reads "No PTO taken"). `node --check` clean.
+- Inactive clients' services still surfaced server-side (2026-10-05 — held
+  for preview approval, `api/`+`client.html`): #430 only fixed the UI-side
+  views (user.html) — reported live, Leese & Shapiro (both deactivated)
+  still had active services (a) included in reminder/escalation emails and
+  (b) kept getting their recurring due dates rolled forward
+  ("reactivated"). Investigated before guessing (rule #7): every one of
+  `api/cron-overdue-check.js`'s 4 `ops_clients` reads already had a SQL
+  `.eq('status','active')` pre-filter — so a literal `status:'inactive'`
+  client was already excluded there. The REAL, previously-undiscovered bug
+  was in `api/ops-sync.js`'s `upsertRows()`: the denormalized
+  `ops_clients.status` DB COLUMN that SQL filter reads was computed as
+  `r.status==='inactive'?'inactive':'active'` — silently collapsing a real
+  `'paused'` client into `'active'` at the column level, even though every
+  JS-side check in this codebase already correctly treats `'paused'` as
+  not-active via the literal `status==='active'` equality. Fixed the
+  ternary to match that same literal equality
+  (`r.status==='active'?'active':'inactive'`). Also added a shared,
+  defensive `isActiveClient(c)` (reads the real `data.status` directly,
+  never the possibly-stale column) applied as a second, authoritative
+  filter right after all 4 `ops_clients` reads in `cron-overdue-check.js`
+  — this is what makes the fix effective immediately for any row written
+  BEFORE the column fix above, with no backfill needed. Deliberately NOT
+  applied to the Tier-3 inactivity-detection "completedSince" scan (same
+  file) — that scan only asks "did this person do real work recently,"
+  and excluding a just-deactivated client's completed work there would
+  risk wrongly flagging someone inactive for genuine work, out of this
+  ticket's scope. `client.html`'s `refreshRecurringDueDates()` (runs
+  unconditionally on every Tracker load, confirmed NOT one of the
+  disabled load-time gremlins — a real, intentional "advance an overdue
+  recurring service's due date automatically" feature) gained the same
+  `isActiveClient()` check (hand-duplicated, rule #3) and now skips an
+  inactive/paused client's services entirely — frozen exactly as they
+  were at deactivation, never silently advanced. `cron-weekly-team-
+  completion.js` was investigated and deliberately left untouched — its
+  own header comment already documents, by design, that it includes every
+  client regardless of active status (a retrospective "what got done this
+  week" record, not a live reminder). Verified with 2 new Node suites (no
+  live DB access, rule #11 — a fake in-memory Supabase client exercising
+  the real `cron-overdue-check.js`/`ops-sync.js` handlers end-to-end,
+  including a deliberate stale-column test case: a client whose DB column
+  says 'active' but whose real `data.status` is 'paused', proving the
+  fix catches it even without a backfill) plus a new Playwright suite
+  against the real, live-rendered `client.html` (an inactive and a paused
+  client's overdue recurring service both provably untouched after
+  `init()`, while an active client's correctly rolls forward). `node
+  --check` clean; `client.html`'s div-balance delta unchanged vs. `main`
+  (0 — pure JS change, no HTML touched).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

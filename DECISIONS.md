@@ -11449,6 +11449,157 @@ Held per rule #10 and the ticket's own explicit "needs preview +
 approval" instruction — previewed and merged by the user directly
 (PR #448), same day.
 
+### 2026-10-05 — Inactive clients' services still surface server-side (reminders + regeneration)
+
+**Ticket:** #430 filtered inactive-client services out of the UI views
+(`user.html`), but server-side paths don't — reported live: Leese &
+Shapiro (both deactivated) still had active services that (a) get
+included in the reminder/escalation emails and (b) keep getting
+reactivated by recurring-service regeneration. Fix both in
+`api/cron-overdue-check.js` (+ any server "due/overdue services"
+computation) and the recurring-regeneration path, sharing one
+"is this client active" rule across UI + crons + regeneration.
+
+**Investigation (rule #7 — verified before touching anything, rather than
+assuming the ticket's own framing of "server paths don't filter" was
+literally true):** read every one of `api/cron-overdue-check.js`'s 4
+`ops_clients` reads (the nag block, the overdue-escalation block, the
+focus-digest block, and the hierarchy-escalation block) and found EVERY
+ONE already had a SQL `.eq('status','active')` pre-filter — confirmed via
+`git log -p` that these predate this session by weeks, not something
+freshly broken. So a client with a literal `data.status==='inactive'`
+genuinely could NOT reach any of these four blocks, server-side, exactly
+as the ticket assumed was missing. That ruled out the obvious hypothesis
+— the real bug had to be elsewhere.
+
+**Root cause, found by reading `api/ops-sync.js`'s `upsertRows()`:** the
+denormalized `ops_clients.status` DB COLUMN — the exact thing every one
+of those 4 SQL `.eq('status','active')` filters reads — is computed at
+write time as `r.status === 'inactive' ? 'inactive' : 'active'`. This
+silently collapses ANY status that isn't the literal string `'inactive'`
+into `'active'` at the column level — including a real `'paused'`
+client, which every JS-side UI check in this codebase already correctly
+treats as not-active via the literal `status==='active'` equality (see
+`user.html`'s own `c.status==='active'` filters from the #430 fix, and
+`index.html`'s pre-existing ones). So a paused client's services could
+leak straight past every one of those four "already correct" SQL
+filters — the bug was never in the filters themselves, it was one layer
+upstream, in what gets written into the column they read. Fixed the
+ternary to the same literal equality: `r.status === 'active' ? 'active'
+: 'inactive'`. Confirmed via `grep` this `statusCol` parameter is passed
+`true` ONLY for the `ops_clients` call site — every other table
+(`ops_users`, `ops_admins`, `ops_roadmap_tasks`, `ops_org_nodes`,
+`ops_org_links`, `ops_commissions`, `ops_goals`, `ops_messages`) omits
+it, so this fix is scoped to exactly the one table with this
+denormalized column, nothing else.
+
+**A second, additive layer — not a replacement for the column fix, a
+guard against ALREADY-STALE rows:** the column fix above only changes
+behavior for a client's NEXT write; any row written before this fix
+shipped (plausibly including Leese and/or Shapiro's own real records,
+if either was ever paused rather than literally set `'inactive'`) would
+still carry a stale `'active'` column value until someone next edits
+that client. Since there's no live Supabase access to run a one-time
+backfill from this environment (rule #11), and the ticket's acceptance
+criterion is "Leese & Shapiro drop off the team's due list everywhere"
+— immediately, not after their next edit — a new shared
+`isActiveClient(c)` (`c?.status==='active'`, reading the real
+`data.status` field directly, never the column) is applied as a second,
+authoritative filter immediately after all 4 `ops_clients` reads in
+`cron-overdue-check.js`. This makes the fix effective the moment it
+ships, with no backfill dependency, and is also the literal "shared rule
+used by every surface" the ticket asked for — the exact same equality
+now appears, independently, in `api/cron-overdue-check.js`,
+`client.html` (below), and every pre-existing UI filter in `user.html`/
+`index.html`.
+
+**Deliberately NOT applied to one spot in the same file, flagged rather
+than silently extended:** the hierarchy-escalation block's Tier-3
+"inactivity detection" `completedSince` scan (same `hClientRows` data,
+a different purpose — "has this person done any real work recently,"
+feeding whether THEY get flagged as inactive, never content in an email
+about a specific client's work) deliberately still reads the raw,
+unfiltered client rows. Completing a service right before its client
+happens to get deactivated is still genuine evidence the person was
+active that day; filtering it out here would risk wrongly flagging a
+real contributor as inactive, which is outside this ticket's own scope
+("no inactive client's services appear in any reminder email").
+
+**Recurring-service regeneration (`client.html`'s
+`refreshRecurringDueDates()`):** confirmed this runs unconditionally
+inside `init()` on every single Tracker page load (NOT one of the
+already-disabled load-time "gremlins" documented in CLAUDE.md — a real,
+intentional, still-supported feature: "advance an overdue recurring
+service's due date to its next cycle automatically, even if nobody
+explicitly marked it done"), with zero awareness of the parent client's
+own status. Fixed by adding the identical `isActiveClient(c)` check
+(hand-duplicated per the zero-shared-code rule — `client.html` shares no
+JS module with `api/cron-overdue-check.js`) and skipping a client
+entirely when it isn't active, before any of its services are ever
+touched — its services are frozen exactly as they stood at
+deactivation; reactivating the client resumes normal rollover for free,
+with no service-level field ever written. `user.html` was checked and
+confirmed to have no equivalent auto-regeneration call at all (its own
+`calcNextDue()` only ever fires from an explicit "mark done" user
+action) — no parallel fix needed there.
+
+**Investigated and deliberately left untouched, flagged rather than
+silently expanded to:** `api/cron-weekly-team-completion.js` also reads
+every `ops_clients` row with no status filter at all — but its own
+header comment already documents this as a deliberate design decision:
+"Includes every client regardless of active/inactive status — this is a
+retrospective record of what actually happened this week, not a live
+workload view... a client deactivated mid-week must not silently drop
+the real work already completed for them." This is a genuinely
+different category from the ticket's own "reminder/escalation" framing
+— a backward-looking completion report, not a forward-looking nag — so
+it was read, understood, and left exactly as it already was, not
+silently brought in scope.
+
+**Verification** (no live Supabase access, rule #11): a new Node suite
+(`verify_inactive_client_crons.mjs`) against the real, byte-identical
+`api/cron-overdue-check.js` default-exported handler, via a fake
+in-memory Supabase client — three clients seeded (one genuinely active,
+one genuinely `'inactive'`, and one `'paused'` with a DELIBERATELY STALE
+`'active'` top-level column, simulating exactly the pre-fix scenario the
+column bug could leave behind), each with 5 overdue recurring services
+for a different assignee reporting to the same manager. At the 11:00
+UTC run: only the active client's services get `overdueNotifiedFor`
+stamped; exactly 5 `'overdue'` notifications fire, all naming an
+active-client service; the Tier-1 manager rollup fires exactly once,
+naming only the active-client assignee's real count, never the other
+two; the focus digest reaches only the active-client assignee, with
+zero digest at all for the other two (their own bucket is empty once
+their only work is correctly excluded). At the 19:00 UTC nag run: only
+the active-client assignee gets nagged. A third check locks the exact
+literal-equality form of `isActiveClient()` in source, guarding against
+a future accidental `!=='inactive'` rewrite that would pass today's
+concrete test cases but silently regress for a value this suite didn't
+happen to cover. A second new Node suite
+(`verify_client_status_column_fix.mjs`) against the real, byte-identical
+`api/ops-sync.js` handler confirms the column fix directly: a `'paused'`
+client is written with DB column `'inactive'` (the real bug, now fixed);
+genuinely `'active'`/`'inactive'` clients are unaffected (regression
+check); a client with no `status` field at all also now gets `'inactive'`
+(matching the same literal-equality convention, rather than defaulting
+to active). A new Playwright suite
+(`verify_recurring_regen_skips_inactive.mjs`) against the real,
+live-rendered `client.html` seeds one active, one inactive, and one
+paused client each with one overdue recurring service, loads the real
+page, and confirms after `init()` runs: the active client's due date
+genuinely advanced; the inactive and paused clients' due dates are
+byte-identical to their seeded (overdue) value — completely untouched,
+with zero JS errors across the whole page load. `node --check` clean on
+both touched server files; `client.html`'s comment-stripped div-balance
+is unchanged vs. `main` (delta 0 — this is a pure JS change, zero
+`<div>` elements touched).
+
+Held per rule #10 and the ticket's own explicit "needs preview +
+approval" instruction — touches real reminder/escalation-email logic
+(`api/cron-overdue-check.js`), the denormalized client-status write path
+(`api/ops-sync.js`), and a live-on-every-load regeneration path
+(`client.html`).
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

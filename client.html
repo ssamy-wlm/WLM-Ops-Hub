@@ -2140,6 +2140,14 @@ function ensureServiceMirrors(){
   if(dirty) saveClients(clients);
 }
 
+// Shared "is this client active" rule (2026-10-05), hand-duplicated per the
+// zero-shared-code rule — same literal `status==='active'` equality every
+// other surface in this codebase already uses (user.html's own
+// `c.status==='active'` filters, api/cron-overdue-check.js's own
+// isActiveClient()), never the inverse `!=='inactive'` (which would wrongly
+// treat a 'paused' client as active). See DECISIONS.md.
+function isActiveClient(c){ return c?.status==='active'; }
+
 function refreshRecurringDueDates(){
   const clients=getClients();
   let dirty=false;
@@ -2161,6 +2169,15 @@ function refreshRecurringDueDates(){
     if(!s.assigneeName && s.assignee){ s.assigneeName=s.assignee; dirty=true; }
   };
   clients.forEach(c=>{
+    // Inactive/paused clients never get their recurring due dates assigned
+    // or rolled forward (2026-10-05) — this function runs on every Tracker
+    // load (see init()), so without this guard a deactivated client's
+    // recurring services kept silently advancing their own due date forever,
+    // making them look like live, upcoming work again. A deactivated
+    // client's services are frozen exactly as they were at deactivation;
+    // reactivating the client restores normal rollover for free, no
+    // service-level field ever touched.
+    if(!isActiveClient(c)) return;
     (c.services||[]).forEach(rollForward);
     (c.locations||[]).forEach(loc=>(loc.services||[]).forEach(rollForward));
     // Sync mirrored projects due dates from their linked service (client-level

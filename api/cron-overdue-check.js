@@ -99,6 +99,22 @@ function cairoLocalParts(now) {
 }
 
 function isInactiveService(s) { return s.status === 'cancelled' || s.status === 'archived'; }
+// Shared "is this client active" rule (2026-10-05) — the same literal
+// `status==='active'` equality every UI surface in this codebase already
+// uses (client.html/index.html/user.html's own `c.status==='active'`
+// filters — never the inverse `!=='inactive'`, which would wrongly treat a
+// 'paused' client as active). Applied as a defensive, authoritative
+// re-check on top of each query's own `.eq('status','active')` SQL filter
+// below, not a replacement for it: that SQL filter reads the top-level
+// `ops_clients.status` COLUMN (a denormalized copy `api/ops-sync.js`'s
+// `upsertRows()` maintains for fast querying), which a real bug — found and
+// fixed in this same change — had collapsing 'paused' into 'active' at
+// write time; this JS-level check instead reads the real, authoritative
+// `data.status` field directly, so an already-stale column value on an
+// existing row (written before that fix) can never leak an inactive/paused
+// client's services into a reminder/escalation email either. See
+// DECISIONS.md for the full investigation.
+function isActiveClient(c) { return c?.status === 'active'; }
 // Same rule as client.html's _svcIsDoneThisCycle/_svcDueStatus — kept in sync
 // deliberately (not imported; this endpoint has no access to that browser-side
 // file), single source of truth documented in both places.
@@ -326,7 +342,7 @@ export default async function handler(req, res) {
         const nBump = (id) => { if (!id) return; const cid = canonicalId(id, nCanonMap); nOverdueCounts.set(cid, (nOverdueCounts.get(cid) || 0) + 1); };
         nTasks.forEach(t => { if (!t.mergedIntoId && taskCountsAsOverdueBurden(t, nToday)) nBump(t.assigneeId); });
         const nScanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, nToday)) nBump(s.assigneeId); });
-        (nClientRows || []).forEach(row => {
+        (nClientRows || []).filter(row => isActiveClient(row.data)).forEach(row => {
           const client = row.data; if (!client) return;
           nScanServiceOverdue(client.services);
           (client.locations || []).forEach(loc => nScanServiceOverdue(loc.services));
@@ -410,7 +426,7 @@ export default async function handler(req, res) {
         const events = [];
         const clientsToUpdate = [];
 
-        for (const row of clientRows || []) {
+        for (const row of (clientRows || []).filter(row => isActiveClient(row.data))) {
           const client = row.data;
           if (!client) continue;
           summary.scanned++;
@@ -630,7 +646,7 @@ export default async function handler(req, res) {
         // the service-overdue-escalation block above uses, reusing its
         // isOverdue()/isInactiveService() predicates directly so this can
         // never disagree with that block on what counts as overdue.
-        (clientRowsForDigest || []).forEach(row => {
+        (clientRowsForDigest || []).filter(row => isActiveClient(row.data)).forEach(row => {
           const client = row.data;
           if (!client) return;
           const scanServices = (list, locationName) => {
@@ -735,6 +751,7 @@ export default async function handler(req, res) {
 
       const { data: hClientRows, error: hClientErr } = await supabase.from('ops_clients').select('id, status, data').eq('status', 'active');
       if (hClientErr) warnings.push(`hierarchyEscalation clients: ${hClientErr.message}`);
+      const hActiveClientRows = (hClientRows || []).filter(row => isActiveClient(row.data));
 
       // Per-person overdue counts, tasks + services, no same-day exclusion.
       // taskCountsAsOverdueBurden (2026-09-08) — a recurring task due again
@@ -746,7 +763,7 @@ export default async function handler(req, res) {
       const bump = (id) => { if (!id) return; const cid = canonicalId(id, canonMap); overdueCounts.set(cid, (overdueCounts.get(cid) || 0) + 1); };
       hTasks.forEach(t => { if (!t.mergedIntoId && taskCountsAsOverdueBurden(t, today2)) bump(t.assigneeId); });
       const scanServiceOverdue = (list) => (list || []).forEach(s => { if (s?.assigneeId && isOverdue(s, today2)) bump(s.assigneeId); });
-      (hClientRows || []).forEach(row => {
+      hActiveClientRows.forEach(row => {
         const client = row.data; if (!client) return;
         scanServiceOverdue(client.services);
         (client.locations || []).forEach(loc => scanServiceOverdue(loc.services));
@@ -820,6 +837,14 @@ export default async function handler(req, res) {
       const completedSince = new Set();
       hTasks.forEach(t => { if (t.assigneeId && t.completedAt && t.completedAt >= cutoffIso) completedSince.add(canonicalId(t.assigneeId, canonMap)); });
       const scanServiceCompleted = (list) => (list || []).forEach(s => { if (s?.assigneeId && s.lastDone && s.lastDone >= cutoffDateStr) completedSince.add(canonicalId(s.assigneeId, canonMap)); });
+      // Deliberately the RAW hClientRows here, not hActiveClientRows — this
+      // scan only asks "did this person do real work recently" (Tier 3
+      // inactivity detection), never anything that emails someone about an
+      // inactive client's services. Completing a service just before its
+      // client was deactivated is still genuine evidence the person was
+      // active, and excluding it here would risk a person being wrongly
+      // flagged inactive for real work — out of this ticket's scope
+      // ("no inactive client's services appear in any reminder email").
       (hClientRows || []).forEach(row => {
         const client = row.data; if (!client) return;
         scanServiceCompleted(client.services);

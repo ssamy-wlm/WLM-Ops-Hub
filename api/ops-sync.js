@@ -1713,7 +1713,17 @@ async function upsertRows(supabase, table, rows, warnings, statusCol) {
   if (!rows.length) return 0;
   const payload = rows.map(r => {
     const row = { id: r.id, data: r };
-    if (statusCol) row.status = r.status === 'inactive' ? 'inactive' : 'active';
+    // Bug fix (2026-10-05): this denormalized column is only ever used as a
+    // fast SQL pre-filter (`.eq('status','active')`) by every cron/digest
+    // query that scans ops_clients — it must mirror the exact same literal
+    // `status==='active'` equality every UI surface in this codebase already
+    // uses, never the inverse `!=='inactive'`. The old ternary defaulted to
+    // 'active' for ANYTHING not literally 'inactive' — silently collapsing a
+    // real 'paused' client's status into 'active' at the DB-column level, so
+    // a paused client's services could leak into a reminder/escalation email
+    // that reads this column, even though every JS-side check already
+    // correctly treated 'paused' as not-active. See DECISIONS.md.
+    if (statusCol) row.status = r.status === 'active' ? 'active' : 'inactive';
     return row;
   });
   const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
