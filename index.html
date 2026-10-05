@@ -9809,38 +9809,72 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     if(typeof _updateSalesNavLockState==='function') _updateSalesNavLockState();
     _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
-    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
-    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[]);
+    // asOf (2026-10-05, live-sync reliability fix) — fetchStartedAt is now
+    // passed to EVERY mutable table here, not just `clients` (the
+    // 2026-09-25 fix's original scope). Every one of these tables can see
+    // the exact same out-of-order-response race `clients` had: this tab's
+    // own jittered 30s live-sync tick, a visibilitychange-triggered pull,
+    // and a cross-tab BroadcastChannel reuse (same-token sibling tabs/
+    // windows, see OPS_STATE_SYNC_CHANNEL above) can all have a pull in
+    // flight at once, and nothing before this guaranteed they'd apply in
+    // the order they were ISSUED rather than the order they ARRIVED. Most
+    // visibly: `tasks`/`notifications` arriving out of order is exactly
+    // what produced the reported "Team's Assigned Tasks flickers/shows
+    // stale counts" and "notification read-state reverts" symptoms — an
+    // older response landing after a newer one (or after this same pull's
+    // own post-write confirmation) silently overwrote the fresher state
+    // with no local edit involved, since _opsIsStaleResponse()/
+    // _opsRecordApplied() were wired into _applyServerArray() already but
+    // never actually called with a real `asOf` for anything but `clients`.
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[], undefined, fetchStartedAt);
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[], undefined, fetchStartedAt);
     _applyServerArray('clients', r.clients, arr=>_saveClientDB(arr), _getClientDB, undefined, fetchStartedAt);
-    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
-    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[], undefined, fetchStartedAt);
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[], undefined, fetchStartedAt);
     // Dedicated, type-scoped feed for Overview's Recent Activity — see
     // api/ops-state.js's recentClientFeedQ comment for why the general
     // feed above (shared with Live Feed, capped at 300 most-recent-of-any-
     // type) can't reliably serve this. Never locally edited, so there's no
     // dirty state to preserve — _applyServerArray's fast path always applies.
-    _applyServerArray('recentClientFeed', r.recentClientFeed, arr=>dbSet(DB_KEYS.recentClientFeed, arr), ()=>dbGet(DB_KEYS.recentClientFeed)||[]);
-    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[]);
-    _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr), ()=>dbGet(DB_KEYS.roadmapTasks)||[]);
-    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
-    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[]);
-    _applyServerArray('payroll', r.payroll, arr=>dbSet(DB_KEYS.payroll, arr), ()=>dbGet(DB_KEYS.payroll)||[]);
-    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[]);
-    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
-    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
+    _applyServerArray('recentClientFeed', r.recentClientFeed, arr=>dbSet(DB_KEYS.recentClientFeed, arr), ()=>dbGet(DB_KEYS.recentClientFeed)||[], undefined, fetchStartedAt);
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[], undefined, fetchStartedAt);
+    _applyServerArray('roadmapTasks', r.roadmapTasks, arr=>dbSet(DB_KEYS.roadmapTasks, arr), ()=>dbGet(DB_KEYS.roadmapTasks)||[], undefined, fetchStartedAt);
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[], undefined, fetchStartedAt);
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[], undefined, fetchStartedAt);
+    _applyServerArray('payroll', r.payroll, arr=>dbSet(DB_KEYS.payroll, arr), ()=>dbGet(DB_KEYS.payroll)||[], undefined, fetchStartedAt);
+    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[], undefined, fetchStartedAt);
+    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[], undefined, fetchStartedAt);
+    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[], undefined, fetchStartedAt);
     if(typeof refreshAdminNotifBadge==='function') refreshAdminNotifBadge();
     // deletedTaskIds passed as the tombstone-exclusion set (2026-09-04) —
     // see _applyServerArray()'s own comment on this parameter for why
     // ops_tasks specifically needs it (a genuine hard delete, no server-
     // side deleted_at filter, unlike orgNodes/orgLinks/users below).
-    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]));
-    if(typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
-    if(typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
-    if(typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
-    if(typeof _taRefreshReportedIfActive==='function') _taRefreshReportedIfActive();
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]), fetchStartedAt);
+    // _taHasActiveInteraction() guard (2026-10-05, live-sync reliability
+    // fix) — a background pull landing while the admin has an inline
+    // control focused inside the task list/roster (an open reassign/
+    // status <select>, a focused inline input) or the task detail overlay
+    // open used to always destructively replace that exact container's
+    // innerHTML (renderTaskAssignments()/renderTaPersonRoster() both do a
+    // full `body.innerHTML = ...map(...)` rebuild, no partial-update path)
+    // — ripping an open native <select> popup out from under the admin
+    // mid-click reads as a freeze (the click lands on nothing, nothing
+    // responds). Same principle as the Commissions editor's own
+    // _commHasUnsavedEdits() guard just below, adapted for a view with no
+    // staged edit-form to diff against: "is something inside this
+    // container currently focused" is the here available proxy for
+    // "the admin is mid-interaction," so the render is skipped (the
+    // underlying data is still applied above either way) rather than
+    // guessed at with a confirm() for a non-interactive background event.
+    const skipTaRender = typeof _taHasActiveInteraction==='function' && _taHasActiveInteraction();
+    if(!skipTaRender && typeof renderTaskAssignments==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active')) renderTaskAssignments();
+    if(!skipTaRender && typeof renderTaPersonRoster==='function' && document.getElementById('admin-taskAssignments')?.classList.contains('active') && !_taPersonViewId) renderTaPersonRoster();
+    if(!skipTaRender && typeof renderTaNeedsAttention==='function' && document.getElementById('ta-subtab-attention')?.style.display!=='none') renderTaNeedsAttention();
+    if(!skipTaRender && typeof _taRefreshReportedIfActive==='function') _taRefreshReportedIfActive();
     // Commissions (Phase 1): mutable, same _applyServerArray dirty-preserving
     // pull as tasks above (no tombstone set — Phase 1 has no delete path).
-    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[]);
+    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[], undefined, fetchStartedAt);
     // Never let a background pull's re-render silently discard in-progress
     // typing (data-loss fix, 2026-09-11) — a 30s live-sync poll, or the
     // post-push pull from an unrelated Save elsewhere, both land here with
@@ -11925,6 +11959,29 @@ function _taAssignedByDisplay(t){
   }
   if(t.assignedById==='primary-admin') return 'Sarah Samy';
   return _taPersonName(t.assignedById);
+}
+
+// Mid-edit guard for a background pull's re-render (2026-10-05, live-sync
+// reliability fix) — see the call site in cloudPullAll() for the full
+// rationale. True when the admin is either inside the task detail overlay
+// (open to approve/decline a due-date request, resolve a report, etc.) or
+// has an interactive element (a native <select>, a focused input) focused
+// inside one of the three containers renderTaskAssignments()/
+// renderTaPersonRoster() destructively rebuild (taTableBody — List view,
+// ta-person-roster — By Person's own roster, taPersonTableBody — a
+// specific person's drilled-into task list). Scoped to exactly those
+// containers, not the whole page, so typing in the unrelated search box
+// or an open modal elsewhere never blocks a legitimate background refresh.
+function _taHasActiveInteraction(){
+  const overlay = document.getElementById('taDetailOverlay');
+  if(overlay && overlay.classList.contains('open')) return true;
+  const active = document.activeElement;
+  if(!active || active===document.body) return false;
+  const containerIds = ['taTableBody', 'ta-person-roster', 'taPersonTableBody'];
+  return containerIds.some(id=>{
+    const el = document.getElementById(id);
+    return el && el.contains(active);
+  });
 }
 
 function renderTaskAssignments(){

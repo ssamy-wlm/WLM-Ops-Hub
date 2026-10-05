@@ -2879,7 +2879,7 @@ async function _pullClientsFromCloud(background){
       dbSave(CL_KEYS.serviceCatalog, rec.serviceCatalog);
     }
     _applyServerArray('catalogSuggestions', rec.catalogSuggestions, arr=>dbSave(CL_KEYS.catalogSuggestions, arr), ()=>db(CL_KEYS.catalogSuggestions)||[]);
-    _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr), getOpsNotifs);
+    _applyServerArray('notifications', rec.notifications, arr=>dbSave(CL_KEYS.opsNotifications, arr), getOpsNotifs, fetchStartedAt);
     // Sales Funnel: omitted entirely from the response (not just an empty
     // array) when access isn't granted — see api/ops-state.js — so this is a
     // no-op for anyone without access, same "never let an absent/empty

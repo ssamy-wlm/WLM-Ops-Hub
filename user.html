@@ -1711,6 +1711,36 @@ function switchToManagerView(){ location.href = 'index.html'; }
 
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Monotonicity guard (2026-10-05, live-sync reliability fix) — hand-
+// duplicated from index.html's/client.html's own identical copies (zero-
+// shared-code rule). This file had NO version of this guard at all before
+// now, even though it runs the exact same class of race those two already
+// had fixed for `clients` (2026-09-25): this page's own 20s stats-refresh
+// interval, its separate 15s message-poll interval, a visibilitychange
+// pull, and a cross-tab/cross-iframe BroadcastChannel reuse (the embedded
+// Tracker iframe shares the same OPS_STATE_SYNC_CHANNEL/token) can all have
+// a request in flight at once, with nothing previously guaranteeing a
+// response was applied in the order it was ISSUED rather than the order it
+// ARRIVED. For `notifications` specifically, this is the direct mechanism
+// behind "marking a notification read doesn't stick": an OLDER response
+// (captured before the read-state edit) arriving AFTER cloudPushData()'s
+// own post-push confirmation pull already landed finds local and snapshot
+// back in agreement (both read:true) — so the record is no longer flagged
+// dirty, and the stale response's read:false is applied verbatim, silently
+// reverting the just-confirmed read state. See _applyServerArray() below
+// for where this is actually checked.
+function _opsAppliedAtKey(table){ return 'wl_srv_applied_at_'+table; }
+function _opsIsStaleResponse(table, asOf){
+  if(asOf==null) return false;
+  try{
+    const last = Number(localStorage.getItem(_opsAppliedAtKey(table)));
+    return Number.isFinite(last) && asOf < last;
+  }catch(e){ return false; }
+}
+function _opsRecordApplied(table, asOf){
+  if(asOf==null) return;
+  try{ localStorage.setItem(_opsAppliedAtKey(table), String(asOf)); }catch(e){}
+}
 function _opsDirty(table, localArr){
   if(!Array.isArray(localArr) || !localArr.length) return [];
   let snap = null;
@@ -1764,13 +1794,17 @@ function _opsDirty(table, localArr){
 // task here the same way — this file has its own equivalent tombstone
 // queue (DB_KEYS.deletedTaskIds, used by the Undo Import feature), so it
 // needs the identical protection.
-function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
+// asOf (2026-10-05, see _opsIsStaleResponse() above) — optional; when
+// provided, an out-of-order response older than the most recently applied
+// one for this table is skipped entirely, before anything else runs.
+function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds, asOf){
   if(!Array.isArray(serverArr) || !serverArr.length) return;         // unchanged empty-guard
+  if(_opsIsStaleResponse(table, asOf)) return; // a fresher response already landed — never regress
   const filtered = (tombstoneIds && tombstoneIds.size) ? serverArr.filter(r=>!tombstoneIds.has(r.id)) : serverArr;
   if(!filtered.length) return; // everything present was tombstoned — same empty-guard, never wipe local
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
-  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); return; } // unchanged fast path
+  if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); _opsRecordApplied(table, asOf); return; } // unchanged fast path
   // Keep the LOCAL copy of every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
   const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
@@ -1785,6 +1819,7 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds){
   // _opsDirty() check, so its pending debounced push still fires and the
   // edit actually persists instead of silently sitting local-only forever.
   _opsSetSnapshot(table, filtered);
+  _opsRecordApplied(table, asOf);
 }
 function _applyServerValue(saveFn, value){
   if(value === null || value === undefined) return;
@@ -1804,6 +1839,14 @@ async function cloudFetchUsers(background){
   const token = _opsToken();
   if(!token) return null;
   try{
+    // Captured BEFORE the request goes out — see _applyServerArray()'s
+    // monotonicity guard (asOf) above for why: this is the anchor that lets
+    // an out-of-order response (this page's own 20s/15s poll intervals, a
+    // visibilitychange pull, or a same-token sibling tab/iframe's
+    // broadcast) be recognized and skipped instead of silently reverting
+    // fresher local state — see the full incident writeup on
+    // _opsAppliedAtKey() above.
+    const fetchStartedAt = Date.now();
     const r = await fetchOpsStateCoordinated(token, !!background);
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
     // Sales Funnel access / Commissions eligibility — server-verified,
@@ -1813,10 +1856,10 @@ async function cloudFetchUsers(background){
     // without a reload.
     _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
     _viewerEarnsCommission = !!r.viewerEarnsCommission;
-    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[]);
+    _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[], undefined, fetchStartedAt);
     if(document.getElementById('sec-mycommissions')?.classList.contains('active') && typeof renderMyCommissionsUser==='function') renderMyCommissionsUser();
     if(typeof _updateSalesNavLockState==='function') _updateSalesNavLockState();
-    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[]);
+    _applyServerArray('users', r.users, arr=>dbSet(DB_KEYS.users, arr), ()=>dbGet(DB_KEYS.users)||[], undefined, fetchStartedAt);
     // Redacted {id,name,title,funnelLevel} shape for a member session (see
     // api/ops-state.js) — added 2026-09-01 so _dtPersonName() can resolve
     // a task's assignedById to a real admin's name (was previously only
@@ -1825,30 +1868,30 @@ async function cloudFetchUsers(background){
     // _getContactList() has referenced since it was written but that was
     // never actually populated — DB_KEYS had no 'admins' entry at all
     // before this, a separate pre-existing bug not touched here.
-    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[]);
-    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[]);
+    _applyServerArray('admins', r.admins, arr=>dbSet(DB_KEYS.admins, arr), ()=>dbGet(DB_KEYS.admins)||[], undefined, fetchStartedAt);
+    _applyServerArray('goals', r.goals, arr=>dbSet(DB_KEYS.goals, arr), ()=>dbGet(DB_KEYS.goals)||[], undefined, fetchStartedAt);
     _applyServerValue(v=>dbSet(DB_KEYS.announcement, v), r.announcement);
     _applyServerValue(v=>dbSet(DB_KEYS.coc, v), r.coc);
-    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[]);
-    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[]);
-    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[]);
-    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[]);
-    _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)), ()=>{ try{ return JSON.parse(localStorage.getItem('wl_clients_db')||'[]'); }catch(e){ return []; } });
+    _applyServerArray('messages', r.messages, arr=>dbSet(DB_KEYS.messages, arr), ()=>dbGet(DB_KEYS.messages)||[], undefined, fetchStartedAt);
+    _applyServerArray('feed', r.feed, arr=>dbSet(DB_KEYS.feed, arr), ()=>dbGet(DB_KEYS.feed)||[], undefined, fetchStartedAt);
+    _applyServerArray('timeOffRequests', r.timeOffRequests, arr=>dbSet(DB_KEYS.timeOffRequests, arr), ()=>dbGet(DB_KEYS.timeOffRequests)||[], undefined, fetchStartedAt);
+    _applyServerArray('timeOffLedger', r.timeOffLedger, arr=>dbSet(DB_KEYS.timeOffLedger, arr), ()=>dbGet(DB_KEYS.timeOffLedger)||[], undefined, fetchStartedAt);
+    _applyServerArray('clients', r.clients, arr=>localStorage.setItem('wl_clients_db', JSON.stringify(arr)), ()=>{ try{ return JSON.parse(localStorage.getItem('wl_clients_db')||'[]'); }catch(e){ return []; } }, undefined, fetchStartedAt);
     // Same guard/reasoning as index.html's own Client Directory refresh
     // hook — a pull landing while this tab is open re-reads the live data
     // WITHOUT resetting the search box (see _cdReloadData() below).
     if(document.getElementById('sec-clientDirectory')?.classList.contains('active') && typeof _cdReloadData==='function') _cdReloadData();
-    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[]);
+    _applyServerArray('notifications', r.notifications, arr=>dbSet(DB_KEYS.notifications, arr), ()=>dbGet(DB_KEYS.notifications)||[], undefined, fetchStartedAt);
     // tombstoneIds: this file's own Undo Import delete queue — see this
     // function's own header comment for why 'tasks' specifically needs it.
-    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]));
+    _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]), fetchStartedAt);
     if(document.getElementById('sec-dailyTasks')?.classList.contains('active') && typeof renderDailyTasks==='function') renderDailyTasks();
     // Read-only Company Overview chart — same ops_org_nodes/ops_org_links
     // data the admin chart renders from (api/ops-state.js no longer strips
     // these for member tier; see there for why it's safe: no sensitive
     // fields, and there is still no write path for members either way).
-    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[]);
-    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[]);
+    _applyServerArray('orgNodes', r.orgNodes, arr=>dbSet(DB_KEYS.orgNodes, arr), ()=>dbGet(DB_KEYS.orgNodes)||[], undefined, fetchStartedAt);
+    _applyServerArray('orgLinks', r.orgLinks, arr=>dbSet(DB_KEYS.orgLinks, arr), ()=>dbGet(DB_KEYS.orgLinks)||[], undefined, fetchStartedAt);
     _applyServerValue(v=>dbSet(DB_KEYS.tourFlags, v), r.tourFlags);
     if(typeof _maybeStartTourFromPull==='function') _maybeStartTourFromPull();
     if(document.getElementById('sec-companyOverview')?.classList.contains('active') && typeof renderCompanyOverviewChart==='function') renderCompanyOverviewChart();
