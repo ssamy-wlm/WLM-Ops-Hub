@@ -608,8 +608,8 @@ Don't relitigate them without an explicit decision from the user.
   (Abby's ledger-only PTO appears with dates+reason, Jacob's cross-table
   duplicate collapses to one line, Michael's genuine zero-PTO case still
   reads "No PTO taken"). `node --check` clean.
-- Inactive clients' services still surfaced server-side (2026-10-05 — held
-  for preview approval, `api/`+`client.html`): #430 only fixed the UI-side
+- Inactive clients' services still surfaced server-side (2026-10-05 —
+  **merged**, PR #451, `api/`+`client.html`): #430 only fixed the UI-side
   views (user.html) — reported live, Leese & Shapiro (both deactivated)
   still had active services (a) included in reminder/escalation emails and
   (b) kept getting their recurring due dates rolled forward
