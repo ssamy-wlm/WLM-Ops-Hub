@@ -62,6 +62,40 @@
 // report body itself and a logError() entry, rather than silently picking
 // one or dropping the person from the report.
 //
+// Two time-off tables, read and merged (2026-10-02 fix) — this report
+// originally read only ops_time_off_requests (the employee-submitted
+// request flow), silently missing PTO the Super Admin/Owner logs directly
+// via index.html's "Log Time Off" ledger tool (ops_time_off_ledger,
+// logTimeOffEntry() — a genuinely different, admin-only entry path with no
+// corresponding request row at all). A real case: Abby's Sept 23-25 PTO
+// was ledger-only and never appeared in this report. Both sources are now
+// read and merged per person — see collectApprovedPtoItems() below.
+//
+// Ledger-specific exclusions, both load-bearing, not optional: an
+// isReversal:true entry (the negative-days correction logTimeOffEntry()'s
+// own Undo/Edit flow appends — see index.html's own header comment on this
+// mechanism) is never itself shown as "PTO taken," and an entry that HAS
+// BEEN reversed (some other ledger row's reversalOf points at it) is
+// excluded too — its PTO was cancelled/corrected, not actually taken. This
+// mirrors index.html's own admin ledger view exactly (`isReversed`/
+// `canAct` in renderAdminTimeOffLedger()), so this report can never show
+// an entry as "taken" that the ledger's own UI already displays as
+// superseded.
+//
+// Dedupe (2026-10-02, the ticket's own named case: Jacob's Sept 21 entry
+// existed in BOTH tables for the identical date range — a request that was
+// ALSO separately hand-logged to the ledger, double-counting the same
+// real PTO event). Two items — one from each table, same person — are
+// treated as the same event only on an EXACT startDate+endDate match; a
+// request always wins that exact-match tie (its own `reason` field is
+// shown), and the ledger counterpart is dropped rather than shown as a
+// second line. A near-miss (overlapping but not identical dates) is
+// deliberately NOT deduped — the ticket's own example is an exact-date
+// duplicate, and silently collapsing two merely-overlapping entries risks
+// discarding a real, distinct day of PTO rather than a genuine duplicate;
+// flagged here as a conservative, explicit choice (CLAUDE.md rule #7), not
+// a silently-assumed one.
+//
 // Idempotency: read-based, same shape as cron-work-anniversaries.js — a
 // 'biMonthlyPtoReport' notification whose context.startDate/endDate
 // already match this run's computed window is treated as already sent, so
@@ -98,6 +132,40 @@ export function computeHalfMonthWindow(year, month, day) {
 const TARGET_FIRST_NAMES = ['Jacob', 'Abby', 'Michael'];
 export function firstNameOf(name) { return String(name || '').trim().split(/\s+/)[0].toLowerCase(); }
 
+function overlapsWindow(start, end, window) {
+  if (!start) return false;
+  return start <= window.endDate && (end || start) >= window.startDate;
+}
+
+// Exported for direct unit testing (CLAUDE.md rule #9) — the pure
+// merge/dedupe core, no Supabase/network dependency. `requests` is the raw
+// ops_time_off_requests rows, `ledgerEntries` the raw ops_time_off_ledger
+// rows (both already unwrapped to their `.data`), `person` the resolved
+// roster entry, `window` the {startDate, endDate} half-month range.
+export function collectApprovedPtoItems(person, requests, ledgerEntries, window) {
+  const nameLower = String(person.name || '').toLowerCase();
+
+  const reqItems = requests
+    .filter(r => r.status === 'approved')
+    .filter(r => r.userId === person.id || String(r.userName || '').toLowerCase() === nameLower)
+    .filter(r => overlapsWindow(r.startDate, r.endDate || r.startDate, window))
+    .map(r => ({ startDate: r.startDate, endDate: r.endDate || r.startDate, reason: r.reason || '' }));
+
+  const reversedIds = new Set(ledgerEntries.filter(e => e.reversalOf).map(e => e.reversalOf));
+  const ledgerItems = ledgerEntries
+    .filter(e => e.status === 'approved' && !e.isReversal && !reversedIds.has(e.id))
+    .filter(e => e.employeeId === person.id || String(e.employeeName || '').toLowerCase() === nameLower)
+    .filter(e => overlapsWindow(e.startDate, e.endDate || e.startDate, window))
+    .map(e => ({ startDate: e.startDate, endDate: e.endDate || e.startDate, reason: e.note || '' }));
+
+  // Exact-date-range dedupe only — see the header comment above for why a
+  // looser overlap-based dedupe was deliberately not built.
+  const reqKeys = new Set(reqItems.map(i => `${i.startDate}|${i.endDate}`));
+  const dedupedLedger = ledgerItems.filter(i => !reqKeys.has(`${i.startDate}|${i.endDate}`));
+
+  return [...reqItems, ...dedupedLedger].sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
+}
+
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
   const header = req.headers.authorization || '';
@@ -124,19 +192,22 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, sent: false, reason: 'already sent for this period' });
     }
 
-    const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: timeOffRows, error: tErr }] = await Promise.all([
+    const [{ data: userRows, error: uErr }, { data: adminRows, error: aErr }, { data: timeOffRows, error: tErr }, { data: ledgerRows, error: lErr }] = await Promise.all([
       supabase.from('ops_users').select('id, data'),
       supabase.from('ops_admins').select('id, data'),
       supabase.from('ops_time_off_requests').select('id, data'),
+      supabase.from('ops_time_off_ledger').select('id, data'),
     ]);
     if (uErr) throw new Error(uErr.message);
     if (aErr) throw new Error(aErr.message);
     if (tErr) throw new Error(tErr.message);
+    if (lErr) throw new Error(lErr.message);
 
     const users = (userRows || []).map(r => ({ id: r.id, ...r.data }));
     const admins = (adminRows || []).map(r => ({ id: r.id, ...r.data }));
     const roster = [...users, ...admins];
     const requests = (timeOffRows || []).map(r => r.data).filter(Boolean);
+    const ledgerEntries = (ledgerRows || []).map(r => ({ id: r.id, ...r.data }));
 
     const warnings = [];
     // Always one line per target person — never omitted, never skipped,
@@ -150,20 +221,11 @@ export default async function handler(req, res) {
         return `${first}: ${matches.length === 0 ? 'not found in the roster' : `${matches.length} ambiguous roster matches`} this run — check Business Setup's error log.`;
       }
       const person = matches[0];
-      const nameLower = String(person.name || '').toLowerCase();
-      const items = requests
-        .filter(req => req.status === 'approved')
-        .filter(req => req.userId === person.id || String(req.userName || '').toLowerCase() === nameLower)
-        .filter(req => {
-          const start = req.startDate, end = req.endDate || req.startDate;
-          if (!start) return false;
-          return start <= window.endDate && end >= window.startDate;
-        })
-        .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
+      const items = collectApprovedPtoItems(person, requests, ledgerEntries, window);
       if (!items.length) return `${person.name}: No PTO taken during ${window.startDate} – ${window.endDate}.`;
-      const lines = items.map(req => {
-        const range = req.endDate && req.endDate !== req.startDate ? `${req.startDate} – ${req.endDate}` : req.startDate;
-        return `  • ${range}${req.reason ? ` — ${req.reason}` : ''}`;
+      const lines = items.map(item => {
+        const range = item.endDate && item.endDate !== item.startDate ? `${item.startDate} – ${item.endDate}` : item.startDate;
+        return `  • ${range}${item.reason ? ` — ${item.reason}` : ''}`;
       }).join('\n');
       return `${person.name} (${items.length}):\n${lines}`;
     });
