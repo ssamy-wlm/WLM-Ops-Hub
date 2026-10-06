@@ -655,6 +655,44 @@ Don't relitigate them without an explicit decision from the user.
   `init()`, while an active client's correctly rolls forward). `node
   --check` clean; `client.html`'s div-balance delta unchanged vs. `main`
   (0 — pure JS change, no HTML touched).
+- Due-date-change approval silently failed + misreported as declined on a
+  locked task (2026-10-06 — held for preview approval, `api/`): reported
+  live on task `task_1788791312066_8xjn3q5` (approved 2026-10-30, stayed
+  2026-09-25, employee got "declined"). Root cause in `api/ops-sync.js`'s
+  admin task-write branch: `dueDate` may be changed by an admin exactly
+  ONCE, then `dueDateLocked` permanently freezes it — a rule meant for
+  ordinary task edits, not for approving a due-date-change request, which
+  by definition only ever fires on a task that's already locked (a member
+  can't request moving a date that was never set). The old
+  `approved: dueDateJustLocked` signal is false whenever the task was
+  already locked, so an approval both silently kept the old date AND
+  reported itself to the employee as a decline. index.html's own
+  `_taResolveDueDateRequest()` was already correct (sends the clamped
+  approved date, or the unchanged date on decline) — audited and left
+  untouched; the inverted/lock-gated path was entirely server-side. Fixed
+  by detecting "this write is resolving a pending request" the same
+  not-trusted-from-a-flag way every other resolution in this file already
+  is (`cur.dueDateChangeRequest` existed and the incoming write explicitly
+  clears it), and — only in that case — letting an incoming `dueDate` that
+  actually differs from `cur.dueDate` override the lock
+  (`dueDateApprovedOverride`); the resolve-notification's `approved` field
+  now reads `dueDateApprovedOverride || dueDateJustLocked`, covering both
+  the already-locked case (the real bug) and a request resolved before the
+  task was ever admin-locked (the pre-existing, already-correct path). A
+  genuine decline sends an unchanged `dueDate`, so none of this fires and
+  both the date and the lock stay exactly as they were, same as before.
+  Verified with a new 4-check Node suite against the real, byte-identical
+  handler (fake in-memory Supabase client, no live access per rule #11):
+  approving on an already-locked task now applies the new date, re-locks
+  at it, and notifies "approved" (confirmed this test fails against the
+  pre-fix code, reproducing the exact reported bug: date stuck at
+  2026-09-25 instead of 2026-10-30); declining on a locked task leaves
+  date+lock untouched and notifies "declined"; approving on a
+  never-before-locked task still works (regression, the one path that was
+  already correct); an unrelated resave that doesn't touch
+  `dueDateChangeRequest` fires no resolve notification at all. `node
+  --check` clean. Held per rule #10 — touches `api/ops-sync.js`'s
+  real task-write/notification logic.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

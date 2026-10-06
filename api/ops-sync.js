@@ -2805,10 +2805,29 @@ export default async function handler(req, res) {
           // stored, it locks (dueDateLocked=true) and every subsequent
           // incoming value is ignored, keeping that date forever after —
           // an accidental resave that leaves dueDate unchanged never locks it.
+          //
+          // Due-date-change-request APPROVAL overrides that lock (2026-10-06
+          // fix) — the whole point of an approval is to apply a new date
+          // even on an already-locked task, and the old code here silently
+          // kept cur.dueDate while the resolve-detection block below, seeing
+          // no actual change, reported the approval back to the employee as
+          // a DECLINE (reproduced live on task task_1788791312066_8xjn3q5).
+          // Detected the same way every other resolution in this file is
+          // detected — not trusted from a client flag: a pending request
+          // existed on `cur` and this write explicitly clears it
+          // (`'dueDateChangeRequest' in inc && !inc.dueDateChangeRequest`,
+          // exactly what _taResolveDueDateRequest() sends for BOTH approve
+          // and decline), combined with whether the incoming dueDate itself
+          // actually differs from cur's — that's what distinguishes the
+          // two: approve sends the clamped proposed date, decline sends the
+          // unchanged existing date. A genuine decline therefore still
+          // leaves dueDate and the lock completely untouched, same as
+          // before this fix.
+          const resolvingDueDateRequest = !!cur.dueDateChangeRequest && ('dueDateChangeRequest' in inc) && !inc.dueDateChangeRequest;
+          const incomingDueDate = typeof inc.dueDate === 'string' ? inc.dueDate : (cur.dueDate || '');
+          const dueDateApprovedOverride = resolvingDueDateRequest && incomingDueDate !== (cur.dueDate || '');
           const dueDateLocked = !!cur.dueDateLocked;
-          const dueDate = dueDateLocked
-            ? cur.dueDate
-            : (typeof inc.dueDate === 'string' ? inc.dueDate : (cur.dueDate || ''));
+          const dueDate = (dueDateLocked && !dueDateApprovedOverride) ? cur.dueDate : incomingDueDate;
           const dueDateJustLocked = !dueDateLocked && dueDate !== (cur.dueDate || '');
           // assigneeName resolved fresh whenever a reassignment (or a
           // resave with a stale/blank cached name) leaves it missing —
@@ -2873,21 +2892,27 @@ export default async function handler(req, res) {
           // that never touches this field leaves it exactly as `cur` had
           // it, so this block never fires for those). Approved vs declined
           // is the actual dueDate outcome above, not a separate signal the
-          // client could get out of sync with: approving is precisely "the
-          // date actually changed" (dueDateJustLocked, computed from the
-          // exact same dueDate this write already applied), declining is
-          // precisely "it didn't." "Any admin may resolve any pending
-          // request" (manager/super-admin only, i.e. isAdmin generally) —
-          // this feature does not scope resolution to specifically the
-          // routed approver, matching this codebase's existing convention
-          // that admin capability over ops_tasks is uniform across every
-          // admin tier, never per-record-scoped to one specific person.
+          // client could get out of sync with: `dueDateApprovedOverride`
+          // covers the already-locked case (2026-10-06 fix — the override
+          // above is precisely "the date actually changed despite the
+          // lock"), `dueDateJustLocked` covers a request resolved on a task
+          // whose dueDate had never been admin-touched before (the lock
+          // wasn't engaged yet, so the generic first-time-lock path already
+          // reflects the real change correctly, same as before this fix);
+          // exactly one of the two can be true for a given resolution, and
+          // both read false — correctly — on a genuine decline. "Any admin
+          // may resolve any pending request" (manager/super-admin only,
+          // i.e. isAdmin generally) — this feature does not scope
+          // resolution to specifically the routed approver, matching this
+          // codebase's existing convention that admin capability over
+          // ops_tasks is uniform across every admin tier, never
+          // per-record-scoped to one specific person.
           if (cur.dueDateChangeRequest && !row.dueDateChangeRequest) {
             dueDateResolveEvents.push({
               taskId: inc.id, subject: row.subject,
               requestedBy: cur.dueDateChangeRequest.requestedBy,
               proposedDate: cur.dueDateChangeRequest.proposedDate,
-              approved: dueDateJustLocked,
+              approved: dueDateApprovedOverride || dueDateJustLocked,
               clientId: row.clientId || null,
             });
           }

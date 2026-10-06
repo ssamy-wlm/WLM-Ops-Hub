@@ -11600,6 +11600,132 @@ approval" instruction — touches real reminder/escalation-email logic
 (`api/ops-sync.js`), and a live-on-every-load regeneration path
 (`client.html`).
 
+### 2026-10-06 — Due-date-change approval silently failed + misreported as declined when dueDateLocked is true
+
+Reported live: an admin approved a due-date-change request on task
+`task_1788791312066_8xjn3q5`, moving it to 2026-10-30. The date never
+moved — it stayed at 2026-09-25 — and the employee who'd requested the
+change received a "declined" notification, even though the admin had
+clicked Approve.
+
+**Investigation (rule #7 — the ticket's own hint, "audit the approve/
+decline branches for an inverted or lock-gated path," was followed
+literally before any fix was written).** `index.html`'s approval handler,
+`_taResolveDueDateRequest(id, approve)` (line ~12482), was read first and
+found already correct: on approve it sets
+`t.dueDate = clampToWeekday(t.dueDateChangeRequest.proposedDate)` (the
+same weekend-clamp helper the rest of the due-date feature already uses);
+on decline it leaves `t.dueDate` completely untouched. Either way it
+clears `t.dueDateChangeRequest` and syncs. Nothing on the client side
+distinguishes "approve" from "decline" beyond what `dueDate` ends up
+being — which turned out to be exactly where the real bug was waiting,
+one layer down.
+
+`api/ops-sync.js`'s admin task-write branch has a long-standing,
+deliberate rule (`C1`-era, predates this ticket): **an admin may change a
+task's `dueDate` exactly once.** The first time an admin's incoming
+`dueDate` actually differs from what's stored, the task locks
+(`dueDateLocked = true`) and every subsequent incoming `dueDate` is
+silently ignored, forever, keeping whatever date it locked at. This rule
+exists for ordinary task edits — once a task is scheduled and locked, a
+later stray/accidental resave can't quietly nudge its deadline.
+
+The due-date-change-request feature (Item C, 2026-09-03) was built
+*on top of* an already-locked task by construction — a member can only
+ever request moving a date they can already see is set, which in
+practice means the task has already gone through the admin's one
+permitted `dueDate` change and is locked. So **every real approval this
+feature was ever going to process hit the "exactly once, already used
+up" branch**: `dueDate = dueDateLocked ? cur.dueDate : inc.dueDate` kept
+`cur.dueDate` regardless of what the approving admin sent, and
+`dueDateJustLocked = !dueDateLocked && dueDate !== cur.dueDate` was
+`false` — it can only ever be `true` the first time a task's `dueDate`
+is ever touched, which by the time a request exists has already
+happened. The resolve-event push used exactly this flag —
+`approved: dueDateJustLocked` — as its sole signal for which
+notification to fire. An approval on an already-locked task therefore
+always computed `approved: false`, i.e. always fired
+`dueDateChangeDeclined`, regardless of what the admin actually did. This
+is a genuinely inverted-feeling bug without being a literal `!` typo: two
+independently-reasonable rules (the one-time lock; "detect approve vs
+decline from the real outcome, never a client-sent flag") were each
+correct in isolation but combined to make the detection signal
+permanently stuck at "no change happened" for the one scenario (an
+already-locked task) this feature exists to handle.
+
+**Fix**, in `api/ops-sync.js`'s admin task-write branch only (confirmed via
+the same grep sweep rule #3 asks for that `user.html` has no parallel
+admin approval path to duplicate this into — approval is an admin-only
+action, `_taResolveDueDateRequest` and its server counterpart are both
+`index.html`/`api/ops-sync.js` only):
+
+- Added `resolvingDueDateRequest` — detected the same not-trusted-from-a-
+  flag way every other resolution in this file already is: a pending
+  request existed on `cur` AND the incoming write explicitly clears the
+  key (`'dueDateChangeRequest' in inc && !inc.dueDateChangeRequest`) —
+  exactly what `_taResolveDueDateRequest()` sends for BOTH approve and
+  decline, so this alone can't distinguish them.
+- Added `dueDateApprovedOverride` — `resolvingDueDateRequest` AND the
+  incoming `dueDate` actually differs from `cur.dueDate`. This is the
+  real distinguishing signal: approve sends the clamped proposed date,
+  decline sends the unchanged existing date (confirmed against
+  `_taResolveDueDateRequest()`'s own code, read above).
+- The `dueDate` computation now reads
+  `(dueDateLocked && !dueDateApprovedOverride) ? cur.dueDate : incomingDueDate`
+  — i.e. the lock is bypassed in precisely the one case where an
+  explicit, server-detected approval is resolving a pending request,
+  never for an ordinary admin edit (which still only gets its one-time
+  change, exactly as before). `dueDateLocked` itself (the stored field)
+  is unchanged — it was already `true` in the bug scenario, so it simply
+  stays `true` at the new value, i.e. "re-locked" at the approved date.
+- The resolve-notification's `approved` field changed from
+  `dueDateJustLocked` alone to `dueDateApprovedOverride || dueDateJustLocked`
+  — the former covers the real bug (already-locked task, approval
+  overrides the lock); the latter is kept for the one scenario where it
+  was already correct (a request resolved on a task whose `dueDate` had,
+  for whatever reason, never been admin-touched before — the lock isn't
+  engaged yet, so the pre-existing first-time-lock detection already
+  reflects the real change correctly). The two conditions are mutually
+  exclusive given the surrounding lock-state branches, so this is a safe
+  `||`, not a double-count.
+- A genuine decline sends an incoming `dueDate` identical to `cur.dueDate`
+  (confirmed from `_taResolveDueDateRequest()`'s own decline branch,
+  which never touches `t.dueDate`), so `dueDateApprovedOverride` is
+  `false`, the lock is respected (correctly — nothing should change), and
+  `approved` reads `false` → `dueDateChangeDeclined`, exactly as intended.
+
+Verified with a new 4-check Node suite
+(`verify_due_date_approval_lock_fix.mjs`) against the real, byte-identical
+default-exported `handler()` (fake in-memory Supabase client, no live
+access per rule #11), seeding the exact reported scenario — a task with
+`dueDateLocked:true`, `dueDate:'2026-09-25'`, and a pending
+`dueDateChangeRequest` proposing `'2026-10-30'`:
+1. Approving applies `'2026-10-30'`, re-locks at that value, clears the
+   request, and fires `dueDateChangeApproved` to the original requester —
+   **confirmed this exact test fails against the pre-fix code** (via
+   `git stash` + re-run), reproducing the live bug byte-for-byte: date
+   stuck at `'2026-09-25'`, notification would have been
+   `dueDateChangeDeclined`.
+2. Declining leaves `dueDate`/`dueDateLocked` completely untouched and
+   fires `dueDateChangeDeclined`.
+3. Regression: approving a request on a task whose `dueDate` was never
+   admin-locked before (`dueDateLocked:false`) still works exactly as it
+   already did pre-fix — applies the date, locks for the first time,
+   notifies approved.
+4. An unrelated resave that leaves `dueDateChangeRequest` present and
+   unchanged (a stale client resaving e.g. just `subject`) fires no
+   resolve notification at all and leaves the pending request and
+   `dueDate` both untouched — confirms the detection is scoped to an
+   actual resolution, not any write that happens to touch the task.
+
+All 4 passed post-fix; test 1 alone was confirmed failing pre-fix.
+`node --check` clean on `api/ops-sync.js`. `index.html` needed no change
+— `_taResolveDueDateRequest()` was audited and confirmed already correct;
+the entire bug was server-side.
+
+Held per rule #10 — touches `api/ops-sync.js`'s real task-write and
+notification logic.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
