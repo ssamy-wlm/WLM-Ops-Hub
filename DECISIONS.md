@@ -11722,7 +11722,8 @@ All 4 passed post-fix; test 1 alone was confirmed failing pre-fix.
 the entire bug was server-side.
 
 Held per rule #10 — touches `api/ops-sync.js`'s real task-write and
-notification logic.
+notification logic. Previewed and merged by the user directly (PR #453),
+same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
