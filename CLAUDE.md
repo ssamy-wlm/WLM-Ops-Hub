@@ -656,7 +656,7 @@ Don't relitigate them without an explicit decision from the user.
   --check` clean; `client.html`'s div-balance delta unchanged vs. `main`
   (0 — pure JS change, no HTML touched).
 - Due-date-change approval silently failed + misreported as declined on a
-  locked task (2026-10-06 — held for preview approval, `api/`): reported
+  locked task (2026-10-06 — **merged**, PR #453, `api/`): reported
   live on task `task_1788791312066_8xjn3q5` (approved 2026-10-30, stayed
   2026-09-25, employee got "declined"). Root cause in `api/ops-sync.js`'s
   admin task-write branch: `dueDate` may be changed by an admin exactly
