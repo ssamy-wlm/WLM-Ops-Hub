@@ -11595,10 +11595,8 @@ is unchanged vs. `main` (delta 0 — this is a pure JS change, zero
 `<div>` elements touched).
 
 Held per rule #10 and the ticket's own explicit "needs preview +
-approval" instruction — touches real reminder/escalation-email logic
-(`api/cron-overdue-check.js`), the denormalized client-status write path
-(`api/ops-sync.js`), and a live-on-every-load regeneration path
-(`client.html`).
+approval" instruction — previewed and merged by the user directly
+(PR #451), same day.
 
 ### 2026-10-06 — Due-date-change approval silently failed + misreported as declined when dueDateLocked is true
 
