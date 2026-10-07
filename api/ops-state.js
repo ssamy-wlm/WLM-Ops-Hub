@@ -66,6 +66,31 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'ops-state', error: err, session }); return res.status(500).json({ error: err.message }); }
 
   try {
+    // serverReadAt (2026-10-07, live-sync reliability follow-up): captured
+    // HERE, server-side, right before the DB fan-out below, instead of the
+    // client stamping its own pre-send Date.now() as the asOf/monotonicity
+    // anchor (see index.html/user.html/client.html's own _opsIsStaleResponse()/
+    // _opsRecordApplied()). That client-side timestamp measures "when did
+    // this browser decide to ask," not "how fresh is this data" — two
+    // concurrent polls from the same page (its own 20s/15s intervals, a
+    // visibilitychange pull) can have their REQUESTS issued in one order but
+    // their RESPONSES reflect the opposite order if the earlier-issued one
+    // happens to hit a slower Vercel cold start/network leg, which is
+    // ordinary, expected latency variance, not a rare edge case. The old
+    // guard would then silently discard the genuinely newer, more-complete
+    // response as "stale" purely because it was asked for first — exactly
+    // the mechanism behind a real report (an employee's My Tasks page
+    // showing fewer tasks than the admin's view after a recent
+    // assignment — see DECISIONS.md). Stamping the anchor HERE instead,
+    // once per request, and echoing it back as `serverReadAt` below, fixes
+    // this at the root: every reader (including a background poll that
+    // reuses a cached/broadcast response instead of making its own request)
+    // now anchors on the moment the DATA was actually read from the single
+    // shared Supabase source of truth, which is the one timestamp that's
+    // actually guaranteed to correlate with real freshness, regardless of
+    // how long any individual request/response happened to spend in
+    // transit on either leg.
+    const serverReadAt = Date.now();
     // Revocation check (2026-09-12 latency fix): this used to be awaited
     // sequentially inside requireSession() BEFORE any of the 21 queries below
     // even started — a full extra Supabase round trip serialized in front of
@@ -246,6 +271,10 @@ export default async function handler(req, res) {
     };
 
     const record = {
+      // See serverReadAt's own comment above — the authoritative freshness
+      // anchor every frontend's asOf monotonicity guard now reads instead of
+      // its own locally-captured pre-send timestamp.
+      serverReadAt,
       // Server-verified identity — the ONLY legitimate source of tier/role for
       // every frontend's UI gating. Never derive admin capability from a
       // client-cached session object (that's the whole bug this fixes): a

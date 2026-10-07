@@ -2863,13 +2863,22 @@ async function _pullClientsFromCloud(background){
   const token=_opsToken();
   if(!token){ console.warn('[WLM Tracker] No auth token found in this browser — cannot resolve viewer tier or pull client data.'); return false; }
   try{
-    // Captured BEFORE the request goes out — see _applyServerArray()'s
-    // monotonicity guard above (asOf) for why: this is the anchor that lets
-    // an out-of-order response from a sibling context (this file's own
-    // embedding parent frame, running its own independent poll) be
-    // recognized and skipped instead of silently reverting `clients`.
-    const fetchStartedAt = Date.now();
     const rec = await fetchOpsStateCoordinated(token, !!background);
+    // asOf anchor (2026-10-07 fix — see api/ops-state.js's serverReadAt for
+    // the full rationale): this USED to be a timestamp captured locally
+    // right before the request went out, which measures "when did this
+    // browser decide to ask," not "how fresh is this data." An
+    // out-of-order response from a sibling context (this file's own
+    // embedding parent frame, running its own independent poll) or
+    // ordinary request/response latency variance can arrive in the
+    // opposite order it was issued — the old client-side timestamp let the
+    // guard silently discard a genuinely newer, more-complete response as
+    // "stale" purely because it was asked for first. Using the server's
+    // own `serverReadAt` instead anchors on the moment the data was
+    // actually read from the single shared source of truth. `?? Date.now()`
+    // is a defensive fallback only (an old cached record from before this
+    // field existed), not the normal path.
+    const fetchStartedAt = rec.serverReadAt ?? Date.now();
     // The ONLY point admin capability is ever granted from — server-verified,
     // fresh on every pull (init, 30s poll, visibility change). Never derived
     // from a cached localStorage session; see _applyViewerTier().

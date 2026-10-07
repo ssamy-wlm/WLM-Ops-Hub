@@ -693,6 +693,63 @@ Don't relitigate them without an explicit decision from the user.
   `dueDateChangeRequest` fires no resolve notification at all. `node
   --check` clean. Held per rule #10 — touches `api/ops-sync.js`'s
   real task-write/notification logic.
+- Employee "My Tasks" under-counting root-caused to the asOf sync guard,
+  NOT a client-status filter (2026-10-07 — held for preview approval,
+  `api/`+`index.html`+`user.html`+`client.html`): reported as "Rana's admin
+  plate shows 40 active tasks, assigned to her ID, on active-or-no
+  clients, but her employee portal shows fewer" with the ticket's own
+  stated hypothesis blaming a #430-style client-status filter. Investigated
+  before guessing (rule #7) — exhaustively: NEITHER `_dtMyTasks()`/
+  `renderDailyTasks()` (the real "My Tasks" page — confirmed via its own
+  nav label) NOR `_collectMyWorkItems()` (a different page, "My Roadmap")
+  apply any client filter to `ops_tasks` items at all, client- or
+  server-side (`api/ops-state.js`'s member-tier task scoping is pure
+  `assigneeId`/`assignedById` equality, no client involved anywhere). A
+  live Playwright reproduction against the real `user.html` confirmed this
+  directly: 40 seeded tasks (mixed active-client/no-client/client-id-not-
+  in-the-loaded-set) all rendered correctly. Flagged this back and asked
+  the user how to proceed rather than force-fitting the ticket's named
+  mechanism; user chose to harden the one concrete alternative mechanism
+  found instead. REAL root cause: PR #450 (merged the day before this
+  ticket, undocumented in CLAUDE.md/DECISIONS.md at the time) added an
+  `asOf` monotonicity guard to all three frontends' `_applyServerArray()`
+  that rejects an out-of-order response using each BROWSER's own
+  locally-captured pre-send timestamp as the "freshness" anchor — which
+  measures "when did this browser decide to ask," not "how fresh is this
+  data." Two of a page's own overlapping polls (its 20s/15s intervals, a
+  visibilitychange pull) can have their REQUESTS issued in one order but
+  their RESPONSES arrive in the opposite order under ordinary Vercel
+  cold-start/network latency variance — the guard would then silently
+  discard the genuinely newer, more-complete response (e.g. reflecting an
+  admin's just-added task assignments) as "stale," purely because it was
+  asked for first, freezing the employee's local task count below reality
+  until a later poll happened to win the race correctly. Fixed at the
+  root: `api/ops-state.js` now stamps a `serverReadAt` timestamp
+  server-side, right before its DB fan-out, and returns it on every
+  response; all three frontends' pull functions (`cloudFetchUsers()` in
+  user.html, `cloudPullAll()` in index.html, `_pullClientsFromCloud()` in
+  client.html) now anchor the `asOf` guard on `r.serverReadAt` (with a
+  `?? Date.now()` defensive fallback for an old cached record predating
+  this field) instead of their own pre-send timestamp — this correlates
+  with true data freshness regardless of either leg's network transit
+  time, since the shared Supabase DB is the single, consistent source of
+  truth a later server-side read is guaranteed to see at least as
+  current. The guard's actual protection (reject a genuinely OLDER
+  response) is completely unchanged — only the timestamp's SOURCE moved
+  server-side. Verified: a new 2-check Node suite against the real,
+  byte-identical `api/ops-state.js` handler (fake in-memory Supabase
+  client, no live access per rule #11) confirms `serverReadAt` is a real
+  number captured within the request's own wall-clock window, and stays
+  non-decreasing across sequential requests; a new 4-check Playwright
+  suite against the real `user.html` reproduces the exact race directly
+  against `_applyServerArray()` — a genuinely fresher 40-task response
+  (serverReadAt=3000) arriving AFTER an already-applied 20-task one
+  (serverReadAt=2000) is now correctly ACCEPTED (this is the fix; the old
+  client-timestamp scheme would have rejected it), while a genuinely
+  OLDER response arriving later is still correctly REJECTED (the guard's
+  real protection is intact). `node --check` clean on `api/ops-state.js`;
+  inline-JS syntax clean on all three frontends; div-balance unchanged vs
+  `main` on all three (pure JS changes, no HTML touched).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

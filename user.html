@@ -1839,15 +1839,28 @@ async function cloudFetchUsers(background){
   const token = _opsToken();
   if(!token) return null;
   try{
-    // Captured BEFORE the request goes out — see _applyServerArray()'s
-    // monotonicity guard (asOf) above for why: this is the anchor that lets
-    // an out-of-order response (this page's own 20s/15s poll intervals, a
-    // visibilitychange pull, or a same-token sibling tab/iframe's
-    // broadcast) be recognized and skipped instead of silently reverting
-    // fresher local state — see the full incident writeup on
-    // _opsAppliedAtKey() above.
-    const fetchStartedAt = Date.now();
     const r = await fetchOpsStateCoordinated(token, !!background);
+    // asOf anchor (2026-10-07 fix — see api/ops-state.js's serverReadAt for
+    // the full rationale): this USED to be a timestamp captured locally
+    // right before the request went out, which measures "when did this
+    // browser decide to ask," not "how fresh is this data." Two of this
+    // page's own concurrent polls (its 20s/15s intervals, a
+    // visibilitychange pull) can have their REQUESTS issued in one order
+    // but their RESPONSES reflect the opposite order under ordinary
+    // network/cold-start latency variance — the old client-side timestamp
+    // let the guard silently discard a genuinely newer, more-complete
+    // response as "stale" purely because it was asked for first. This was
+    // the actual mechanism behind a real report (an employee's My Tasks
+    // page showing fewer tasks than the admin's view after a recent
+    // assignment — see DECISIONS.md). Using the server's own
+    // `serverReadAt` instead anchors on the moment the data was actually
+    // read from the single shared source of truth — also correctly
+    // reused as-is whenever `background` mode reuses a cached/broadcast
+    // response instead of making its own request, since that value
+    // travels WITH the record rather than being re-stamped per reader.
+    // `?? Date.now()` is a defensive fallback only (an old cached record
+    // from before this field existed), not the normal path.
+    const fetchStartedAt = r.serverReadAt ?? Date.now();
     _updateModeSwitcherUI(r.viewerAdminId ?? null);
     // Sales Funnel access / Commissions eligibility — server-verified,
     // same convention as viewerTier: never re-derived client-side. Drives
