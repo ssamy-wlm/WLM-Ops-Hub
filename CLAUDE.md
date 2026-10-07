@@ -694,7 +694,7 @@ Don't relitigate them without an explicit decision from the user.
   --check` clean. Held per rule #10 — touches `api/ops-sync.js`'s
   real task-write/notification logic.
 - Employee "My Tasks" under-counting root-caused to the asOf sync guard,
-  NOT a client-status filter (2026-10-07 — held for preview approval,
+  NOT a client-status filter (2026-10-07 — **merged**, PR #455,
   `api/`+`index.html`+`user.html`+`client.html`): reported as "Rana's admin
   plate shows 40 active tasks, assigned to her ID, on active-or-no
   clients, but her employee portal shows fewer" with the ticket's own
