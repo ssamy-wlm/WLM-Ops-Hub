@@ -11725,6 +11725,154 @@ Held per rule #10 — touches `api/ops-sync.js`'s real task-write and
 notification logic. Previewed and merged by the user directly (PR #453),
 same day.
 
+### 2026-10-07 — Employee "My Tasks" under-counting: the ticket's own hypothesis was wrong; real cause was the asOf sync guard
+
+**Ticket, verbatim premise:** "Rana's admin plate shows 40 active tasks,
+all correctly assigned to her ID, on active or no clients — but her
+employee portal shows fewer. Data verified clean (no ID mismatch, no
+inactive-client tasks, no stale clientIds)." The ticket's own stated
+hypothesis: "Investigate employee-view task filtering in `user.html`
+(`loadMyAssignments` / `_collectMyWorkItems`): the #430 client-status
+filter likely drops a task whose client isn't resolvable in the
+employee's loaded client set." Also asked to check for "any default
+status/client filter or a display cap."
+
+**Investigation (rule #7 — the premise was checked, not assumed).**
+First established which page is actually "My Tasks": confirmed via the
+nav item's own id/label (`id="nav-dailytasks"`, `>My Tasks<`) that this is
+`_dtMyTasks()`/`renderDailyTasks()` (the "Daily Tasks" feature) — NOT
+`loadMyAssignments()` (feeds "My Services") or `_collectMyWorkItems()`
+(feeds the separate "My Roadmap" page), the two functions the ticket
+itself named. Read every function in the real "My Tasks" render chain
+(`_dtMyTasks()`, `renderDailyTasks()`, `_dtTasksForStatusTab()`,
+`_dtRenderStatusTabBar()`, `_dtStatusTabCounts()`) — none of them
+reference a client, a client list, or client status at all; the only
+filters are `assigneeId===currentUser.id`, `!mergedIntoId`, and the
+active category/status-tab UI filters (which are visible toggles, not a
+silent drop). Checked `_collectMyWorkItems()` too, since the ticket named
+it specifically — its `clients.filter(c=>c.status==='active')` (the real
+#430 fix) only ever gates the SERVICES/PROJECTS loop; its separate
+`ops_tasks` block (added 2026-08-28, right after) pushes directly from
+`_dtMyTasks()` with no client check of any kind. Checked
+`api/ops-state.js`'s server-side `tasks` scoping too: pure
+`assigneeId === session.id || assignedById === session.id` for member
+tier — no client involved. Grepped the entire file for every
+`status==='active'` client filter (8 call sites) — none are anywhere
+near the Daily Tasks code block. Also checked "Whole team" multi-assignee
+tasks (`assigneeIds[]`) as a possible id-mismatch angle: `_taBuildEveryoneClones()`
+confirmed each team member gets their OWN real task clone with their OWN
+real `assigneeId`, so this doesn't explain a gap either.
+
+**Empirical confirmation, not just static reading.** Built a Playwright
+reproduction (`repro_rana_tasks.mjs`) against the real, unmodified
+`user.html`: seeded exactly 40 tasks for a test "Rana" — 20 referencing
+an active client, 10 with no client at all, and 10 referencing a
+`clientId` that doesn't exist ANYWHERE in her loaded `clients` array (the
+literal "unresolvable client" scenario the ticket's hypothesis describes)
+— and confirmed via the real page that all 40 render on the "All" status
+tab, with `_dtMyTasks().length` also reading 40. The ticket's named
+mechanism does not exist in this codebase today; implementing the
+literal "fix" it described (adding a client-resolution exclusion) would
+have made the page MORE restrictive, the opposite of fixing
+under-counting.
+
+**Flagged back rather than guessing further (rule #7).** Presented these
+findings to the user along with the one concrete alternative lead found
+during investigation (below) and asked how to proceed: harden that lead
+now, pause for a live data export of Rana's actual rows first, or both.
+User chose to harden the lead now.
+
+**The actual lead, and root cause.** PR #450 ("Live-sync reliability:
+extend asOf monotonicity guard to all tables, add mid-edit guard for
+Task Assignments") merged into `main` the day before this ticket, by a
+different session, with no corresponding CLAUDE.md/DECISIONS.md entry at
+the time (a process gap — not something this session's own workflow
+produced, noted here for the record since it's directly relevant to this
+bug's cause). It extended an existing `clients`-only monotonicity guard
+(`_opsIsStaleResponse()`/`_opsRecordApplied()`, originally 2026-09-25,
+`client.html`'s/`index.html`'s own copies) to every table in all three
+frontends, including `tasks` in `user.html` for the very first time.
+The guard's `asOf` anchor was, in every one of the three files, a
+timestamp the BROWSER captured locally right before sending its request
+(`const fetchStartedAt = Date.now()`) — intended to let an
+out-of-order-ARRIVING response be recognized as stale and skipped. The
+flaw: a client-captured pre-send timestamp measures *when the browser
+decided to ask*, not *how fresh the underlying data actually is*. Two of
+a single page's own overlapping polls — this page's 20s stats-refresh
+interval, its separate 15s message-poll interval, a visibilitychange
+pull, or (for `clients` specifically) a cross-iframe broadcast reuse —
+can have their REQUESTS issued in one order but their RESPONSES arrive in
+the opposite order under perfectly ordinary Vercel cold-start/network
+latency variance (an earlier-issued request can easily take longer in
+transit than a later-issued one). When that happens, the guard — as
+written — discards whichever response happens to carry the SMALLER
+locally-captured timestamp, even when that response is the one that
+actually reflects the admin's more recent task assignments. The
+employee's local task count then stays frozen at the smaller, stale
+figure until some LATER poll happens to resolve in the "correct" order by
+chance. This is a completely general mechanism (not specific to
+`tasks` — the same flaw exists for every table this guard now covers in
+all three files), but `tasks` is the one the ticket's own symptom points
+at.
+
+**Fix, anchored server-side instead of client-side.** `api/ops-state.js`
+now captures `const serverReadAt = Date.now();` once, right before its
+`Promise.all` DB fan-out (as close as practical to the actual reads),
+and returns it as `record.serverReadAt`. All three frontends' own pull
+functions now read `r.serverReadAt`/`rec.serverReadAt` (with a
+`?? Date.now()` defensive fallback for an old cached record from before
+this field existed) as the `asOf` value passed into every
+`_applyServerArray()` call, instead of their own pre-send
+`Date.now()`. Why this actually fixes it: the single shared Supabase
+database is the one true, consistent source of freshness — a server
+invocation that reads the DB LATER in real wall-clock time is guaranteed
+to see data at least as current as one that read it earlier, REGARDLESS
+of how long either request's network transit happened to take on the way
+out or the way back. The guard's own comparison logic
+(`_opsIsStaleResponse()`/`_opsRecordApplied()`) is completely unchanged —
+only the SOURCE of the timestamp being compared moved from "client-local,
+pre-send" to "server-side, at-read-time." The existing, real protection
+this guard was built for (rejecting a genuinely stale response — e.g. the
+2026-09-25 `clients` race, the notification-mark-as-read-doesn't-stick
+case PR #450 itself fixed) is untouched, since a genuinely older response
+still carries a genuinely earlier `serverReadAt`.
+
+Scope note: the ticket asked for a fix "in `user.html`," but the root
+cause is identical, hand-duplicated code (rule #3) in all three
+frontends, introduced by the same PR the same day — leaving `index.html`/
+`client.html` with the identical latent flaw while only patching
+`user.html` would have left two already-identified copies of the same
+bug sitting in the codebase, so all three were fixed together.
+
+**Verification (no live Supabase access, rule #11).** A new 2-check Node
+suite (`verify_ops_state_server_read_at.mjs`) against the real,
+byte-identical default-exported `api/ops-state.js` handler (a fake
+in-memory Supabase client — extended with `.order()`/`.limit()`/`.is()`
+chain support this session, since the real handler's feed/org-link
+queries use them and the existing scratchpad harness didn't yet):
+`serverReadAt` is a real number captured within the request's own actual
+wall-clock window; two sequential requests produce non-decreasing
+values. A new 4-check Playwright suite
+(`verify_server_anchored_asof_fix.mjs`) against the real, unmodified
+`user.html` directly exercises `_applyServerArray()`/the asOf guard with
+fabricated out-of-arrival-order responses: a genuinely fresher 40-task
+response (serverReadAt=3000, reflecting a later DB read) arriving AFTER
+an already-applied, genuinely older 20-task one (serverReadAt=2000) is
+now correctly ACCEPTED — this is the fix itself, since the old
+client-timestamp scheme would have rejected it (issued-order, not
+read-order); a genuinely OLDER response (serverReadAt=2000) arriving
+after the newer one is still correctly REJECTED, proving the guard's
+real protection survives unchanged. `node --check` clean on
+`api/ops-state.js`; inline-JS syntax (extracted `<script>` blocks)
+clean on `index.html`/`user.html`/`client.html`; comment-stripped
+div-balance unchanged vs. `main` on all three (deltas −2/−1/0
+respectively, identical to `main`'s own baseline — every edit this
+session was pure JS, no HTML structure touched).
+
+Held per rule #10 and the ticket's own explicit "preview" instruction —
+touches `api/ops-state.js` (a live read path every tier depends on) and
+the pull/sync logic in all three frontends.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

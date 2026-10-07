@@ -9781,18 +9781,29 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
   _lastPullOk = false;
   setCloudStatus('Syncing…','syncing');
   try {
-    // Captured BEFORE the request goes out — see _applyServerArray()'s
-    // monotonicity guard (asOf) for why: this is the anchor that lets an
-    // out-of-order response from the embedded client.html iframe's own,
-    // independent poll be recognized and skipped instead of silently
-    // reverting `clients`.
-    const fetchStartedAt = Date.now();
     // background:true ONLY for the recurring 30s live-sync tick
     // (fromLiveSync) — every other caller of cloudPullAll (login, a manual
     // Refresh click, cloudAutoSync()'s own post-push confirmation pull, etc.)
     // still always forces a real, uncoalesced fetch. See the
     // fetchOpsStateCoordinated() comment above OPS_STATE_URL for why.
     const r = await fetchOpsStateCoordinated(token, !!fromLiveSync);
+    // asOf anchor (2026-10-07 fix — see api/ops-state.js's serverReadAt for
+    // the full rationale): this USED to be a timestamp captured locally
+    // right before the request went out, which measures "when did this
+    // browser decide to ask," not "how fresh is this data." An
+    // out-of-order response from this tab's own poll, the embedded
+    // client.html iframe's independent poll, or ordinary request/response
+    // latency variance across two overlapping requests can have responses
+    // arrive in the opposite order they were issued — the old client-side
+    // timestamp let the guard silently discard a genuinely newer, more-
+    // complete response as "stale" purely because it was asked for first
+    // (the real mechanism behind a reported "employee sees fewer tasks
+    // than admin" bug — see DECISIONS.md). Using the server's own
+    // `serverReadAt` instead anchors on the moment the data was actually
+    // read from the single shared source of truth. `?? Date.now()` is a
+    // defensive fallback only (an old cached record from before this field
+    // existed), not the normal path.
+    const fetchStartedAt = r.serverReadAt ?? Date.now();
     // Server-verified, set only once we actually have a response — see the
     // module-level comment above _lastViewerTier for why restoreAdminSession()
     // gates on this instead of anything cached.
