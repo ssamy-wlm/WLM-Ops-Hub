@@ -11871,7 +11871,8 @@ session was pure JS, no HTML structure touched).
 
 Held per rule #10 and the ticket's own explicit "preview" instruction —
 touches `api/ops-state.js` (a live read path every tier depends on) and
-the pull/sync logic in all three frontends.
+the pull/sync logic in all three frontends. Previewed and merged by the
+user directly (PR #455), same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
