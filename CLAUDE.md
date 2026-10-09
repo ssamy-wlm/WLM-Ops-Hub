@@ -750,6 +750,71 @@ Don't relitigate them without an explicit decision from the user.
   real protection is intact). `node --check` clean on `api/ops-state.js`;
   inline-JS syntax clean on all three frontends; div-balance unchanged vs
   `main` on all three (pure JS changes, no HTML touched).
+- Server-synced "New assigned" badge — employee portal (2026-10-09 — held
+  for preview approval + migration-apply gate per rule #12,
+  `supabase/migrations/`+`api/`+`user.html`): the employee "🔔 N new
+  assigned" badge over-counted for two compounding reasons — (1) "seen"
+  lived ONLY in `localStorage['wl_dt_seen_ids']`, never synced to the
+  server, so a new device/cleared cache/an owner viewing an employee's
+  account from their own browser read nearly everything as "new" (the
+  reported case: 90 of Sarah Ibrahim's 97 real tasks); (2) the filter had
+  no status check at all, so a Done task still counted as "new." New
+  table `ops_task_seen` (`user_id text, task_id text, seen_at
+  timestamptz, primary key (user_id, task_id)`) — insert-only,
+  `ops_block_mutations()`-guarded (same trigger as `ops_feed`/
+  `ops_error_log`/`ops_session_activity`), a DELIBERATE flagged deviation
+  from the document-model convention (rule #5) for the same reasoning
+  `ops_session_activity` already established: a per-user capture keyed
+  for an efficient lookup, not editable app data. New endpoint
+  `api/ops-task-seen.js` (modeled directly on `api/session-ping.js`) is
+  the ONLY writer — `requireSession()`-gated, `user_id` always
+  `session.id` (never client-claimed), upserts with
+  `ignoreDuplicates:true` (a genuine `ON CONFLICT DO NOTHING`, never an
+  UPDATE, so it can never trip the block-mutations trigger), capped at
+  500 ids/call, best-effort (any failure logs and still responds 204 —
+  same "a dropped ack is fine" convention as every other fire-and-forget
+  ping in this codebase). `api/ops-state.js` reads the caller's own
+  `ops_task_seen` rows in total isolation from the main 21-query
+  Promise.all fan-out (started concurrently, awaited and error-handled
+  completely separately) and degrades to `taskSeenIds: []` on ANY
+  failure — a brand-new, not-yet-guaranteed-to-exist table must never be
+  able to abort the rest of this response, the exact failure mode behind
+  the three outages rule #12 documents. `user.html`: `_dtServerSeen`
+  (populated from the load payload) unioned with the existing
+  `wl_dt_seen_ids` via a new `_dtSeenSet()` — union, not server-only, so
+  nobody sees a one-time spike on first load and no backfill write is
+  ever needed. The badge count (`renderDailyTasks()`) now excludes
+  `status==='Done'` and self-assigned tasks
+  (`assignedById===assigneeId`) in addition to checking
+  `_dtSeenSet()`. The ack fires ONLY from two explicit user actions —
+  `openDtDetailPanel()` (unchanged instant local update, plus a new
+  fire-and-forget POST) and a new "Mark all as seen" button — never on
+  load, render, or any sync path, per this feature's own hard constraint
+  against a load-time mutation (rule #2). `index.html`/`client.html`
+  confirmed to have no equivalent badge/mechanism at all (grepped for
+  `dtNewAssignedBadge`/`wl_dt_seen_ids` — zero matches in either file) —
+  employee-portal-only by design, nothing to touch there. Verified: a new
+  9-check Node suite against the real, byte-identical
+  `api/ops-task-seen.js`/`api/ops-state.js` handlers (fake in-memory
+  Supabase client, no live access per rule #11 — extended this session
+  with `forceError()`/composite-key `onConflict`/`ignoreDuplicates`
+  support for this exact table shape): method/session/validation guards,
+  rows scoped to the caller only, the 500-id cap, idempotency, correct
+  per-caller `taskSeenIds` scoping, graceful `[]` degradation on a forced
+  table error with the rest of the response unaffected, and a real
+  ack-then-pull round trip reflecting correctly. A new 10-check
+  Playwright suite against the real, unmodified `user.html`: zero
+  `ops-task-seen` calls fire from page load or from navigating to/
+  rendering My Tasks (the hard constraint); the badge correctly excludes
+  Done/self-assigned/already-acked tasks; opening a task's detail panel
+  fires exactly one correctly-scoped ack and drops the count; "Mark all
+  as seen" acks every remaining new task and hides the badge. `node
+  --check` clean; inline-JS syntax clean on all three frontends;
+  div-balance unchanged vs `main` on all three (`user.html`'s own new
+  button sits inside an existing `<div>`, zero new elements added to the
+  count). Held per rule #10 (touches `api/ops-state.js` + a new write
+  path) AND rule #12 (new migration file) — the DB operator must confirm
+  `ops_task_seen` exists on production, empty, before this merges.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

@@ -91,6 +91,18 @@ export default async function handler(req, res) {
     // how long any individual request/response happened to spend in
     // transit on either leg.
     const serverReadAt = Date.now();
+    // ops_task_seen (2026-10-09, server-synced "New assigned" badge) —
+    // started here, CONCURRENTLY with the main fan-out below, but
+    // deliberately awaited and error-handled in total isolation from it
+    // (see where it's awaited, right after the main Promise.all resolves)
+    // rather than being folded into that same array. This table is brand
+    // new and not yet guaranteed to exist in every environment this
+    // endpoint runs against — a missing table or any other failure here
+    // must degrade to an empty list, never abort or fail the rest of this
+    // response, which is exactly the failure mode that took the app down
+    // once before when `ops-state` depended on a table that hadn't been
+    // created yet (CLAUDE.md rule #12's incident history).
+    const taskSeenPromise = supabase.from('ops_task_seen').select('task_id').eq('user_id', session.id);
     // Revocation check (2026-09-12 latency fix): this used to be awaited
     // sequentially inside requireSession() BEFORE any of the 21 queries below
     // even started — a full extra Supabase round trip serialized in front of
@@ -182,6 +194,20 @@ export default async function handler(req, res) {
         await logError({ endpoint: 'ops-state', error: q.error, session, extra: { table } });
         q.data = null;
       }
+    }
+
+    // Isolated from the main per-query error loop just above on purpose —
+    // see taskSeenPromise's own start-site comment above. Degrades to []
+    // on literally anything going wrong (missing table, a thrown network
+    // error, etc.) rather than ever rejecting or affecting the rest of
+    // this response.
+    let taskSeenIds = [];
+    try {
+      const { data: taskSeenData, error: taskSeenError } = await taskSeenPromise;
+      if (taskSeenError) await logError({ endpoint: 'ops-state', error: taskSeenError, session, extra: { table: 'ops_task_seen' } });
+      else if (Array.isArray(taskSeenData)) taskSeenIds = taskSeenData.map(r => r.task_id);
+    } catch (err) {
+      await logError({ endpoint: 'ops-state', error: err, session, extra: { table: 'ops_task_seen' } });
     }
 
     const deletedIds = new Set((deletedQ.data || []).map(r => r.user_id));
@@ -294,6 +320,13 @@ export default async function handler(req, res) {
       // Harmless to expose: it's only ever the caller's own identity, never
       // anyone else's. Remove once the discrepancy is resolved.
       viewerId: session.id ?? null,
+      // Server-synced "New assigned" badge (2026-10-09) — the caller's own
+      // set of already-acknowledged task ids (see ops_task_seen's own
+      // comment above), scoped to session.id same as every other
+      // self-only field here (notifications, tourFlags, etc.). Every
+      // tier gets this back; only user.html's employee-portal "My Tasks"
+      // page currently reads it (index.html has no such badge).
+      taskSeenIds,
       // Dual-mode account model (see CLAUDE.md, api/ops-auth.js): present
       // only when the signed session actually carries them — undefined on
       // the token becomes null here, exactly like viewerLevel above. Lets
