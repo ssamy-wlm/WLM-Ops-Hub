@@ -1129,7 +1129,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
       <div id="sec-dailyTasks" class="page-section">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
           <div style="font-family:'Poppins',sans-serif;font-size:18px;color:var(--text-dark);">My Tasks</div>
-          <div id="dtNewAssignedBadge" style="display:none;font-size:12px;color:var(--text-mid);">🔔 <span id="dtNewAssignedCount">0</span> new assigned</div>
+          <div id="dtNewAssignedBadge" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);">
+            🔔 <span id="dtNewAssignedCount">0</span> new assigned
+            <button class="btn btn-xs btn-outline" onclick="dtMarkAllSeen()">Mark all as seen</button>
+          </div>
         </div>
 
         <!-- Header declutter (2026-09-01): sub-tabs and the List/Calendar
@@ -1898,6 +1901,11 @@ async function cloudFetchUsers(background){
     // tombstoneIds: this file's own Undo Import delete queue — see this
     // function's own header comment for why 'tasks' specifically needs it.
     _applyServerArray('tasks', r.tasks, arr=>dbSet(DB_KEYS.tasks, arr), ()=>dbGet(DB_KEYS.tasks)||[], new Set(dbGet(DB_KEYS.deletedTaskIds)||[]), fetchStartedAt);
+    // Server-synced "New assigned" badge (2026-10-09) — a plain overwrite
+    // on every pull, same as _mySalesFunnelLevel/_viewerEarnsCommission
+    // above (read-only server state, never dirty-tracked like `tasks`
+    // itself); see _dtSeenSet()'s own comment for the full rationale.
+    if(Array.isArray(r.taskSeenIds)) _dtServerSeen = r.taskSeenIds;
     if(document.getElementById('sec-dailyTasks')?.classList.contains('active') && typeof renderDailyTasks==='function') renderDailyTasks();
     // Read-only Company Overview chart — same ops_org_nodes/ops_org_links
     // data the admin chart renders from (api/ops-state.js no longer strips
@@ -2488,7 +2496,18 @@ function _dtCompletedAt(prevStatus, newStatus, prevCompletedAt){
 // for a task newly assigned to me whether by a parse-commit or an admin's
 // manual reassignment — either way, I've never opened it before.
 function _dtSeenIds(){ try{ return JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]'); }catch(e){ return []; } }
-function _dtIsNew(t, seen){ return !(seen||_dtSeenIds()).includes(t.id); }
+// Server-synced "New assigned" badge (2026-10-09) — _dtServerSeen is this
+// person's own ops_task_seen rows, populated from the /api/ops-state load
+// payload (see cloudFetchUsers()) so the badge reads identically on every
+// device instead of living only in this one browser's localStorage. Union
+// of server + local (never server-only) during the transition, so nobody
+// sees a one-time spike on first load after this ships and no backfill
+// write is ever needed — a task already in wl_dt_seen_ids from before this
+// feature existed still counts as seen even before its own ack has made it
+// to the server.
+let _dtServerSeen = [];
+function _dtSeenSet(){ return new Set([...(_dtServerSeen||[]), ..._dtSeenIds()]); }
+function _dtIsNew(t, seen){ return !(seen||_dtSeenSet()).has(t.id); }
 
 // Same y/m/d-components-not-raw-string construction as index.html's
 // _taFormatShortDate() — `new Date(isoString)` parses as UTC midnight and
@@ -2591,15 +2610,25 @@ function _dtStatusColor(status){
 function renderDailyTasks(){
   let tasks = _dtMyTasks();
   if(_dtActiveCategory) tasks = tasks.filter(t=>t.category===_dtActiveCategory);
-  // "New assigned" badge: tasks assigned to me that I haven't opened the
-  // detail panel for yet (local-only "seen" flag, same spirit as an unread
-  // notification — never written back to the server).
-  let seen = [];
-  try{ seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]'); }catch(e){}
-  const newCount = tasks.filter(t=>!seen.includes(t.id)).length;
+  // "New assigned" badge (2026-10-09 fix — see _dtSeenSet()'s own comment
+  // for the server-sync half of this): over-counted before this, two ways
+  // at once — (1) "seen" lived ONLY in this browser's localStorage, so a
+  // new device/cleared cache/the owner opening someone else's account from
+  // their own browser made nearly everything read "new" (the reported
+  // case: 90 of 97 real tasks for one person); (2) this filter had no
+  // status check at all, so an already-Done task still counted as "new."
+  // Fixed: Done tasks never count, a self-assigned task never counts
+  // (nobody needs to be told about their own self-addition), and "seen"
+  // is now the server-synced union _dtSeenSet() provides.
+  const seen = _dtSeenSet();
+  const newCount = tasks.filter(t=>
+    t.status!=='Done' &&
+    !(t.assignedById && t.assignedById===t.assigneeId) &&
+    !seen.has(t.id)
+  ).length;
   const badge = document.getElementById('dtNewAssignedBadge');
   if(badge){
-    badge.style.display = newCount>0 ? '' : 'none';
+    badge.style.display = newCount>0 ? 'flex' : 'none';
     document.getElementById('dtNewAssignedCount').textContent = newCount;
   }
   const navBadge = document.getElementById('daily-tasks-badge');
@@ -2633,7 +2662,7 @@ function _renderDtListTable(tasks){
     return;
   }
   if(empty) empty.style.display = 'none';
-  const seen = _dtSeenIds();
+  const seen = _dtSeenSet();
   body.innerHTML = tasks.map(t=>{
     const isNew = _dtIsNew(t, seen);
     const blocked = t.status==='Blocked';
@@ -2746,18 +2775,69 @@ function _dtAssignedByDisplay(t){
   return _dtPersonName(t.assignedById);
 }
 
+// Server-synced "seen" acknowledgement (2026-10-09) — fire-and-forget POST
+// to /api/ops-task-seen, the ONLY write path for ops_task_seen. Strictly
+// user-initiated (called only from openDtDetailPanel() below and the
+// optional "Mark all as seen" button) — never on page load, never on
+// render, never from cloudFetchUsers()/any sync path, per this feature's
+// own hard constraint against a load-time mutation (CLAUDE.md rule #2). A
+// dropped/failed ack is fine — the badge simply re-shows until the next
+// successful one, same "best-effort, never surfaced as a broken app"
+// convention as every other fire-and-forget ping in this file.
+function _dtAckSeen(ids){
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if(!list.length) return;
+  list.forEach(id=>{ if(!_dtServerSeen.includes(id)) _dtServerSeen.push(id); });
+  const token = _opsToken();
+  if(!token) return;
+  fetch('/api/ops-task-seen', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
+    body: JSON.stringify({ taskIds: list }),
+  }).catch(()=>{});
+}
+
+// "Mark all as seen" (2026-10-09) — strictly a button click, never called
+// from anywhere else (load, render, sync). Marks every task CURRENTLY
+// counted as "new" by the badge (same filter renderDailyTasks() uses:
+// not Done, not self-assigned, not already seen — and respecting whatever
+// category pill is active, same as the badge count itself does) — "seen
+// everything I'm looking at right now," not a blanket server-side
+// mark-everything regardless of the active filter.
+function dtMarkAllSeen(){
+  let tasks = _dtMyTasks();
+  if(_dtActiveCategory) tasks = tasks.filter(t=>t.category===_dtActiveCategory);
+  const seen = _dtSeenSet();
+  const newIds = tasks.filter(t=>
+    t.status!=='Done' &&
+    !(t.assignedById && t.assignedById===t.assigneeId) &&
+    !seen.has(t.id)
+  ).map(t=>t.id);
+  if(!newIds.length) return;
+  try{
+    const local = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]');
+    const merged = [...new Set([...local, ...newIds])].slice(-500);
+    localStorage.setItem('wl_dt_seen_ids', JSON.stringify(merged));
+  }catch(e){}
+  _dtAckSeen(newIds); // same single choke point openDtDetailPanel() uses
+  renderDailyTasks();
+}
+
 function openDtDetailPanel(id){
   const t = _dtMyTasks().find(x=>x.id===id);
   if(!t) return;
   _dtDetailTaskId = id;
-  // Mark seen — local-only, never synced (see the badge comment in renderDailyTasks).
-  // Also clears this task's own "New" highlight/tag (see _dtIsNew()) —
+  // Mark seen — instant local update for a snappy UI (same as before this
+  // feature), PLUS a server-synced acknowledgement (_dtAckSeen()) so the
+  // badge reads identically on every device, not just this browser. Also
+  // clears this task's own "New" highlight/tag (see _dtIsNew()) —
   // re-render the list right away so opening a task visibly drops it
   // rather than waiting for some other unrelated re-render.
   try{
     const seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]');
     if(!seen.includes(id)){ seen.push(id); localStorage.setItem('wl_dt_seen_ids', JSON.stringify(seen.slice(-500))); renderDailyTasks(); }
   }catch(e){}
+  _dtAckSeen(id);
   const body = document.getElementById('dtDetailBody');
   body.innerHTML = `
     <label class="form-label">Task</label>
