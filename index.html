@@ -1683,7 +1683,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);">
         <div style="display:flex;gap:6px;">
           <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📝 Add / Import</button>
-          <button class="btn btn-sm btn-outline" id="taSubtabMyTasksBtn" onclick="setTaSubtab('mytasks')" style="border-radius:8px 8px 0 0;">🙋 My Tasks</button>
+          <button class="btn btn-sm btn-outline" id="taSubtabMyTasksBtn" onclick="setTaSubtab('mytasks')" style="border-radius:8px 8px 0 0;">🙋 My Tasks<span class="admin-msg-nav-badge" id="ta-mytasks-new-badge" style="display:none;">0</span></button>
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👥 Team's Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
@@ -9061,6 +9061,16 @@ let _lastPullOk = false;
 // granted funnel-Owner specifically (see applyAdminRoleRestrictions()).
 let _mySalesFunnelLevel = null;
 let _viewerEarnsCommission = false;
+// "N new assigned" parity fix (2026-10-12) — admin-portal half of the same
+// fix shipped for user.html: an admin who is also an assignee (a
+// self-assigned task, or a dual-role account) deserves the same real
+// "assigned since I last looked" signal on Task Assignments' own My Tasks
+// sub-tab, not just the session-scoped _taIsNew() amber highlight (which
+// resets every page load and was never the accumulating-count bug this
+// shares a backend with — see DECISIONS.md). Server-verified
+// (api/ops-state.js), never re-derived client-side. See
+// _markTasksViewed()'s own comment for how it's reset.
+let _viewerLastViewedTasksAt = null;
 
 function setCloudStatus(msg, type='idle'){
   const el = document.getElementById('cloudSyncStatus');
@@ -9817,6 +9827,12 @@ async function cloudPullAll(silent=false, fromLiveSync=false){
     // Super Admin Commissions MANAGEMENT tab (next to Payroll) is gated
     // purely on isSuperAdmin via the existing uniform baseline, unaffected.
     _viewerEarnsCommission = !!r.viewerEarnsCommission;
+    // See the module-level declaration above for the full rationale. Same
+    // "null falls back to whatever this session already has" convention as
+    // user.html's own copy — null means "treat everything as new," so an
+    // in-flight markTasksViewed write racing an overlapping pull must never
+    // regress an already-reset badge back to the historical count.
+    _viewerLastViewedTasksAt = r.viewerLastViewedTasksAt ?? _viewerLastViewedTasksAt;
     if(typeof _updateSalesNavLockState==='function') _updateSalesNavLockState();
     _updateModeSwitcherUI(r.viewerEmployeeId ?? null);
 
@@ -10720,6 +10736,32 @@ async function cloudAutoSync(){
   return await cloudPushAll(true);
 }
 
+// "N new assigned" parity fix (2026-10-12) — admin-portal copy of
+// user.html's _markTasksViewed() (hand-duplicated, zero-shared-code rule).
+// Called once, from setTaSubtab('mytasks'), the moment an admin actually
+// navigates into Task Assignments' My Tasks sub-tab — never on every
+// renderTaskAssignments() re-render, which fires far more often (every
+// background pull, every inline edit). Sets the optimistic local reset
+// synchronously, before the network call even starts, so the badge already
+// reads ~0 on this same render. A direct POST, not the generic dirty-diff
+// push path — this is a one-shot server action (api/ops-sync.js's
+// markTasksViewed), same as user.html's copy.
+async function _markTasksViewed(){
+  _viewerLastViewedTasksAt = new Date().toISOString();
+  const token = _opsToken();
+  if(!token) return;
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{markTasksViewed:true}})
+    });
+    if(!res.ok) return;
+    const body = await res.json().catch(()=>({}));
+    if(body?.applied?.lastViewedTasksAt) _viewerLastViewedTasksAt = body.applied.lastViewedTasksAt;
+  }catch(e){}
+}
+
 // Live sync — polls the server every ~30s so all devices/roles stay in sync,
 // with no manual Pull/Push needed. Runs for both admins and members.
 // Jittered (2026-09-12, ±4s) via a self-rescheduling setTimeout rather than a
@@ -11081,7 +11123,12 @@ function setTaSubtab(tab){
   document.getElementById('ta-subtab-attention').style.display = tab==='attention' ? '' : 'none';
   document.getElementById('ta-subtab-reported').style.display = tab==='reported' ? '' : 'none';
   document.getElementById('ta-subtab-duplicates').style.display = tab==='duplicates' ? '' : 'none';
-  if(tab==='mytasks') renderTaskAssignments();
+  // _markTasksViewed() (2026-10-12) — resets the "new assigned" badge the
+  // instant the admin actually opens My Tasks, not on every in-page
+  // re-render; see its own comment for why. renderTaskAssignments() right
+  // after it reads the already-updated _viewerLastViewedTasksAt, so this
+  // same render correctly shows ~0 "new" on entry.
+  if(tab==='mytasks'){ _markTasksViewed(); renderTaskAssignments(); }
   if(tab==='assigned') renderTaskAssignments();
   if(tab==='person') renderTaPersonRoster();
   if(tab==='attention') renderTaNeedsAttention();
@@ -12004,6 +12051,23 @@ function renderTaskAssignments(){
   // whichever sub-tab is currently visible; its own container stays hidden
   // via setTaSubtab() unless "My Tasks" is the active one.
   _renderTaListTable(_taMyTasksFilteredTasks(), 'taMyTasksTableBody', 'taMyTasksListEmpty');
+  // "N new assigned" badge (2026-10-12) — same lastAssignedAt-vs-
+  // viewerLastViewedTasksAt definition as user.html's dtNewAssignedBadge
+  // (see _markTasksViewed()'s own comment), computed on ALL of the admin's
+  // own tasks (_taMyTasksOwnTasks(), unfiltered by status-tab), not just
+  // the currently status-filtered set — "new" is independent of which
+  // status tab happens to be active, same reasoning as user.html's copy.
+  {
+    const myTasksBadge = document.getElementById('ta-mytasks-new-badge');
+    if(myTasksBadge){
+      const newCount = _viewerLastViewedTasksAt==null ? 0 : _taMyTasksOwnTasks().filter(t=>{
+        const assignedAt = t.lastAssignedAt || t.assignedDate || t.createdAt || null;
+        return assignedAt && new Date(assignedAt).getTime() > new Date(_viewerLastViewedTasksAt).getTime();
+      }).length;
+      myTasksBadge.textContent = newCount;
+      myTasksBadge.style.display = newCount>0 ? '' : 'none';
+    }
+  }
   const tasks = _taFilteredTasks();
   // Person drill-in (2026-09-04) — when a specific person is selected from
   // By Person, render their tasks as a colored card list INTO that same
