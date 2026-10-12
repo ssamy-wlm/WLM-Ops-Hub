@@ -2786,6 +2786,20 @@ export default async function handler(req, res) {
           row.reportedMisassignedByName = null;
           row.reportedMisassignedAt = null;
           row.reportedMisassignedReason = null;
+          // lastAssignedAt (2026-10-12, "N new assigned" fix) — a brand-new
+          // task is, by definition, newly assigned to whoever its assigneeId
+          // resolved to above. Server-stamped here (never trusted from
+          // `inc`) so BOTH portals can define "new" as "lastAssignedAt is
+          // after my own lastViewedTasksAt" — see the matching stamp in the
+          // admin UPDATE branch below (a genuine reassignment) and
+          // markTasksViewed's own comment further down for the other half
+          // of this fix. Replaces user.html's old `wl_dt_seen_ids` — a
+          // local-only, opened-the-detail-panel-only list that stayed
+          // "unseen" forever for any task worked via inline controls,
+          // which is what actually produced the reported "94 new of ~101"
+          // inflation (DB evidence: no per-task seen field, no per-user
+          // last-viewed timestamp existed before this).
+          row.lastAssignedAt = new Date().toISOString();
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
         } else if (isAdmin) {
@@ -2952,6 +2966,15 @@ export default async function handler(req, res) {
             row = { ...row, reportedMisassignedAt: null, reportedMisassignedByName: null, reportedMisassignedBy: null, reportedMisassignedReason: null };
             delete row.dismissReason;
           }
+          // lastAssignedAt (2026-10-12, "N new assigned" fix) — server-
+          // stamped on a genuine reassignment (the SAME assigneeChanged()
+          // check that already gates fireOpsTaskAssignmentNotifications()
+          // below, recomputed here since `row` isn't finalized yet at that
+          // point) so it can never be spoofed/skewed by a client clock, and
+          // preserved from `cur` on any resave that doesn't actually touch
+          // the assignee — see the insert branch above for the fuller
+          // rationale.
+          row.lastAssignedAt = assigneeChanged(cur, row) ? new Date().toISOString() : (cur.lastAssignedAt || null);
           // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
           // own comment. Applied last, after every other admin-side field
           // resolution above, so a regenerated row still carries whatever
@@ -3082,6 +3105,13 @@ export default async function handler(req, res) {
               requestedBy: session.id, requestedByName: session.name, clientId: row.clientId || null,
             });
           }
+          // lastAssignedAt (2026-10-12, "N new assigned" fix) — a member can
+          // never change their own assigneeId via this path (it's in
+          // TASK_KEYS_MEMBER_MAY_NOT_TOUCH, rejected above before reaching
+          // here), so this always just preserves cur's value — included for
+          // symmetry with the admin branch's own stamp above, not because
+          // this branch can actually trigger a reassignment.
+          row.lastAssignedAt = assigneeChanged(cur, row) ? new Date().toISOString() : (cur.lastAssignedAt || null);
           // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
           // own comment; identical to the admin branch above, applied last
           // so it can only ever override status/dueDate/recurring/
@@ -3494,6 +3524,26 @@ export default async function handler(req, res) {
         if (error) warnings.push(`notifications(${inc.id}): ${error.message}`); else n++;
       }
       applied.notifications = n;
+    }
+
+    // ── "My Tasks" view-reset timestamp ("N new assigned" fix, 2026-10-12)
+    // — same self-scoped-key carve-out as tourFlags above, so it works
+    // uniformly for the primary-admin sentinel too (no ops_users/ops_admins
+    // row to attach a field to). Sent as an explicit boolean flag, not a
+    // timestamp — the client has no business supplying the value; this is
+    // exactly WHY the old wl_dt_seen_ids approach (unbounded, local-only,
+    // only ever appended to by opening a task's own detail panel) produced
+    // the reported "94 new of ~101" inflation: nothing server-side anchored
+    // "new" to an actual moment the person looked at their list. This one
+    // value, read back as viewerLastViewedTasksAt in api/ops-state.js (see
+    // there), redefines "new" as "assigned after I last opened My Tasks" —
+    // reusing #425/#450's existing settings-key write path, so it can't be
+    // reverted by a pull the way a plain local flag could. ──
+    if (c.markTasksViewed === true) {
+      const key = 'lastViewedTasksAt_' + session.id;
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('ops_settings').upsert({ key, data: now }, { onConflict: 'key' });
+      if (error) warnings.push(`markTasksViewed: ${error.message}`); else applied.lastViewedTasksAt = now;
     }
 
     // Every failed cloud write already lives in `warnings` (per-row, never
