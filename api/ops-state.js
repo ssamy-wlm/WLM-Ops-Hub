@@ -326,6 +326,15 @@ export default async function handler(req, res) {
       // existing ops_settings table (see api/ops-sync.js) rather than a new
       // table or a field on a row that may not exist for every account.
       tourFlags: settingsMap['tourFlags_' + session.id] ?? { tourSeen: {}, dismissedTips: [] },
+      // "N new assigned" fix (2026-10-12) — server-verified, same self-
+      // scoped-key pattern as tourFlags right above (so it works uniformly
+      // for the primary-admin sentinel too). Written by api/ops-sync.js's
+      // markTasksViewed action, the moment the caller actually opens My
+      // Tasks — never re-derived or trusted from the client. null until the
+      // caller has ever opened My Tasks at all (a brand-new account, or one
+      // that predates this fix), which both portals treat as "nothing has
+      // been viewed yet," not "everything is new."
+      viewerLastViewedTasksAt: settingsMap['lastViewedTasksAt_' + session.id] ?? null,
       // Weekly backup-download reminder state (2026-09-13) — Super Admin/
       // Owner only (nulled for every other tier below, same visibility as
       // commissions/payRate), keyed by the caller's own ADMIN identity —

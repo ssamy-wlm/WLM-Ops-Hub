@@ -1525,6 +1525,11 @@ const DB_KEYS = {
 // all (every session here is a plain employee).
 let _mySalesFunnelLevel = null;
 let _viewerEarnsCommission = false;
+// "N new assigned" fix (2026-10-12) — server-verified (api/ops-state.js's
+// viewerLastViewedTasksAt), never re-derived client-side. See
+// renderDailyTasks()'s own comment for how this replaces the old
+// wl_dt_seen_ids-based count, and _markTasksViewed() for how it's reset.
+let _viewerLastViewedTasksAt = null;
 // Called from cloudFetchUsers() right after the two flags above are set
 // (every pull — fresh login, session restore, live-sync poll) — one
 // function, one set of conditions, never two independently-computed
@@ -1868,6 +1873,17 @@ async function cloudFetchUsers(background){
     // pull, not just at login, so a live mid-session grant takes effect
     // without a reload.
     _mySalesFunnelLevel = r.viewerSalesFunnelLevel ?? null;
+    // See the module-level declaration above for the full rationale. Unlike
+    // viewerTier/viewerSalesFunnelLevel/viewerEarnsCommission (which always
+    // adopt the server's value, null included), a null here falls back to
+    // whatever this session already has rather than resetting to null —
+    // null means "treat everything as new," so an in-flight
+    // markTasksViewed write racing an overlapping pull (which could still
+    // return the pre-write null/older value) must never regress an
+    // already-reset badge back to the historical-backlog count. Still a
+    // low-stakes, simple-scalar race, no asOf machinery needed — see
+    // _markTasksViewed()'s own comment.
+    _viewerLastViewedTasksAt = r.viewerLastViewedTasksAt ?? _viewerLastViewedTasksAt;
     _viewerEarnsCommission = !!r.viewerEarnsCommission;
     _applyServerArray('commissions', r.commissions, arr=>dbSet(DB_KEYS.commissions, arr), ()=>dbGet(DB_KEYS.commissions)||[], undefined, fetchStartedAt);
     if(document.getElementById('sec-mycommissions')?.classList.contains('active') && typeof renderMyCommissionsUser==='function') renderMyCommissionsUser();
@@ -2002,6 +2018,39 @@ async function cloudPushData(){
     localStorage.setItem('wl_cloud_last_sync', new Date().toISOString());
     return {ok:true, rejected: Array.isArray(body.rejected) ? body.rejected : []};
   }catch(e){ return {ok:false, rejected:[]}; }
+}
+
+// "N new assigned" fix (2026-10-12) — called once, from loadDailyTasks(),
+// the moment the employee actually navigates into My Tasks (never on every
+// renderDailyTasks() re-render, which fires far more often for in-page
+// updates — see loadDailyTasks()'s own comment). Sets the optimistic local
+// reset SYNCHRONOUSLY, before the network call even starts, so the badge
+// already reads ~0 on this same render — not a fire-and-forget write in
+// the data-loss sense (there's nothing here that can be lost: re-opening
+// the page just re-sends the same idempotent action, and a failed request
+// only means the badge stays wrong until the next successful open/pull,
+// never that a task or notification silently reverts). A direct POST, not
+// the generic debounced _scheduleCloudPush() path — this isn't a
+// dirty-diffed table value, it's a one-shot server action (see
+// api/ops-sync.js's markTasksViewed), and the whole point is for it to
+// land promptly, not whenever some unrelated edit's 2s debounce happens to
+// flush next.
+async function _markTasksViewed(){
+  _viewerLastViewedTasksAt = new Date().toISOString();
+  const token = _opsToken();
+  if(!token) return;
+  try{
+    const res = await fetch(OPS_SYNC_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify({changes:{markTasksViewed:true}})
+    });
+    if(!res.ok) return;
+    const body = await res.json().catch(()=>({}));
+    // Prefer the server's own authoritative timestamp over the optimistic
+    // client-clock one set above, when it's actually available.
+    if(body?.applied?.lastViewedTasksAt) _viewerLastViewedTasksAt = body.applied.lastViewedTasksAt;
+  }catch(e){}
 }
 
 // ── Daily Tasks (employee) — port of the WebLight Media Email Tracker.
@@ -2548,6 +2597,12 @@ function loadDailyTasks(){
       return `<button class="dt-cat-pill${active?' active':''}" onclick="setDtActiveCategory(${c==='All'?'null':`'${c}'`})">${DT_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
+  // "N new assigned" fix (2026-10-12) — resets the view the instant the
+  // employee actually opens this page, not on every in-page re-render (see
+  // _markTasksViewed()'s own comment). _viewerLastViewedTasksAt is already
+  // updated optimistically before this call returns, so the renderDailyTasks()
+  // right after it correctly shows ~0 "new" on this same entry.
+  _markTasksViewed();
   renderDailyTasks();
   renderDtRecentImports();
 }
@@ -2591,12 +2646,23 @@ function _dtStatusColor(status){
 function renderDailyTasks(){
   let tasks = _dtMyTasks();
   if(_dtActiveCategory) tasks = tasks.filter(t=>t.category===_dtActiveCategory);
-  // "New assigned" badge: tasks assigned to me that I haven't opened the
-  // detail panel for yet (local-only "seen" flag, same spirit as an unread
-  // notification — never written back to the server).
-  let seen = [];
-  try{ seen = JSON.parse(localStorage.getItem('wl_dt_seen_ids')||'[]'); }catch(e){}
-  const newCount = tasks.filter(t=>!seen.includes(t.id)).length;
+  // "New assigned" badge (redefined 2026-10-12 — see _viewerLastViewedTasksAt's
+  // own comment and _markTasksViewed()): a task now counts as "new" only
+  // when its server-stamped lastAssignedAt (falling back to assignedDate,
+  // then createdAt, for a task from before this fix ever stamped it) is
+  // AFTER the last time this employee actually opened My Tasks — never the
+  // old wl_dt_seen_ids check (every task NOT individually opened via its
+  // own detail panel, which is what produced the reported "94 new of ~101"
+  // — a task worked entirely through inline status/notes controls, never
+  // once opened, stayed "new" forever under that definition). A null
+  // _viewerLastViewedTasksAt (never opened My Tasks even once) is treated
+  // as "nothing is new yet" (0), not "everything is new" — loadDailyTasks()
+  // always calls _markTasksViewed() before this function runs on an actual
+  // page entry, so that null state is never actually visible to the user.
+  const newCount = _viewerLastViewedTasksAt==null ? 0 : tasks.filter(t=>{
+    const assignedAt = t.lastAssignedAt || t.assignedDate || t.createdAt || null;
+    return assignedAt && new Date(assignedAt).getTime() > new Date(_viewerLastViewedTasksAt).getTime();
+  }).length;
   const badge = document.getElementById('dtNewAssignedBadge');
   if(badge){
     badge.style.display = newCount>0 ? '' : 'none';

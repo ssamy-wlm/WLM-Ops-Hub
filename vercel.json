@@ -50,6 +50,10 @@
     {
       "path": "/api/cron-pto-report",
       "schedule": "0 * 1,16 * *"
+    },
+    {
+      "path": "/api/cron-prune-notifications",
+      "schedule": "0 10 * * *"
     }
   ]
 }
