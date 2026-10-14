@@ -750,6 +750,82 @@ Don't relitigate them without an explicit decision from the user.
   real protection is intact). `node --check` clean on `api/ops-state.js`;
   inline-JS syntax clean on all three frontends; div-balance unchanged vs
   `main` on all three (pure JS changes, no HTML touched).
+- Leave-aware alerts: suppress nags/inactive-flags during approved time off
+  (2026-10-14 — held for preview approval, `api/`): reported live — Jacob
+  Joslin, on approved PTO Oct 12–16, was still listed in the Oct 14
+  "big-issue" alert under both "Manager/admin overdue (5+)" (13 overdue)
+  and "Inactive since 2026-10-13 (no login, no completed work)." Owner
+  decisions: approved leave hides the person ENTIRELY (no separate "on
+  leave" line); only `status==='approved'` suppresses — a pending request
+  (the ticket's own counter-example: Sarah Ibrahim's pending Oct 16
+  request) never does. New shared helper
+  `getApprovedLeaveIdSet(supabase, win, warnings)` in `api/ops-sync.js` —
+  reuses the exact same approved/non-reversed/non-cancelled/overlap
+  predicates `api/cron-pto-report.js`'s `collectApprovedPtoItems()`
+  already established for both `ops_time_off_requests` and
+  `ops_time_off_ledger` (kept in sync deliberately); `overlapsWindow()`
+  itself was moved (not duplicated) from `cron-pto-report.js` into
+  `ops-sync.js` so both files import the one shared copy —
+  `collectApprovedPtoItems()`'s own behavior is byte-identical, re-run
+  clean. Fail-OPEN by design: any read error degrades to an EMPTY set
+  (never a throw), so a broken time-off read can never silently hide a
+  real overdue/inactive person — only ever ADD false suppression risk
+  toward "alert fires when it maybe shouldn't," never the reverse.
+  Hardened one documented gap beyond the ticket's own given code: the
+  ledger half originally keyed its reversed-entry exclusion
+  (`reversedIds.has(e.id)`) off a BARE `r.data` object with no `id`
+  merged in — harmless for a normally-written row (ops-sync.js's own
+  `insertNewOnly()` already stores the full record, `id` included, inside
+  `data`), but fragile for an edge-case row missing it; now merges
+  `{id: r.id, ...r.data}` the same defensive way
+  `collectApprovedPtoItems()`'s own ledger caller already does. Applied at
+  4 suppression points in `api/cron-overdue-check.js`, each canonicalizing
+  both sides with that block's own existing `canonMap`/`canonicalId` (so
+  a dual-role person's leave suppresses them regardless of which identity
+  the time-off row is filed under — same convention `activeSince`/
+  `overdueCounts` already use): (a) the twice-daily overdue self-nag
+  (`considerForNag`, window `{today, today}`); (b) "Manager/admin overdue
+  (5+)" (`escalatingAdmins`, window `{today, today}`); (c) "Inactive
+  since …" (`inactivePeople`, window `{cutoffDateStr, today}` — the
+  WIDER look-back range, since leave anywhere across it legitimately
+  explains no login/no completed work); (d) the weekday-morning "add your
+  tasks" reminder (`DAILY_TASK_REMINDER_RECIPIENTS`) — these 3 recipients
+  are hardcoded `{name,email}` pairs with no id of their own, so each is
+  resolved against the live directory by email first (same lookup the
+  block's own quiet-hours check already does) before canonicalizing and
+  checking, window `{cairo.dateStr, cairo.dateStr}` (this block's own
+  already-computed run-day date). Due dates are completely untouched;
+  once leave ends, the person reappears automatically on the next run —
+  no manual reset, no backfill. Scope note (flagged, not guessed — rule
+  #7): `getApprovedLeaveIdSet` is ID-only (`userId`/`employeeId`), per
+  the ticket's own given code — it does NOT fall back to matching by
+  name the way `collectApprovedPtoItems()`'s own PER-PERSON predicate
+  does (that fallback only makes sense with a specific person to match
+  against; this helper computes a global id set, not a per-person
+  check), so a real time-off row with no id at all would not suppress
+  anyone — verified as the row's actual documented behavior, not an
+  oversight. Verified with a new 10-check Node suite against the real,
+  byte-identical `getApprovedLeaveIdSet`/`overlapsWindow` (fake in-memory
+  Supabase client, no live access per rule #11): id-match + both tables;
+  pending never suppresses; a reversal entry and an entry reversed by
+  another both never suppress; leave-window edge (in vs. out of range);
+  fail-open on a forced read error — confirmed this exact ledger-defense
+  gap by first writing a realistic (no embedded `data.id`) fixture, which
+  failed against the ticket's own literal given code, then fixing it as
+  described above. A new 5-check Playwright-free end-to-end suite against
+  the real, unmodified `api/cron-overdue-check.js` handler reproduces the
+  exact live scenario (Jacob 13-overdue + on-leave, Sarah 5-overdue +
+  pending-only, Lenny 5-overdue + a reversed ledger "leave," David
+  genuinely inactive with no leave at all) across both the 11:00 UTC
+  hierarchy run and the 13:00 UTC nag run, a later run after Jacob's leave
+  ends (he reappears, unprompted), the daily-reminder skip (point d), and
+  a forced leave-read failure (still alerts, fail-open) — confirmed all 4
+  behavior-asserting tests in this suite fail against the pre-fix code
+  (via `git stash`) and pass clean after. `node --check` clean on all 3
+  touched files (`api/ops-sync.js`, `api/cron-pto-report.js`,
+  `api/cron-overdue-check.js`); no HTML touched, so no div-balance check
+  applies. Held per rule #10 — touches live cron/notification logic;
+  no data writes, no schema change, no sync/permission change.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
