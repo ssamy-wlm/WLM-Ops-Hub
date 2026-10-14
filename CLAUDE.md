@@ -826,6 +826,47 @@ Don't relitigate them without an explicit decision from the user.
   `api/cron-overdue-check.js`); no HTML touched, so no div-balance check
   applies. Held per rule #10 — touches live cron/notification logic;
   no data writes, no schema change, no sync/permission change.
+- Employee task status edit silently reverting on background sync fixed
+  (2026-10-14 — **merged**, PR #460, `user.html`): reported as "editing a
+  task appears to save, then reverts on the next sync, as if not saved."
+  Traced end-to-end before guessing (rule #7): `_dtChangeStatus()` (the
+  inline status dropdown on the My Tasks list — the single most commonly
+  used task edit, not the detail panel's Save button) was the one
+  task-field write path in this file that never awaited or checked its
+  own push result — `dbSet()` + the 2-second-debounced
+  `_scheduleCloudPush()`, with `"Status updated ✓"` shown immediately and
+  unconditionally, before the push even started. `saveDtTaskUpdate()`
+  (detail panel) and `submitReportTask()` already correctly
+  `await cloudPushData()` and roll back on failure. `_opsDirty()`'s
+  dirty-tracking and `_applyServerArray()`'s whole-record preservation
+  (user.html's merge strategy — confirmed *more* protective than
+  index.html's field-level merge, not less) were both ruled out directly:
+  a concurrent-pull-before-debounce and a reload-before-debounce both
+  correctly preserved a pending edit. `finalizeRecurring()` was also ruled
+  out (scoped only to a recurring task's own Done-transition). Real
+  mechanism: the 2-second debounce is a materially larger race window
+  than index.html's own immediate, non-debounced admin-side push for the
+  same control — long enough for a concurrent admin edit to the same task
+  (reassignment, category change) to trigger a genuine server-side
+  rejection via `api/ops-sync.js`'s `TASK_KEYS_MEMBER_MAY_NOT_TOUCH`
+  disallowed-key check, which the old fire-and-forget path never
+  surfaced — the edit never reached the server at all, and the next real
+  sync showing the untouched value read as "it reverted." Fixed to match
+  `saveDtTaskUpdate()`'s discipline: push immediately (no debounce),
+  await the result, and on anything but a clean accept roll the field
+  back to its prior value (re-reading the array fresh, not the closed-
+  over copy, since a legitimate background pull may have changed other
+  fields on the same task while the push was in flight) and surface the
+  real failure — the actual rejection reason or a generic "could not
+  save" for a network-level failure — instead of claiming success ahead
+  of the server's answer. Verified with a 4-scenario Playwright suite
+  against the real, unmodified `user.html` (successful edit persists
+  through a concurrent pull and pushes promptly with no debounce window;
+  a genuine rejection rolls back and surfaces the real reason; a 500
+  rolls back with a generic error; zero-JS-error load check across all
+  three portals) — confirmed via `git stash` that the suite fails against
+  the pre-fix code, proving it's a genuine regression test. `node --check`
+  clean; div-balance unchanged vs. baseline (delta -1).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
