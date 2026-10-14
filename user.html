@@ -3172,14 +3172,34 @@ async function submitReportTask(){
   showToast('Reported ✓ — the admin team has been notified');
 }
 
-// Inline status-dropdown change from the list row — same write path
-// (dbSet + _scheduleCloudPush) as saveDtTaskUpdate() above, no separate
-// mechanism. Blocked requires a reason exactly like the detail panel
-// does; prompt() stands in for the panel's own required text field since
-// there's no second input available inline. Cancelling or leaving it
-// empty reverts the <select> to its previous value rather than silently
-// saving Blocked with no reason.
-function _dtChangeStatus(id, newStatus, selectEl){
+// Inline status-dropdown change from the list row (2026-10-14 fix —
+// "edit appears to save, then reverts on the next sync"). This used to
+// be fire-and-forget: dbSet() + the debounced, 2-SECOND _scheduleCloudPush()
+// — it was the only task-field write in this file that never awaited or
+// checked its own result (saveDtTaskUpdate()/_dtStopRecurring() above
+// both already await cloudPushData() and revert on failure). The stale
+// comment this replaces even claimed it was "the same write path" as
+// saveDtTaskUpdate() — it wasn't. Root-caused: this is the single most
+// commonly used task edit (every status change on the list goes through
+// here, not the detail panel), so it's also the one most exposed to a
+// genuine server-side rejection — e.g. an admin concurrently touching the
+// same task (a reassignment, a category change) inside this same 2-second
+// window, which TASK_KEYS_MEMBER_MAY_NOT_TOUCH's disallowed-key check
+// (api/ops-sync.js) correctly rejects outright — with the old
+// fire-and-forget path giving the employee zero indication anything went
+// wrong: the "Status updated ✓" toast fired unconditionally, before the
+// push even started, and local dirty-tracking (_opsDirty()) kept showing
+// the edited value in THIS browser only, for as long as its own
+// localStorage snapshot survived — never actually landing on the server
+// record other devices/sessions/the admin portal would ever see.
+// Fixed to match saveDtTaskUpdate()'s exact discipline: push immediately
+// (cloudPushData(), not the debounced _scheduleCloudPush() — removing the
+// multi-second race window entirely, same as index.html's own
+// cloudAutoSync() does for its inline status change), await the real
+// result, and on anything other than a clean accept, roll the local
+// value back to what it was and surface a clear error — never a UI that
+// claims success ahead of (or despite) the server's actual answer.
+async function _dtChangeStatus(id, newStatus, selectEl){
   const tasks = dbGet(DB_KEYS.tasks)||[];
   const t = tasks.find(x=>x.id===id);
   if(!t) return;
@@ -3195,11 +3215,37 @@ function _dtChangeStatus(id, newStatus, selectEl){
   } else {
     blockReason = '';
   }
+  const prevBlockReason = t.blockReason, prevCompletedAt = t.completedAt;
   t.completedAt = _dtCompletedAt(prevStatus, newStatus, t.completedAt);
   t.status = newStatus;
   t.blockReason = blockReason;
   dbSet(DB_KEYS.tasks, tasks);
-  _scheduleCloudPush();
+  renderDailyTasks();
+  const result = await cloudPushData();
+  const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
+  if(!result.ok || rejectedThis){
+    // Not confirmed — roll back so the UI never shows a status the server
+    // didn't actually accept. Re-reads the array fresh rather than reusing
+    // the closed-over `tasks`/`t` — a background pull could have legally
+    // changed other fields on this same task while the push was in flight.
+    const freshTasks = dbGet(DB_KEYS.tasks)||[];
+    const freshT = freshTasks.find(x=>x.id===id);
+    if(freshT){
+      freshT.status = prevStatus;
+      freshT.blockReason = prevBlockReason;
+      freshT.completedAt = prevCompletedAt;
+      dbSet(DB_KEYS.tasks, freshTasks);
+    }
+    if(selectEl) selectEl.value = prevStatus;
+    // Same convention as saveDtTaskUpdate()/submitReportTask() above: a
+    // genuine rejection already got its own "❌ Not saved: <reason>" toast
+    // from inside cloudPushData() itself — showing a second, generic one
+    // here would just double up. Only a non-rejection failure (network
+    // error, non-200) needs this function's own toast at all.
+    if(!rejectedThis) showToast('❌ Could not save — try again');
+    renderDailyTasks();
+    return;
+  }
   showToast('Status updated ✓');
   renderDailyTasks();
 }
