@@ -1406,35 +1406,37 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div style="font-size:11px;color:var(--text-light);margin-top:6px;">Tasks have no frequency, so the filter only drives services.</div>
       </div>
 
-      <!-- Split into two donuts, one per work type (2026-09-07) — was a
-           single combined "Open Work by Urgency" donut; see
-           _renderOverviewUrgencyDonut()'s own comment for why a shared
-           group/data-key scheme was needed once there are two of these on
-           the same page (hover must never cross-highlight the other
-           donut). -->
+      <!-- Split into two bars, one per work type (2026-09-07, donuts →
+           compact horizontal segmented bars 2026-10-14 — Option A, same
+           data/computation, render-only change) — was a single combined
+           "Open Work by Urgency" donut; see _renderOverviewUrgencyDonut()'s
+           own comment for why a shared group/data-key scheme was kept once
+           there are two of these on the same page. -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
         <div class="card" style="margin:0;">
-          <div class="card-header">
+          <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
             <div>
               <div class="card-title">Tasks by Urgency</div>
-              <div class="card-sub">Open (not done) tasks — hover a slice or row for the count</div>
+              <div class="card-sub">Open (not done) tasks — hover a bar segment or row for the count</div>
             </div>
+            <div id="ov-tasks-urgency-open-total" style="font-size:13px;font-weight:700;color:var(--text-dark);white-space:nowrap;flex-shrink:0;"></div>
           </div>
-          <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
-            <div style="position:relative;width:150px;height:150px;flex-shrink:0;" id="ov-tasks-urgency-donut-wrap"></div>
-            <div style="flex:1;min-width:180px;" id="ov-tasks-urgency-list"></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <div id="ov-tasks-urgency-bar-wrap"></div>
+            <div id="ov-tasks-urgency-list" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;"></div>
           </div>
         </div>
         <div class="card" style="margin:0;">
-          <div class="card-header">
+          <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
             <div>
               <div class="card-title">Services by Urgency</div>
-              <div class="card-sub">Open (not done) services <span id="ov-svc-urgency-freq-sub"></span>— hover a slice or row for the count</div>
+              <div class="card-sub">Open (not done) services <span id="ov-svc-urgency-freq-sub"></span>— hover a bar segment or row for the count</div>
             </div>
+            <div id="ov-services-urgency-open-total" style="font-size:13px;font-weight:700;color:var(--text-dark);white-space:nowrap;flex-shrink:0;"></div>
           </div>
-          <div class="card-body" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
-            <div style="position:relative;width:150px;height:150px;flex-shrink:0;" id="ov-services-urgency-donut-wrap"></div>
-            <div style="flex:1;min-width:180px;" id="ov-services-urgency-list"></div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <div id="ov-services-urgency-bar-wrap"></div>
+            <div id="ov-services-urgency-list" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;"></div>
           </div>
         </div>
       </div>
@@ -8190,127 +8192,63 @@ const OV_URGENCY_BUCKETS=[
   {key:'upcoming', label:'Upcoming', color:'#0ca30c'},
 ];
 
-// Renders ONE donut into its own group's elements — group is 'tasks' or
-// 'services', matching the #ov-<group>-urgency-* ids in the HTML (split
-// 2026-09-07 from a single combined "Open Work by Urgency" donut into two,
-// one per work type, so the Overdue/Due-this-week/etc. mix for tasks can't
-// be lost inside a services-heavy team's numbers or vice versa).
+// Renders ONE urgency breakdown into its own group's elements — group is
+// 'tasks' or 'services', matching the #ov-<group>-urgency-* ids in the
+// HTML (split 2026-09-07 from a single combined "Open Work by Urgency"
+// donut into two, one per work type, so the Overdue/Due-this-week/etc. mix
+// for tasks can't be lost inside a services-heavy team's numbers or vice
+// versa; donut → compact horizontal segmented bar 2026-10-14, Option A —
+// same bucketTotals input/computation, this function only changed HOW it
+// draws them).
 // bucketTotals is JUST that group's own already-summed {overdue,
 // dueThisWeek, dueThisMonth, upcoming} — the caller
-// (renderTeamProductionAnalytics()) is responsible for handing each donut
-// its own type-scoped totals; this function only draws. Pure render, no
-// sync/cloud call. SVG donut built by stacking one <circle> per slice with
-// stroke-dasharray/dashoffset, rotated -90deg so slices start at 12
-// o'clock and proceed clockwise, matching the original mockup.
+// (renderTeamProductionAnalytics()) is responsible for handing this
+// function its own type-scoped totals; this function only draws. Pure
+// render, no sync/cloud call — innerHTML is built once per call from
+// freshly-computed strings and assigned once (no incremental DOM patching,
+// no re-render loop), so there's nothing here that can flicker the way a
+// polling-driven rebuild would.
 //
-// Every element/class this function touches carries data-group="<group>"
-// so the two donuts' hover states (_ovUrgencyHover/_ovUrgencyUnhover below)
-// can never cross-highlight each other — a bare class-name query (the
-// single-donut original's own approach) would otherwise thicken a slice on
-// BOTH donuts at once whenever either one is hovered, since they'd share
-// the exact same .ov-urgency-seg/.ov-urgency-row class names.
+// Every element this function touches carries data-group="<group>" so the
+// two cards' tooltips/markup can never collide, matching the convention
+// the donut version established.
 function _renderOverviewUrgencyDonut(group, bucketTotals){
-  const wrap=document.getElementById(`ov-${group}-urgency-donut-wrap`);
+  const barWrap=document.getElementById(`ov-${group}-urgency-bar-wrap`);
   const listEl=document.getElementById(`ov-${group}-urgency-list`);
-  if(!wrap||!listEl) return;
+  const openTotalEl=document.getElementById(`ov-${group}-urgency-open-total`);
+  if(!barWrap||!listEl) return;
 
   const total=OV_URGENCY_BUCKETS.reduce((s,b)=>s+(bucketTotals[b.key]||0),0);
-  const size=150, stroke=20, r=(size-stroke)/2, c=2*Math.PI*r;
-  let offset=0;
   const segs=OV_URGENCY_BUCKETS.map(b=>{
     const val=bucketTotals[b.key]||0;
-    const pct=total?val/total:0;
-    const arc=pct*c;
-    const seg={...b, val, pct, arc, offset};
-    offset+=arc;
-    return seg;
+    const pct=total?(val/total*100):0;
+    return {...b, val, pct};
   });
 
-  // Circles built from only the NON-ZERO segments (2026-09-28 polish) — a
-  // zero-value bucket's own arc="0" circle drew nothing anyway, but still
-  // left an extra element and an extra seam for the browser to rasterize,
-  // one real source of the reported jagged/misaligned look. The LAST
-  // visible segment's arc is set to the exact remainder (c - its own
-  // offset) rather than its own pct*c value, so the segments always sum
-  // to EXACTLY the full circumference and the ring closes with no
-  // floating-point hairline gap or overlap at the seam where it meets the
-  // first segment (12 o'clock, after the -90deg rotation below) —
-  // pct*c across 4 independently-rounded fractions doesn't reliably
-  // re-sum to c to the sub-pixel precision SVG actually rasterizes at.
-  // stroke-linecap="butt" is now explicit (was relying on the SVG
-  // default, which IS butt, but left unstated) so adjacent segments meet
-  // with a clean flat edge — never a rounded overhang that would bulge
-  // into its neighbor at the boundary, the "clean modern donut" look
-  // asked for here.
-  const visibleSegs=segs.filter(s=>s.val>0);
-  const circles=visibleSegs.map((s,i)=>{
-    const isLast=i===visibleSegs.length-1;
-    const arc=isLast?(c-s.offset):s.arc;
-    const dash=`${arc} ${c-arc}`;
-    return `<circle class="ov-urgency-seg" data-group="${group}" data-key="${s.key}" cx="${size/2}" cy="${size/2}" r="${r}"
-      fill="none" stroke="${s.color}" stroke-width="${stroke}" stroke-linecap="butt"
-      stroke-dasharray="${dash}" stroke-dashoffset="${-s.offset}"
-      style="transition:stroke-width .15s;cursor:pointer;"
-      onmouseenter="_ovUrgencyHover('${group}','${s.key}','${escHtmlAdmin(s.label)}',${s.val})"
-      onmouseleave="_ovUrgencyUnhover('${group}')"><title>${s.val} · ${escHtmlAdmin(s.label)}</title></circle>`;
-  }).join('');
+  if(openTotalEl) openTotalEl.textContent=`${total} open`;
 
-  // Center overlay (2026-09-28 polish) — explicitly sized/positioned to
-  // the donut's actual INNER diameter (size - 2*stroke = 110px here, not
-  // the full 150px wrap) and centered with negative margins from the
-  // middle, so the count/label can never visually extend into the ring's
-  // own stroke band regardless of digit count — the reported "center
-  // count overlaps the ring." overflow:hidden + white-space:nowrap keep a
-  // 3+ digit count or a long label from growing past that circle instead
-  // of silently spilling outward.
-  const innerDiameter=size-stroke*2;
-  wrap.innerHTML=`
-    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" style="transform:rotate(-90deg);">
-      ${total?circles:`<circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}" stroke-linecap="butt"></circle>`}
-    </svg>
-    <div id="ov-${group}-urgency-center" style="position:absolute;top:50%;left:50%;width:${innerDiameter}px;height:${innerDiameter}px;margin:-${innerDiameter/2}px 0 0 -${innerDiameter/2}px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;pointer-events:none;">
-      <div id="ov-${group}-urgency-center-val" style="font-size:24px;font-weight:800;color:var(--text-dark);line-height:1.1;white-space:nowrap;">${total}</div>
-      <div id="ov-${group}-urgency-center-label" style="font-size:10px;color:var(--text-light);font-weight:600;line-height:1.2;white-space:nowrap;">open ${group}</div>
-    </div>`;
-  // Stashed so _ovUrgencyUnhover() can restore the exact default text on
-  // mouseleave without re-deriving it from rendered DOM (fragile — arc
-  // lengths are floats, not reliably round-trippable back to the integer
-  // count).
-  wrap._ovDefaultVal=total;
-  wrap._ovDefaultLabel=`open ${group}`;
+  // Single rounded container, one segment element per NON-ZERO bucket sized
+  // by percent width — a zero-value bucket contributes no element (and so no
+  // width) but still gets its own legend row below. Widths are plain
+  // percentages of a flex row that always sums to 100% by construction
+  // (every visible segment's width comes from the exact same `total`
+  // denominator), so unlike the old donut's arc-length math there's no
+  // floating-point remainder to special-case for the last segment.
+  const segHtml=segs.filter(s=>s.val>0).map(s=>
+    `<div class="ov-urgency-bar-seg" data-group="${group}" data-key="${s.key}" style="height:100%;width:${s.pct}%;background:${s.color};" title="${escHtmlAdmin(s.label)}: ${s.val}"></div>`
+  ).join('');
+  barWrap.innerHTML=`<div style="display:flex;width:100%;height:14px;border-radius:7px;overflow:hidden;background:var(--border);">${segHtml}</div>`;
 
+  // 2-column legend — same 4 buckets/counts the donut listed, in the same
+  // fixed order, every bucket always rendering its own row (including a
+  // 0-count one) so the legend reads as a complete, stable breakdown
+  // rather than one that reshuffles/disappears rows as counts change.
   listEl.innerHTML=segs.map(s=>`
-    <div class="ov-urgency-row" data-group="${group}" data-key="${s.key}" style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;"
-      onmouseenter="_ovUrgencyHover('${group}','${s.key}','${escHtmlAdmin(s.label)}',${s.val})" onmouseleave="_ovUrgencyUnhover('${group}')">
-      <span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
-      <span style="flex:1;font-size:12px;color:var(--text-dark);">${escHtmlAdmin(s.label)}</span>
-      <span style="font-size:12px;font-weight:700;color:var(--text-dark);">${s.val}</span>
-      <span style="font-size:10.5px;color:var(--text-light);width:32px;text-align:right;">${total?Math.round(s.pct*100):0}%</span>
+    <div data-group="${group}" data-key="${s.key}" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dark);padding:2px 0;" title="${escHtmlAdmin(s.label)}: ${s.val}">
+      <span style="width:8px;height:8px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+      <span style="color:var(--text-light);">${escHtmlAdmin(s.label)}</span>
+      <span style="font-weight:700;">${s.val}</span>
     </div>`).join('');
-}
-
-function _ovUrgencyHover(group,key,label,val){
-  const centerVal=document.getElementById(`ov-${group}-urgency-center-val`);
-  const centerLabel=document.getElementById(`ov-${group}-urgency-center-label`);
-  if(centerVal) centerVal.textContent=val;
-  if(centerLabel) centerLabel.textContent=label;
-  document.querySelectorAll(`.ov-urgency-seg[data-group="${group}"]`).forEach(el=>{
-    el.setAttribute('stroke-width', el.getAttribute('data-key')===key ? 24 : 20);
-  });
-  document.querySelectorAll(`.ov-urgency-row[data-group="${group}"]`).forEach(el=>{
-    el.style.background = el.getAttribute('data-key')===key ? 'var(--bg-light,#f5f5f5)' : '';
-  });
-}
-function _ovUrgencyUnhover(group){
-  const wrap=document.getElementById(`ov-${group}-urgency-donut-wrap`);
-  const centerVal=document.getElementById(`ov-${group}-urgency-center-val`);
-  const centerLabel=document.getElementById(`ov-${group}-urgency-center-label`);
-  document.querySelectorAll(`.ov-urgency-seg[data-group="${group}"]`).forEach(el=>el.setAttribute('stroke-width', 20));
-  document.querySelectorAll(`.ov-urgency-row[data-group="${group}"]`).forEach(el=>{ el.style.background=''; });
-  if(wrap && centerVal && centerLabel){
-    centerVal.textContent=wrap._ovDefaultVal;
-    centerLabel.textContent=wrap._ovDefaultLabel;
-  }
 }
 
 // Overview's Team Production Analytics lives on #admin-overview, but
@@ -13690,10 +13628,11 @@ function refreshAdminOverview(){
   // moved/added here from the old standalone "Team analytics" tab/page;
   // the "Services Completed — Last 8 Weeks" bar chart that used to live at
   // tpa-weekly-trend was replaced outright by a single combined urgency
-  // donut on 2026-08-28, then split into the two type-scoped donuts
-  // (ov-tasks-urgency-donut-wrap/ov-services-urgency-donut-wrap) on
-  // 2026-09-07 — see renderTeamProductionAnalytics()'s own comments for
-  // why). renderTeamProductionAnalytics() is fully self-contained (reads
+  // donut on 2026-08-28, then split into two type-scoped donuts
+  // (ov-tasks-urgency-bar-wrap/ov-services-urgency-bar-wrap, originally
+  // donut-wrap) on 2026-09-07, then redrawn as compact horizontal
+  // segmented bars on 2026-10-14 — see renderTeamProductionAnalytics()'s
+  // own comments for why). renderTeamProductionAnalytics() is fully self-contained (reads
   // its own DOM targets, guards on their absence) so calling it here is
   // the whole integration — no computation duplicated.
   if(typeof renderTeamProductionAnalytics==='function') renderTeamProductionAnalytics();
