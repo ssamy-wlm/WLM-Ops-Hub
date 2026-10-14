@@ -1007,6 +1007,58 @@ Don't relitigate them without an explicit decision from the user.
   lessons" section updated with the module-mode `node --check`
   requirement and the merge-vs-rebase lesson so this class of error
   can't silently reach `main` again.
+- Urgent fix: #460 regression — unowned-service rejection blocked/alarmed
+  on legitimate task saves (2026-10-14 — **merged**, PR #469,
+  `api/ops-sync.js`+`user.html`): reported live — a member marking a task
+  Done still saw `"❌ Not saved: not assigned to services item svc_X"`
+  (even though the task itself persisted fine) whenever their local
+  `wl_clients_db` held a stale copy of a service belonging to someone
+  else on the SAME shared client record. #460's rollback scoping
+  (`rejectedThis`, `table==='tasks' && id===this task`) was already
+  correct; the actual bug was `cloudPushData()`'s own generic
+  `"❌ Not saved: <reason>"` toast firing for ANY rejection in the batch,
+  unscoped to what the caller cared about — plus the underlying client-
+  write rejection was itself a false positive: `checkMemberClientWrite()`
+  rejected the WHOLE client write the moment any item the member wasn't
+  assigned to merely differed from the server's current value, whether
+  or not the member ever touched it (routine staleness — another
+  admin's edit, a cron due-date rollover — not an actual conflict with
+  this member's own edit). Two-part fix: (a) `cloudPushData()` gains an
+  optional `opts.onlyToastFor {table, id}` — wired into
+  `_dtChangeStatus()`/`saveDtTaskUpdate()` — so the generic toast only
+  fires for a rejection matching THIS write; every other existing caller
+  keeps the original behavior. (b) Both layers: `user.html`'s
+  `cloudPushData()` now trims each dirty client's services/
+  recurringServices/locations[].services down to only the member's own
+  items before it's ever sent (`_pushSafeClient()`); `api/ops-sync.js`
+  gained `restrictClientWriteToOwnItems()`, run on every member client
+  write BEFORE `checkMemberClientWrite()` and storage — every list item
+  the member isn't assigned to (including one their payload omitted
+  entirely) is pinned to the server's own CURRENT value, verbatim,
+  regardless of what the incoming payload said, so the check only ever
+  judges the member's own items and storage can never drift or silently
+  delete an unowned one. A genuine attempt to edit/delete someone else's
+  item is still completely ineffective — it just no longer collaterally
+  blocks the member's own legitimate edit bundled in the same write. The
+  server-side layer is what actually makes the write safe; the client
+  trim is belt-and-suspenders. Verified with a 7-check Node suite against
+  the real, exported `checkMemberClientWrite()`/
+  `restrictClientWriteToOwnItems()`/`isAssignedToMember()` (pure
+  functions, no Supabase needed per rule #11) — reproduces the exact
+  reported rejection pre-fix, confirms the fix allows the write, an
+  unowned item omitted entirely is restored not deleted, a genuine
+  attempted edit to an unowned item is still ineffective but no longer
+  blocks the member's own edit, a real scalar-key violation still
+  rejects, franchise/location services get identical treatment — plus a
+  3-scenario Playwright suite against the real `user.html`: no
+  misleading toast even transiently (verified by recording every
+  `showToast()` call, not just final DOM state), a genuine rejection of
+  the edited task itself still rolls back + shows its reason, and the
+  push body is confirmed to never include the unowned service.
+  Confirmed via `git stash` both suites fail against the pre-fix code.
+  `node --check` AND the newer module-mode `node --input-type=module
+  --check` (rule #9) both clean on `api/ops-sync.js`; inline-JS syntax
+  clean on `user.html`; div-balance unchanged vs. baseline (delta -1).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
