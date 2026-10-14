@@ -867,6 +867,50 @@ Don't relitigate them without an explicit decision from the user.
   three portals) — confirmed via `git stash` that the suite fails against
   the pre-fix code, proving it's a genuine regression test. `node --check`
   clean; div-balance unchanged vs. baseline (delta -1).
+- `getApprovedLeaveIdSet` name fallback — a reliability net (2026-10-14 —
+  held for preview approval, `api/`): `getApprovedLeaveIdSet` (added the
+  same day, see the leave-aware-alerts entry above) only ever matched a
+  time-off row to a person by raw id (`userId`/`employeeId`), unlike
+  `api/cron-pto-report.js`'s own `collectApprovedPtoItems()`, which
+  already matches by id OR name — a leave row filed under a name with a
+  missing/stale id would be counted by the PTO report yet missed by
+  suppression. Gave the function an optional 4th `directory` param
+  (`{users, admins}`, same shape `loadDirectory()` already returns);
+  omitting it keeps the function byte-identical to before (back-compat).
+  When passed, a new `buildNameIdMap()` helper builds a lower-cased/
+  trimmed full-name → id map from the roster, excluding any name shared
+  by 2+ people (never guess which one — rule #7) and pushing one warning
+  per ambiguous name (not per row). Each approved+overlapping request/
+  ledger row still adds its raw id exactly as before, AND — additively —
+  resolves its `userName`/`employeeName` through the map and adds that id
+  too if found uniquely. Still returns a `Set` of raw ids; every caller
+  canonicalizes exactly as before. Updated all 4 call sites in
+  `api/cron-overdue-check.js` to pass their already-loaded directory
+  (`{dtrUsers,dtrAdmins}`/`{nUsers,nAdmins}`/`{hUsers,hAdmins}` ×2) — each
+  block already had the directory in scope, so this is a pure additive
+  argument, not a new read. Verified with a new 8-check Node suite against
+  the real, unmodified export (fake in-memory Supabase client, no live
+  access per rule #11): a request row with a matching name but a blank
+  userId is suppressed by name; a ledger row with a matching employeeName
+  but no employeeId likewise; an id-based match still works unchanged
+  with a directory passed (regression); an ambiguous duplicate name is
+  never resolved by name (a warning fires exactly once, not once per
+  row), while a DIFFERENT row's own real id for one of the duplicates
+  still suppresses normally; omitting `directory` entirely reproduces
+  today's id-only behavior exactly, including zero warnings; a pending
+  request and a reversed/self-reversal ledger entry still never suppress,
+  even when a name would otherwise resolve — confirmed via `git stash`
+  that 4 of these 8 (the ones directly exercising the new name-match
+  behavior) fail against the pre-fix code. Re-ran the leave-aware-alerts
+  e2e suite (5/5, unchanged — this branch doesn't touch the daily-
+  reminder recipient loop itself, only adds the 4th arg to its
+  `getApprovedLeaveIdSet` call), the leave-aware-alerts unit suite
+  (10/10), and the PTO-report ledger-merge suite (2/2) — 25/25 total.
+  `node --check` clean on both touched files. Intentionally a SEPARATE PR
+  from the daily-task-reminder dynamic-recipient-list change above — same
+  ticket, explicitly split so each is independently testable/revertable;
+  no shared code path beyond both already reading from the same
+  `loadDirectory(supabase)` call each block already had in scope.
 - Daily task reminder now reaches every active employee, not a hardcoded 3
   (2026-10-14 — **merged**, PR #463, `api/`): reported live — the
   weekday-morning "add your tasks" email in `api/cron-overdue-check.js`
