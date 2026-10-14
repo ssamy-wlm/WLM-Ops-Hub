@@ -40,7 +40,7 @@
 // Controls → Data Backups → Create Manual Snapshot), unaffected either way.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
-import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS } from './ops-sync.js';
+import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, personOf, DEFAULT_TEAM_NOTIF_PREFS, getApprovedLeaveIdSet } from './ops-sync.js';
 import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
 import { isWithinQuietHours } from '../lib/quietHours.js';
 
@@ -257,10 +257,29 @@ export default async function handler(req, res) {
               const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
               return rec?.team;
             };
+            // Leave-aware alerts (2026-10-14) — don't nudge someone to "add
+            // your tasks" while they're on approved leave. These 3 recipients
+            // are hardcoded {name,email} pairs with no id of their own, so
+            // each is resolved against the live directory by email first
+            // (same lookup teamForEmail() already does) and canonicalized
+            // with this block's own canonMap before checking the leave set,
+            // same convention as every other per-person signal in this file.
+            // Window is {cairo.dateStr, cairo.dateStr} — this block's own
+            // already-computed run-day date, not a new clock. Fail-open: a
+            // leave-read error yields an empty set, so this reminder still
+            // sends (never silently hides by failing closed).
+            const dtrCanonMap = buildCanonicalIdMap(dtrUsers, dtrAdmins);
+            const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings);
+            const idForEmail = (email) => {
+              const lower = (email || '').toLowerCase();
+              const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
+              return rec?.id || null;
+            };
             let sent = 0;
             let suppressed = 0;
             for (const r of DAILY_TASK_REMINDER_RECIPIENTS) {
               if (isWithinQuietHours(teamForEmail(r.email), new Date())) { suppressed++; continue; }
+              if (onLeaveTodayDtr.has(canonicalId(idForEmail(r.email), dtrCanonMap))) { suppressed++; continue; }
               try {
                 const html = buildEmailHtml({
                   name: r.name,
@@ -348,12 +367,21 @@ export default async function handler(req, res) {
           (client.locations || []).forEach(loc => nScanServiceOverdue(loc.services));
         });
 
+        // Leave-aware alerts (2026-10-14) — someone on approved time off
+        // today is hidden entirely from the self-nag (owner decision: no
+        // separate "on leave" line, just silence while they're out).
+        // Window is {nToday, nToday} — this block's own already-computed
+        // run-day date. Pending time off never suppresses (see
+        // getApprovedLeaveIdSet's own comment); fail-open on a read error.
+        const onLeaveToday = await getApprovedLeaveIdSet(supabase, { startDate: nToday, endDate: nToday }, warnings);
+
         const nagRows = [];
         const considerForNag = (p, kind) => {
           if (!p.id) return;
           if (kind === 'admin' && nCanonMap.has(p.id)) return; // a linked admin row — represented once via its employee counterpart
           const count = nOverdueCounts.get(p.id) || 0;
           if (count < OVERDUE_ESCALATION_THRESHOLD) return;
+          if (onLeaveToday.has(canonicalId(p.id, nCanonMap))) return;
           if (!p.email) return;
           nagRows.push({
             type: 'overdueNag', recipientId: p.id, recipientKind: kind,
@@ -814,13 +842,22 @@ export default async function handler(req, res) {
         managerSummariesSent++;
       });
 
+      // Leave-aware alerts (2026-10-14) — someone on approved time off
+      // TODAY is hidden entirely from "Manager/admin overdue (5+)" (owner
+      // decision: no separate "on leave" line). Window is {today2, today2}
+      // — this block's own already-computed run-day date, not a new clock.
+      // Pending time off never suppresses; fail-open on a read error.
+      const onLeaveToday2 = await getApprovedLeaveIdSet(supabase, { startDate: today2, endDate: today2 }, warnings);
+
       // Tier 2 — manager/admin -> super-admin escalation. a.id is
       // canonicalized (2026-09-17) — a linked admin row's own id is an
       // ALIAS in canonMap, so this now reads the same merged total
       // overdueCounts bump() already accumulated under the person's
       // employee id, instead of only ever seeing whatever fraction of their
       // work happened to be assigned under the bare admin id.
-      const escalatingAdmins = hAdmins.filter(a => a.level !== 'super' && a.level !== 'owner' && (overdueCounts.get(canonicalId(a.id, canonMap)) || 0) >= OVERDUE_ESCALATION_THRESHOLD);
+      const escalatingAdmins = hAdmins
+        .filter(a => a.level !== 'super' && a.level !== 'owner' && (overdueCounts.get(canonicalId(a.id, canonMap)) || 0) >= OVERDUE_ESCALATION_THRESHOLD)
+        .filter(a => !onLeaveToday2.has(canonicalId(a.id, canonMap)));
 
       // Tier 3 — inactivity: no session activity and no completed work since
       // the previous working day. Every raw id is canonicalized the instant
@@ -850,6 +887,16 @@ export default async function handler(req, res) {
         scanServiceCompleted(client.services);
         (client.locations || []).forEach(loc => scanServiceCompleted(loc.services));
       });
+      // Leave-aware alerts (2026-10-14) — someone on approved leave at any
+      // point across the WHOLE look-back window {cutoffDateStr, today2}
+      // legitimately had no login/no completed work, so they're hidden
+      // from "Inactive since …" too (owner decision: hide, don't add an
+      // "on leave" line). A wider window than onLeaveToday2's above on
+      // purpose — this one has to cover the entire inactivity look-back,
+      // not just today. Pending time off never suppresses; fail-open on a
+      // read error.
+      const onLeaveWindow = await getApprovedLeaveIdSet(supabase, { startDate: cutoffDateStr, endDate: today2 }, warnings);
+
       const inactivePeople = [];
       [...hUsers, ...hAdmins].forEach(p => {
         if (!p.id || p.id === 'primary-admin' || p.status === 'inactive') return;
@@ -859,6 +906,7 @@ export default async function handler(req, res) {
         // canonically, via their employee row's own iteration below.
         if (canonMap.has(p.id)) return;
         if (activeSince.has(p.id) || completedSince.has(p.id)) return;
+        if (onLeaveWindow.has(canonicalId(p.id, canonMap))) return;
         inactivePeople.push(p.name || p.id);
       });
 
