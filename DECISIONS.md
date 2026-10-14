@@ -12072,6 +12072,7 @@ Held per rule #10 — touches live cron/notification logic
 (`api/cron-overdue-check.js`'s nag/escalation/inactivity/reminder
 blocks). No data writes, no schema change, no sync/permission change, per
 the ticket's own explicit scope statement — confirmed by the diff itself.
+Previewed and merged by the user directly (PR #459), same day.
 
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 

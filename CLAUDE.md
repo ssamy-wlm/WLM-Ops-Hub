@@ -751,7 +751,7 @@ Don't relitigate them without an explicit decision from the user.
   inline-JS syntax clean on all three frontends; div-balance unchanged vs
   `main` on all three (pure JS changes, no HTML touched).
 - Leave-aware alerts: suppress nags/inactive-flags during approved time off
-  (2026-10-14 — held for preview approval, `api/`): reported live — Jacob
+  (2026-10-14 — **merged**, PR #459, `api/`): reported live — Jacob
   Joslin, on approved PTO Oct 12–16, was still listed in the Oct 14
   "big-issue" alert under both "Manager/admin overdue (5+)" (13 overdue)
   and "Inactive since 2026-10-13 (no login, no completed work)." Owner
