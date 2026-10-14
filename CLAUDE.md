@@ -144,6 +144,14 @@ Don't relitigate them without an explicit decision from the user.
    value even when a hidden ancestor means nobody can see it). For pure
    server-side logic with no live Supabase access available, write a Node
    script that imports and exercises the real exported functions directly.
+   **For any `api/*.js` file: also run `node --input-type=module --check <
+   path` (or exercise the file via a real dynamic `import()` in a Node test),
+   not just a bare `node --check path`.** These files run as ES modules in
+   production; a bare `node --check` on a `.js` file parses it as CommonJS,
+   which does NOT catch an ES-module-only error like a duplicate top-level
+   `const` declaration in the same scope — see the 2026-10-14 hotfix
+   (PR #467) below, where exactly this gap let a parse error reach `main`
+   undetected and take down the entire overdue/alert cron.
 
 10. **Branch + PR per feature, with a Vercel preview.** Two tiers of risk,
     two different approval paths:
@@ -975,6 +983,30 @@ Don't relitigate them without an explicit decision from the user.
   bar+legend while the Tasks card's stays byte-identical; zero-JS-error
   load check across all three portals. `node --check` clean; div-balance
   unchanged vs. baseline (delta -2).
+- Production hotfix: duplicate `const onLeaveTodayDtr` broke the overdue/
+  alert cron (2026-10-14 — **merged**, PR #467, `api/`): `api/cron-
+  overdue-check.js` on `main` failed to load as an ES module
+  (`SyntaxError: Identifier 'onLeaveTodayDtr' has already been
+  declared`) after PR #464's branch was updated by merging `main`
+  (carrying PR #463's rewrite of the same reminder block) instead of
+  being rebased — the merge kept both sides' versions of the leave-set
+  line plus an orphaned `idForEmail()` helper. Every overdue/alert
+  feature (self-nags, the daily big-issue alert, "Inactive since…", and
+  leave-aware suppression) stopped firing; no data was affected (read-
+  only feature). A bare `node --check` on the file passed clean the
+  whole time (parses as CommonJS, where the redeclaration isn't an
+  error) — only module-mode checking or an actual ESM `import()` catches
+  it. Fixed surgically: removed the duplicate 3-arg
+  `getApprovedLeaveIdSet()` call and the dead `idForEmail()` helper,
+  kept the single 4-arg call (with the name-fallback directory). Verified
+  via `node --input-type=module --check`, grep counts, and the full
+  32-check PR-A/PR-B/leave-aware-alerts/PTO-report suite set (all of
+  which dynamically `import()` the real file, so they failed 7/7 against
+  the broken pre-fix code via `git stash` and passed clean after — the
+  same load failure a live invocation would hit). Rule #9 and the "Key
+  lessons" section updated with the module-mode `node --check`
+  requirement and the merge-vs-rebase lesson so this class of error
+  can't silently reach `main` again.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
@@ -1051,6 +1083,16 @@ call is transitively dead too.)
 - **"write warning(s)" are benign:** the server role-guard correctly
   dropping a manager-tier admin's unauthorized orgNodes/orgLinks/settings
   writes — not data loss.
+- **Merge `main` into an open PR branch only via rebase, never a merge
+  commit, when two open PRs touch the same lines.** A plain merge lets
+  git silently keep BOTH sides of a conflicting edit to the same
+  statement (e.g. two different rewrites of the same `const` line) with
+  no conflict marker to catch, producing a duplicate declaration that's
+  a hard ES-module `SyntaxError` — this exact mechanism broke `main` on
+  2026-10-14 (PR #467) when PR #464's branch was updated by merging
+  `main` (which already carried PR #463's rewrite of the same block)
+  instead of rebasing. See rule #9's module-mode `node --check` addendum
+  above — the fix for both the symptom and the detection gap.
 
 ---
 
