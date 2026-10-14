@@ -257,12 +257,6 @@ export default async function handler(req, res) {
             // by failing closed).
             const dtrCanonMap = buildCanonicalIdMap(dtrUsers, dtrAdmins);
             const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings, { users: dtrUsers, admins: dtrAdmins });
-            const idForEmail = (email) => {
-              const lower = (email || '').toLowerCase();
-              const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
-              return rec?.id || null;
-            };
-            const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings);
             // Dynamic recipient list (2026-10-14, replacing the old hardcoded
             // 3-person DAILY_TASK_REMINDER_RECIPIENTS) — every active member
             // with an email on file. Admins are deliberately excluded here;
