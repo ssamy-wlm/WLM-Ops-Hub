@@ -1567,8 +1567,42 @@ export function overlapsWindow(start, end, window) {
 // signal in cron-overdue-check.js already does, so a dual-role person's
 // leave still suppresses them regardless of which identity their time-off
 // row happens to be filed under.
-export async function getApprovedLeaveIdSet(supabase, win, warnings) {
+//
+// Optional `directory` param (2026-10-14, `{ users, admins }`, same shape
+// loadDirectory() already returns) — a reliability net, not a behavior
+// change for existing callers: omitting it keeps this function exactly
+// id-only, byte-for-byte as before. api/cron-pto-report.js's own
+// collectApprovedPtoItems() already matches a time-off row by id OR name
+// (`r.userId === person.id || String(r.userName||'').toLowerCase() ===
+// nameLower`); this function only ever matched by id, so a row filed under
+// a name with a missing/stale id was counted by the PTO report yet missed
+// here. When a directory is passed, buildNameIdMap() below resolves each
+// row's `userName`/`employeeName` against the live roster too — but ONLY
+// for a name that's unique across the whole roster; a name shared by 2+
+// people is deliberately left unresolved (never guess which one — rule #7)
+// and a warning is pushed once per ambiguous name. Name resolution is
+// strictly additive: the raw id (when present) is still added exactly as
+// before regardless of whether a name match also fires.
+function buildNameIdMap(directory, warnings) {
+  const map = new Map();
+  const ambiguous = new Set();
+  const people = [...(directory?.users || []), ...(directory?.admins || [])];
+  for (const p of people) {
+    const name = String(p?.name || '').trim().toLowerCase();
+    if (!name) continue;
+    if (map.has(name) && map.get(name) !== p.id) ambiguous.add(name);
+    else map.set(name, p.id);
+  }
+  for (const name of ambiguous) {
+    map.delete(name);
+    warnings?.push(`leaveSet: ambiguous roster name "${name}" (2+ people share it) — name-fallback match skipped, id-only match still applies`);
+  }
+  return map;
+}
+
+export async function getApprovedLeaveIdSet(supabase, win, warnings, directory) {
   const ids = new Set();
+  const nameIdMap = directory ? buildNameIdMap(directory, warnings) : null;
   try {
     const [{ data: reqRows, error: rErr }, { data: ledRows, error: lErr }] = await Promise.all([
       supabase.from('ops_time_off_requests').select('id, data'),
@@ -1590,11 +1624,23 @@ export async function getApprovedLeaveIdSet(supabase, win, warnings) {
     requests
       .filter(r => r.status === 'approved')
       .filter(r => overlapsWindow(r.startDate, r.endDate || r.startDate, win))
-      .forEach(r => { if (r.userId) ids.add(r.userId); });
+      .forEach(r => {
+        if (r.userId) ids.add(r.userId);
+        if (nameIdMap && r.userName) {
+          const match = nameIdMap.get(String(r.userName).trim().toLowerCase());
+          if (match) ids.add(match);
+        }
+      });
     ledger
       .filter(e => e.status === 'approved' && !e.isReversal && !reversedIds.has(e.id))
       .filter(e => overlapsWindow(e.startDate, e.endDate || e.startDate, win))
-      .forEach(e => { if (e.employeeId) ids.add(e.employeeId); });
+      .forEach(e => {
+        if (e.employeeId) ids.add(e.employeeId);
+        if (nameIdMap && e.employeeName) {
+          const match = nameIdMap.get(String(e.employeeName).trim().toLowerCase());
+          if (match) ids.add(match);
+        }
+      });
   } catch (err) {
     warnings?.push(`leaveSet: ${err.message}`);
   }

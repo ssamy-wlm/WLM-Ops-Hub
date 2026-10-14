@@ -269,7 +269,7 @@ export default async function handler(req, res) {
             // leave-read error yields an empty set, so this reminder still
             // sends (never silently hides by failing closed).
             const dtrCanonMap = buildCanonicalIdMap(dtrUsers, dtrAdmins);
-            const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings);
+            const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings, { users: dtrUsers, admins: dtrAdmins });
             const idForEmail = (email) => {
               const lower = (email || '').toLowerCase();
               const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
@@ -373,7 +373,7 @@ export default async function handler(req, res) {
         // Window is {nToday, nToday} — this block's own already-computed
         // run-day date. Pending time off never suppresses (see
         // getApprovedLeaveIdSet's own comment); fail-open on a read error.
-        const onLeaveToday = await getApprovedLeaveIdSet(supabase, { startDate: nToday, endDate: nToday }, warnings);
+        const onLeaveToday = await getApprovedLeaveIdSet(supabase, { startDate: nToday, endDate: nToday }, warnings, { users: nUsers, admins: nAdmins });
 
         const nagRows = [];
         const considerForNag = (p, kind) => {
@@ -847,7 +847,7 @@ export default async function handler(req, res) {
       // decision: no separate "on leave" line). Window is {today2, today2}
       // — this block's own already-computed run-day date, not a new clock.
       // Pending time off never suppresses; fail-open on a read error.
-      const onLeaveToday2 = await getApprovedLeaveIdSet(supabase, { startDate: today2, endDate: today2 }, warnings);
+      const onLeaveToday2 = await getApprovedLeaveIdSet(supabase, { startDate: today2, endDate: today2 }, warnings, { users: hUsers, admins: hAdmins });
 
       // Tier 2 — manager/admin -> super-admin escalation. a.id is
       // canonicalized (2026-09-17) — a linked admin row's own id is an
@@ -895,7 +895,7 @@ export default async function handler(req, res) {
       // purpose — this one has to cover the entire inactivity look-back,
       // not just today. Pending time off never suppresses; fail-open on a
       // read error.
-      const onLeaveWindow = await getApprovedLeaveIdSet(supabase, { startDate: cutoffDateStr, endDate: today2 }, warnings);
+      const onLeaveWindow = await getApprovedLeaveIdSet(supabase, { startDate: cutoffDateStr, endDate: today2 }, warnings, { users: hUsers, admins: hAdmins });
 
       const inactivePeople = [];
       [...hUsers, ...hAdmins].forEach(p => {

@@ -12074,6 +12074,88 @@ blocks). No data writes, no schema change, no sync/permission change, per
 the ticket's own explicit scope statement — confirmed by the diff itself.
 Previewed and merged by the user directly (PR #459), same day.
 
+### 2026-10-14 (later same day) — `getApprovedLeaveIdSet` name fallback (reliability net)
+
+**Problem:** `getApprovedLeaveIdSet` (added earlier the same day, see
+above) only ever matched a time-off row to a person by raw id
+(`userId`/`employeeId`). `api/cron-pto-report.js`'s own
+`collectApprovedPtoItems()` — the function this feature deliberately
+reused the predicates from — already matches by id OR name
+(`r.userId === person.id || String(r.userName||'').toLowerCase() ===
+nameLower`). A time-off row filed under a name with a missing or stale
+id would therefore be counted correctly by the PTO report yet silently
+missed by suppression — the exact asymmetry this ticket closes.
+
+**Fix:** gave the function an optional 4th parameter,
+`directory = { users, admins }` — the same shape `loadDirectory()`
+already returns, which every one of this file's 4 call sites already had
+in scope. Omitting it keeps the function completely unchanged
+(id-only, byte-identical to the version shipped earlier today) — this is
+additive, not a breaking signature change.
+
+When a directory IS passed, a new module-private `buildNameIdMap()`
+builds a lower-cased, trimmed full-name → id map from
+`[...directory.users, ...directory.admins]`. A name shared by 2+ distinct
+ids is deliberately excluded from the map entirely (never guess which
+person a shared name refers to — rule #7), and a warning is pushed
+exactly ONCE per ambiguous name (not once per occurrence) via a
+dedicated `ambiguous` Set that's only drained after the full roster scan
+completes. For each approved+overlapping request/ledger row, the
+existing raw-id path is completely unchanged — `userId`/`employeeId` is
+still added exactly as before — and, additively, the row's own
+`userName`/`employeeName` (when present) is resolved through the map and
+that id is added too if a unique match is found. The function still
+returns a plain `Set` of raw ids exactly as before; every caller keeps
+canonicalizing both sides with its own block's `canonMap`/`canonicalId`
+afterward, unchanged.
+
+**Call sites updated, all 4** (each already had its own `loadDirectory()`
+result in scope — this is a pure additive 4th argument at each site, not
+a new read): the daily-task-reminder block
+(`{users: dtrUsers, admins: dtrAdmins}`), the twice-daily overdue
+self-nag block (`{users: nUsers, admins: nAdmins}`), and the
+hierarchy-escalation block's two separate calls — "Manager/admin
+overdue" and "Inactive since …" — both passing
+`{users: hUsers, admins: hAdmins}`.
+
+**Verification** (no live Supabase access, rule #11 — the same fake
+in-memory Supabase harness): a new 8-check Node suite against the real,
+unmodified `getApprovedLeaveIdSet` export: a request row with a matching
+name but a blank/null `userId` is suppressed purely by name; a ledger row
+with a matching `employeeName` but a missing `employeeId` likewise; a
+row whose id matches directly still works completely unchanged with a
+directory passed (the core backward-compatibility regression); an
+ambiguous duplicate name across the roster is never resolved by name — a
+DIFFERENT row that happens to carry one of the duplicate's own real id
+still suppresses normally (the ambiguity only blocks the name path, never
+an already-present id), the ambiguous name's own null-id row contributes
+nothing, and the warning fires exactly once, not once per affected row;
+omitting `directory` entirely reproduces today's id-only behavior exactly
+— including zero warnings ever pushed; a PENDING request and both a
+reversed ledger entry and a self-reported reversal entry still never
+suppress, even when a name would otherwise resolve cleanly. Confirmed via
+`git stash` that 4 of these 8 (the two direct name-match checks and the
+ambiguous-name check) fail against the pre-fix code — the other 4 are
+regression/back-compat checks that correctly already held either way.
+Re-ran the leave-aware-alerts e2e suite unchanged (5/5 — this PR doesn't
+touch the daily-reminder recipient loop itself, only adds the 4th
+argument to its `getApprovedLeaveIdSet` call, so its fixtures and
+assertions are untouched), the leave-aware-alerts unit suite (10/10,
+untouched), and the PTO-report ledger-merge suite (2/2, untouched) —
+25/25 across all 4 files combined. `node --check` clean on
+`api/ops-sync.js` and `api/cron-overdue-check.js`. No HTML touched, no
+migration, no schema change.
+
+Held per rule #10 — a low-risk robustness change touching live
+notification suppression logic (not the recipient list itself, nor any
+data write). Deliberately kept as a SEPARATE PR from the daily-task-
+reminder dynamic-recipient-list change (same ticket, explicitly split by
+the user: "do NOT bundle... Keep them independent so each can be tested
+and reverted on its own") — different risk surface (recipient selection
+vs. suppression-set accuracy), no shared code path between the two beyond
+both reading from `loadDirectory(supabase)`'s output, which each call
+site already had in scope before either change.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
