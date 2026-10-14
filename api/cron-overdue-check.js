@@ -44,17 +44,15 @@ import { resolveNotifyRecipients, resolveReportRecipients, insertNotifications, 
 import { buildEmailHtml, sendResendEmail } from '../lib/resendClient.js';
 import { isWithinQuietHours } from '../lib/quietHours.js';
 
-// Weekday morning "log your tasks" reminder (2026-09-07) — v1 hardcoded
-// recipients, can become a per-user toggle later. Sent via the same Resend
-// setup every other notification email already uses (lib/resendClient.js),
-// NOT through insertNotifications()/ops_notifications, since this isn't tied
-// to a real event on a real record — it's a fixed daily nudge to 3 specific
-// people, so a plain direct send is the simpler, more literal fit.
-const DAILY_TASK_REMINDER_RECIPIENTS = [
-  { name: 'Rana Ayman', email: 'ranaa@weblightmedia.com' },
-  { name: 'Sherine Amin', email: 'sherinea@weblightmedia.com' },
-  { name: 'Assmaa Fouad', email: 'assmaaf@weblightmedia.com' },
-];
+// Weekday morning "log your tasks" reminder (2026-09-07, hardcoded
+// 3-person list retired 2026-10-14). Sent via the same Resend setup every
+// other notification email already uses (lib/resendClient.js), NOT through
+// insertNotifications()/ops_notifications, since this isn't tied to a real
+// event on a real record — it's a daily nudge, so a plain direct send is
+// the simpler, more literal fit. Recipients are now every active member
+// with an email on file (see the block below) rather than a fixed list —
+// a hardcoded roster silently kept emailing people who'd left (Assmaa) and
+// silently skipped everyone else on the team.
 
 // Shared by the hierarchy-escalation block (tier 2, below) and the
 // twice-daily overdue self-nag block (2026-09-18, below) — hoisted to
@@ -237,71 +235,60 @@ export default async function handler(req, res) {
 
             // Quiet-hours check (2026-09-13) — this send site is the one
             // place in this file that emails via sendResendEmail() DIRECTLY
-            // rather than through insertNotifications() (see this block's
-            // own header comment above: hardcoded name/email pairs, no
-            // recipientId to look a team up from the way every other
-            // notification type in this codebase already does). Resolved by
-            // matching each hardcoded email against the live directory, same
-            // "never trust a hardcoded default, resolve fresh" discipline
-            // already used elsewhere in this file — falls back to the
+            // rather than through insertNotifications(), since this isn't
+            // tied to a real event on a real record. Falls back to the
             // Egypt/default window (matching this codebase's own established
-            // `team || 'Egypt'` convention) only if no matching row exists.
+            // `team || 'Egypt'` convention) via `u.team` directly — no
+            // separate lookup needed since dtrUsers below already carries it.
             // In practice this cron only ever fires weekday mornings
             // (vercel.json's "0 7 * * 1-5"), which never overlaps either
             // team's Fri-evening-through-Mon-morning window — so this is a
             // defensive, always-correct check, not one expected to actually
             // suppress anything under the current schedule.
             const { users: dtrUsers, admins: dtrAdmins } = await loadDirectory(supabase);
-            const teamForEmail = (email) => {
-              const lower = (email || '').toLowerCase();
-              const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
-              return rec?.team;
-            };
             // Leave-aware alerts (2026-10-14) — don't nudge someone to "add
-            // your tasks" while they're on approved leave. These 3 recipients
-            // are hardcoded {name,email} pairs with no id of their own, so
-            // each is resolved against the live directory by email first
-            // (same lookup teamForEmail() already does) and canonicalized
-            // with this block's own canonMap before checking the leave set,
-            // same convention as every other per-person signal in this file.
-            // Window is {cairo.dateStr, cairo.dateStr} — this block's own
-            // already-computed run-day date, not a new clock. Fail-open: a
-            // leave-read error yields an empty set, so this reminder still
-            // sends (never silently hides by failing closed).
+            // your tasks" while they're on approved leave. Each recipient's
+            // own `u.id` is canonicalized with this block's own canonMap
+            // before checking the leave set, same convention as every other
+            // per-person signal in this file. Window is {cairo.dateStr,
+            // cairo.dateStr} — this block's own already-computed run-day
+            // date, not a new clock. Fail-open: a leave-read error yields an
+            // empty set, so this reminder still sends (never silently hides
+            // by failing closed).
             const dtrCanonMap = buildCanonicalIdMap(dtrUsers, dtrAdmins);
             const onLeaveTodayDtr = await getApprovedLeaveIdSet(supabase, { startDate: cairo.dateStr, endDate: cairo.dateStr }, warnings);
-            const idForEmail = (email) => {
-              const lower = (email || '').toLowerCase();
-              const rec = [...dtrUsers, ...dtrAdmins].find(p => (p.email || '').toLowerCase() === lower);
-              return rec?.id || null;
-            };
+            // Dynamic recipient list (2026-10-14, replacing the old hardcoded
+            // 3-person DAILY_TASK_REMINDER_RECIPIENTS) — every active member
+            // with an email on file. Admins are deliberately excluded here;
+            // they get escalation emails instead (see this file's hierarchy-
+            // escalation block below) — if the owner wants admins included
+            // too that's a separate, explicitly-confirmed decision.
+            const dtrRecipients = dtrUsers.filter(u => u.status !== 'inactive' && u.email);
             let sent = 0;
             let suppressed = 0;
-            for (const r of DAILY_TASK_REMINDER_RECIPIENTS) {
-              if (isWithinQuietHours(teamForEmail(r.email), new Date())) { suppressed++; continue; }
-              if (onLeaveTodayDtr.has(canonicalId(idForEmail(r.email), dtrCanonMap))) { suppressed++; continue; }
+            for (const u of dtrRecipients) {
+              if (isWithinQuietHours(u.team, new Date())) { suppressed++; continue; }
+              if (onLeaveTodayDtr.has(canonicalId(u.id, dtrCanonMap))) { suppressed++; continue; }
               try {
                 const html = buildEmailHtml({
-                  name: r.name,
+                  name: u.name,
                   title: 'Good morning — add your tasks for today.',
                   body: "Quick reminder to log today's workload/tasks in the Ops Hub before the morning meeting.",
                   link: process.env.APP_URL || 'https://opshub.weblightmedia.com/user',
                 });
-                // David email overhaul audit (2026-09-28) — DAILY_TASK_REMINDER_RECIPIENTS
-                // above has never included David, so this `type` has no
-                // observable effect today; passed anyway as defense-in-depth
-                // so this hardcoded list could never silently start
-                // reaching him if it's ever edited later with no one
-                // remembering to re-check that against his allowlist.
-                const result = await sendResendEmail({ to: r.email, subject: 'Good morning — add your tasks for today.', html, type: 'dailyTaskReminder' });
+                // David email overhaul audit (2026-09-28) — `type` passed as
+                // defense-in-depth so this list could never silently start
+                // reaching him if his own `status`/email ever qualify him
+                // here without anyone re-checking his allowlist.
+                const result = await sendResendEmail({ to: u.email, subject: 'Good morning — add your tasks for today.', html, type: 'dailyTaskReminder' });
                 if (result?.suppressed) suppressed++;
                 else sent++;
               } catch (err) {
-                await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err, extra: { recipient: r.email } });
-                warnings.push(`dailyTaskReminder send (${r.email}): ${err.message}`);
+                await logError({ endpoint: 'cron-overdue-check:dailyTaskReminder', error: err, extra: { recipient: u.email } });
+                warnings.push(`dailyTaskReminder send (${u.email}): ${err.message}`);
               }
             }
-            summary.dailyTaskReminder = `sent ${sent}/${DAILY_TASK_REMINDER_RECIPIENTS.length}${suppressed ? ` (${suppressed} suppressed — quiet hours/David allowlist)` : ''}`;
+            summary.dailyTaskReminder = `sent ${sent}/${dtrRecipients.length}${suppressed ? ` (${suppressed} suppressed — quiet hours/leave/David allowlist)` : ''}`;
           }
         } else {
           summary.dailyTaskReminder = 'not a Cairo weekday (safety-net check — the cron schedule itself already restricts to weekdays)';
