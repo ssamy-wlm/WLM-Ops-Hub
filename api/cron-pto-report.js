@@ -104,7 +104,7 @@
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { localPartsInTz } from '../lib/quietHours.js';
-import { insertNotifications, DAVID_EMAIL } from './ops-sync.js';
+import { insertNotifications, DAVID_EMAIL, overlapsWindow } from './ops-sync.js';
 
 function dateStr(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
 
@@ -132,10 +132,10 @@ export function computeHalfMonthWindow(year, month, day) {
 const TARGET_FIRST_NAMES = ['Jacob', 'Abby', 'Michael'];
 export function firstNameOf(name) { return String(name || '').trim().split(/\s+/)[0].toLowerCase(); }
 
-function overlapsWindow(start, end, window) {
-  if (!start) return false;
-  return start <= window.endDate && (end || start) >= window.startDate;
-}
+// overlapsWindow() moved to api/ops-sync.js (2026-10-14, leave-aware alerts)
+// so api/cron-overdue-check.js's new getApprovedLeaveIdSet() can share the
+// exact same overlap test — imported above, behavior byte-identical to the
+// copy that used to live here.
 
 // Exported for direct unit testing (CLAUDE.md rule #9) — the pure
 // merge/dedupe core, no Supabase/network dependency. `requests` is the raw

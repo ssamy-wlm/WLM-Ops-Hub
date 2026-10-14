@@ -1537,6 +1537,70 @@ export function resolveTimeOffSubmittedRecipients(admins) {
   return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
 }
 
+// Moved here from api/cron-pto-report.js (2026-10-14, leave-aware alerts) so
+// both that file and api/cron-overdue-check.js share the exact same
+// overlap test — true if [start, end] (an approved time-off range) overlaps
+// [window.startDate, window.endDate] at all, not only if fully contained.
+// cron-pto-report.js's own collectApprovedPtoItems() now imports this
+// instead of keeping its own copy; behavior is byte-identical to before.
+export function overlapsWindow(start, end, window) {
+  if (!start) return false;
+  return start <= window.endDate && (end || start) >= window.startDate;
+}
+
+// Set of raw person ids on APPROVED, non-reversed, non-cancelled time off
+// whose range overlaps [win.startDate .. win.endDate] — the exact same
+// request/ledger predicates api/cron-pto-report.js's own
+// collectApprovedPtoItems() already uses (kept in sync deliberately: a
+// ledger isReversal:true entry, or one another entry's reversalOf points
+// at, is never "approved leave"; a PENDING request never suppresses either
+// — only a literal status==='approved' row does, per this feature's own
+// explicit owner decision that a pending request, e.g. Sarah Ibrahim's,
+// must not quiet her alerts).
+//
+// Reads are best-effort: on any error, a warning is pushed and an EMPTY
+// set is returned so the caller still ALERTS — fail TOWARD alerting, never
+// toward silently hiding a real overdue/inactive person because this read
+// happened to fail. Returns RAW ids (userId/employeeId) — every caller is
+// responsible for canonicalizing both sides with its own block's
+// canonMap/canonicalId before comparing, same as every other per-person
+// signal in cron-overdue-check.js already does, so a dual-role person's
+// leave still suppresses them regardless of which identity their time-off
+// row happens to be filed under.
+export async function getApprovedLeaveIdSet(supabase, win, warnings) {
+  const ids = new Set();
+  try {
+    const [{ data: reqRows, error: rErr }, { data: ledRows, error: lErr }] = await Promise.all([
+      supabase.from('ops_time_off_requests').select('id, data'),
+      supabase.from('ops_time_off_ledger').select('id, data'),
+    ]);
+    if (rErr) warnings?.push(`leaveSet requests: ${rErr.message}`);
+    if (lErr) warnings?.push(`leaveSet ledger: ${lErr.message}`);
+    const requests = (reqRows || []).map(r => r.data).filter(Boolean);
+    // {id: r.id, ...r.data} (not a bare r.data) — same defensive merge
+    // cron-pto-report.js's own collectApprovedPtoItems() caller already
+    // uses for this table: the row's `id` normally already lives inside
+    // `data` too (every ledger entry is written via insertNewOnly(), which
+    // stores `data: r` — the full incoming record including its own `id`
+    // property), but falling back to the outer column id here too is what
+    // makes the reversedIds.has(e.id) check below reliable even for a
+    // malformed/legacy row that's missing it from the payload.
+    const ledger = (ledRows || []).map(r => (r.data ? { id: r.id, ...r.data } : null)).filter(Boolean);
+    const reversedIds = new Set(ledger.filter(e => e.reversalOf).map(e => e.reversalOf));
+    requests
+      .filter(r => r.status === 'approved')
+      .filter(r => overlapsWindow(r.startDate, r.endDate || r.startDate, win))
+      .forEach(r => { if (r.userId) ids.add(r.userId); });
+    ledger
+      .filter(e => e.status === 'approved' && !e.isReversal && !reversedIds.has(e.id))
+      .filter(e => overlapsWindow(e.startDate, e.endDate || e.startDate, win))
+      .forEach(e => { if (e.employeeId) ids.add(e.employeeId); });
+  } catch (err) {
+    warnings?.push(`leaveSet: ${err.message}`);
+  }
+  return ids;
+}
+
 async function fireTimeOffSubmittedNotification(supabase, request, warnings) {
   const { users, admins } = await getDirectory(supabase);
   const rows = resolveTimeOffSubmittedRecipients(admins).map(r => {
