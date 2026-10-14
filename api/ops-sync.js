@@ -331,9 +331,14 @@ function preserveMissingClientFields(incoming, current) {
 // the actual convention this app uses, see index.html ~5722-5723) and
 // projects whose progress/progressLog they're updating (userUpdateProgress())
 // via an assigned service, or whose tasks are assigned to them directly
-// (userMarkTaskDone()). ANY other change — to the client itself, to another
-// person's items — REJECTS THE WHOLE WRITE with a clear reason; nothing is
-// silently merged or dropped.
+// (userMarkTaskDone()). This function is always run against the output of
+// restrictClientWriteToOwnItems() above (see its own comment), never the raw
+// payload — an item NOT assigned to this member can no longer differ from
+// `current` by the time this check runs, so the only way it still fails is a
+// genuine attempted change to the client itself or a scalar field; an actual
+// attempt to edit another person's item is equally ineffective either way
+// (that item's value is pinned to `current` before storage), it just no
+// longer rejects the member's OWN, legitimate edits bundled in the same write.
 export function isAssignedToMember(item, memberId, memberName) {
   if (!item) return false;
   if (item.assigneeId === memberId) return true;
@@ -375,6 +380,62 @@ function diffArrayById(oldArr, newArr) {
     if (!newById.has(id)) changed.push({ id, prev: item, next: null });
   }
   return changed;
+}
+
+// A member's own client write shares the SAME record as every other
+// member's services on that client — the record this function returns a
+// cleaned copy of is what checkMemberClientWrite() validates AND what
+// actually gets stored, never the raw, possibly-stale `incoming` a browser
+// sent (2026-10-14, fixing the #460 regression this created: a member's
+// LEGITIMATE edit to their own service was getting the WHOLE client write
+// rejected — "not assigned to services item svc_X" — whenever their local
+// cache simply hadn't seen a since-changed service belonging to someone
+// else on the same client; that staleness has nothing to do with what this
+// member actually touched). Every list item the member ISN'T assigned to is
+// replaced with the server's own CURRENT value, verbatim, regardless of
+// what the incoming payload said about it (including items the incoming
+// payload omitted entirely) — so checkMemberClientWrite() only ever judges
+// the member's OWN items (where a real diff still means a real edit), and
+// storage can never drift an unowned item OR silently drop it just because
+// this member's browser had a stale or incomplete copy. A member genuinely
+// trying to edit (or delete, by omission) someone else's item still ends
+// up with that item's CURRENT value here — ineffective, exactly as before,
+// just without collaterally blocking their own legitimate edit.
+export function restrictClientWriteToOwnItems(incoming, current, memberId, memberName) {
+  if (!current) return incoming;
+  const restrictList = (curArr, incArr) => {
+    if (!Array.isArray(incArr)) return incArr; // key absent entirely — listKeyMissingButNonEmpty already guards this case
+    const curById = new Map((curArr || []).filter(x => x && x.id != null).map(x => [String(x.id), x]));
+    const incIds = new Set(incArr.filter(x => x && x.id != null).map(x => String(x.id)));
+    const kept = incArr.map(item => {
+      const curItem = item && item.id != null ? curById.get(String(item.id)) : null;
+      // Not theirs — always take the server's own current value, never
+      // whatever this member's payload (stale or not) happened to carry.
+      if (curItem && !isAssignedToMember(curItem, memberId, memberName)) return curItem;
+      return item;
+    });
+    // An unowned item the member's payload dropped entirely (a stale local
+    // cache that never had it) must not vanish from storage just because it
+    // isn't in `incArr` — restore it from current.
+    for (const curItem of (curArr || [])) {
+      if (curItem && curItem.id != null && !incIds.has(String(curItem.id)) && !isAssignedToMember(curItem, memberId, memberName)) {
+        kept.push(curItem);
+      }
+    }
+    return kept;
+  };
+  const out = { ...incoming };
+  out.services = restrictList(current.services, incoming.services);
+  out.recurringServices = restrictList(current.recurringServices, incoming.recurringServices);
+  if (Array.isArray(incoming.locations)) {
+    const curLocsById = new Map((current.locations || []).filter(l => l && l.id != null).map(l => [l.id, l]));
+    out.locations = incoming.locations.map(loc => {
+      const curLoc = loc && loc.id != null ? curLocsById.get(loc.id) : null;
+      if (!curLoc) return loc;
+      return { ...loc, services: restrictList(curLoc.services, loc.services) };
+    });
+  }
+  return out;
 }
 
 // Plain server-side Date usage (this is a serverless request handler, not
@@ -2704,17 +2765,24 @@ export default async function handler(req, res) {
             rejected.push({ table: 'clients', id: inc.id, reason: 'members cannot create new clients' });
             continue;
           }
-          const check = checkMemberClientWrite(cur.data, inc, session.id, session.name);
+          // Clean copy first (2026-10-14 — see restrictClientWriteToOwnItems()'s
+          // own comment): every item this member isn't assigned to is pinned to
+          // the server's CURRENT value regardless of what their payload said,
+          // so checkMemberClientWrite() below only ever judges this member's
+          // OWN items — a stale/incomplete copy of someone ELSE's service can
+          // no longer reject (or quietly drop) this member's legitimate edit.
+          const safeInc = restrictClientWriteToOwnItems(inc, cur.data, session.id, session.name);
+          const check = checkMemberClientWrite(cur.data, safeInc, session.id, session.name);
           if (!check.allowed) {
             rejected.push({ table: 'clients', id: inc.id, reason: check.reason });
             continue;
           }
           // status is never part of the check above (members can't touch it),
           // but guard it here too — belt and suspenders against active/inactive drift.
-          // checkMemberClientWrite() above ran against the RAW `inc` — the merge
-          // only ever fills in fields already absent from `inc`, which never
+          // checkMemberClientWrite() above ran against `safeInc` — the merge
+          // only ever fills in fields already absent from it, which never
           // changes what that check saw.
-          const toStore = preserveMissingClientFields(inc, cur.data);
+          const toStore = preserveMissingClientFields(safeInc, cur.data);
           const { error: uErr } = await supabase.from('ops_clients').update({ data: { ...toStore, status: cur.status } }).eq('id', inc.id);
           if (uErr) { warnings.push(`clients(${inc.id}): ${uErr.message}`); continue; }
           n++;
@@ -2726,18 +2794,18 @@ export default async function handler(req, res) {
             // for the self-assign check fireAssignmentNotifications() does
             // (2026-09-03: assignment emails go to the assignee only, never
             // when they assigned it to themselves).
-            assignmentEvents.push(...collectServiceAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
-            assignmentEvents.push(...collectTaskAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
-            assignmentEvents.push(...collectSubitemAssignmentEvents(inc, cur.data, inc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectServiceAssignmentEvents(safeInc, cur.data, safeInc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectTaskAssignmentEvents(safeInc, cur.data, safeInc).map(ev => ({ ...ev, assignedById: session.id })));
+            assignmentEvents.push(...collectSubitemAssignmentEvents(safeInc, cur.data, safeInc).map(ev => ({ ...ev, assignedById: session.id })));
           }
           if (notifSettings.serviceUpdate) {
-            serviceUpdateEvents.push(...collectServiceUpdateEvents(inc, cur.data, inc));
+            serviceUpdateEvents.push(...collectServiceUpdateEvents(safeInc, cur.data, safeInc));
           }
           if (notifSettings.done) {
-            doneEvents.push(...collectServiceDoneEvents(inc, cur.data, inc));
+            doneEvents.push(...collectServiceDoneEvents(safeInc, cur.data, safeInc));
           }
           if (notifSettings.submittedForReview) {
-            reviewEvents.push(...collectSubmittedForReviewEvents(inc, cur.data, inc));
+            reviewEvents.push(...collectSubmittedForReviewEvents(safeInc, cur.data, safeInc));
           }
         }
         applied.clients = n;
