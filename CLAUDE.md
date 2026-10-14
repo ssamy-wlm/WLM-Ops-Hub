@@ -867,6 +867,32 @@ Don't relitigate them without an explicit decision from the user.
   three portals) — confirmed via `git stash` that the suite fails against
   the pre-fix code, proving it's a genuine regression test. `node --check`
   clean; div-balance unchanged vs. baseline (delta -1).
+- Overview urgency donuts replaced with compact horizontal segmented bars
+  (2026-10-14 — **merged**, PR #462, `index.html`, Option A from the
+  mockup): the "Tasks by Urgency"/"Services by Urgency" cards now render a
+  header ("N open"), a single rounded segmented bar (Overdue/Due this
+  week/Due this month/Upcoming, same colors as before), and a 2-column
+  legend — replacing the two SVG donut rings. Render-only change, per
+  scope: ALL existing data/computation and the Services frequency filter
+  (#433) untouched — `_renderOverviewUrgencyDonut(group, bucketTotals)`
+  kept its name and exact input contract from
+  `renderTeamProductionAnalytics()`. Segment widths are plain percentages
+  of bucketTotals/total, always summing to 100% by construction — no
+  floating-point remainder special-case needed the way the old donut's
+  SVG arc-length math required. A 0-count bucket contributes no bar
+  segment element but still renders its own legend row (0). Removed the
+  now-dead `_ovUrgencyHover()`/`_ovUrgencyUnhover()` donut-highlight JS
+  and the SVG center-overlay elements (nothing left to highlight);
+  hover-for-count kept via a native `title` attribute on each segment/
+  legend row instead. IDs renamed `...-urgency-donut-wrap` →
+  `...-urgency-bar-wrap`. Verified with a new Playwright suite: segment-
+  width proportionality + legend correctness (including the 0-count
+  case) against the render function directly; an end-to-end test via the
+  real `renderTeamProductionAnalytics()`/`setOvSvcFreqFilter()` proving
+  switching the Services frequency filter updates the Services card's
+  bar+legend while the Tasks card's stays byte-identical; zero-JS-error
+  load check across all three portals. `node --check` clean; div-balance
+  unchanged vs. baseline (delta -2).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
