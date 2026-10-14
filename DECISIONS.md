@@ -12148,6 +12148,8 @@ suppression-set accuracy), no shared code path between the two beyond
 both reading from `loadDirectory(supabase)`'s output, which each call
 site already had in scope before either change.
 
+Previewed and merged by the user directly (PR #463), same day.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

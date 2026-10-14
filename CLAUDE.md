@@ -868,7 +868,7 @@ Don't relitigate them without an explicit decision from the user.
   the pre-fix code, proving it's a genuine regression test. `node --check`
   clean; div-balance unchanged vs. baseline (delta -1).
 - Daily task reminder now reaches every active employee, not a hardcoded 3
-  (2026-10-14 — held for preview approval, `api/`): reported live — the
+  (2026-10-14 — **merged**, PR #463, `api/`): reported live — the
   weekday-morning "add your tasks" email in `api/cron-overdue-check.js`
   only ever went to a hardcoded `DAILY_TASK_REMINDER_RECIPIENTS` 3-person
   list (Rana/Sherine/Assmaa), silently skipping every other active member
