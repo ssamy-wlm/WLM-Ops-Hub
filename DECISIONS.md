@@ -12156,6 +12156,8 @@ vs. suppression-set accuracy), no shared code path between the two beyond
 both reading from `loadDirectory(supabase)`'s output, which each call
 site already had in scope before either change.
 
+Previewed and merged by the user directly (PR #464), same day.
+
 ### 2026-10-14 (later same day) — Daily task reminder: hardcoded 3-person list → every active employee
 
 **Reported:** the weekday-morning "Good morning — add your tasks for

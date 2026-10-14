@@ -868,7 +868,7 @@ Don't relitigate them without an explicit decision from the user.
   the pre-fix code, proving it's a genuine regression test. `node --check`
   clean; div-balance unchanged vs. baseline (delta -1).
 - `getApprovedLeaveIdSet` name fallback — a reliability net (2026-10-14 —
-  held for preview approval, `api/`): `getApprovedLeaveIdSet` (added the
+  **merged**, PR #464, `api/`): `getApprovedLeaveIdSet` (added the
   same day, see the leave-aware-alerts entry above) only ever matched a
   time-off row to a person by raw id (`userId`/`employeeId`), unlike
   `api/cron-pto-report.js`'s own `collectApprovedPtoItems()`, which
