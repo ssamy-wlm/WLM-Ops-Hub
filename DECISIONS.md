@@ -12156,6 +12156,82 @@ vs. suppression-set accuracy), no shared code path between the two beyond
 both reading from `loadDirectory(supabase)`'s output, which each call
 site already had in scope before either change.
 
+### 2026-10-14 (later same day) — Daily task reminder: hardcoded 3-person list → every active employee
+
+**Reported:** the weekday-morning "Good morning — add your tasks for
+today" email (`api/cron-overdue-check.js`'s 07:00 UTC block) only ever
+went to a hardcoded `DAILY_TASK_REMINDER_RECIPIENTS` constant — Rana
+Ayman, Sherine Amin, Assmaa Fouad. Two problems: every other active
+employee never got it at all, and Assmaa — who has since left the
+company (`ops_users` row has `status:'inactive'`) — kept getting it
+indefinitely, since the hardcoded pair never consulted her actual roster
+status.
+
+**Fix:** replaced the hardcoded loop with a dynamic recipient list built
+fresh from the live roster each run: `dtrUsers.filter(u => u.status !==
+'inactive' && u.email)`, looping over each `u.name`/`u.email`/`u.id`/
+`u.team` directly. This made the old per-recipient `teamForEmail()`/
+`idForEmail()` lookup helpers (which existed only to go from a hardcoded
+email back to a real roster row) unnecessary — removed along with the
+`DAILY_TASK_REMINDER_RECIPIENTS` constant itself, since a real `ops_users`
+row already carries everything needed. The two existing suppressions are
+completely unchanged in behavior, only their input changed from a
+hardcoded pair to a real roster row: quiet-hours
+(`isWithinQuietHours(u.team, new Date())`) and leave-aware
+(`onLeaveTodayDtr.has(canonicalId(u.id, dtrCanonMap))`, the suppression
+point (d) added earlier the same day in the leave-aware-alerts entry
+above — that call site is otherwise untouched by this change; it still
+passes 3 args, no `directory` param yet, since that's PR B's separate
+change). `summary.dailyTaskReminder` now reports `sent ${sent}/${eligible
+recipient count}` against the real dynamic total instead of a hardcoded
+`/3`.
+
+**Scope, flagged rather than assumed:** "active employees" = active
+*members* (`ops_users`) only. Admins are deliberately unchanged — they
+already get escalation emails through a different path (the
+hierarchy-escalation block). The ticket itself named the one-line
+addition that would include admins too (`dtrAdmins.filter(a =>
+a.status !== 'inactive' && a.email)`) but explicitly said not to assume
+it without confirming first — not added here.
+
+**Verification** (no live Supabase access, rule #11 — the existing fake
+in-memory Supabase harness): a new 7-check Node suite against the real,
+unmodified handler — every active member with an email is attempted; an
+inactive member (Assmaa) never is; a member with no email is skipped
+with no warning logged at all (never attempts a send to nothing); a
+member on approved leave today is still suppressed, a non-leave member
+still attempted; a `'US'`-team member inside their own Fri–Mon quiet
+window is suppressed while an `'Egypt'`-team member at the identical
+instant is not (both real `lib/quietHours.js` behavior, not reimplemented
+test logic); a freshly-added active-member fixture is picked up as a
+recipient with zero code changes; the summary string's denominator
+reflects the real dynamic eligible count. Confirmed via `git stash` that
+2 of these 7 (the Assmaa-exclusion check and the new-hire-auto-pickup
+check — the two behaviors a hardcoded list structurally cannot exhibit)
+fail against the pre-fix code; the other 5 incidentally already passed
+pre-fix too (Rana/Sherine were already in the old hardcoded list, so
+those checks aren't new regression coverage, but they still correctly
+exercise the new code path). The pre-existing leave-aware-alerts e2e
+suite's point-(d) test (which exercised the now-deleted hardcoded list)
+was updated to use two real `ops_users` fixtures instead, asserting the
+exact same thing it always did (leave suppresses, no-leave doesn't) — not
+a behavior change, just an updated fixture shape; re-run clean (5/5)
+together with the leave-aware-alerts unit suite (10/10, untouched) and
+the PTO-report ledger-merge suite (2/2, untouched) — 24/24 across all 4
+files combined. `node --check` clean on `api/cron-overdue-check.js`. No
+HTML touched, no migration, no schema change.
+
+Held per rule #10 — changes who gets emailed, a live notification-logic
+change. Deliberately kept as a SEPARATE PR from the `getApprovedLeaveIdSet`
+name-fallback reliability change (same ticket, explicitly split by the
+user: "do NOT bundle... Keep them independent so each can be tested and
+reverted on its own") — different risk surface (recipient selection vs.
+suppression-set accuracy), no shared code path between the two beyond
+both reading from `loadDirectory(supabase)`'s output, which each call
+site already had in scope before either change.
+
+Previewed and merged by the user directly (PR #463), same day.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

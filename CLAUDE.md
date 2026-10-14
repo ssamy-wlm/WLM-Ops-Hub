@@ -911,6 +911,70 @@ Don't relitigate them without an explicit decision from the user.
   ticket, explicitly split so each is independently testable/revertable;
   no shared code path beyond both already reading from the same
   `loadDirectory(supabase)` call each block already had in scope.
+- Daily task reminder now reaches every active employee, not a hardcoded 3
+  (2026-10-14 — **merged**, PR #463, `api/`): reported live — the
+  weekday-morning "add your tasks" email in `api/cron-overdue-check.js`
+  only ever went to a hardcoded `DAILY_TASK_REMINDER_RECIPIENTS` 3-person
+  list (Rana/Sherine/Assmaa), silently skipping every other active member
+  and still emailing Assmaa, who'd left the company (`status:'inactive'`).
+  Replaced the hardcoded loop with a dynamic recipient list —
+  `dtrUsers.filter(u => u.status !== 'inactive' && u.email)` — looping
+  over each `u.name`/`u.email`/`u.id`/`u.team` directly (no email→row
+  lookup needed anymore, so the old `teamForEmail()`/`idForEmail()`
+  helpers were removed along with the constant itself). Scope: active
+  *members* (`ops_users`) only — admins unchanged, they get escalation
+  emails instead; the ticket itself flagged this rather than assuming
+  admins should be added too. The two existing per-recipient suppressions
+  (quiet-hours via `isWithinQuietHours(u.team, ...)`, leave-aware via
+  `onLeaveTodayDtr.has(canonicalId(u.id, dtrCanonMap))`) are unchanged —
+  only their input (a real roster row vs. a hardcoded pair) changed.
+  `summary.dailyTaskReminder` now reports a dynamic `sent/suppressed`
+  count against the real eligible-recipient total instead of a hardcoded
+  `/3`. Verified with a new 7-check Node suite against the real,
+  unmodified handler (fake in-memory Supabase client, no live access per
+  rule #11): every active-with-email member is attempted; an inactive
+  member (Assmaa) never is; a member with no email is skipped with no
+  warning at all; a member on approved leave today is still suppressed; a
+  'US'-team member inside their own quiet window is still suppressed
+  while an 'Egypt'-team member at the same instant is not; a brand-new
+  active-member fixture is picked up with zero code changes; the summary
+  string reflects the dynamic count — confirmed via `git stash` that 2 of
+  these (the Assmaa-exclusion and new-hire-inclusion checks, the two
+  behaviors the old hardcoded list literally could not have) fail against
+  the pre-fix code. The pre-existing leave-aware-alerts e2e suite's
+  recipient fixtures were updated to real `ops_users` rows (the hardcoded
+  list it exercised no longer exists) with no change to what it actually
+  asserts; re-run clean (5/5), together with the leave-aware-alerts unit
+  suite (10/10) and the PTO-report ledger-merge suite (2/2) — 24/24 total
+  across all 4 files combined. `node --check` clean. Intentionally a
+  SEPARATE PR from the `getApprovedLeaveIdSet` name-fallback change below
+  — different risk surface, independently revertable.
+- Overview urgency donuts replaced with compact horizontal segmented bars
+  (2026-10-14 — **merged**, PR #462, `index.html`, Option A from the
+  mockup): the "Tasks by Urgency"/"Services by Urgency" cards now render a
+  header ("N open"), a single rounded segmented bar (Overdue/Due this
+  week/Due this month/Upcoming, same colors as before), and a 2-column
+  legend — replacing the two SVG donut rings. Render-only change, per
+  scope: ALL existing data/computation and the Services frequency filter
+  (#433) untouched — `_renderOverviewUrgencyDonut(group, bucketTotals)`
+  kept its name and exact input contract from
+  `renderTeamProductionAnalytics()`. Segment widths are plain percentages
+  of bucketTotals/total, always summing to 100% by construction — no
+  floating-point remainder special-case needed the way the old donut's
+  SVG arc-length math required. A 0-count bucket contributes no bar
+  segment element but still renders its own legend row (0). Removed the
+  now-dead `_ovUrgencyHover()`/`_ovUrgencyUnhover()` donut-highlight JS
+  and the SVG center-overlay elements (nothing left to highlight);
+  hover-for-count kept via a native `title` attribute on each segment/
+  legend row instead. IDs renamed `...-urgency-donut-wrap` →
+  `...-urgency-bar-wrap`. Verified with a new Playwright suite: segment-
+  width proportionality + legend correctness (including the 0-count
+  case) against the render function directly; an end-to-end test via the
+  real `renderTeamProductionAnalytics()`/`setOvSvcFreqFilter()` proving
+  switching the Services frequency filter updates the Services card's
+  bar+legend while the Tasks card's stays byte-identical; zero-JS-error
+  load check across all three portals. `node --check` clean; div-balance
+  unchanged vs. baseline (delta -2).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
