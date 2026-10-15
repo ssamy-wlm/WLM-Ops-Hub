@@ -1096,6 +1096,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <input type="checkbox" id="notif-due-soon-toggle" checked onchange="saveNotifSettingsFromForm()">
             Show due-soon reminders (services due within 7 days)
           </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;margin-top:7px;">
+            <input type="checkbox" id="notif-sound-toggle" onchange="saveNotifSettingsFromForm()">
+            Play a sound for new notifications <span style="color:var(--text-light);font-size:10px;">(off by default)</span>
+          </label>
         </div>
 
         <!-- Stats row — compact tiles (see .mywork-stat above) -->
@@ -4786,8 +4790,14 @@ function _notifSettingsKey(){ return 'wl_notif_settings_'+(currentUser?.id||curr
 function getNotifSettings(){
   try{
     const raw=JSON.parse(localStorage.getItem(_notifSettingsKey())||'null');
-    return { scope: raw?.scope==='client'?'client':'mine', dueSoon: raw?.dueSoon!==false };
-  }catch(e){ return { scope:'mine', dueSoon:true }; }
+    // sound (2026-10-15) — DEFAULT OFF (reported as playing "constantly"
+    // even after reading everything; turned off by default here rather
+    // than chasing the triggering logic, per explicit instruction).
+    // raw?.sound===true is the only way it's ever on — same "explicit
+    // opt-in, absent/anything-else means off" convention as dueSoon above
+    // uses for the opposite default.
+    return { scope: raw?.scope==='client'?'client':'mine', dueSoon: raw?.dueSoon!==false, sound: raw?.sound===true };
+  }catch(e){ return { scope:'mine', dueSoon:true, sound:false }; }
 }
 function setNotifSettings(next){
   try{ localStorage.setItem(_notifSettingsKey(), JSON.stringify(next)); }catch(e){}
@@ -4795,7 +4805,8 @@ function setNotifSettings(next){
 function saveNotifSettingsFromForm(){
   const scopeEl=document.querySelector('input[name="notif-scope"]:checked');
   const dueSoonEl=document.getElementById('notif-due-soon-toggle');
-  setNotifSettings({ scope: scopeEl?scopeEl.value:'mine', dueSoon: dueSoonEl?dueSoonEl.checked:true });
+  const soundEl=document.getElementById('notif-sound-toggle');
+  setNotifSettings({ scope: scopeEl?scopeEl.value:'mine', dueSoon: dueSoonEl?dueSoonEl.checked:true, sound: soundEl?soundEl.checked:false });
   loadMyAssignments();
 }
 function toggleNotifSettingsPanel(){
@@ -4808,9 +4819,11 @@ function _renderNotifSettingsForm(){
   const scopeMine=document.getElementById('notif-scope-mine');
   const scopeClient=document.getElementById('notif-scope-client');
   const dueSoonToggle=document.getElementById('notif-due-soon-toggle');
+  const soundToggle=document.getElementById('notif-sound-toggle');
   if(scopeMine) scopeMine.checked = ns.scope==='mine';
   if(scopeClient) scopeClient.checked = ns.scope==='client';
   if(dueSoonToggle) dueSoonToggle.checked = ns.dueSoon;
+  if(soundToggle) soundToggle.checked = ns.sound;
 }
 
 // ── Employee favorites (Monday feature pack, Feature 6) ──────────────────
@@ -5306,7 +5319,11 @@ document.addEventListener('click', _unlockNotifSound, {once:true});
 document.addEventListener('keydown', _unlockNotifSound, {once:true});
 document.addEventListener('touchstart', _unlockNotifSound, {once:true});
 function _playNotifBing(){
-  if(!_notifSoundUnlocked) return;
+  // Notification sound ON/OFF (2026-10-15, getNotifSettings()'s own
+  // comment above) — DEFAULT OFF; gated here so every existing call site
+  // (just updateAssignmentsBadge() below) automatically respects it with
+  // no change needed at the call site itself.
+  if(!_notifSoundUnlocked || !getNotifSettings().sound) return;
   try{
     if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
     const ctx = _notifAudioCtx;
