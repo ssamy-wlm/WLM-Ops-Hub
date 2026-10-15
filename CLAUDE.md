@@ -1185,6 +1185,93 @@ Don't relitigate them without an explicit decision from the user.
   fails pre-fix (sound played by default). No `api/*.js` touched (rule
   #9's module-mode check doesn't apply); div-balance unchanged on both
   files vs. baseline.
+- Transcript paste/upload parsing-import feature removed, meeting-parse
+  auto-update removed, inbound email kept fully working (2026-10-15 —
+  held for preview approval, `index.html`+`user.html`+`api/`): mapped
+  first (report-only, no code changes), then removed on explicit go-ahead.
+  Removed: `index.html`'s "📝 Add / Import" Task Assignments sub-tab (the
+  paste/upload UI, staging-review card, recent-imports list) and its JS
+  (`_onTaParseFilesChosen`, `runTaskEmailParse`, `_taUpdateStaged`,
+  `discardStagedTask`, `undoStagedImportBatch`, `commitStagedTasks`,
+  `_taRecentImportBatches`/`renderTaRecentImports`, `_taStagedTasks`,
+  `_taParseFileTexts`, plus the now-orphaned `undoCommittedImportBatch` —
+  not explicitly named in the ticket but unreachable without the removed
+  UI and sharing no other caller); new default Task Assignments sub-tab is
+  "My Tasks" (`taSubtabMyTasksBtn` now carries the default
+  `btn-toggle-active` class in the HTML itself, same mechanism "parse" used
+  before — no JS reset-on-every-load added, so a sticky mid-session tab
+  choice behaves exactly as before). `user.html`'s parallel "Add / import
+  tasks" tab and its hand-duplicated JS
+  (`_onDtParseFilesChosen`/`runDtEmailParse`/`_dtUpdateStaged`/
+  `discardDtStagedTask`/`undoDtStagedImportBatch`/`commitDtStagedTasks`/
+  `undoDtCommittedImportBatch`/`_dtStagedTasks`/`_dtParseFileTexts`) also
+  removed — no replacement delete button added, per explicit instruction;
+  this was already the member portal's only reachable path to the
+  tombstones.taskIds member-delete permission (the general delete UI was
+  already removed 2026-08-26), so member task deletion stays gone, as
+  before this feature ever existed. `api/ops-sync.js`'s meeting-parse
+  write/notify functions (`applyMeetingParseTaskStatusUpdate`,
+  `fireMeetingParseNotifyEvents`, `resolveMeetingParseRecipients`) deleted
+  outright. In `api/process-transcript.js`: deleted the
+  existingItemMentions matching/gating logic (`matchExistingTask`,
+  `activeServiceCandidates`, `matchExistingService`,
+  `evaluateMeetingParseGate`, and the whole existingItemMentions block
+  inside `parseTaskEmailForSession` that called them) and the
+  existingItemMentions instructions/schema from the taskEmail system
+  prompt. Deliberate, flagged deviation from the ticket's literal function
+  list (rule #7): `isSameTask`/`subjectSimilarity`/`subjectTokens` were
+  also named for removal, but investigation found they're shared with (a)
+  `dedupeWithinBatch()` (collapsing duplicate mentions WITHIN one parse
+  batch — core extraction, not matching-against-existing) and (b) the
+  `mergeIntoId` computation in `parseTaskEmailForSession` that flags a
+  newly-extracted task as a likely duplicate of an EXISTING open task —
+  confirmed via direct reading of `api/inbound-email.js`'s
+  `createTasksFromParsed()` that inbound email actively depends on
+  `mergeIntoId` (skips re-adding a task flagged as a duplicate, reports it
+  in the confirmation reply) — a completely different feature from the
+  meeting-parse status-auto-update being removed. Kept all three
+  functions; only the existing-item status-matching/auto-update consumers
+  were deleted. `api/inbound-email.js` itself: confirmed **zero diff**
+  (verified via `git diff --stat`) — still imports and calls
+  `parseTaskEmailForSession` exactly as before; it keeps creating tasks
+  from email exactly as before, it simply never again receives an
+  existingItemMentions-driven auto-update (that capability no longer
+  exists anywhere, not something inbound email opted out of). The separate
+  "My Roadmap" transcript-paste feature (`rmExtractTranscript()`,
+  `extractRoadmapTasks()`) was out of scope and is untouched — confirmed
+  via grep it shares no removed symbol. `client.html` has zero dependency
+  on any of this (confirmed clean via grep in the mapping step) — fully
+  unaffected. Verified with a new 6-check Node suite against the real,
+  unmodified `parseTaskEmailForSession()` (fake in-memory Supabase client
+  + mocked Gemini fetch, no live access per rule #11): a brand-new task is
+  still extracted with no existing tasks to match; the `mergeIntoId` dedup
+  against an existing open task still works (the exact mechanism
+  `inbound-email.js` depends on); a model response that still emits
+  `existingItemMentions` (proving the code path is gone, not just the
+  prompt instruction) triggers zero `ops_tasks` updates and zero
+  notification inserts; `ops-sync.js` no longer exports the three removed
+  functions; the removed function names no longer appear anywhere in
+  `process-transcript.js`'s source while `isSameTask`/`dedupeWithinBatch`
+  still do. Plus a 13-check Playwright suite against the real, live-served
+  files (no import UI/buttons/inputs in either portal's DOM, the new
+  default tab's active class, "+ New Task" still present in both) and a
+  baseline-vs-branch console-error comparison on all three portals (same
+  2 pre-existing network-only console lines on both `main` and this
+  branch — confirms zero NEW JS errors introduced). `node --check` AND
+  `node --input-type=module --check` (rule #9) both clean on all 4 touched
+  `api/*.js` files (including `api/cron-overdue-check.js`, where only a
+  stale comment referencing a removed function name was fixed — no
+  behavior change); div-balance delta unchanged vs. baseline on both
+  touched HTML files (index.html -2, user.html -1, matching `main`).
+  `api/ops-sync.js`'s `insertNotifications()` `opts.directory` override
+  mechanism (still used by `api/cron-overdue-check.js`) and its
+  `meetingParseNotify` notification-type icon/label entries in
+  `index.html` (still needed to render any already-existing historical
+  notification rows of that type) were deliberately left in place — not
+  dead code, just no longer fed by any new write. Held per rule #10 —
+  touches `api/ops-sync.js`'s notification/write logic and
+  `api/process-transcript.js`'s task-extraction logic, even though no
+  schema/migration/auth change is involved.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
