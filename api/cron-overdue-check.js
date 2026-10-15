@@ -395,9 +395,9 @@ export default async function handler(req, res) {
         // NEEDS an accurate team lookup for quiet hours to work correctly
         // (every other insertNotifications() call in this file passes
         // bypassQuietHours:true and so never exercises this path at all —
-        // this is the first one that does). Exact same fix/precedent
-        // api/process-transcript.js's fireMeetingParseNotifyEvents()
-        // already established for the identical cross-function risk.
+        // this is the first one that does). Same opts.directory override
+        // mechanism api/ops-sync.js's insertNotifications() already
+        // exposes for exactly this cross-function cache risk.
         await insertNotifications(supabase, nagRows, warnings, { directory: { users: nUsers, admins: nAdmins } });
       } catch (err) {
         await logError({ endpoint: 'cron-overdue-check:overdueNag', error: err });
