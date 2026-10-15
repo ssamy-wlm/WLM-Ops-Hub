@@ -1007,8 +1007,8 @@ Don't relitigate them without an explicit decision from the user.
   lessons" section updated with the module-mode `node --check`
   requirement and the merge-vs-rebase lesson so this class of error
   can't silently reach `main` again.
-- Don't send emails to inactive users (2026-10-15 — held for preview
-  approval, `lib/`): deactivated employees kept receiving Ops Hub emails
+- Don't send emails to inactive users (2026-10-15 — **merged**, PR #470,
+  `lib/`): deactivated employees kept receiving Ops Hub emails
   (overdue nags, digests, assignment emails), wasting the monthly Resend
   quota. Fixed with one guard at the single choke point every Resend-
   sending path in this codebase already goes through —

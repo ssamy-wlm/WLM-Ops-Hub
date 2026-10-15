@@ -12438,6 +12438,16 @@ also a genuine behavior change to live email-sending across the whole
 app, not a docs/read-only/additive-UI change, so held for preview
 approval rather than treated as low-risk.
 
+Previewed and merged by the user directly (PR #470), same day. Verified
+post-merge that the owner's own "merge main into the branch" update
+(same mechanical step that caused the PR #467 duplicate-declaration
+outage the day before) produced no repeat: `node --input-type=module
+--check` confirmed clean on `lib/resendClient.js`, `api/cron-overdue-
+check.js`, AND `api/ops-sync.js` (the latter touched by PR #469, merged
+to `main` in between this branch being cut and this PR merging) on the
+post-merge `main`, and the full 40-check related regression suite
+re-ran clean.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
