@@ -12331,6 +12331,113 @@ are confirmed green," with the preview-invocation half substituted by
 the equivalent dynamic-import proof once direct access proved
 unavailable.
 
+### 2026-10-15 — Don't send emails to inactive users
+
+**Problem:** deactivated employees kept receiving Ops Hub emails —
+overdue nags, "focus" digests, assignment emails — wasting the monthly
+Resend quota on people who no longer work here.
+
+**Fix, one guard at the single choke point.** `sendResendEmail()` in
+`lib/resendClient.js` is the one low-level function every Resend-sending
+path in this codebase already goes through (established in the David-
+suppression work, 2026-09-25/2026-09-28) — so this is the one place a
+guard covers every email type at once (nag, digest, assignment, and any
+future one), rather than needing to be threaded through every caller
+individually. Added right alongside the existing David check, same
+shape:
+
+- `isEmailSuppressedForInactiveUser(toEmail, rosterStatusMap)` — a pure
+  predicate, testable without any DB access, over an already-loaded
+  `Map<emailLower, status>`. An address with no entry in the map at all
+  (inbound replies, off-site backup recipients, client/external
+  addresses) or whose entry is anything other than the literal string
+  `'inactive'` is never suppressed; only a roster member whose OWN
+  status is `'inactive'` is. Matched on lowercased email, per the
+  ticket's own spec — the only identifier a `to` address can be compared
+  against.
+- `getRosterStatusMap()` does the actual `ops_users`/`ops_admins` read.
+  The ticket asked for "load roster status once per invocation, reads
+  only, never writes." `sendResendEmail()` has no single handler entry
+  point of its own to reset a cache from the way `api/ops-sync.js`'s own
+  `_directoryCache`/`_notifSettingsCache` do (reset explicitly at the top
+  of that file's one `handler()` — and that file's own comment documents
+  the real bug a FORGOTTEN reset caused: a warm serverless instance
+  silently serving the first request's stale directory to every later
+  request). Since `sendResendEmail()` is called from many different
+  `api/*.js` files with no shared handler to hook a reset into, an
+  explicit reset scheme isn't available here. Used a 30-second TTL cache
+  instead: it amortizes the roster read across every send inside one
+  cron/request loop (the daily task reminder and the overdue self-nag
+  can each call `sendResendEmail()` dozens of times in a single
+  invocation), while still naturally expiring BETWEEN invocations —
+  every cron in this codebase runs minutes to hours apart, far longer
+  than 30 seconds, so a warm instance can never serve meaningfully stale
+  status data the way the directory-cache bug did. This is a
+  deliberately different tradeoff from that established pattern, not an
+  oversight — flagged here so a future reader doesn't "fix" it into an
+  explicit reset scheme that has nowhere to live.
+- **Fails OPEN** on a roster-read error (logged via `logError()`, never
+  thrown or allowed to propagate). This is the single choke point every
+  outbound email in the entire app goes through — a broken roster read
+  must never silently stop ALL sending; the only acceptable failure
+  direction is "nobody gets suppressed this round" (the same effective
+  outcome as an address matching no roster member at all), never "no
+  email can be sent."
+
+**Scope boundary, flagged rather than silently decided (rule #7).** The
+Admin Controls "Send Test Email" diagnostic
+(`api/send-assignment-email.js`, triggered with no `recipientId`) already
+has its own deliberate bypasses for the David suppression and quiet
+hours, reasoned as "a deliberate on-demand action, not a scheduled
+notification." This ticket's own fix spec asked for ONE uniform guard at
+the single choke point, explicitly covering "any future" email path too,
+and named no exceptions the way the David ticket explicitly listed its
+three allowed types and two bypass cases. So no bypass was added here:
+an admin using the test-email diagnostic to send to an inactive person's
+own address will see it silently suppressed exactly like any other
+path (`{ok:true}` with no `id` back from that endpoint) — not fixed, since
+it's outside this ticket's stated scope ("Nothing else in scope").
+
+**Verification** (no live Supabase access, rule #11 — the existing fake
+in-memory Supabase harness + a mocked `global.fetch` standing in for the
+real Resend API): a new 8-check Node suite against the real, unmodified
+`sendResendEmail`/`isEmailSuppressedForInactiveUser` exports — the pure
+predicate's own case-insensitive matching and its "never suppress an
+active member or an unmatched address" behavior; an inactive `ops_users`
+member suppressed with ZERO Resend API calls ever made; an inactive
+`ops_admins` member suppressed too (not just plain users); an active
+member and an external/unmatched address both still sent to normally; a
+forced roster-read error still sends (the fail-open guarantee); the TTL
+cache proven to actually avoid a second DB read — 3 sequential sends
+populate the cache, then a 4th send against a DELIBERATELY-broken table
+still correctly suppresses the same inactive address from the cached
+map rather than fail-open-sending to it (which is what would happen if
+each call genuinely re-queried and hit the forced error); and David-
+suppression/inactive-user-suppression are proven to compose correctly —
+each still independently fires, neither masks the other. Confirmed via
+`git stash` that 4 of these 8 (the two direct-suppression checks and the
+TTL-cache-reuse check) fail against the pre-fix code. Also re-ran the
+full related regression surface clean — 40/40 combined across the daily-
+reminder suite (7/7), the leave-aware-alerts e2e suite (5/5, using the
+current post-PR-#463-merge dynamic-recipient fixture set — a stale
+scratchpad copy of this suite, left over from the PR #467 hotfix session
+and still referencing the now-deleted hardcoded `DAILY_TASK_REMINDER_
+RECIPIENTS` list, was identified as already broken on `main` independent
+of this change and was not used for this ticket's regression baseline)
+and unit suite (10/10), the name-fallback suite (8/8), and the PTO-
+report ledger-merge suite (2/2) — confirming the new guard changes
+nothing for any already-active recipient these suites exercise.
+`node --input-type=module --check` clean on `lib/resendClient.js` (per
+rule #9's module-mode addendum, added specifically because of the
+PR #467 hotfix the day before). No data writes (the roster read is
+read-only), no schema change, no migration.
+
+Held per rule #10 — `lib/resendClient.js` is CODEOWNERS-gated (`lib/`)
+regardless, so the owner's review is required before merge either way;
+also a genuine behavior change to live email-sending across the whole
+app, not a docs/read-only/additive-UI change, so held for preview
+approval rather than treated as low-risk.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
