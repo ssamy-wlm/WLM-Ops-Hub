@@ -1007,6 +1007,62 @@ Don't relitigate them without an explicit decision from the user.
   lessons" section updated with the module-mode `node --check`
   requirement and the merge-vs-rebase lesson so this class of error
   can't silently reach `main` again.
+- Don't send emails to inactive users (2026-10-15 — held for preview
+  approval, `lib/`): deactivated employees kept receiving Ops Hub emails
+  (overdue nags, digests, assignment emails), wasting the monthly Resend
+  quota. Fixed with one guard at the single choke point every Resend-
+  sending path in this codebase already goes through —
+  `sendResendEmail()` in `lib/resendClient.js`, right alongside the
+  existing David suppression. A new `isEmailSuppressedForInactiveUser
+  (toEmail, rosterStatusMap)` pure predicate (same testable shape as
+  `isEmailSuppressedForDavid()`) checks the `to` address, lowercased,
+  against a `Map<emailLower, status>` built from `ops_users`+
+  `ops_admins`; only a roster member whose own status is literally
+  `'inactive'` is suppressed — an address matching no roster member at
+  all (inbound replies, backup recipients, client/external addresses)
+  or an active member is sent as normal. The roster read itself
+  (`getRosterStatusMap()`) uses a 30s TTL cache rather than the explicit
+  per-request reset `api/ops-sync.js`'s own `_directoryCache`/
+  `_notifSettingsCache` need (that file's own comment documents the real
+  bug a forgotten reset caused) — `sendResendEmail()` has no single
+  handler entry point of its own to reset from, so a short TTL instead
+  amortizes the read across every send in one cron loop while still
+  naturally expiring between invocations (every cron here runs minutes
+  to hours apart). Fails OPEN on a roster-read error (logged via
+  `logError()`, never thrown) — this is the single choke point every
+  outbound email in the app goes through, so a broken roster read must
+  never silently stop ALL sending, only ever risk under-suppressing.
+  Flagged, not silently decided (rule #7): the Admin Controls "Send Test
+  Email" diagnostic (`api/send-assignment-email.js`, no `recipientId`)
+  was deliberately NOT given a bypass the way it has one for David/
+  quiet-hours — the ticket asked for one uniform guard covering "any
+  future" email path too, with no exceptions named, so an admin
+  test-sending to an inactive person's own address will see it silently
+  suppressed (`{ok:true}` with no `id`) same as any other path; not
+  fixed since it's outside this ticket's stated scope. Verified with a
+  new 8-check Node suite against the real, unmodified `sendResendEmail`/
+  `isEmailSuppressedForInactiveUser` exports (fake in-memory Supabase
+  client + a mocked `global.fetch` standing in for the real Resend API,
+  no live access per rule #11): the pure predicate itself (case-
+  insensitive match, active/external never suppressed); an inactive
+  `ops_users` member suppressed with zero Resend API calls made; an
+  inactive `ops_admins` member suppressed too; an active member and an
+  external/unmatched address both still sent normally; a forced roster-
+  read error still sends (fail-open); the TTL cache is proven to avoid a
+  second DB read across 4 sequential sends in one test (the 4th read
+  would hit a deliberately forced error if the cache weren't working);
+  David-suppression and inactive-user-suppression compose correctly
+  (both independently still fire, neither masks the other) — confirmed
+  via `git stash` that 4 of these 8 fail against the pre-fix code. Also
+  re-ran the full related regression surface clean (40/40 combined): the
+  daily-reminder suite (7/7), the leave-aware-alerts e2e suite (5/5,
+  using the current post-merge dynamic-recipient fixture set) and unit
+  suite (10/10), the name-fallback suite (8/8), and the PTO-report
+  ledger-merge suite (2/2) — confirming the new guard doesn't change
+  behavior for any already-active recipient these suites exercise.
+  `node --input-type=module --check` clean (per rule #9's module-mode
+  addendum). No data writes (read-only roster lookup), no schema
+  change, no migration.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
