@@ -1299,9 +1299,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="admin-notif-dot" class="admin-notif-dot"></div>
         </div>
         <div id="admin-notif-panel" class="admin-notif-panel">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);gap:8px;">
             <div style="font-weight:700;font-size:13px;">Notifications</div>
-            <button class="btn btn-xs btn-outline" onclick="markAllAdminNotifsRead()">Mark all read</button>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-light);cursor:pointer;font-weight:400;" title="Play a sound when a new notification arrives">
+                <input type="checkbox" id="admin-notif-sound-toggle" onchange="_setAdminNotifSoundEnabled(this.checked)" style="margin:0;">
+                Sound
+              </label>
+              <button class="btn btn-xs btn-outline" onclick="markAllAdminNotifsRead()">Mark all read</button>
+            </div>
           </div>
           <div id="admin-notif-list" style="padding:6px;"></div>
           <div style="padding:8px 14px;border-top:1px solid var(--border);text-align:center;">
@@ -9997,8 +10003,23 @@ function _unlockNotifSound(){ _notifSoundUnlocked = true; }
 document.addEventListener('click', _unlockNotifSound, {once:true});
 document.addEventListener('keydown', _unlockNotifSound, {once:true});
 document.addEventListener('touchstart', _unlockNotifSound, {once:true});
+// Notification sound ON/OFF toggle (2026-10-15 — reported as playing
+// "constantly" even after reading everything; turned off by default here
+// rather than chasing the triggering logic, per explicit instruction).
+// Local-only (localStorage, per-admin on this browser) — display
+// preference, never synced/pushed, same convention as every other
+// browser-local-only setting in this file (e.g. wl_theme). DEFAULT OFF:
+// an admin who wants it back on flips the checkbox in the notification
+// panel; nothing plays until they do.
+const _ADMIN_NOTIF_SOUND_KEY = 'wl_admin_notif_sound_enabled';
+function _adminNotifSoundEnabled(){
+  try{ return localStorage.getItem(_ADMIN_NOTIF_SOUND_KEY)==='true'; }catch(e){ return false; }
+}
+function _setAdminNotifSoundEnabled(on){
+  try{ localStorage.setItem(_ADMIN_NOTIF_SOUND_KEY, on?'true':'false'); }catch(e){}
+}
 function _playNotifBing(){
-  if(!_notifSoundUnlocked) return;
+  if(!_notifSoundUnlocked || !_adminNotifSoundEnabled()) return;
   try{
     if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
     const ctx = _notifAudioCtx;
@@ -10076,6 +10097,8 @@ function _notifTaskWasDeleted(n){
   return !_taTasks().some(t=>t.id===taskId);
 }
 function renderAdminNotifPanel(){
+  const soundToggle = document.getElementById('admin-notif-sound-toggle');
+  if(soundToggle) soundToggle.checked = _adminNotifSoundEnabled();
   const el = document.getElementById('admin-notif-list'); if(!el) return;
   const notifs = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!_notifTaskWasDeleted(n)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
   if(!notifs.length){ el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:12px;">No notifications</div>'; return; }
