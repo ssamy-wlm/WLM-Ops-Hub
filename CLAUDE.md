@@ -1152,6 +1152,39 @@ Don't relitigate them without an explicit decision from the user.
   `git stash` the suite fails pre-fix. Per rule #9: both a bare `node
   --check` and the module-mode `node --input-type=module --check`
   clean.
+- Notification sound turned off by default, with a persisted on/off
+  toggle (2026-10-15 — **merged**, PR #473, `index.html`+`user.html`,
+  display-only): reported as playing "constantly," even after reading
+  all notifications. Traced before guessing (rule #7): the bell sound's
+  trigger (`refreshAdminNotifBadge()`/`updateAssignmentsBadge()`) is a
+  bare unread-COUNT comparison destabilized by a real, separate
+  instability source — `api/ops-state.js`'s notifications query caps at
+  the 200 most recent rows SYSTEM-WIDE, so a heavy recipient's own
+  local notification window can churn between polls independent of
+  anything they've actually read. Rather than chasing that triggering
+  logic (a bigger, separate fix — real notification pagination, out of
+  this ticket's scope), turned the sound OFF by default in both
+  portals, with a persisted per-browser toggle. `index.html`: a new
+  "Sound" checkbox next to "Mark all read" in the notif panel header
+  (`wl_admin_notif_sound_enabled`, localStorage-only, never synced);
+  `_playNotifBing()` gated on it alongside the existing gesture-unlock
+  check. `user.html`: added to the existing local-only "🔔
+  Notifications" settings panel — `getNotifSettings()`/
+  `setNotifSettings()` gained a `sound` field (default `false`, same
+  explicit-opt-in shape `dueSoon` already uses for its own opposite
+  default). Bell icon/unread-count badge completely unaffected either
+  way — only the sound itself is gated. Verified with a 9-check
+  Playwright suite against the real files: sound defaults OFF (proven
+  via a real `window.AudioContext` construction counter — a faithful
+  proxy for "did a sound play," since `_playNotifBing()` only
+  constructs one on an actual gate-passing attempt) while badges still
+  update; toggling ON (both directly and via the real `user.html` form
+  save path) lets exactly one sound play; both checkboxes start
+  unchecked and persist via their real save paths; zero-JS-error load
+  check across all three portals. Confirmed via `git stash` the suite
+  fails pre-fix (sound played by default). No `api/*.js` touched (rule
+  #9's module-mode check doesn't apply); div-balance unchanged on both
+  files vs. baseline.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
