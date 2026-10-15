@@ -498,7 +498,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // rejected outright rather than silently accepted with a blank reason.
 const REPORT_REASONS = ['Duplicated', 'Not my task'];
 
-const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
+export const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate', 'selfAssignedAt',
@@ -506,6 +506,36 @@ const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   // priority above; attach-only in this PR (no gate logic here).
   'sopLinks',
 ];
+
+// Pin-not-reject (2026-10-15 — fixes a real, 100%-of-members-affecting
+// regression: 659 tasks across all 9 members carry selfAssignedAt, so the
+// OLD flat "any TASK_KEYS_MEMBER_MAY_NOT_TOUCH field differs from cur ->
+// reject the WHOLE write" rule below rejected essentially every ordinary
+// status/notes edit a member ever made on their own self-assigned task,
+// the instant their local cache was simply stale on one of these fields —
+// exactly the same class of false-positive #469's
+// restrictClientWriteToOwnItems() fixed for client/service writes, same
+// fix applied here). Every protected field is pinned to the server's own
+// CURRENT value, verbatim, regardless of what the incoming payload said —
+// a member still can NEVER actually change one of these fields (it's
+// always forced back to `cur`'s value, same outcome as the old reject
+// would have produced for a genuine attempted edit), but a merely-STALE
+// copy of one can no longer block or roll back an otherwise-legitimate
+// edit to an allowed field (status, notes, etc.) on a task that IS
+// theirs. dueDate keeps its own pre-existing fill-only semantics instead
+// of a flat pin: a member may still FILL a previously-empty dueDate (the
+// duplicate-merge feature's "fill the due date only if missing" rule,
+// 2026-08-26), just never change one already set — pinned to cur.dueDate
+// only when cur.dueDate already has a value.
+export function pinMemberForbiddenTaskFields(cur, inc) {
+  const safe = { ...inc };
+  for (const key of TASK_KEYS_MEMBER_MAY_NOT_TOUCH) {
+    if (key === 'dueDate') continue;
+    safe[key] = cur[key];
+  }
+  safe.dueDate = cur.dueDate ? cur.dueDate : inc.dueDate;
+  return safe;
+}
 
 // Recurring tasks (2026-09-08) — a task the assignee (or an admin) has
 // flagged as permanently repeating, stored as `recurring:{frequency,
@@ -3167,28 +3197,16 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'not your task' });
             continue;
           }
-          // dueDate gets its own fill-only rule below, not the flat
-          // compare every other disallowed key uses — a member may FILL a
-          // previously-empty dueDate (needed for the duplicate-merge
-          // feature's "fill the due date only if missing" additive rule)
-          // but never CHANGE one that's already set. Found and fixed
-          // 2026-08-26 while building that feature: the parser's own
-          // existing parse-time merge-into-existing-task path has always
-          // filled a missing dueDate the same way, which means a member's
-          // merge was being silently rejected here before this fix,
-          // despite the UI already showing it as merged.
-          const disallowedKey = TASK_KEYS_MEMBER_MAY_NOT_TOUCH.find(key => {
-            if (key === 'dueDate') return false;
-            return JSON.stringify(cur[key]) !== JSON.stringify(inc[key]);
-          });
-          if (disallowedKey) {
-            rejected.push({ table: 'tasks', id: inc.id, reason: `members cannot edit tasks.${disallowedKey}` });
-            continue;
-          }
-          if (cur.dueDate && inc.dueDate !== cur.dueDate) {
-            rejected.push({ table: 'tasks', id: inc.id, reason: 'members cannot edit tasks.dueDate' });
-            continue;
-          }
+          // Pin-not-reject (2026-10-15 — see pinMemberForbiddenTaskFields()'s
+          // own comment above for why): every TASK_KEYS_MEMBER_MAY_NOT_TOUCH
+          // field is forced to the server's current value right here,
+          // BEFORE any of the checks/merges below ever look at the payload
+          // — a member's write can no longer be rejected just because one
+          // of these fields was merely stale in their local cache. Every
+          // `inc.*` reference from here down is `safeInc.*` instead, so
+          // nothing downstream can accidentally see the member's original,
+          // un-pinned value for a protected field.
+          const safeInc = pinMemberForbiddenTaskFields(cur, inc);
           // Required reason (2026-09-11) — a genuine transition into
           // reportedMisassigned must always carry one of the two allowed
           // values; user.html's own reason modal already blocks submission
@@ -3196,7 +3214,7 @@ export default async function handler(req, res) {
           // REPORT_REASONS' own comment). A resave that leaves
           // reportedMisassigned already true (or doesn't touch it at all)
           // is unaffected — this only gates the actual transition.
-          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && !REPORT_REASONS.includes(inc.reportedMisassignedReason)) {
+          if (safeInc.reportedMisassigned === true && !cur.reportedMisassigned && !REPORT_REASONS.includes(safeInc.reportedMisassignedReason)) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'a task report requires a valid reportedMisassignedReason' });
             continue;
           }
@@ -3213,7 +3231,7 @@ export default async function handler(req, res) {
           // block never got a chance to run). openReportTaskModal()'s own
           // client-side gate (user.html) was never the real protection;
           // this is.
-          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && cur.origin !== 'admin') {
+          if (safeInc.reportedMisassigned === true && !cur.reportedMisassigned && cur.origin !== 'admin') {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'reports can only be filed on an admin-assigned task' });
             continue;
           }
@@ -3232,17 +3250,17 @@ export default async function handler(req, res) {
           // is what now actually stops a self-added task from reaching
           // this at all, not just the UI.
           row = {
-            ...inc,
-            reportedMisassigned: typeof inc.reportedMisassigned === 'boolean' ? inc.reportedMisassigned : (cur.reportedMisassigned || false),
-            reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
-            reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
-            reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+            ...safeInc,
+            reportedMisassigned: typeof safeInc.reportedMisassigned === 'boolean' ? safeInc.reportedMisassigned : (cur.reportedMisassigned || false),
+            reportedMisassignedBy: safeInc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
+            reportedMisassignedByName: safeInc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
+            reportedMisassignedAt: safeInc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
             // reportedMisassignedReason (2026-09-11) — same "never let an
             // absent field blank a real value" fallback as the three
             // fields right above; the required-reason guard above already
             // ensures this is one of REPORT_REASONS whenever it's actually
             // the transition into a report.
-            reportedMisassignedReason: inc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
+            reportedMisassignedReason: safeInc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
             // Due-date-change request (Item C, 2026-09-03) — a member can
             // only ever CREATE one, never clear/edit it (there's no self-
             // cancel here, out of this feature's stated scope); an
@@ -3285,10 +3303,11 @@ export default async function handler(req, res) {
           }
           // lastAssignedAt (2026-10-12, "N new assigned" fix) — a member can
           // never change their own assigneeId via this path (it's in
-          // TASK_KEYS_MEMBER_MAY_NOT_TOUCH, rejected above before reaching
-          // here), so this always just preserves cur's value — included for
-          // symmetry with the admin branch's own stamp above, not because
-          // this branch can actually trigger a reassignment.
+          // TASK_KEYS_MEMBER_MAY_NOT_TOUCH, pinned to cur's value above
+          // before reaching here — see pinMemberForbiddenTaskFields()), so
+          // this always just preserves cur's value — included for symmetry
+          // with the admin branch's own stamp above, not because this
+          // branch can actually trigger a reassignment.
           row.lastAssignedAt = assigneeChanged(cur, row) ? new Date().toISOString() : (cur.lastAssignedAt || null);
           // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
           // own comment; identical to the admin branch above, applied last
