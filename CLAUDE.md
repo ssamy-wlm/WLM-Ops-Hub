@@ -1115,6 +1115,43 @@ Don't relitigate them without an explicit decision from the user.
   `node --check` AND the newer module-mode `node --input-type=module
   --check` (rule #9) both clean on `api/ops-sync.js`; inline-JS syntax
   clean on `user.html`; div-balance unchanged vs. baseline (delta -1).
+- Urgent fix: members could not edit ANY self-assigned task
+  (2026-10-15 — **merged**, PR #472, `api/ops-sync.js`): reported live —
+  the server rejected every status edit on a self-assigned task with
+  `"members cannot edit tasks.selfAssignedAt"`, blocking all 9 team
+  members (659 tasks across them carry `selfAssignedAt`). Root cause:
+  the member task-write branch rejected the WHOLE write the instant ANY
+  `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` field merely differed from the
+  server's current row — including when the mismatch was pure
+  staleness (the member's local cache hadn't seen a field like
+  `selfAssignedAt` yet) rather than an actual attempted edit. Same
+  false-positive class #469 fixed for client/service writes
+  (`restrictClientWriteToOwnItems()`), now recurring on tasks. Fix:
+  pin-not-reject, extended to task fields — new
+  `pinMemberForbiddenTaskFields(cur, inc)`, run before the write is
+  evaluated at all, forces every `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` field
+  to the server's own CURRENT value regardless of what the payload
+  said; `dueDate` keeps its pre-existing fill-only rule (pinned to
+  `cur.dueDate` only when already set, not a flat pin). A member still
+  can NEVER actually change a protected field — always forced back to
+  `cur`'s value — but staleness on one can no longer block or roll back
+  a legitimate edit to an allowed field (status, notes) on a task
+  that's theirs. Every `inc.*` reference downstream in the member
+  branch now reads the pinned `safeInc` instead of the raw payload.
+  `TASK_KEYS_MEMBER_MAY_NOT_TOUCH`/`pinMemberForbiddenTaskFields()` are
+  now exported, matching #469's precedent. Verified with a 7-check Node
+  suite: 3 direct unit tests on the exported pin function (own edit
+  survives, every protected field pins to cur; a genuine attempted edit
+  to a protected field is silently pinned, never applied; dueDate
+  fill-only semantics preserved) plus 4 full end-to-end runs of the
+  real, unmodified `handler()` against a real signed session token and
+  an in-memory fake Supabase client (no live DB access, rule #11):
+  reproduces + fixes the exact reported bug, a tamper attempt is pinned
+  not rejected, the "not your task" ownership check is unchanged
+  (regression guard), dueDate fill-only holds end-to-end. Confirmed via
+  `git stash` the suite fails pre-fix. Per rule #9: both a bare `node
+  --check` and the module-mode `node --input-type=module --check`
+  clean.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
