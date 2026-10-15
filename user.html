@@ -1946,6 +1946,46 @@ function _flushCloudPush(){
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _flushCloudPush(); });
 window.addEventListener('pagehide', _flushCloudPush);
 
+// Comprehensive "is this item mine" predicate (2026-10-14) — matches
+// api/ops-sync.js's own isAssignedToMember() field-for-field (assigneeId,
+// assigneeIds[], assignedUserIds[], subitems[].assigneeId, assigneeName/
+// assignee matched by name), used ONLY to trim what this member's push
+// sends for a client record they don't fully own (see _pushSafeClient()
+// below) — NOT the same predicate as the display-only _svcAssignedToMe()
+// elsewhere in this file (that one is narrower, tracker-schema-only, and
+// must stay that way for what it already renders).
+function _pushItemIsMine(item, myId, myName){
+  if(!item) return false;
+  if(item.assigneeId===myId) return true;
+  if(Array.isArray(item.assigneeIds) && item.assigneeIds.includes(myId)) return true;
+  if(Array.isArray(item.assignedUserIds) && item.assignedUserIds.includes(myId)) return true;
+  if(Array.isArray(item.subitems) && item.subitems.some(si=>si && si.assigneeId===myId)) return true;
+  const assigneeName = String(item.assigneeName||item.assignee||'').trim().toLowerCase();
+  const nameLower = String(myName||'').trim().toLowerCase();
+  return !!nameLower && assigneeName===nameLower;
+}
+// Trims a dirty client record down to just this member's own services/
+// recurringServices/locations[].services before it's ever added to the push
+// payload (2026-10-14 — part of the #460-regression fix: a member's
+// LEGITIMATE edit to their own service was getting the whole client write
+// rejected — "not assigned to services item svc_X" — whenever their local
+// cache simply hadn't seen a since-changed service belonging to someone
+// else on the SAME shared client record). This is belt-and-suspenders, not
+// load-bearing on its own — api/ops-sync.js's restrictClientWriteToOwnItems()
+// independently reconstructs any item this member isn't assigned to from
+// the server's own current value before validating/storing, which is what
+// actually makes the write safe either way — but there's no reason for a
+// member's own browser to ever SEND a stale copy of someone else's service
+// in the first place.
+function _pushSafeClient(c, myId, myName){
+  const keepList = arr => Array.isArray(arr) ? arr.filter(s=>_pushItemIsMine(s, myId, myName)) : arr;
+  const out = {...c};
+  out.services = keepList(c.services);
+  out.recurringServices = keepList(c.recurringServices);
+  if(Array.isArray(c.locations)) out.locations = c.locations.map(loc=>({...loc, services: keepList(loc.services)}));
+  return out;
+}
+
 // Push ONLY the records that changed locally (EODs/goals/feed/clients/time-off).
 // The server enforces which of these a member may actually write (see
 // api/ops-sync.js) — e.g. a member's client edits are restricted server-side
@@ -1957,13 +1997,22 @@ window.addEventListener('pagehide', _flushCloudPush);
 // mergeDtDuplicate()) can await this directly instead of the fire-and-
 // forget debounced _scheduleCloudPush() path every other write here still
 // uses. Existing callers that don't read the return value are unaffected.
-async function cloudPushData(){
+//
+// opts.onlyToastFor ({table, id}, 2026-10-14) — when given, the generic
+// "❌ Not saved: <reason>" toast below only fires for a rejection matching
+// THAT specific table+id; a rejection of an unrelated item (another table,
+// or the same table but a different record — e.g. a stale, unrelated
+// client write bundled into the same push) is surfaced to nobody, since it
+// has nothing to do with what this particular caller is trying to save.
+// Omit it (every other existing caller) to keep the original behavior:
+// surface the first rejection in the batch, whatever it is.
+async function cloudPushData(opts){
   const token = _opsToken();
   if(!token) return {ok:false, rejected:[]};
   try {
     const changes = {};
     const clientsDirty = _opsDirty('clients', JSON.parse(localStorage.getItem('wl_clients_db')||'[]'));
-    if(clientsDirty.length) changes.clients = clientsDirty;
+    if(clientsDirty.length) changes.clients = clientsDirty.map(c=>_pushSafeClient(c, currentUser?.id, currentUser?.name));
     const goalsDirty = _opsDirty('goals', dbGet(DB_KEYS.goals)||[]);
     if(goalsDirty.length) changes.goals = goalsDirty;
     const feedDirty = _opsDirty('feed', dbGet(DB_KEYS.feed)||[]);
@@ -2008,9 +2057,15 @@ async function cloudPushData(){
     const body = await res.json().catch(()=>({}));
     // Server REJECTS (not silently drops) an out-of-scope client edit with a
     // clear reason — surface it, don't let it vanish silently on the refresh
-    // below (see api/ops-sync.js checkMemberClientWrite()).
+    // below (see api/ops-sync.js checkMemberClientWrite()). Scoped to
+    // opts.onlyToastFor when the caller asked for that (see this function's
+    // own comment above) — otherwise, every rejection in the batch is fair
+    // game, same as always.
     if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
-      showToast(`❌ Not saved: ${body.rejected[0].reason}`);
+      const toastRejections = (opts && opts.onlyToastFor)
+        ? body.rejected.filter(r=>r.table===opts.onlyToastFor.table && r.id===opts.onlyToastFor.id)
+        : body.rejected;
+      if(toastRejections.length) showToast(`❌ Not saved: ${toastRejections[0].reason}`);
     }
     if(newDtTaskTombs.length){ try{ localStorage.setItem('wl_dt_task_tombstones_sent', JSON.stringify([...dtTaskTombsSent, ...newDtTaskTombs])); }catch(e){} }
     // Refresh from the server so this device reflects exactly what was accepted.
@@ -3089,7 +3144,7 @@ async function saveDtTaskUpdate(id){
   dbSet(DB_KEYS.tasks, tasks);
   const saveBtn = document.getElementById('dt-save-btn');
   if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
-  const result = await cloudPushData();
+  const result = await cloudPushData({onlyToastFor:{table:'tasks', id}});
   const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
   if(!result.ok || rejectedThis){
     // Not confirmed — revert the local optimistic change so the UI never
@@ -3221,7 +3276,7 @@ async function _dtChangeStatus(id, newStatus, selectEl){
   t.blockReason = blockReason;
   dbSet(DB_KEYS.tasks, tasks);
   renderDailyTasks();
-  const result = await cloudPushData();
+  const result = await cloudPushData({onlyToastFor:{table:'tasks', id}});
   const rejectedThis = result.rejected.some(r=>r.table==='tasks' && r.id===id);
   if(!result.ok || rejectedThis){
     // Not confirmed — roll back so the UI never shows a status the server
