@@ -1115,6 +1115,135 @@ Don't relitigate them without an explicit decision from the user.
   `node --check` AND the newer module-mode `node --input-type=module
   --check` (rule #9) both clean on `api/ops-sync.js`; inline-JS syntax
   clean on `user.html`; div-balance unchanged vs. baseline (delta -1).
+- Deleted tasks must stay deleted — whole-team task resurrection fixed
+  (2026-10-20 — held for preview approval + migration apply, `api/`+
+  `index.html`+`user.html`+migration): reported live — 2 whole-team/
+  imported tasks (`assigneeIds` = all 8 members, `importBatchId`-tagged)
+  kept reappearing after every delete, each time under a brand-new
+  `ops_tasks.id` sharing the SAME base timestamp as the original "Everyone"
+  commit (a tight synchronous `.map()` loop producing one `_taGenId()` call
+  per roster member can share the same `Date.now()` millisecond — the
+  "fresh random suffix, fixed base" signature in the evidence). Traced
+  before guessing (rule #7) — NOT `commitStagedTasks()`/
+  `_taBuildEveryoneClones()` (fires once, only on an explicit admin
+  commit) and NOT `api/inbound-email.js`'s `createTasksFromParsed()`
+  (already fully idempotent against webhook re-delivery via its own
+  `alreadyProcessed(emailId)`/`markProcessed()` guard — investigated,
+  confirmed not the mechanism, deliberately left untouched). REAL root
+  cause: `_applyServerArray()`'s own "a dirty record the server doesn't
+  have yet must not be dropped" branch (in BOTH `index.html` and
+  `user.html` — hand-duplicated per rule #3) — present since this
+  function's original design, built to protect a genuinely brand-new,
+  not-yet-pushed local record, but with no way to distinguish that from a
+  record that WAS confirmed by the server before and has since been
+  deleted (by this tab, a sibling tab/device, or a cron) — this function
+  runs on every poll (20s interval), the textbook rule-#2 violation
+  ("compare local vs incoming on a timer, resurrect what you think is
+  missing"), just never caught before because most tables don't have a
+  realistic way for a deleted-but-still-locally-dirty record to exist on
+  a DIFFERENT open tab. Fixed at the root, NOT tasks-specific (this
+  function serves every table it's called for): the existing per-table
+  snapshot (`_opsReadSnapshot()`/`snapById`) already distinguishes
+  "never confirmed by the server" (no snapshot entry — genuinely new,
+  still resurrected, unchanged) from "was confirmed, now absent" (WAS in
+  a snapshot — correctly a deletion, never resurrected) — one added
+  `!snapById.has(l.id)` condition on the resurrection branch in both
+  files; `user.html` additionally gained its own `_opsReadSnapshot()`
+  helper (it didn't track `snap` at all before, only `_opsDirty()` read
+  it inline). `client.html` has the IDENTICAL latent bug (same resurrect-
+  on-dirty-and-missing pattern, in its own hand-duplicated
+  `_applyServerArray()`) but was NOT touched — it never syncs the `tasks`
+  table at all, so it's out of this ticket's scope, confirmed not
+  silently; flagged as a real, separate future risk (a deleted client,
+  notification, or feed item could resurrect the same way).
+  **Part 2 — durable, content-keyed tombstones** (defense-in-depth,
+  survives ANY future re-creation vector, not just the one found above):
+  new `ops_deleted_task_ids` table (migration
+  `20261020120000_ops_deleted_task_ids.sql`, additive, idempotent, named
+  columns like `ops_session_activity` — flagged deviation from the
+  document-model convention — append-only via the existing
+  `ops_block_mutations()` trigger). New exported
+  `computeTaskDeleteKey(row)` in `api/ops-sync.js`:
+  `importBatchId|subject|assigneeId`, returning `null` for a task with no
+  `importBatchId` — deliberately scoped to imported/whole-team tasks only
+  (the actual at-risk class); a plain one-off manually-created task has no
+  importBatchId and nothing ever re-derives it from a template, so
+  extending key-matching to free-form subjects would risk two unrelated
+  future tasks colliding on common wording alone (flagged, not an
+  oversight — rule #7). `assigneeId` included so deleting ONE team
+  member's copy of a whole-team import tombstones only that copy, never a
+  sibling still legitimately assigned to someone else from the same
+  batch. Wired into `api/ops-sync.js`'s existing `c.tasks` write block:
+  the hard-delete path (`tombstones.taskIds`) now fetches each row's
+  content UNCONDITIONALLY before deleting (previously only fetched for a
+  non-admin's own authorization check) and writes a tombstone for every
+  deleted row that has a computable key, via `upsert` +
+  `ignoreDuplicates` (safe to re-delete the same stable content); the
+  fetch failing degrades to "tombstoning skipped this round," never to
+  blocking the actual delete (fail-open, same discipline as every other
+  best-effort secondary check in this codebase). The create path
+  (`!cur`) now checks a NEW row's key (when it has an importBatchId)
+  against both the tombstone table AND already-live `ops_tasks` content
+  (closing requirement #4, "re-processing the same importBatchId must
+  not create duplicates" — covers a double-click or a retried push, not
+  just the original resurrection bug) — skips with a warning, never an
+  error, on either match; the newly-created key is also added to the
+  in-memory duplicate set immediately after a successful insert, closing
+  the narrower intra-request gap (two duplicate rows staged in the SAME
+  batch). `api/inbound-email.js`'s `createTasksFromParsed()` deliberately
+  NOT given this same check — it has no importBatchId concept at all
+  (computeTaskDeleteKey would always return null there), and its own
+  emailId-based idempotency already covers its actual risk (webhook
+  re-delivery) more precisely than a content-signature would. Verified
+  with a new 11-check Node suite against the real, unmodified
+  `handler`/`computeTaskDeleteKey` exports (fake in-memory Supabase
+  client, no live access per rule #11): the pure key formula (null for
+  no-importBatchId, stable+deterministic, assignee-scoped); deleting an
+  imported task writes a correctly-keyed tombstone, a plain task writes
+  none; the REAL incident reproduced directly (a resurrected clone under
+  a brand-new id matching a tombstoned key is skipped) and a sibling
+  clone for a different, never-deleted assignee from the same batch is
+  NOT blocked; a double-commit of the same batch (different ids, two
+  separate requests) only creates one copy, and so does a client-bug
+  duplicate within a SINGLE request; an ordinary update to an existing
+  task is completely unaffected; re-deleting the same stable content
+  twice is a harmless no-op (no unique-constraint error, original
+  tombstone preserved); a forced pre-delete fetch failure still lets the
+  actual delete proceed (fail-open) — confirmed via `git stash` that 6 of
+  these 11 fail against the pre-fix code. Separately, an 8-check Node
+  suite (via a brace-matching extractor + a `localStorage` polyfill, no
+  Playwright needed — pure sync logic, nothing visual) exercises the
+  REAL, unmodified `_applyServerArray()` from both `index.html` and
+  `user.html` directly: a task deleted server-side does not resurrect
+  even when this tab's own copy is still "dirty"; a genuinely brand-new,
+  never-synced local task is still preserved (the regression this logic
+  exists for in the first place); a pending edit to a task the server
+  still has (just stale) is completely unaffected; a table with no prior
+  snapshot at all still trusts local fully — confirmed via `git stash`
+  that the index.html resurrection check fails pre-fix, and that all 4
+  user.html checks fail pre-fix for the correct underlying reason
+  (`_opsReadSnapshot()` didn't exist there before this fix at all). 63
+  checks total across both suites plus the full pre-existing regression
+  surface (daily-reminder, leave-aware-alerts ×2, name-fallback,
+  PTO-report, inactive-user-suppression, due-date-approval-lock) re-run
+  clean. `node --input-type=module --check` clean on `api/ops-sync.js`
+  (per rule #9's module-mode addendum); inline-JS syntax clean on both
+  HTML files; div-balance delta 0 on both (pure `<script>` content
+  changes, confirmed via diff — no HTML markup touched).
+  **Migration not yet applied to production** — this agent has no live
+  DB access (rule #11); per rule #12 this cannot be merged until the DB
+  operator runs the dry-run → apply → verify cycle and confirms the
+  Business Setup schema-drift panel shows 0 pending for
+  `ops_deleted_task_ids`. **Data cleanup is a separate, POST-merge DB-
+  operator step** (per the ticket's own instruction): once this fix is
+  live, delete the 3 currently-resurrecting rows
+  (`task_1787933180295_wqc9hza`/`_rxoxisx`/`_m47ifdt`) and confirm they
+  stay gone across a load/sync — doing this BEFORE the fix ships would
+  just resurrect them again. Also flagged, not fixed (out of this
+  ticket's stated scope, noted in the ticket itself): a whole-team
+  assignee list can include deactivated/on-leave users (Assmaa, Jacob) —
+  worth a separate look at whether `_taBuildEveryoneClones()`'s roster
+  source should filter to active-only.
 - Urgent fix: members could not edit ANY self-assigned task
   (2026-10-15 — **merged**, PR #472, `api/ops-sync.js`): reported live —
   the server rejected every status edit on a self-assigned task with

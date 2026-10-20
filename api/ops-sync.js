@@ -1359,6 +1359,32 @@ export function resolveDueDateApprover(requesterId, users, admins) {
   return [{ id: 'primary-admin', kind: 'admin' }];
 }
 
+// Stable content-based delete key for a task (2026-10-20, "Deleted tasks
+// must stay deleted") — NOT the random ops_tasks.id, which is minted fresh
+// every time a task gets (re-)materialized; that's exactly why an id-keyed
+// tombstone (the ops_deleted_user_ids convention) structurally can't catch
+// this class of bug — see supabase/migrations/20261020120000_ops_deleted_
+// task_ids.sql for the full incident writeup this closes.
+//
+// Deliberately scoped to tasks that carry an `importBatchId` — a parsed/
+// imported batch, or an "Everyone" (whole-team) commit via index.html's
+// _taBuildEveryoneClones() — the exact class the real reported incident
+// involved. Returns null for anything else (a plain one-off manually-
+// created task has no importBatchId): nothing ever re-derives such a task
+// from a template, so there's no resurrection risk to tombstone, and
+// reusing subject text alone as a key would risk two completely unrelated
+// future tasks that happen to share common wording ("Daily standup")
+// colliding — flagged, not an oversight (rule #7).
+//
+// Includes assigneeId so deleting ONE team member's copy of a whole-team
+// import tombstones only THAT copy — a sibling clone from the same batch,
+// still legitimately assigned to someone else, is a different key and is
+// never affected.
+export function computeTaskDeleteKey(row) {
+  if (!row?.importBatchId) return null;
+  return `${row.importBatchId}|${row.subject || ''}|${row.assigneeId || ''}`;
+}
+
 // Fired when a member's request is written (see the member-write branch
 // below) — notifies the resolved approver only, never the requester
 // themselves (resolveDueDateApprover() never returns the requester's own
@@ -2686,6 +2712,13 @@ export default async function handler(req, res) {
       await fireSubmittedForReviewNotifications(supabase, reviewEvents, warnings, notices);
     }
 
+    // Durable task-delete tombstones (2026-10-20, "Deleted tasks must stay
+    // deleted") — see computeTaskDeleteKey()'s own comment below and
+    // supabase/migrations/20261020120000_ops_deleted_task_ids.sql for the
+    // full incident/rationale. Applied right before the task-write block
+    // below, since both the create path (skip a tombstoned/duplicate
+    // insert) and the hard-delete path (write the tombstone) live there.
+    //
     // ── Task Assignments (admin) / Daily Tasks (employee) — ops_tasks.
     // Admins have full CRUD on any task, including reassigning it to a
     // different employee. A member may create a brand-new task assigned to
@@ -2716,6 +2749,36 @@ export default async function handler(req, res) {
       const ids = incoming.map(t => t.id);
       const { data: currentTaskRows } = await supabase.from('ops_tasks').select('id, data').in('id', ids);
       const byId = new Map((currentTaskRows || []).map(r => [r.id, r.data]));
+      // Durable tombstones + idempotent import (2026-10-20) — only ever
+      // computed for incoming rows that are genuinely NEW (no `cur`) AND
+      // carry an importBatchId (computeTaskDeleteKey() returns null for
+      // anything else, by design — see its own comment). Two separate
+      // checks share this one batched lookup: (a) tombstonedKeys — this
+      // exact stable content was explicitly deleted before and must never
+      // reappear; (b) existingKeys — this exact stable content ALREADY
+      // exists live under a different id (a double-commit of the same
+      // staged batch — an accidental double-click, or a retried push —
+      // ticket requirement #4, "re-processing the same importBatchId must
+      // not create duplicates"). Plain `select` + in-JS filtering (not a
+      // `data->>importBatchId` PostgREST path filter) deliberately, so
+      // this is exercised identically against the real Supabase client and
+      // the fake in-memory one this codebase's own test suites use (rule
+      // #11) — same scale as the full ops_users/ops_admins/ops_clients
+      // reads already done elsewhere in this file.
+      const newKeyedTasks = incoming.filter(t => !byId.get(t.id) && t.importBatchId);
+      let tombstonedKeys = new Set();
+      let existingKeys = new Set();
+      if (newKeyedTasks.length) {
+        const candidateKeys = newKeyedTasks.map(computeTaskDeleteKey).filter(Boolean);
+        const [{ data: tombRows, error: tombCheckErr }, { data: allTaskRows, error: dupCheckErr }] = await Promise.all([
+          supabase.from('ops_deleted_task_ids').select('delete_key').in('delete_key', candidateKeys),
+          supabase.from('ops_tasks').select('data'),
+        ]);
+        if (tombCheckErr) warnings.push(`tasks tombstone check: ${tombCheckErr.message}`);
+        if (dupCheckErr) warnings.push(`tasks duplicate-import check: ${dupCheckErr.message}`);
+        tombstonedKeys = new Set((tombRows || []).map(r => r.delete_key));
+        existingKeys = new Set((allTaskRows || []).map(r => computeTaskDeleteKey(r.data)).filter(Boolean));
+      }
       const notifSettings = await getNotificationSettings(supabase);
       const taskAssignmentEvents = [];
       const reportEvents = [];
@@ -2752,6 +2815,22 @@ export default async function handler(req, res) {
         const cur = byId.get(inc.id);
         let row;
         if (!cur) {
+          // Tombstoned-or-duplicate skip (2026-10-20) — checked FIRST,
+          // before anything else about this incoming row is even looked
+          // at. `deleteKey` is null for anything without an importBatchId
+          // (see computeTaskDeleteKey()'s own comment), so this is a
+          // complete no-op for the overwhelming majority of task writes
+          // (plain one-off manual tasks and every ordinary UPDATE, which
+          // never reaches this `!cur` branch at all).
+          const deleteKey = inc.importBatchId ? computeTaskDeleteKey(inc) : null;
+          if (deleteKey && tombstonedKeys.has(deleteKey)) {
+            warnings.push(`tasks(${inc.id}): skipped — this exact task was previously deleted (tombstoned: ${deleteKey})`);
+            continue;
+          }
+          if (deleteKey && existingKeys.has(deleteKey)) {
+            warnings.push(`tasks(${inc.id}): skipped — this exact task already exists under a different id (duplicate import: ${deleteKey})`);
+            continue;
+          }
           // assignedDate must never be blank on a stored task (this
           // feature's own requirement) — the parser already fills it for
           // every parsed task, but a manually-created task (either portal's
@@ -2849,6 +2928,15 @@ export default async function handler(req, res) {
           row.lastAssignedAt = new Date().toISOString();
           const { error } = await supabase.from('ops_tasks').insert({ id: inc.id, data: row });
           if (error) { warnings.push(`tasks(${inc.id}): ${error.message}`); continue; }
+          // Record this row's own key immediately (2026-10-20) — closes the
+          // intra-request gap `existingKeys` alone wouldn't catch: a single
+          // batch that itself contains 2+ rows for the same stable key
+          // (e.g. a client-side bug staging the same clone twice) would
+          // otherwise insert both, since neither was in the pre-loop
+          // snapshot. The SECOND one in the SAME loop now correctly matches
+          // this just-added key and is skipped by the existingKeys check
+          // above, same as a duplicate from an earlier request.
+          if (deleteKey) existingKeys.add(deleteKey);
         } else if (isAdmin) {
           // assignedById never gets blanked by a falsy incoming value — a
           // client that hasn't pulled back the server-assigned value yet
@@ -3195,11 +3283,22 @@ export default async function handler(req, res) {
     if (Array.isArray(tombstones?.taskIds) && tombstones.taskIds.length) {
       const idsToDelete = [...new Set(tombstones.taskIds.filter(id => typeof id === 'string' && id))];
       if (idsToDelete.length) {
+        // Fetched unconditionally now (2026-10-20) — was previously only
+        // fetched for a non-admin caller's own authorization check; an
+        // admin delete skipped this fetch entirely. Now needed either way
+        // so every genuinely-deleted row's content is available to compute
+        // its stable delete_key (computeTaskDeleteKey()) AFTER the delete
+        // succeeds — see the durable-tombstone write below. Fails OPEN for
+        // the delete ITSELF: an admin's delete must never start depending
+        // on this fetch succeeding (it never did before this change) — a
+        // fetch failure only means tombstoning is best-effort-skipped this
+        // round (an empty `rows` below simply tombstones nothing), never
+        // that the actual deletion is blocked.
+        const { data: rows, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').in('id', idsToDelete);
+        if (fetchErr) warnings.push(`taskIds delete fetch: ${fetchErr.message}`);
         let deletableIds = idsToDelete;
         if (!isAdmin) {
-          const { data: rows, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').in('id', idsToDelete);
           if (fetchErr) {
-            warnings.push(`taskIds delete: ${fetchErr.message}`);
             deletableIds = [];
           } else {
             deletableIds = (rows || [])
@@ -3216,6 +3315,28 @@ export default async function handler(req, res) {
             warnings.push(`taskIds delete: ${error.message}`);
           } else {
             applied.deletedTaskIds = deletableIds.length;
+            // Durable tombstones (2026-10-20, "Deleted tasks must stay
+            // deleted") — written AFTER the delete actually succeeds, so a
+            // failed delete never produces an orphaned tombstone for a row
+            // that's still live. Scoped to deletableIds (the rows ACTUALLY
+            // removed above), using each row's own pre-delete content
+            // (fetched above) to compute its stable key —
+            // computeTaskDeleteKey() returns null for a plain task with no
+            // importBatchId, so .filter(Boolean) silently skips those (no
+            // tombstone needed; see that function's own comment on why).
+            // upsert + ignoreDuplicates (ON CONFLICT DO NOTHING on
+            // delete_key) makes re-deleting the same stable content a
+            // harmless no-op rather than a unique-constraint error.
+            const deletableSet = new Set(deletableIds);
+            const tombRows = (rows || [])
+              .filter(r => deletableSet.has(r.id))
+              .map(r => ({ delete_key: computeTaskDeleteKey(r.data), task_id: r.id, deleted_by: session.id }))
+              .filter(t => t.delete_key);
+            if (tombRows.length) {
+              const { error: tombErr } = await supabase.from('ops_deleted_task_ids')
+                .upsert(tombRows, { onConflict: 'delete_key', ignoreDuplicates: true });
+              if (tombErr) warnings.push(`ops_deleted_task_ids tombstone: ${tombErr.message}`);
+            }
             // Clean up any notification pointing at a now-deleted task
             // (2026-09-02) — taskAssignment/taskReported are the only two
             // types whose context carries a real ops_tasks id (see

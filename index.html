@@ -9199,8 +9199,20 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds, asOf){
   const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
-  // server's response.
-  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
+  // server's response — BUT ONLY when it's genuinely never been confirmed
+  // by the server before. "never in ANY prior snapshot" is the signal:
+  // `snapById` IS that confirmation record. An id missing from the
+  // server's response that WAS in a prior snapshot was DELETED (by this
+  // tab, a sibling tab/device, or a server-side process) — resurrecting it
+  // here is the exact "deleted tasks keep coming back" bug (2026-10-20,
+  // see DECISIONS.md): a whole-team/imported task another already-open
+  // admin tab still held locally — however it came to be "dirty" relative
+  // to THAT tab's own last snapshot — would otherwise get silently
+  // re-inserted, with its original id, the moment this function next ran
+  // on that tab's own poll. Not tasks-specific: this function serves
+  // every table it's called for, and the underlying bug never was
+  // tasks-specific either.
+  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id) && !snapById.has(l.id)) merged.push(l); });
   saveFn(merged);
   // Snapshot to the (tombstone-filtered) SERVER array, not the merged one —
   // this is what keeps a preserved edit "dirty" against the next
