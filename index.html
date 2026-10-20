@@ -8529,6 +8529,23 @@ function renderTeamProductionAnalytics(){
   const drill = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[], dueToday:[] };
   const todayStr=_taToday();
 
+  // Overdue/Due-Today stat-card headline numbers, SERVICES only (2026-10-20
+  // redesign — see the Overdue/Due Today card assembly below) — computed
+  // directly over allServices, the exact same two predicates Services-by-
+  // Urgency's own svcUrgOverdue/due-today check already use
+  // (_chSvcDueStatus()==='overdue'; not done/not stuck + s.due===todayStr),
+  // but deliberately over allServices rather than filteredServices: the top
+  // stat-card row sits ABOVE the frequency chips and is a global summary,
+  // not subject to that filter. When _ovSvcFreqFilter==='all',
+  // filteredServices===allServices, so this equals svcUrgOverdue by
+  // construction — the consistency this feature's own spec requires.
+  let svcOverdueAllCount=0, svcDueTodayAllCount=0;
+  allServices.forEach(s=>{
+    if(_svcStatus(s)==='done') return;
+    if(_chSvcDueStatus(s)==='overdue'){ svcOverdueAllCount++; return; }
+    if(_svcStatus(s)!=='stuck' && s.due===todayStr) svcDueTodayAllCount++;
+  });
+
   const rows=_timeOffRoster().map(person=>{
     const sum=_personWorkSummary(person, allTasks, allServices);
     // Overdue/Blocked combine BOTH tasks and services, using each side's
@@ -8612,7 +8629,8 @@ function renderTeamProductionAnalytics(){
       if(bucket==='dueThisWeek') servicesDueThisWeek++; else if(bucket==='dueThisMonth') servicesDueThisMonth++; else servicesUpcoming++;
     });
     return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked, dueToday,
-      tasksOverdue, servicesOverdue, tasksDueThisWeek, tasksDueThisMonth, tasksUpcoming,
+      tasksOverdue, servicesOverdue, tasksDueToday:tasksDueTodayItems.length,
+      tasksDueThisWeek, tasksDueThisMonth, tasksUpcoming,
       servicesDueThisWeek, servicesDueThisMonth, servicesUpcoming };
   }).sort((a,b)=>a.name.localeCompare(b.name));
 
@@ -8622,12 +8640,12 @@ function renderTeamProductionAnalytics(){
     acc.tasksAssigned+=r.tasksAssigned; acc.tasksDone+=r.tasksDone;
     acc.servicesAssigned+=r.servicesAssigned; acc.servicesDone+=r.servicesDone;
     acc.overdue+=r.overdue; acc.blocked+=r.blocked; acc.dueToday+=r.dueToday;
-    acc.tasksOverdue+=r.tasksOverdue; acc.servicesOverdue+=r.servicesOverdue;
+    acc.tasksOverdue+=r.tasksOverdue; acc.servicesOverdue+=r.servicesOverdue; acc.tasksDueToday+=r.tasksDueToday;
     acc.tasksDueThisWeek+=r.tasksDueThisWeek; acc.tasksDueThisMonth+=r.tasksDueThisMonth; acc.tasksUpcoming+=r.tasksUpcoming;
     acc.servicesDueThisWeek+=r.servicesDueThisWeek; acc.servicesDueThisMonth+=r.servicesDueThisMonth; acc.servicesUpcoming+=r.servicesUpcoming;
     return acc;
   }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueToday:0,
-      tasksOverdue:0,servicesOverdue:0,tasksDueThisWeek:0,tasksDueThisMonth:0,tasksUpcoming:0,
+      tasksOverdue:0,servicesOverdue:0,tasksDueToday:0,tasksDueThisWeek:0,tasksDueThisMonth:0,tasksUpcoming:0,
       servicesDueThisWeek:0,servicesDueThisMonth:0,servicesUpcoming:0});
   const totalAssigned=totals.tasksAssigned+totals.servicesAssigned;
   const totalDone=totals.tasksDone+totals.servicesDone;
@@ -8675,11 +8693,24 @@ function renderTeamProductionAnalytics(){
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">Services</div>
     <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">${svcOpenCount} open</div>
   </div>`;
+  // Overdue/Due Today cards, services-first (2026-10-20 redesign) — same
+  // card shape/footprint/drillKey as the plain statCard() these replace
+  // (still clicks into the same combined tasks+services _ovDrillData list,
+  // unchanged), just a services headline (svcOverdueAllCount/
+  // svcDueTodayAllCount, computed above) with a task-count sub-line
+  // (totals.tasksOverdue/totals.tasksDueToday, the exact same per-person-
+  // summed task numbers the Tasks-by-Urgency donut's own overdue slice
+  // already uses) instead of one combined number.
+  const urgencyStatCard=(label,svcVal,taskExtra,color,drillKey)=>`<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" onclick="openOvStatDrill('${drillKey}')" title="View the items behind this number">
+    <div style="font-size:20px;font-weight:800;color:${color||'var(--text-dark)'};">${svcVal}</div>
+    <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
+    <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">+ ${taskExtra} tasks</div>
+  </div>`;
   statsEl.innerHTML=[
     ratioStatCard('Tasks', totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
     svcSummaryCard,
-    statCard('Overdue', totals.overdue, totals.overdue?'var(--red)':null, 'overdue'),
-    statCard('Due Today', totals.dueToday, totals.dueToday?'var(--orange)':null, 'dueToday'),
+    urgencyStatCard('Overdue · services', svcOverdueAllCount, totals.tasksOverdue, svcOverdueAllCount?'var(--red)':null, 'overdue'),
+    urgencyStatCard('Due today · services', svcDueTodayAllCount, totals.tasksDueToday, svcDueTodayAllCount?'var(--orange)':null, 'dueToday'),
     statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
     statCard('Team % Done', teamPct==null?'—':teamPct+'%', 'var(--accent)', 'teamPct'),
   ].join('');
