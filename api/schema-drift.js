@@ -49,6 +49,7 @@ const EXPECTED_TABLES = [
   { table: 'ops_error_log', migration: '20260707150000_ops_error_log.sql' },
   { table: 'ops_backups', migration: '20260817130000_ops_backups.sql' },
   { table: 'ops_tasks', migration: '20260819100000_ops_tasks.sql' },
+  { table: 'ops_deleted_task_ids', migration: '20261020120000_ops_deleted_task_ids.sql' },
 ];
 
 // Columns bolted onto an existing table via a dedicated migration file
