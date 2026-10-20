@@ -1680,6 +1680,13 @@ function switchToManagerView(){ location.href = 'index.html'; }
 
 function _opsSnapKey(table){ return 'wl_srv_snap_'+table; }
 function _opsSetSnapshot(table, arr){ try{ localStorage.setItem(_opsSnapKey(table), JSON.stringify(arr||[])); }catch(e){} }
+// Factored out so _applyServerArray()'s resurrection guard can read the
+// exact same snapshot _opsDirty() already reads, without a second,
+// separately-maintained copy of this try/catch (same factoring index.html's
+// own identical copy already has).
+function _opsReadSnapshot(table){
+  try{ const raw = localStorage.getItem(_opsSnapKey(table)); return raw!=null ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
 // Monotonicity guard (2026-10-05, live-sync reliability fix) — hand-
 // duplicated from index.html's/client.html's own identical copies (zero-
 // shared-code rule). This file had NO version of this guard at all before
@@ -1774,14 +1781,24 @@ function _applyServerArray(table, serverArr, saveFn, getFn, tombstoneIds, asOf){
   const local = typeof getFn==='function' ? (getFn()||[]) : [];
   const dirtyIds = new Set(_opsDirty(table, local).map(r=>r.id));
   if(dirtyIds.size===0){ saveFn(filtered); _opsSetSnapshot(table, filtered); _opsRecordApplied(table, asOf); return; } // unchanged fast path
+  const snap = _opsReadSnapshot(table);
+  const snapById = new Map((snap||[]).map(r=>[r.id, r]));
   // Keep the LOCAL copy of every still-dirty record instead of the server's
   // (stale, pre-edit) one; take everything else from the server as normal.
   const merged = filtered.map(r => dirtyIds.has(r.id) ? (local.find(l=>l.id===r.id) || r) : r);
   const serverIds = new Set(filtered.map(r=>r.id));
   // A dirty record the server doesn't have at all yet (e.g. brand new,
   // not-yet-pushed) must not be dropped just because it's missing from the
-  // server's response.
-  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id)) merged.push(l); });
+  // server's response — BUT ONLY when it's genuinely never been confirmed
+  // by the server before (its id was never in any prior snapshot). An id
+  // missing from the server's response that WAS in a prior snapshot was
+  // DELETED (by this tab, a sibling tab/device, or a server-side process)
+  // — resurrecting it here is the exact "deleted tasks keep coming back"
+  // bug (2026-10-20, see DECISIONS.md and index.html's identical copy of
+  // this same fix). Not tasks-specific: this function serves every table
+  // it's called for, and the underlying bug never was tasks-specific
+  // either.
+  local.forEach(l => { if(dirtyIds.has(l.id) && !serverIds.has(l.id) && !snapById.has(l.id)) merged.push(l); });
   saveFn(merged);
   // Snapshot to the (tombstone-filtered) SERVER array, not the merged one —
   // this is what keeps a preserved edit "dirty" against the next
