@@ -1401,6 +1401,49 @@ Don't relitigate them without an explicit decision from the user.
   touches `api/ops-sync.js`'s notification/write logic and
   `api/process-transcript.js`'s task-extraction logic, even though no
   schema/migration/auth change is involved.
+- Overview top stat-card row: Overdue/Due Today now lead with SERVICES, not
+  combined tasks+services (2026-10-20 — held for preview approval,
+  `index.html`, display-only, additive): in
+  `renderTeamProductionAnalytics()`, the Overdue/Due Today cards now show a
+  SERVICES headline with a "+ N tasks" sub-line, instead of one number
+  blending both. Headline numbers (`svcOverdueAllCount`/
+  `svcDueTodayAllCount`) are computed directly over `allServices` — NOT
+  `filteredServices` — reusing the exact two predicates Services-by-
+  Urgency's own `svcUrgOverdue`/per-person due-today check already use
+  (`_chSvcDueStatus(s)==='overdue'`; not done/not stuck + `s.due===
+  todayStr`), deliberately independent of the `_ovSvcFreqFilter` frequency
+  chips: the top cards are a global summary that sits ABOVE those chips, so
+  switching the chip filter must never change them (verified live — see
+  below). When the filter is 'all', `filteredServices===allServices`, so
+  these equal Services-by-Urgency's own legend numbers by construction —
+  the consistency the ticket required. Sub-line task counts reuse
+  `totals.tasksOverdue` (already existed, feeds Tasks-by-Urgency's own
+  overdue slice) and a new `totals.tasksDueToday` (added the same way
+  `tasksOverdue`/`servicesOverdue` were already split out — each person's
+  `tasksDueTodayItems.length` returned/summed alongside the existing
+  `dueToday` combined field, which is otherwise untouched). Cards
+  relabeled "Overdue · services"/"Due today · services"; new
+  `urgencyStatCard()` helper reuses the exact same card markup/footprint/
+  `onclick="openOvStatDrill(...)"` as the plain `statCard()` it replaces
+  for these two cards — same drill-down modal, same combined tasks+
+  services item list, unchanged. Tasks/Services/Blocked-Stuck/Team % Done
+  cards, the 6-column grid, card order, and the calendar below are all
+  byte-for-byte untouched. Verified with a new 20-check Playwright suite
+  against the real, unmodified `renderTeamProductionAnalytics()` (fixture
+  clients/tasks seeded straight into localStorage, no live Supabase per
+  rule #11): the headline numbers match a deliberately UNASSIGNED overdue/
+  due-today service (proving roster-independence, the same class of bug
+  the 2026-09-25 Services-summary fix closed for the Services card);
+  "+N tasks" matches Tasks-by-Urgency's own overdue legend row; both
+  headline cards stay unchanged after switching the frequency filter to
+  'yearly' (the fixture's services are 'monthly') while Services-by-
+  Urgency's own legend correctly drops to 0 — proving the top cards are
+  genuinely filter-independent and the existing donut is unaffected; the
+  row stays exactly 6 cards at one uniform height; all 4 unchanged cards'
+  labels still present; zero-JS-error load across all three portals.
+  `node --check` on extracted inline JS clean; div-balance unchanged vs.
+  baseline (delta -2). No `api/*.js` touched, so rule #9's module-mode
+  check doesn't apply.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
