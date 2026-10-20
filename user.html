@@ -471,7 +471,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    border+background tint on the card div itself (same idea as index.html's
    own copy, hand-duplicated). */
 .dt-row-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
-.dt-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 .dt-new-tag{font-size:9px;font-weight:800;padding:2px 6px;border-radius:8px;background:#f59e0b;color:#fff;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0;}
 /* "Blocked" task status (2026-08-20) — same red treatment as index.html's
    own copy (hand-duplicated, zero-shared-code) and Workload's "Stuck"
@@ -1096,6 +1095,10 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
             <input type="checkbox" id="notif-due-soon-toggle" checked onchange="saveNotifSettingsFromForm()">
             Show due-soon reminders (services due within 7 days)
           </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);cursor:pointer;margin-top:7px;">
+            <input type="checkbox" id="notif-sound-toggle" onchange="saveNotifSettingsFromForm()">
+            Play a sound for new notifications <span style="color:var(--text-light);font-size:10px;">(off by default)</span>
+          </label>
         </div>
 
         <!-- Stats row — compact tiles (see .mywork-stat above) -->
@@ -1143,7 +1146,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;">
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtTabMineBtn" onclick="setDtTab('mine')" style="border-radius:8px 8px 0 0;white-space:nowrap;">My assigned tasks</button>
-            <button class="btn btn-sm btn-outline" id="dtTabImportBtn" onclick="setDtTab('import')" style="border-radius:8px 8px 0 0;white-space:nowrap;">Add / import tasks</button>
           </div>
           <div style="display:flex;gap:6px;padding-bottom:6px;align-items:center;flex-wrap:wrap;">
             <button class="btn btn-sm btn-outline btn-toggle-active" id="dtViewListBtn" onclick="setDtView('list')">☰ List</button>
@@ -1230,44 +1232,6 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
           </div>
         </div>
 
-        <div id="dtTabImport" style="display:none;">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">📝 Add / import tasks</div>
-                <div class="card-sub">Paste a meeting transcript or note, or drop one or more files — extracted tasks land only in your own list</div>
-              </div>
-            </div>
-            <div class="card-body">
-              <textarea id="dtParseText" rows="4" placeholder="Paste a transcript or meeting note here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
-              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                <input type="file" id="dtParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onDtParseFilesChosen(event)">
-                <button class="btn btn-sm btn-primary" id="dtParseBtn" onclick="runDtEmailParse()">Parse &amp; extract tasks</button>
-              </div>
-              <div id="dtParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
-            </div>
-          </div>
-
-          <!-- Review-before-assign staging (2026-08-20) — same pattern as
-               index.html's admin side: parsing never writes to your task
-               list directly. No assignee picker here — you can't assign to
-               anyone else, same existing role split; client/due/priority/
-               category are still editable. See _dtStagedTasks/
-               runDtEmailParse()/commitDtStagedTasks(). -->
-          <div id="dt-staging-wrap" style="display:none;">
-            <div class="card">
-              <div class="card-header">
-                <div>
-                  <div class="card-title">🔎 Review before adding</div>
-                  <div class="card-sub">Edit anything, or discard a row you don't want, before committing.</div>
-                </div>
-                <button class="btn btn-sm btn-primary" onclick="commitDtStagedTasks()">✅ Save these (<span id="dtStagingCount">0</span>)</button>
-              </div>
-              <div class="card-body" id="dt-staging-list"></div>
-            </div>
-          </div>
-          <div id="dt-recent-imports" style="margin-top:12px;"></div>
-        </div>
       </div>
 
       <!-- ── MESSAGES ── -->
@@ -2048,13 +2012,16 @@ async function cloudPushData(opts){
     // finish/skip/replay action (see _saveTourFlags below), never on load.
     const tourFlags = dbGet(DB_KEYS.tourFlags); if(tourFlags) changes.tourFlags = tourFlags;
 
-    // Task import undo (2026-08-20) — same already-sent dedup pattern
+    // Task tombstone queue (2026-08-20) — same already-sent dedup pattern
     // index.html uses for its org-node/link tombstones, hand-duplicated
     // here (CLAUDE.md zero-shared-code rule). This one is a genuine hard
-    // DELETE server-side (ops_tasks has no deleted_at column) — see
-    // undoDtStagedImportBatch()/undoDtCommittedImportBatch() and the
+    // DELETE server-side (ops_tasks has no deleted_at column) — see the
     // tombstones.taskIds block in api/ops-sync.js, which restricts a
-    // member to only deleting a batch THEY themselves committed.
+    // member to only deleting a batch THEY themselves committed. The
+    // Add/Import feature that used to be the only writer into
+    // DB_KEYS.deletedTaskIds here has been removed (member task deletion
+    // stays gone, same as before that feature existed) — this block is
+    // kept only to flush any already-queued tombstone from before removal.
     const dtDeletedTaskIds = dbGet(DB_KEYS.deletedTaskIds)||[];
     let dtTaskTombsSent = [];
     try{ dtTaskTombsSent = JSON.parse(localStorage.getItem('wl_dt_task_tombstones_sent')||'[]'); }catch(e){}
@@ -2187,10 +2154,6 @@ const DT_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 const DT_PRIORITIES = ['Urgent','High','Normal','Low'];
 
 let _dtTab = 'mine';
-// Review-before-assign staging (2026-08-20) — same in-memory-only pattern
-// as index.html's _taStagedTasks; nothing here is written to your task
-// list until commitDtStagedTasks() runs.
-let _dtStagedTasks = [];
 let _dtView = 'list';
 let _dtActiveCategory = null;
 // Status sub-tab (2026-08-26): 'notstarted' | 'inprogress' | 'done' | 'all'.
@@ -2199,7 +2162,6 @@ let _dtActiveCategory = null;
 let _dtStatusTab = 'notstarted';
 let _dtCalDate = new Date();
 let _dtDetailTaskId = null;
-let _dtParseFileTexts = [];
 
 function _dtGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
 // mergedIntoId (2026-08-26, duplicate-merge feature): a soft-merged-away
@@ -2676,7 +2638,6 @@ function loadDailyTasks(){
   // right after it correctly shows ~0 "new" on this same entry.
   _markTasksViewed();
   renderDailyTasks();
-  renderDtRecentImports();
 }
 
 function setDtActiveCategory(cat){ _dtActiveCategory = cat; loadDailyTasks(); }
@@ -2692,9 +2653,7 @@ function setDtTab(tab){
   // fixes, same root cause admin's own copy of this had (see
   // index.html's setTaSubtab()).
   document.getElementById('dtTabMineBtn').className = 'btn btn-sm btn-outline'+(tab==='mine'?' btn-toggle-active':'');
-  document.getElementById('dtTabImportBtn').className = 'btn btn-sm btn-outline'+(tab==='import'?' btn-toggle-active':'');
   document.getElementById('dtTabMine').style.display = tab==='mine' ? '' : 'none';
-  document.getElementById('dtTabImport').style.display = tab==='import' ? '' : 'none';
   if(tab==='mine') renderDailyTasks();
 }
 
@@ -3329,304 +3288,16 @@ async function _dtChangeStatus(id, newStatus, selectEl){
 // a standing capability with no UI path to it" convention. Confirmed with
 // Sarah rather than assumed: api/ops-sync.js's tombstones.taskIds member
 // path (self-created-only, assignedById===session.id — see its own
-// comment there) is deliberately LEFT AS-IS, not narrowed to admin-only,
-// because "Undo this import" (undoDtStagedImportBatch()/
-// undoDtCommittedImportBatch(), the safety-net reversal of a batch the
-// employee themselves just committed via parsing) depends on that exact
-// same server path and was explicitly kept working. With the general
-// Delete UI gone, that already-narrow server permission (a member can
-// only ever delete a task THEY created, never one merely assigned to
-// them, never anyone else's) is never reachable except through Undo
-// Import — so removing the button here fully delivers "employees can't
-// delete tasks" as a general capability without breaking the one
-// safety-net action that was explicitly kept.
-
-function _onDtParseFilesChosen(event){
-  const files = Array.from(event.target.files || []);
-  _dtParseFileTexts = [];
-  if(!files.length) return;
-  let remaining = files.length;
-  files.forEach(f=>{
-    const reader = new FileReader();
-    reader.onload = () => {
-      _dtParseFileTexts.push(reader.result);
-      remaining--;
-      if(remaining===0) document.getElementById('dtParseStatus').textContent = `${files.length} file(s) loaded, ready to parse.`;
-    };
-    reader.readAsText(f);
-  });
-}
-
-async function runDtEmailParse(){
-  const token = _opsToken();
-  if(!token) return;
-  const pastedText = document.getElementById('dtParseText').value.trim();
-  const allText = [pastedText, ..._dtParseFileTexts].filter(Boolean).join('\n\n---\n\n');
-  if(!allText){ showToast('Paste text or drop a file first'); return; }
-  const btn = document.getElementById('dtParseBtn');
-  const statusEl = document.getElementById('dtParseStatus');
-  btn.disabled = true;
-  statusEl.textContent = 'Parsing…';
-  try{
-    const res = await fetch('/api/process-transcript', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-      body: JSON.stringify({ mode: 'taskEmail', text: allText }),
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
-    const extracted = Array.isArray(data.tasks) ? data.tasks : [];
-    if(!extracted.length){
-      statusEl.textContent = 'No tasks found in that text.';
-      return;
-    }
-    // Review-before-assign staging (2026-08-20) — same "parsing must NOT
-    // commit to the live task list" rule as index.html's admin side.
-    // assigneeId defaults to the server's roster-matched owner when the
-    // pasted text named a specific person (api/process-transcript.js
-    // already scoped that to "me, or one of my own direct reports" — a
-    // manager-tier employee like Sherine parsing an email about Rana's
-    // work), falling back to self otherwise — shown read-only in the
-    // staging row (no assignee dropdown; a member can't assign to anyone
-    // else, same existing role split), not editable there either.
-    //
-    // importBatchId (2026-08-20) tags every row from THIS parse action —
-    // see index.html's identical comment on its own copy of this — so the
-    // staging list can group them and offer one batch-scoped "Undo this
-    // import" instead of only one-row-at-a-time Discard.
-    const importBatchId = 'imp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
-    const nowIso = new Date().toISOString();
-    extracted.forEach(et=>{
-      _dtStagedTasks.push({
-        id: _dtGenId(),
-        importBatchId, createdAt: nowIso,
-        subject: et.subject, notes: et.notes||'', tags: et.tags||[],
-        clientId: et.clientId||null, clientName: et.clientName||'',
-        assigneeId: et.assigneeId||currentUser?.id||null, assignedById: currentUser?.id||null,
-        category: et.category, priority: et.priority,
-        status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
-        // 'parsed-transcript', not 'parsed-email' (2026-09-01) — nobody
-        // gets tasks from email, they come from pasted meeting transcripts
-        // (or a dropped .eml file's text content, extracted the same way);
-        // the stored value is just a provenance tag, never displayed to
-        // the employee (see the removed "Email received" detail-panel row).
-        source: 'parsed-transcript', origin: 'self',
-        emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
-        assignedDate: et.assignedDate||_dtToday(),
-        mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
-      });
-    });
-    document.getElementById('dtParseText').value = '';
-    document.getElementById('dtParseFileInput').value = '';
-    _dtParseFileTexts = [];
-    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — review below before adding.`;
-    _renderDtStaging();
-  } catch(e){
-    statusEl.textContent = `❌ ${e.message}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function _dtUpdateStaged(id, field, value){
-  const row = _dtStagedTasks.find(x=>x.id===id);
-  if(!row) return;
-  // Same "Subject is required" guard index.html's own copy applies — a
-  // staged row must never be blankable to a nameless task via the
-  // editable subject input. Re-renders to visually reset the input back
-  // to the last valid value, since it isn't otherwise re-synced to
-  // row.subject on every keystroke.
-  if(field==='subject' && !value.trim()){
-    showToast('Subject is required');
-    _renderDtStaging();
-    return;
-  }
-  // Weekend-clamped (2026-09-02), same as index.html's own copy —
-  // re-renders so the input visually shows the snapped date.
-  if(field==='dueDate' && value){
-    row[field] = clampToWeekday(value);
-    _renderDtStaging();
-    return;
-  }
-  row[field] = value || null;
-  if(field==='clientId'){
-    const c = _dtActiveClients().find(x=>x.id===value);
-    row.clientName = c ? c.name : '';
-  }
-}
-
-function discardDtStagedTask(id){
-  _dtStagedTasks = _dtStagedTasks.filter(x=>x.id!==id);
-  _renderDtStaging();
-}
-
-// Undo an entire import BEFORE it's committed — see index.html's identical
-// undoStagedImportBatch(). No network call: nothing from staging has ever
-// reached ops_tasks.
-function undoDtStagedImportBatch(batchId){
-  _dtStagedTasks = _dtStagedTasks.filter(x=>x.importBatchId!==batchId);
-  _renderDtStaging();
-}
-
-function _renderDtStaging(){
-  const wrap = document.getElementById('dt-staging-wrap');
-  const list = document.getElementById('dt-staging-list');
-  const countEl = document.getElementById('dtStagingCount');
-  if(!wrap || !list) return;
-  if(!_dtStagedTasks.length){
-    wrap.style.display = 'none';
-    list.innerHTML = '';
-    return;
-  }
-  wrap.style.display = '';
-  if(countEl) countEl.textContent = _dtStagedTasks.length;
-  const clients = _dtActiveClients();
-  // Grouped by importBatchId — see index.html's identical comment on its
-  // own copy of this grouping.
-  const batches = [];
-  const byBatch = {};
-  _dtStagedTasks.forEach(row=>{
-    const bid = row.importBatchId || '_none';
-    if(!byBatch[bid]){ byBatch[bid] = { id: bid, rows: [] }; batches.push(byBatch[bid]); }
-    byBatch[bid].rows.push(row);
-  });
-  list.innerHTML = batches.map(batch=>{
-    const rowsHtml = batch.rows.map(row=>{
-      // Every staged row is, by definition, from the current import —
-      // always shown with the same amber "New" treatment as a just-
-      // assigned committed task (see _dtIsNew()/.dt-staging-new).
-      const rowStyle = 'padding:12px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;';
-      if(row.mergeIntoId){
-        // Same reasoning as index.html: a merge mutates an EXISTING task
-        // (narrow/additive only) rather than creating a new one, so no
-        // editable fields here — they'd never actually apply.
-        return `<div class="dt-staging-new" style="${rowStyle}">
-          <div style="font-weight:600;color:var(--text-dark);">${escHtmlUser(row.subject||'')} <span class="dt-new-tag">New</span></div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlUser(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
-          <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button></div>
-        </div>`;
-      }
-      // No assignee picker — a member can't assign to anyone else (same
-      // role split as everywhere in this file); shown read-only instead.
-      // _dtPersonName() is a plain id->name lookup (falls back to 'You' for
-      // the viewer's own id), reused as-is here.
-      return `<div class="dt-staging-new" style="${rowStyle}">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlUser(row.subject||'')}" placeholder="Task subject" onchange="_dtUpdateStaged('${row.id}','subject',this.value)">
-          <span class="dt-new-tag">New</span>
-        </div>
-        <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlUser(row.notes||'')}" placeholder="Notes (optional)" onchange="_dtUpdateStaged('${row.id}','notes',this.value)">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <span style="font-size:12px;color:var(--text-light);padding:5px 8px;background:var(--bg2);border-radius:6px;">👤 ${escHtmlUser(_dtPersonName(row.assigneeId))}</span>
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','clientId',this.value)">
-            <option value="">No client</option>
-            ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlUser(c.name)}</option>`).join('')}
-          </select>
-          <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_dtUpdateStaged('${row.id}','dueDate',this.value)">
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','priority',this.value)">
-            ${DT_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
-          </select>
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_dtUpdateStaged('${row.id}','category',this.value)">
-            ${DT_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${DT_CATEGORY_LABELS[c]||c}</option>`).join('')}
-          </select>
-          <button class="btn btn-xs btn-outline" onclick="discardDtStagedTask('${row.id}')">🗑 Discard</button>
-        </div>
-      </div>`;
-    }).join('');
-    return `<div style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:11px;color:var(--text-light);">${batch.rows.length} task(s) from this import</span>
-        <button class="btn btn-xs btn-outline" onclick="undoDtStagedImportBatch('${batch.id}')">↩ Undo this import</button>
-      </div>
-      ${rowsHtml}
-    </div>`;
-  }).join('');
-}
-
-// Commits every remaining staged row to this member's own task list — see
-// index.html's commitStagedTasks() for the identical reasoning (deferred
-// narrow merge, plain-row creation from whatever was left/edited in the
-// staging table). Switches to "My assigned tasks" afterward so the result
-// is immediately visible.
-//
-// Recently-committed batches, this session only — see index.html's
-// identical _taRecentImportBatches for why this is in-memory/session-only
-// and only ever tracks non-merge task ids.
-let _dtRecentImportBatches = [];
-function commitDtStagedTasks(){
-  if(!_dtStagedTasks.length) return;
-  const tasks = dbGet(DB_KEYS.tasks)||[];
-  let createdCount = 0, mergedCount = 0;
-  const newBatchIds = {};
-  _dtStagedTasks.forEach(row=>{
-    if(row.mergeIntoId){
-      const existing = tasks.find(x=>x.id===row.mergeIntoId);
-      if(existing){
-        if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
-        existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
-        if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
-        if(row.status==='Done'){
-          existing.completedAt = _dtCompletedAt(existing.status||'Not started', 'Done', existing.completedAt);
-          existing.status = 'Done';
-        }
-        mergedCount++;
-        return;
-      }
-    }
-    const { mergeIntoId, mergeIntoSubject, ...task } = row;
-    // A brand-new task — see index.html's identical comment on its own
-    // copy of this: treated as never having been Done before, so a task
-    // created directly with status:'Done' (e.g. the parser's alreadyDone
-    // mapping) still gets a real completedAt to sort by.
-    task.completedAt = _dtCompletedAt('Not started', task.status, null);
-    tasks.push(task);
-    createdCount++;
-    const bid = task.importBatchId || '_none';
-    (newBatchIds[bid] = newBatchIds[bid]||[]).push(task.id);
-  });
-  dbSet(DB_KEYS.tasks, tasks);
-  _scheduleCloudPush();
-  Object.entries(newBatchIds).forEach(([id, taskIds])=>{
-    if(id!=='_none') _dtRecentImportBatches.unshift({ id, taskIds });
-  });
-  _dtRecentImportBatches = _dtRecentImportBatches.slice(0,10);
-  _dtStagedTasks = [];
-  _renderDtStaging();
-  renderDtRecentImports();
-  showToast(`✅ ${createdCount} task(s) added${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
-  setDtTab('mine');
-}
-
-function renderDtRecentImports(){
-  const wrap = document.getElementById('dt-recent-imports');
-  if(!wrap) return;
-  if(!_dtRecentImportBatches.length){ wrap.innerHTML = ''; return; }
-  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent imports (this session)</div>` +
-    _dtRecentImportBatches.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
-      <span>${b.taskIds.length} task(s) added</span>
-      <button class="btn btn-xs btn-outline" onclick="undoDtCommittedImportBatch('${b.id}')">↩ Undo this import</button>
-    </div>`).join('');
-}
-
-// Reverses an already-committed import — a genuine per-record delete (see
-// tombstones.taskIds in api/ops-sync.js, permission-scoped to only a
-// batch THIS member themselves committed — see the comment on
-// cloudPushData()'s own tombstone block above).
-function undoDtCommittedImportBatch(batchId){
-  const batch = _dtRecentImportBatches.find(b=>b.id===batchId);
-  if(!batch) return;
-  if(!confirm(`Remove ${batch.taskIds.length} task(s) from this import? This can't be undone.`)) return;
-  const tasks = (dbGet(DB_KEYS.tasks)||[]).filter(t=>!batch.taskIds.includes(t.id));
-  dbSet(DB_KEYS.tasks, tasks);
-  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
-  batch.taskIds.forEach(id=>{ if(!tomb.includes(id)) tomb.push(id); });
-  dbSet(DB_KEYS.deletedTaskIds, tomb);
-  _scheduleCloudPush();
-  _dtRecentImportBatches = _dtRecentImportBatches.filter(b=>b.id!==batchId);
-  renderDtRecentImports();
-  renderDailyTasks();
-  showToast(`Removed ${batch.taskIds.length} task(s) from that import`);
-}
+// comment there) is deliberately LEFT AS-IS, not narrowed to admin-only.
+// The Add/Import feature that used to be the only reachable path to that
+// permission (the "Undo this import" safety-net reversal of a batch the
+// employee themselves committed via parsing) has since been removed too
+// (see CLAUDE.md) — with both it and the general Delete UI gone, that
+// already-narrow server permission (a member can only ever delete a task
+// THEY created, never one merely assigned to them, never anyone else's)
+// is no longer reachable from this portal's UI at all. The server-side
+// permission itself is untouched (out of scope here, and other callers of
+// the same tombstones.taskIds path may still exist elsewhere).
 
 // "+ New Task" (2026-09-09) — a deliberately minimal, direct-create path
 // (no staging/review step, unlike the parser) for adding a single task to
@@ -3644,9 +3315,7 @@ function undoDtCommittedImportBatch(batchId){
 // assigneeId (falling back to session.id regardless of what's sent),
 // force-overrides dueDate to today (weekend-clamped) whenever the
 // resolved assigneeId===session.id, and stamps selfAssignedAt itself once
-// assignedById===assigneeId is true — nothing new needed there, this
-// button just exercises the same self-assign path _dtStagedTasks() rows
-// already use when parsing something for yourself.
+// assignedById===assigneeId is true — nothing new needed there.
 function openNewDtTaskModal(){
   document.getElementById('ndtSubject').value = '';
   document.getElementById('ndtNotes').value = '';
@@ -4803,8 +4472,14 @@ function _notifSettingsKey(){ return 'wl_notif_settings_'+(currentUser?.id||curr
 function getNotifSettings(){
   try{
     const raw=JSON.parse(localStorage.getItem(_notifSettingsKey())||'null');
-    return { scope: raw?.scope==='client'?'client':'mine', dueSoon: raw?.dueSoon!==false };
-  }catch(e){ return { scope:'mine', dueSoon:true }; }
+    // sound (2026-10-15) — DEFAULT OFF (reported as playing "constantly"
+    // even after reading everything; turned off by default here rather
+    // than chasing the triggering logic, per explicit instruction).
+    // raw?.sound===true is the only way it's ever on — same "explicit
+    // opt-in, absent/anything-else means off" convention as dueSoon above
+    // uses for the opposite default.
+    return { scope: raw?.scope==='client'?'client':'mine', dueSoon: raw?.dueSoon!==false, sound: raw?.sound===true };
+  }catch(e){ return { scope:'mine', dueSoon:true, sound:false }; }
 }
 function setNotifSettings(next){
   try{ localStorage.setItem(_notifSettingsKey(), JSON.stringify(next)); }catch(e){}
@@ -4812,7 +4487,8 @@ function setNotifSettings(next){
 function saveNotifSettingsFromForm(){
   const scopeEl=document.querySelector('input[name="notif-scope"]:checked');
   const dueSoonEl=document.getElementById('notif-due-soon-toggle');
-  setNotifSettings({ scope: scopeEl?scopeEl.value:'mine', dueSoon: dueSoonEl?dueSoonEl.checked:true });
+  const soundEl=document.getElementById('notif-sound-toggle');
+  setNotifSettings({ scope: scopeEl?scopeEl.value:'mine', dueSoon: dueSoonEl?dueSoonEl.checked:true, sound: soundEl?soundEl.checked:false });
   loadMyAssignments();
 }
 function toggleNotifSettingsPanel(){
@@ -4825,9 +4501,11 @@ function _renderNotifSettingsForm(){
   const scopeMine=document.getElementById('notif-scope-mine');
   const scopeClient=document.getElementById('notif-scope-client');
   const dueSoonToggle=document.getElementById('notif-due-soon-toggle');
+  const soundToggle=document.getElementById('notif-sound-toggle');
   if(scopeMine) scopeMine.checked = ns.scope==='mine';
   if(scopeClient) scopeClient.checked = ns.scope==='client';
   if(dueSoonToggle) dueSoonToggle.checked = ns.dueSoon;
+  if(soundToggle) soundToggle.checked = ns.sound;
 }
 
 // ── Employee favorites (Monday feature pack, Feature 6) ──────────────────
@@ -5323,7 +5001,11 @@ document.addEventListener('click', _unlockNotifSound, {once:true});
 document.addEventListener('keydown', _unlockNotifSound, {once:true});
 document.addEventListener('touchstart', _unlockNotifSound, {once:true});
 function _playNotifBing(){
-  if(!_notifSoundUnlocked) return;
+  // Notification sound ON/OFF (2026-10-15, getNotifSettings()'s own
+  // comment above) — DEFAULT OFF; gated here so every existing call site
+  // (just updateAssignmentsBadge() below) automatically respects it with
+  // no change needed at the call site itself.
+  if(!_notifSoundUnlocked || !getNotifSettings().sound) return;
   try{
     if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
     const ctx = _notifAudioCtx;

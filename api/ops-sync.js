@@ -498,7 +498,7 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
 // rejected outright rather than silently accepted with a blank reason.
 const REPORT_REASONS = ['Duplicated', 'Not my task'];
 
-const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
+export const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'assigneeId', 'assignedById',
   'category', 'priority', 'dueDate', 'dueDateLocked', 'source', 'origin',
   'emailReceivedDate', 'emailThreadId', 'assignedDate', 'selfAssignedAt',
@@ -506,6 +506,36 @@ const TASK_KEYS_MEMBER_MAY_NOT_TOUCH = [
   // priority above; attach-only in this PR (no gate logic here).
   'sopLinks',
 ];
+
+// Pin-not-reject (2026-10-15 — fixes a real, 100%-of-members-affecting
+// regression: 659 tasks across all 9 members carry selfAssignedAt, so the
+// OLD flat "any TASK_KEYS_MEMBER_MAY_NOT_TOUCH field differs from cur ->
+// reject the WHOLE write" rule below rejected essentially every ordinary
+// status/notes edit a member ever made on their own self-assigned task,
+// the instant their local cache was simply stale on one of these fields —
+// exactly the same class of false-positive #469's
+// restrictClientWriteToOwnItems() fixed for client/service writes, same
+// fix applied here). Every protected field is pinned to the server's own
+// CURRENT value, verbatim, regardless of what the incoming payload said —
+// a member still can NEVER actually change one of these fields (it's
+// always forced back to `cur`'s value, same outcome as the old reject
+// would have produced for a genuine attempted edit), but a merely-STALE
+// copy of one can no longer block or roll back an otherwise-legitimate
+// edit to an allowed field (status, notes, etc.) on a task that IS
+// theirs. dueDate keeps its own pre-existing fill-only semantics instead
+// of a flat pin: a member may still FILL a previously-empty dueDate (the
+// duplicate-merge feature's "fill the due date only if missing" rule,
+// 2026-08-26), just never change one already set — pinned to cur.dueDate
+// only when cur.dueDate already has a value.
+export function pinMemberForbiddenTaskFields(cur, inc) {
+  const safe = { ...inc };
+  for (const key of TASK_KEYS_MEMBER_MAY_NOT_TOUCH) {
+    if (key === 'dueDate') continue;
+    safe[key] = cur[key];
+  }
+  safe.dueDate = cur.dueDate ? cur.dueDate : inc.dueDate;
+  return safe;
+}
 
 // Recurring tasks (2026-09-08) — a task the assignee (or an admin) has
 // flagged as permanently repeating, stored as `recurring:{frequency,
@@ -1305,162 +1335,6 @@ async function fireTaskReportDismissedNotification(supabase, events, warnings) {
   await insertNotifications(supabase, rows, warnings);
 }
 
-// Meeting-parse notify recipients (2026-09-16) — same fixed-rule shape as
-// resolveReportRecipients() right above (never resolveNotifyRecipients()'s
-// manager-escalation logic): always the primary-admin sentinel + every
-// super/owner admin, PLUS the item's own responsible person when
-// resolvable in either table — deduped. Used for a SERVICE mention
-// (always notify-only, per that feature's own "never auto-change"
-// instruction) and for a TASK mention whose speaker couldn't be
-// identified at all (the explicit "fall back to notify-only for tasks
-// too" case in api/process-transcript.js's evaluateMeetingParseGate()) —
-// same recipient rule either way, since both are "someone should go take
-// a look," not a routine assignment.
-export function resolveMeetingParseRecipients(personId, users, admins) {
-  const out = [{ id: 'primary-admin', kind: 'admin' }];
-  admins.filter(a => a.level === 'super' || a.level === 'owner').forEach(a => out.push({ id: a.id, kind: 'admin' }));
-  if (personId && personId !== 'primary-admin') {
-    const asUser = users.find(u => u.id === personId);
-    const asAdmin = admins.find(a => a.id === personId);
-    if (asUser) out.push({ id: personId, kind: 'user' });
-    else if (asAdmin) out.push({ id: personId, kind: 'admin' });
-  }
-  const seen = new Set();
-  return out.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
-}
-
-// Fires the meeting-parse notify-only message for both item types (never
-// for the task-auto-update case — that path carries no notification at
-// all, per this feature's own "no confirmation... stamp source" wording,
-// which never mentions notifying anyone for a successful auto-write).
-// `events`: {itemType:'task'|'service', itemName, personId, clientId,
-// taskId, impliedStatus, meetingDate}. `directory` is this caller's own
-// ALREADY-FRESH {users, admins} (api/process-transcript.js's own
-// activeRoster(), split by kind) — deliberately never fetched here via
-// getDirectory(), and passed straight through to insertNotifications() as
-// opts.directory so its own internal quiet-hours lookup uses the same
-// fresh data instead of this file's per-request cache (see that
-// function's own comment on why a cross-module cache is unsafe here).
-export async function fireMeetingParseNotifyEvents(supabase, events, warnings, directory) {
-  if (!events.length) return;
-  const { users, admins } = directory;
-  const rows = [];
-  events.forEach(ev => {
-    resolveMeetingParseRecipients(ev.personId, users, admins).forEach(r => {
-      const isPrimary = r.id === 'primary-admin';
-      const person = isPrimary ? null : personOf(r.id, r.kind, { users, admins });
-      const verb = ev.impliedStatus === 'done' ? 'may be done' : 'may have started';
-      const label = ev.itemType === 'task' ? 'task' : 'service';
-      rows.push({
-        type: 'meetingParseNotify', recipientId: r.id, recipientKind: r.kind,
-        recipientName: isPrimary ? 'Sarah Samy' : (person?.name || ''),
-        recipientEmail: isPrimary ? 'ssamy@weblightmedia.com' : (person?.email || ''),
-        title: `Meeting suggests a ${label} may need review: ${ev.itemName}`,
-        body: `Meeting on ${ev.meetingDate} suggests ${label} '${ev.itemName}' ${verb} — please review.`,
-        link: '',
-        context: { taskId: ev.taskId || null, clientId: ev.clientId || null },
-      });
-    });
-  });
-  await insertNotifications(supabase, rows, warnings, { directory });
-}
-
-// Meeting-parse task auto-update (2026-09-16) — the WRITE half of
-// "detect meeting mentions of existing work and act by type"
-// (api/process-transcript.js does the matching/gate evaluation via
-// evaluateMeetingParseGate(); this is the one place that actually
-// touches ops_tasks for it). Called directly as a library function, never
-// through this file's own signed-session handler() below — the caller
-// (a meeting transcript parse) has no session bound to the TASK'S OWNER,
-// only to whoever pasted the transcript, so this never goes through the
-// normal isAdmin/member gate at all. Write-authority here comes entirely
-// from the caller having already evaluated the self-report-or-super-admin
-// gate BEFORE calling this — it trusts that decision, it doesn't
-// re-derive it.
-//
-// No-op guarded: a task already sitting at newStatus is left completely
-// untouched (no write, no audit stamp) — the same meeting mentioned
-// twice, or a status that already matches, are both real, expected
-// no-ops. finalizeRecurring() is reused as-is so a recurring task marked
-// Done this way regenerates for its next cycle exactly like it would via
-// the UI, rather than getting stuck showing Done forever. Every change
-// carries a NEW `lastMeetingParseUpdate` audit object — deliberately
-// separate from the task's own `source` field (which already means
-// something else: 'parsed-email' vs manually created) — recording the
-// prior status alongside the new one and who/when, so the change is
-// reviewable/reversible by a human looking at the task, per this
-// feature's own explicit "auditable/reversible" requirement. No separate
-// Undo control was built for this (out of this feature's own stated
-// server-only file scope) — reversal is "an admin looks at
-// lastMeetingParseUpdate and edits status back," same as any other
-// mis-set status today.
-export async function applyMeetingParseTaskStatusUpdate(supabase, { task, newStatus, attributedPersonId, attributedPersonName, meetingDate }, warnings) {
-  if (!task) return null;
-  // Re-fetch immediately before writing (2026-09-19) — `task` is the copy
-  // process-transcript.js selected once, BEFORE the Anthropic call, which
-  // can take seconds up to 30s+ on the chunk/merge path. This is not the
-  // #400 "key-absent" clobber class (task came from a live select, not a
-  // stale request body), but there was no re-fetch right before the write
-  // either — so a concurrent human edit to this same task (assignee,
-  // priority, notes, anything) during the parse window was silently
-  // reverted when this write landed, since it always spread the STALE
-  // pre-call snapshot as its base. Every field below now comes from `cur`
-  // (the fresh row) instead — only the status-driven fields this function
-  // is actually responsible for (status/blockReason/lastMeetingParseUpdate/
-  // completedAt/recurring rollover) are ever changed.
-  const { data: freshRow, error: fetchErr } = await supabase.from('ops_tasks').select('id, data').eq('id', task.id).maybeSingle();
-  if (fetchErr) { warnings.push(`tasks(${task.id}) meeting-parse re-fetch: ${fetchErr.message}`); return null; }
-  if (!freshRow) return null; // deleted concurrently — nothing left to update
-  const cur = { id: freshRow.id, ...freshRow.data };
-  if (cur.status === newStatus) return null; // already at the target status by the time we got here (a human beat us to it, or a duplicate mention) — genuine no-op
-  // Respect a manual correction — never flip a human's fix back (2026-09-19,
-  // Task 3 of the fix hand-off). If a PRIOR meeting-parse write left this
-  // task at some status (cur.lastMeetingParseUpdate.toStatus), and the
-  // CURRENT status no longer matches that, something changed it since —
-  // almost certainly a human noticing a wrong auto-update and correcting
-  // it. Re-applying a new auto-update on top would silently discard that
-  // correction. Detected against the FRESH `cur` (not the stale `task`
-  // parameter), so this closes the exact same race Task 2 already closed
-  // for every other field. This is a real idempotency-key-style guard
-  // (Option A discussed for this feature, not the fuller "who/when changed
-  // status" tracking of Option B, which no field in this codebase records
-  // today) — narrower in scope, but requires no new schema. The literal
-  // string 'human-correction' (never `null` or a row object) lets the
-  // caller distinguish this specific case and notify a human instead of
-  // silently doing nothing, the same "don't guess, tell a human" treatment
-  // the unidentified-speaker gate already gets.
-  if (cur.lastMeetingParseUpdate && cur.status !== cur.lastMeetingParseUpdate.toStatus) return 'human-correction';
-  let row = {
-    ...cur,
-    status: newStatus,
-    // A task moving to Done/In progress via this path is, by definition,
-    // no longer Blocked — same "clear blockReason the instant status
-    // leaves Blocked" convention both portals' own status-change UI
-    // already applies (2026-08-21).
-    blockReason: null,
-    lastMeetingParseUpdate: {
-      fromStatus: cur.status || '',
-      toStatus: newStatus,
-      attributedPersonId: attributedPersonId || null,
-      attributedPersonName: attributedPersonName || '',
-      meetingDate: meetingDate || '',
-      appliedAt: new Date().toISOString(),
-    },
-  };
-  if (newStatus === 'Done') row.completedAt = new Date().toISOString();
-  row = finalizeRecurring(cur, row);
-  // finalizeRecurring() can override row.status (e.g. Done -> Not started
-  // on a regenerated cycle) without touching lastMeetingParseUpdate.toStatus
-  // above, which would otherwise still claim the pre-regeneration value
-  // (e.g. 'Done'). Left unsynced, the very next meeting-parse write would
-  // see cur.status ('Not started', from THIS write's own regeneration)
-  // disagree with cur.lastMeetingParseUpdate.toStatus ('Done') and wrongly
-  // treat this feature's own recurring rollover as a human correction.
-  row.lastMeetingParseUpdate = { ...row.lastMeetingParseUpdate, toStatus: row.status };
-  const { error } = await supabase.from('ops_tasks').update({ data: row }).eq('id', cur.id);
-  if (error) { warnings.push(`tasks(${cur.id}) meeting-parse update: ${error.message}`); return null; }
-  return row;
-}
 
 // Due-date-change request approver resolution (2026-09-03) — deliberately
 // NOT resolveReviewRecipients(): that function ALWAYS additionally includes
@@ -1802,15 +1676,10 @@ export async function insertNotifications(supabase, rows, warnings, opts = {}) {
     // suppressed item was already inserted above, unaffected.
     //
     // opts.directory (2026-09-16) — an explicit {users, admins} override
-    // for the quiet-hours team lookup right below, used ONLY by
-    // fireMeetingParseNotifyEvents() (api/process-transcript.js's meeting-
-    // parse feature). That caller lives in a completely separate
-    // serverless function from this file's own handler() — the one place
-    // that resets getDirectory()'s per-request _directoryCache — so
-    // calling getDirectory() here unconditionally would risk this file's
-    // per-request cache silently going stale across many warm-container
-    // invocations of THAT other function (see the import comment at the
-    // top of process-transcript.js for the full reasoning). Every
+    // for the quiet-hours team lookup right below, used by a caller that
+    // already has its own fresh roster in scope and wants to avoid this
+    // file's per-request _directoryCache going stale across a long-running
+    // batch (see api/cron-overdue-check.js's own call site). Every other
     // existing caller in this file omits opts.directory, so this is a
     // purely additive, backward-compatible change — getDirectory(supabase)
     // still runs exactly as before for all of them.
@@ -3255,28 +3124,16 @@ export default async function handler(req, res) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'not your task' });
             continue;
           }
-          // dueDate gets its own fill-only rule below, not the flat
-          // compare every other disallowed key uses — a member may FILL a
-          // previously-empty dueDate (needed for the duplicate-merge
-          // feature's "fill the due date only if missing" additive rule)
-          // but never CHANGE one that's already set. Found and fixed
-          // 2026-08-26 while building that feature: the parser's own
-          // existing parse-time merge-into-existing-task path has always
-          // filled a missing dueDate the same way, which means a member's
-          // merge was being silently rejected here before this fix,
-          // despite the UI already showing it as merged.
-          const disallowedKey = TASK_KEYS_MEMBER_MAY_NOT_TOUCH.find(key => {
-            if (key === 'dueDate') return false;
-            return JSON.stringify(cur[key]) !== JSON.stringify(inc[key]);
-          });
-          if (disallowedKey) {
-            rejected.push({ table: 'tasks', id: inc.id, reason: `members cannot edit tasks.${disallowedKey}` });
-            continue;
-          }
-          if (cur.dueDate && inc.dueDate !== cur.dueDate) {
-            rejected.push({ table: 'tasks', id: inc.id, reason: 'members cannot edit tasks.dueDate' });
-            continue;
-          }
+          // Pin-not-reject (2026-10-15 — see pinMemberForbiddenTaskFields()'s
+          // own comment above for why): every TASK_KEYS_MEMBER_MAY_NOT_TOUCH
+          // field is forced to the server's current value right here,
+          // BEFORE any of the checks/merges below ever look at the payload
+          // — a member's write can no longer be rejected just because one
+          // of these fields was merely stale in their local cache. Every
+          // `inc.*` reference from here down is `safeInc.*` instead, so
+          // nothing downstream can accidentally see the member's original,
+          // un-pinned value for a protected field.
+          const safeInc = pinMemberForbiddenTaskFields(cur, inc);
           // Required reason (2026-09-11) — a genuine transition into
           // reportedMisassigned must always carry one of the two allowed
           // values; user.html's own reason modal already blocks submission
@@ -3284,7 +3141,7 @@ export default async function handler(req, res) {
           // REPORT_REASONS' own comment). A resave that leaves
           // reportedMisassigned already true (or doesn't touch it at all)
           // is unaffected — this only gates the actual transition.
-          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && !REPORT_REASONS.includes(inc.reportedMisassignedReason)) {
+          if (safeInc.reportedMisassigned === true && !cur.reportedMisassigned && !REPORT_REASONS.includes(safeInc.reportedMisassignedReason)) {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'a task report requires a valid reportedMisassignedReason' });
             continue;
           }
@@ -3301,7 +3158,7 @@ export default async function handler(req, res) {
           // block never got a chance to run). openReportTaskModal()'s own
           // client-side gate (user.html) was never the real protection;
           // this is.
-          if (inc.reportedMisassigned === true && !cur.reportedMisassigned && cur.origin !== 'admin') {
+          if (safeInc.reportedMisassigned === true && !cur.reportedMisassigned && cur.origin !== 'admin') {
             rejected.push({ table: 'tasks', id: inc.id, reason: 'reports can only be filed on an admin-assigned task' });
             continue;
           }
@@ -3320,17 +3177,17 @@ export default async function handler(req, res) {
           // is what now actually stops a self-added task from reaching
           // this at all, not just the UI.
           row = {
-            ...inc,
-            reportedMisassigned: typeof inc.reportedMisassigned === 'boolean' ? inc.reportedMisassigned : (cur.reportedMisassigned || false),
-            reportedMisassignedBy: inc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
-            reportedMisassignedByName: inc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
-            reportedMisassignedAt: inc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
+            ...safeInc,
+            reportedMisassigned: typeof safeInc.reportedMisassigned === 'boolean' ? safeInc.reportedMisassigned : (cur.reportedMisassigned || false),
+            reportedMisassignedBy: safeInc.reportedMisassignedBy || cur.reportedMisassignedBy || null,
+            reportedMisassignedByName: safeInc.reportedMisassignedByName || cur.reportedMisassignedByName || null,
+            reportedMisassignedAt: safeInc.reportedMisassignedAt || cur.reportedMisassignedAt || null,
             // reportedMisassignedReason (2026-09-11) — same "never let an
             // absent field blank a real value" fallback as the three
             // fields right above; the required-reason guard above already
             // ensures this is one of REPORT_REASONS whenever it's actually
             // the transition into a report.
-            reportedMisassignedReason: inc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
+            reportedMisassignedReason: safeInc.reportedMisassignedReason || cur.reportedMisassignedReason || null,
             // Due-date-change request (Item C, 2026-09-03) — a member can
             // only ever CREATE one, never clear/edit it (there's no self-
             // cancel here, out of this feature's stated scope); an
@@ -3373,10 +3230,11 @@ export default async function handler(req, res) {
           }
           // lastAssignedAt (2026-10-12, "N new assigned" fix) — a member can
           // never change their own assigneeId via this path (it's in
-          // TASK_KEYS_MEMBER_MAY_NOT_TOUCH, rejected above before reaching
-          // here), so this always just preserves cur's value — included for
-          // symmetry with the admin branch's own stamp above, not because
-          // this branch can actually trigger a reassignment.
+          // TASK_KEYS_MEMBER_MAY_NOT_TOUCH, pinned to cur's value above
+          // before reaching here — see pinMemberForbiddenTaskFields()), so
+          // this always just preserves cur's value — included for symmetry
+          // with the admin branch's own stamp above, not because this
+          // branch can actually trigger a reassignment.
           row.lastAssignedAt = assigneeChanged(cur, row) ? new Date().toISOString() : (cur.lastAssignedAt || null);
           // Recurring regeneration (2026-09-08) — see finalizeRecurring()'s
           // own comment; identical to the admin branch above, applied last

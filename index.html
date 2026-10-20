@@ -1299,9 +1299,15 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div id="admin-notif-dot" class="admin-notif-dot"></div>
         </div>
         <div id="admin-notif-panel" class="admin-notif-panel">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);gap:8px;">
             <div style="font-weight:700;font-size:13px;">Notifications</div>
-            <button class="btn btn-xs btn-outline" onclick="markAllAdminNotifsRead()">Mark all read</button>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-light);cursor:pointer;font-weight:400;" title="Play a sound when a new notification arrives">
+                <input type="checkbox" id="admin-notif-sound-toggle" onchange="_setAdminNotifSoundEnabled(this.checked)" style="margin:0;">
+                Sound
+              </label>
+              <button class="btn btn-xs btn-outline" onclick="markAllAdminNotifsRead()">Mark all read</button>
+            </div>
           </div>
           <div id="admin-notif-list" style="padding:6px;"></div>
           <div style="padding:8px 14px;border-top:1px solid var(--border);text-align:center;">
@@ -1679,13 +1685,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-taskAssignments" class="page-section">
       <div style="margin-bottom:16px;">
         <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Parse meeting transcripts into tasks, or add one manually, and assign to anyone on the team</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Add a task manually and assign it to anyone on the team</div>
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);">
         <div style="display:flex;gap:6px;">
-          <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabParseBtn" onclick="setTaSubtab('parse')" style="border-radius:8px 8px 0 0;">📝 Add / Import</button>
-          <button class="btn btn-sm btn-outline" id="taSubtabMyTasksBtn" onclick="setTaSubtab('mytasks')" style="border-radius:8px 8px 0 0;">🙋 My Tasks<span class="admin-msg-nav-badge" id="ta-mytasks-new-badge" style="display:none;">0</span></button>
+          <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabMyTasksBtn" onclick="setTaSubtab('mytasks')" style="border-radius:8px 8px 0 0;">🙋 My Tasks<span class="admin-msg-nav-badge" id="ta-mytasks-new-badge" style="display:none;">0</span></button>
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👥 Team's Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabAttentionBtn" onclick="setTaSubtab('attention')" style="border-radius:8px 8px 0 0;">⚠️ Needs Attention</button>
@@ -1700,43 +1705,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="btn btn-primary btn-sm" style="width:auto;flex-shrink:0;margin:0 0 6px;" onclick="openTaskEditModal(null)">+ New Task</button>
       </div>
 
-      <div id="ta-subtab-parse">
-        <div class="card" style="margin-bottom:16px;">
-          <div class="card-header">
-            <div>
-              <div class="card-title">📝 Import &amp; parse</div>
-              <div class="card-sub">Paste a meeting transcript, or drop one or more files</div>
-            </div>
-          </div>
-          <div class="card-body">
-            <textarea id="taParseText" rows="4" placeholder="Paste a meeting transcript here…" style="width:100%;font:inherit;padding:10px 12px;border:1px solid var(--border);border-radius:8px;resize:vertical;margin-bottom:10px;"></textarea>
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-              <input type="file" id="taParseFileInput" accept=".eml,message/rfc822" multiple onchange="_onTaParseFilesChosen(event)">
-              <button class="btn btn-sm btn-primary" id="taParseBtn" onclick="runTaskEmailParse()">Parse &amp; extract tasks</button>
-            </div>
-            <div id="taParseStatus" style="font-size:12px;color:var(--text-mid);margin-top:10px;"></div>
-          </div>
-        </div>
-
-        <!-- Review-before-assign staging (2026-08-20): parsing never
-             writes to ops_tasks directly — extracted tasks land here for
-             review/edit/discard first. Nothing exists in Assigned Tasks
-             until "Save / assign these" is clicked. See _taStagedTasks/
-             runTaskEmailParse()/commitStagedTasks(). -->
-        <div id="ta-staging-wrap" style="display:none;">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">🔎 Review before assigning</div>
-              </div>
-              <button class="btn btn-sm btn-primary" onclick="commitStagedTasks()">✅ Save / assign these (<span id="taStagingCount">0</span>)</button>
-            </div>
-            <div class="card-body" id="ta-staging-list"></div>
-          </div>
-        </div>
-        <div id="ta-recent-imports" style="margin-top:12px;"></div>
-      </div>
-
       <!-- "My Tasks" (2026-09-10) — the logged-in admin's own tasks
            (assigneeId === _currentAdminId()), so an admin can see their own
            list without filtering the shared Assigned Tasks view every time
@@ -1747,7 +1715,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            pair of containers — same "independent status-tab scope, shared
            underlying machinery" pattern By Person/Team's Tasks already
            established. -->
-      <div id="ta-subtab-mytasks" style="display:none;">
+      <div id="ta-subtab-mytasks">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
           <button class="ta-status-pill active" id="taMyTasksStatusTabNotStartedBtn" onclick="setTaMyTasksStatusTab('notstarted')">Not Started <span class="ta-pill-count" id="taMyTasksStatusCountNotStarted">0</span></button>
           <button class="ta-status-pill" id="taMyTasksStatusTabInProgressBtn" onclick="setTaMyTasksStatusTab('inprogress')">In Progress <span class="ta-pill-count" id="taMyTasksStatusCountInProgress">0</span></button>
@@ -7115,9 +7083,8 @@ window.switchAdminTab = function(el, tab){
    .rm-card-new above, reused via .rm-new-tag directly for the pill. Was a
    <tr> background tint before the 2026-08-28 card redesign; now a border+
    background tint on the card div itself, same idea as .rm-card-new. See
-   _taIsNew()/_renderTaListTable()/_renderTaStaging(). */
+   _taIsNew()/_renderTaListTable(). */
 .ta-row-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
-.ta-staging-new{border-color:#f59e0b!important;background:rgba(245,158,11,.06)!important;}
 /* "Blocked" task status (2026-08-20) — same red treatment as Workload's
    "Stuck" service status (SERVICE_STATUSES' stuck color/bg), mirrored
    here rather than a third separate visual language for "work has
@@ -9680,11 +9647,10 @@ async function cloudPushAll(silent=false){
     try{ orgLinkAlreadySent = JSON.parse(localStorage.getItem('wl_org_link_tombstones_sent')||'[]'); }catch(e){}
     const newOrgLinkTombs = allOrgLinkTombIds.filter(id=>!orgLinkAlreadySent.includes(id));
 
-    // Task import undo (2026-08-20) — same already-sent dedup pattern, but
+    // Task delete (2026-08-20) — same already-sent dedup pattern, but
     // this one is a genuine hard DELETE server-side (ops_tasks has no
     // deleted_at column, unlike orgNodes/orgLinks above) — see
-    // undoStagedImportBatch()/undoCommittedImportBatch() and the
-    // tombstones.taskIds block in api/ops-sync.js.
+    // _taDeleteTask() and the tombstones.taskIds block in api/ops-sync.js.
     const allTaskTombIds = dbGet(DB_KEYS.deletedTaskIds)||[];
     let taskAlreadySent = [];
     try{ taskAlreadySent = JSON.parse(localStorage.getItem('wl_task_tombstones_sent')||'[]'); }catch(e){}
@@ -10009,8 +9975,23 @@ function _unlockNotifSound(){ _notifSoundUnlocked = true; }
 document.addEventListener('click', _unlockNotifSound, {once:true});
 document.addEventListener('keydown', _unlockNotifSound, {once:true});
 document.addEventListener('touchstart', _unlockNotifSound, {once:true});
+// Notification sound ON/OFF toggle (2026-10-15 — reported as playing
+// "constantly" even after reading everything; turned off by default here
+// rather than chasing the triggering logic, per explicit instruction).
+// Local-only (localStorage, per-admin on this browser) — display
+// preference, never synced/pushed, same convention as every other
+// browser-local-only setting in this file (e.g. wl_theme). DEFAULT OFF:
+// an admin who wants it back on flips the checkbox in the notification
+// panel; nothing plays until they do.
+const _ADMIN_NOTIF_SOUND_KEY = 'wl_admin_notif_sound_enabled';
+function _adminNotifSoundEnabled(){
+  try{ return localStorage.getItem(_ADMIN_NOTIF_SOUND_KEY)==='true'; }catch(e){ return false; }
+}
+function _setAdminNotifSoundEnabled(on){
+  try{ localStorage.setItem(_ADMIN_NOTIF_SOUND_KEY, on?'true':'false'); }catch(e){}
+}
 function _playNotifBing(){
-  if(!_notifSoundUnlocked) return;
+  if(!_notifSoundUnlocked || !_adminNotifSoundEnabled()) return;
   try{
     if(!_notifAudioCtx) _notifAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
     const ctx = _notifAudioCtx;
@@ -10088,6 +10069,8 @@ function _notifTaskWasDeleted(n){
   return !_taTasks().some(t=>t.id===taskId);
 }
 function renderAdminNotifPanel(){
+  const soundToggle = document.getElementById('admin-notif-sound-toggle');
+  if(soundToggle) soundToggle.checked = _adminNotifSoundEnabled();
   const el = document.getElementById('admin-notif-list'); if(!el) return;
   const notifs = (dbGet(DB_KEYS.notifications)||[]).filter(n=>!_notifTaskWasDeleted(n)).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,20);
   if(!notifs.length){ el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-light);font-size:12px;">No notifications</div>'; return; }
@@ -10834,9 +10817,10 @@ const TA_STATUS_OPTIONS = ['Not started','In progress','Blocked','Done'];
 // Sentinel assigneeId for "the whole team" (2026-08-25) — never a real
 // roster id, so every id-based lookup (roster.find, _taAssignedByName,
 // etc.) simply finds nothing for it, same as any other unmatched id
-// would. Only ever expanded into real per-person clones at commit time
-// (commitStagedTasks()/saveTaskEdit()) — nothing else treats it as a real
-// assignee. Matches the same literal string api/process-transcript.js's
+// would. Only ever expanded into real per-person clones at save time
+// (saveTaskEdit(), see _taBuildEveryoneClones()) — nothing else treats it
+// as a real assignee. Matches the same literal string
+// api/process-transcript.js's
 // EVERYONE_ASSIGNEE_ID uses (hand-duplicated, not shared — CLAUDE.md rule
 // #3 — but the two must stay byte-identical for the parser's own
 // groupOwner-no-attendees mapping to land on an option this UI knows how
@@ -10891,13 +10875,6 @@ let _taSortField = 'assignedDate';
 let _taSortDir = 'desc';
 let _taCalDate = new Date();
 let _taDetailTaskId = null;
-let _taParseFileTexts = [];
-// Review-before-assign staging (2026-08-20) — parsing populates this array
-// ONLY; nothing here is written to ops_tasks (via _taSaveTasks/
-// cloudAutoSync) until commitStagedTasks() runs. Purely an in-memory
-// working set, never persisted to localStorage/cloud itself — a page
-// reload with unstaged rows loses them, same as any other unsaved form.
-let _taStagedTasks = [];
 
 function _taGenId(){ return 'task_'+Date.now()+'_'+Math.random().toString(36).slice(2,9); }
 // Sorted A→Z (case-insensitive) — every client dropdown fed from this
@@ -10933,9 +10910,8 @@ function _taSnapDueDateInput(el){ el.value = clampToWeekday(el.value); }
 // task ASSIGNED (created or reassigned) after this admin session's page
 // load flags amber until the page is reloaded — "recently added/assigned,
 // so you can see what just came in." lastAssignedAt is a soft, cosmetic
-// timestamp only (bumped in saveTaskEdit()/_taReassign()/
-// commitStagedTasks() whenever assigneeId actually changes) — never a
-// permission or audit field.
+// timestamp only (bumped in saveTaskEdit()/_taReassign() whenever
+// assigneeId actually changes) — never a permission or audit field.
 function _taIsNew(t){
   const pageLoad = parseInt(sessionStorage.getItem('wl_ta_page_load')||'0');
   return new Date(t.lastAssignedAt||t.createdAt||0).getTime() > pageLoad + 800;
@@ -11032,18 +11008,11 @@ function loadTaskAssignments(){
     }).join('');
   }
   renderTaskAssignments();
-  renderTaRecentImports();
 }
 
 let _taActiveCategory = null;
 function setTaActiveCategory(cat){ _taActiveCategory = cat; loadTaskAssignments(); }
 
-// "Add / Import (parse)" and "Assigned Tasks" are separate sub-tabs —
-// parsing/importing new tasks is a distinct activity from browsing and
-// scheduling the ones already assigned, per the parser-quality spec's
-// explicit instruction to keep them apart. Re-renders on switching INTO
-// "assigned" so anything imported (or changed by someone else, picked up
-// by the normal live-sync poll) while parked on the parse tab shows fresh.
 function setTaSubtab(tab){
   // Base class is always 'btn btn-sm btn-outline' — only btn-toggle-active
   // is added/removed for the active state (2026-08-24, matching the same
@@ -11052,21 +11021,18 @@ function setTaSubtab(tab){
   // itself, which changes the button's border width between states — the
   // exact "resizes/looks inconsistent" bug this fixes; see the
   // .btn-toggle-active comment on setTaView() for the fuller history.
-  document.getElementById('taSubtabParseBtn').className = 'btn btn-sm btn-outline'+(tab==='parse'?' btn-toggle-active':'');
   document.getElementById('taSubtabMyTasksBtn').className = 'btn btn-sm btn-outline'+(tab==='mytasks'?' btn-toggle-active':'');
   document.getElementById('taSubtabAssignedBtn').className = 'btn btn-sm btn-outline'+(tab==='assigned'?' btn-toggle-active':'');
   document.getElementById('taSubtabPersonBtn').className = 'btn btn-sm btn-outline'+(tab==='person'?' btn-toggle-active':'');
   document.getElementById('taSubtabAttentionBtn').className = 'btn btn-sm btn-outline'+(tab==='attention'?' btn-toggle-active':'');
   document.getElementById('taSubtabReportedBtn').className = 'btn btn-sm btn-outline'+(tab==='reported'?' btn-toggle-active':'');
   document.getElementById('taSubtabDupBtn').className = 'btn btn-sm btn-outline'+(tab==='duplicates'?' btn-toggle-active':'');
-  document.getElementById('taSubtabParseBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabMyTasksBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAssignedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabPersonBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabAttentionBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabReportedBtn').style.borderRadius = '8px 8px 0 0';
   document.getElementById('taSubtabDupBtn').style.borderRadius = '8px 8px 0 0';
-  document.getElementById('ta-subtab-parse').style.display = tab==='parse' ? '' : 'none';
   document.getElementById('ta-subtab-mytasks').style.display = tab==='mytasks' ? '' : 'none';
   document.getElementById('ta-subtab-assigned').style.display = tab==='assigned' ? '' : 'none';
   document.getElementById('ta-subtab-person').style.display = tab==='person' ? '' : 'none';
@@ -12946,8 +12912,8 @@ function saveTaskEdit(){
     ...(assigneeChanged ? { reportedMisassigned: false, reportedMisassignedBy: null, reportedMisassignedByName: null, reportedMisassignedAt: null, reportedMisassignedReason: null } : {}),
   };
   if(!t.subject){ showToast('Subject is required','warn'); return; }
-  // Everyone (whole team) — same clone-at-commit-time approach as
-  // commitStagedTasks() (see _taBuildEveryoneClones()). Editing an
+  // Everyone (whole team) — expands into real per-person clones at save
+  // time (see _taBuildEveryoneClones()). Editing an
   // EXISTING task into Everyone reuses its own id for the first clone
   // (so the original row becomes one specific person's copy, never
   // orphaned) and creates one brand-new task per remaining member; a
@@ -12983,25 +12949,10 @@ function saveTaskEdit(){
   showToast(isNew ? 'Task created ✓' : 'Task saved ✓');
 }
 
-function _onTaParseFilesChosen(event){
-  const files = Array.from(event.target.files || []);
-  _taParseFileTexts = [];
-  if(!files.length) return;
-  let remaining = files.length;
-  files.forEach(f=>{
-    const reader = new FileReader();
-    reader.onload = () => {
-      _taParseFileTexts.push(reader.result);
-      remaining--;
-      if(remaining===0) document.getElementById('taParseStatus').textContent = `${files.length} file(s) loaded, ready to parse.`;
-    };
-    reader.readAsText(f);
-  });
-}
-
 // Defensive JSON parsing for /api/process-transcript responses (2026-09-28)
-// — shared by runTaskEmailParse() and rmExtractTranscript() below, this
-// endpoint's two call sites. A Vercel platform-level failure (e.g. the
+// — used by rmExtractTranscript() below, this endpoint's remaining call
+// site (the "Add/Import" task-parse UI's own call was removed along with
+// that feature — see CLAUDE.md). A Vercel platform-level failure (e.g. the
 // function hitting its real timeout and being killed mid-request) returns
 // the PLATFORM's own non-JSON crash page, never anything
 // api/process-transcript.js's own code produces — a bare `res.json()`
@@ -13017,230 +12968,6 @@ async function _ptSafeJson(res){
   try { return JSON.parse(raw); }
   catch { throw new Error('Parsing failed — please try again.'); }
 }
-async function runTaskEmailParse(){
-  const token = _opsToken();
-  if(!token) return;
-  const pastedText = document.getElementById('taParseText').value.trim();
-  const allText = [pastedText, ..._taParseFileTexts].filter(Boolean).join('\n\n---\n\n');
-  if(!allText){ showToast('Paste text or drop a file first','warn'); return; }
-  const btn = document.getElementById('taParseBtn');
-  const statusEl = document.getElementById('taParseStatus');
-  btn.disabled = true;
-  statusEl.textContent = 'Parsing…';
-  try{
-    const res = await fetch('/api/process-transcript', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
-      body: JSON.stringify({ mode: 'taskEmail', text: allText }),
-    });
-    const data = await _ptSafeJson(res);
-    if(!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
-    const extracted = Array.isArray(data.tasks) ? data.tasks : [];
-    if(!extracted.length){
-      statusEl.textContent = 'No tasks found in that text.';
-      return;
-    }
-    // Review-before-assign staging (2026-08-20): parsing must NEVER commit
-    // to the live task list — not a new row, and not a merge into an
-    // existing one either, since a merge also mutates ops_tasks. Every
-    // extracted task (including merge candidates) lands in _taStagedTasks
-    // for review/edit/discard; nothing reaches ops_tasks/notifications/
-    // Assigned Tasks until commitStagedTasks() runs. et.mergeIntoId/
-    // mergeIntoSubject (from api/process-transcript.js's existing dedupe
-    // pass) are carried through unresolved — see commitStagedTasks() for
-    // where the actual narrow additive merge now happens.
-    //
-    // importBatchId (2026-08-20) tags every row from THIS parse action —
-    // one id shared by the whole batch, generated client-side (purely a
-    // grouping key for "Undo this import", never a permission/audit
-    // field) — so the staging list can group them and offer a single
-    // batch-scoped undo instead of only one-row-at-a-time Discard.
-    const importBatchId = 'imp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
-    const nowIso = new Date().toISOString();
-    extracted.forEach(et=>{
-      _taStagedTasks.push({
-        id: _taGenId(),
-        importBatchId, createdAt: nowIso, lastAssignedAt: nowIso,
-        subject: et.subject, notes: et.notes||'', tags: et.tags||[],
-        clientId: et.clientId||null, clientName: et.clientName||'',
-        // Auto-detected assignee/client are pre-filled but editable — see
-        // _renderTaStaging(); still just a default, freely changed there.
-        assigneeId: et.assigneeId||null, assignedById: null,
-        // Debug/visibility only (2026-08-21) — the model's raw ownerName,
-        // carried through even when it couldn't be resolved to anyone on
-        // the roster, so _renderTaStaging() can show what the model
-        // actually said instead of leaving a silent blank. Never written
-        // to ops_tasks — stripped out in commitStagedTasks() along with
-        // mergeIntoId/mergeIntoSubject.
-        ownerRaw: et.ownerRaw||'',
-        category: et.category, priority: et.priority,
-        status: et.status||'Not started', dueDate: et.dueDate||'', dueDateLocked: false,
-        // 'parsed-transcript', not 'parsed-email' (2026-09-03) — nobody
-        // gets tasks from email, they come from pasted meeting
-        // transcripts (or a dropped .eml file's text content, extracted
-        // the same way); a provenance tag only, never displayed anywhere
-        // in this file any more (see the removed "Email received" field).
-        source: 'parsed-transcript', origin: 'admin',
-        emailReceivedDate: et.emailReceivedDate||'', emailThreadId: et.emailThreadId||'',
-        replyStatus: '',
-        assignedDate: et.assignedDate||_taToday(),
-        mergeIntoId: et.mergeIntoId||null, mergeIntoSubject: et.mergeIntoSubject||'',
-      });
-    });
-    document.getElementById('taParseText').value = '';
-    document.getElementById('taParseFileInput').value = '';
-    _taParseFileTexts = [];
-    statusEl.textContent = `✅ ${extracted.length} task(s) extracted — review below before assigning.`;
-    _renderTaStaging();
-  } catch(e){
-    statusEl.textContent = `❌ ${e.message}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function _taUpdateStaged(id, field, value){
-  const row = _taStagedTasks.find(x=>x.id===id);
-  if(!row) return;
-  // Same "Subject is required" guard saveTaskEdit() already applies to a
-  // manually-created/edited task — a staged row must never be blankable
-  // to a nameless task via the new editable subject input. Re-renders to
-  // visually reset the input back to the last valid value, since the
-  // input itself isn't otherwise re-synced to row.subject on every keystroke.
-  if(field==='subject' && !value.trim()){
-    showToast('Subject is required');
-    _renderTaStaging();
-    return;
-  }
-  // Weekend-clamped (2026-09-02), same as saveTaskEdit()'s own due-date
-  // field — re-renders so the input visually shows the snapped date
-  // rather than silently storing a different value than what's displayed.
-  if(field==='dueDate' && value){
-    const clamped = clampToWeekday(value);
-    row[field] = clamped;
-    _renderTaStaging();
-    return;
-  }
-  row[field] = value || null;
-  if(field==='clientId'){
-    const c = _taActiveClients().find(x=>x.id===value);
-    row.clientName = c ? c.name : '';
-  }
-}
-
-function discardStagedTask(id){
-  _taStagedTasks = _taStagedTasks.filter(x=>x.id!==id);
-  _renderTaStaging();
-}
-
-// Undo an entire import BEFORE it's committed — drops every staged row
-// from this one parse action, leaving any OTHER staged batch (from an
-// earlier parse that hasn't been committed yet either) untouched. No
-// network call: nothing from staging has ever reached ops_tasks.
-function undoStagedImportBatch(batchId){
-  _taStagedTasks = _taStagedTasks.filter(x=>x.importBatchId!==batchId);
-  _renderTaStaging();
-}
-
-function _renderTaStaging(){
-  const wrap = document.getElementById('ta-staging-wrap');
-  const list = document.getElementById('ta-staging-list');
-  const countEl = document.getElementById('taStagingCount');
-  if(!wrap || !list) return;
-  if(!_taStagedTasks.length){
-    wrap.style.display = 'none';
-    list.innerHTML = '';
-    return;
-  }
-  wrap.style.display = '';
-  if(countEl) countEl.textContent = _taStagedTasks.length;
-  const roster = _timeOffRoster();
-  const clients = _taActiveClients();
-  // Grouped by importBatchId so multiple not-yet-committed parses (rare,
-  // but possible if a second paste happens before the first is saved) each
-  // get their own "Undo this import" scope instead of one undoing
-  // everything currently staged.
-  const batches = [];
-  const byBatch = {};
-  _taStagedTasks.forEach(row=>{
-    const bid = row.importBatchId || '_none';
-    if(!byBatch[bid]){ byBatch[bid] = { id: bid, rows: [] }; batches.push(byBatch[bid]); }
-    byBatch[bid].rows.push(row);
-  });
-  list.innerHTML = batches.map(batch=>{
-    const rowsHtml = batch.rows.map(row=>{
-      // Every staged row is, by definition, from the current import —
-      // always shown with the same amber "New" treatment as a just-
-      // assigned committed task (see _taIsNew()/.ta-staging-new).
-      const rowStyle = 'padding:12px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;';
-      if(row.mergeIntoId){
-        // A merge candidate mutates an EXISTING task (narrow/additive —
-        // notes/tags/dueDate-if-missing/status-if-done only, same as
-        // before this feature) rather than creating a new one, so editable
-        // assignee/client/etc. fields here would be misleading — they'd
-        // never actually apply. Shown read-only with just a Discard option.
-        return `<div class="ta-staging-new" style="${rowStyle}">
-          <div style="font-weight:600;color:var(--text-dark);">${escHtmlAdmin(row.subject||'')} <span class="rm-new-tag">New</span></div>
-          <div style="font-size:12px;color:var(--text-light);margin-top:2px;">↪ Will merge into existing task: <strong>${escHtmlAdmin(row.mergeIntoSubject||'')}</strong>${row.notes?' · adds a note':''}</div>
-          <div style="margin-top:8px;"><button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button></div>
-        </div>`;
-      }
-      return `<div class="ta-staging-new" style="${rowStyle}">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <input type="text" class="form-input" style="font-size:13px;font-weight:600;padding:6px 8px;flex:1;min-width:160px;" value="${escHtmlAdmin(row.subject||'')}" placeholder="Task subject" onchange="_taUpdateStaged('${row.id}','subject',this.value)">
-          <span class="rm-new-tag">New</span>
-        </div>
-        <input type="text" class="form-input" style="font-size:12px;padding:5px 8px;width:100%;margin-bottom:8px;" value="${escHtmlAdmin(row.notes||'')}" placeholder="Notes (optional)" onchange="_taUpdateStaged('${row.id}','notes',this.value)">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','assigneeId',this.value)">
-            <option value="">Unassigned</option>
-            <option value="${TA_EVERYONE_ID}" ${row.assigneeId===TA_EVERYONE_ID?'selected':''}>👥 Everyone (whole team)</option>
-            ${roster.map(p=>`<option value="${p.id}" ${p.id===row.assigneeId?'selected':''}>${escHtmlAdmin(p.name)}</option>`).join('')}
-          </select>
-          ${!row.assigneeId && row.ownerRaw ? `<span style="font-size:11px;color:var(--text-light);font-style:italic;">detected: ${escHtmlAdmin(row.ownerRaw)}.</span>` : ''}
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','clientId',this.value)">
-            <option value="">No client</option>
-            ${clients.map(c=>`<option value="${c.id}" ${c.id===row.clientId?'selected':''}>${escHtmlAdmin(c.name)}</option>`).join('')}
-          </select>
-          <input type="date" class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" value="${row.dueDate||''}" onchange="_taUpdateStaged('${row.id}','dueDate',this.value)">
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','priority',this.value)">
-            ${TA_PRIORITIES.map(p=>`<option value="${p}" ${p===row.priority?'selected':''}>${p}</option>`).join('')}
-          </select>
-          <select class="form-input" style="font-size:12px;padding:5px 8px;width:auto;" onchange="_taUpdateStaged('${row.id}','category',this.value)">
-            ${TA_CATEGORIES.map(c=>`<option value="${c}" ${c===row.category?'selected':''}>${TA_CATEGORY_LABELS[c]||c}</option>`).join('')}
-          </select>
-          <button class="btn btn-xs btn-outline" onclick="discardStagedTask('${row.id}')">🗑 Discard</button>
-        </div>
-      </div>`;
-    }).join('');
-    return `<div style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-size:11px;color:var(--text-light);">${batch.rows.length} task(s) from this import</span>
-        <button class="btn btn-xs btn-outline" onclick="undoStagedImportBatch('${batch.id}')">↩ Undo this import</button>
-      </div>
-      ${rowsHtml}
-    </div>`;
-  }).join('');
-}
-
-// Commits every remaining staged row — and ONLY these rows — to ops_tasks
-// in one action: a plain row becomes a new task with whatever fields were
-// left/edited in the staging table; a merge-candidate row applies the same
-// narrow, additive-only merge (notes appended, tags unioned, due date
-// filled only if missing, status escalated to Done only if the text said
-// so) that used to happen automatically at parse time — now deferred here,
-// after review, per this feature's whole point ("parsing must NOT commit
-// to the live task list"). Switches to Assigned Tasks afterward so the
-// commit's result is immediately visible, same as "moves them over."
-//
-// Recently-committed batches, this session only (2026-08-20) — powers the
-// POST-commit "Undo this import" (see undoCommittedImportBatch() below).
-// Deliberately in-memory/session-only, not persisted: undoing a merge's
-// additive text changes isn't attempted (out of scope — only brand-new
-// rows this batch actually CREATED are ever candidates for the hard
-// delete), so only non-merge task ids are tracked per batch here.
-let _taRecentImportBatches = [];
-
 // Expands a single task carrying assigneeId===TA_EVERYONE_ID into one real
 // clone per active roster member — "co-assign" for the whole team, same
 // idea as the parser's own multi-name/group-attendee clone model (see
@@ -13262,95 +12989,6 @@ function _taBuildEveryoneClones(baseTask, roster){
     assigneeIds: ids,
     lastAssignedAt: nowIso,
   }));
-}
-
-function commitStagedTasks(){
-  if(!_taStagedTasks.length) return;
-  const tasks = _taTasks();
-  const roster = _timeOffRoster();
-  let createdCount = 0, mergedCount = 0;
-  const newBatchIds = {};
-  _taStagedTasks.forEach(row=>{
-    if(row.mergeIntoId){
-      const existing = tasks.find(x=>x.id===row.mergeIntoId);
-      if(existing){
-        if(row.notes) existing.notes = existing.notes ? `${existing.notes}\n${row.notes}` : row.notes;
-        existing.tags = [...new Set([...(existing.tags||[]), ...(row.tags||[])])];
-        if(!existing.dueDate && row.dueDate) existing.dueDate = row.dueDate;
-        if(row.status==='Done'){
-          existing.completedAt = _taCompletedAt(existing.status||'Not started', 'Done', existing.completedAt);
-          existing.status = 'Done';
-        }
-        mergedCount++;
-        return;
-      }
-      // Existing row no longer in the currently-loaded local list (rare)
-      // — fall through and create a new task rather than silently
-      // dropping this one.
-    }
-    const { mergeIntoId, mergeIntoSubject, ownerRaw, ...task } = row;
-    // A brand-new task, per _taCompletedAt() — treated as never having
-    // been Done before, so a task created directly with status:'Done'
-    // (e.g. the parser's alreadyDone mapping) still gets a real
-    // completedAt to sort by; anything else harmlessly clears to ''.
-    task.completedAt = _taCompletedAt('Not started', task.status, null);
-    const bid = task.importBatchId || '_none';
-    if(task.assigneeId===TA_EVERYONE_ID && roster.length){
-      const clones = _taBuildEveryoneClones(task, roster);
-      clones.forEach(c=>{
-        tasks.push(c);
-        createdCount++;
-        (newBatchIds[bid] = newBatchIds[bid]||[]).push(c.id);
-      });
-      return;
-    }
-    tasks.push(task);
-    createdCount++;
-    (newBatchIds[bid] = newBatchIds[bid]||[]).push(task.id);
-  });
-  _taSaveTasks(tasks);
-  cloudAutoSync();
-  Object.entries(newBatchIds).forEach(([id, taskIds])=>{
-    if(id!=='_none') _taRecentImportBatches.unshift({ id, taskIds });
-  });
-  _taRecentImportBatches = _taRecentImportBatches.slice(0,10);
-  _taStagedTasks = [];
-  _renderTaStaging();
-  renderTaRecentImports();
-  showToast(`✅ ${createdCount} task(s) assigned${mergedCount?`, ${mergedCount} merged into existing task(s)`:''}`);
-  setTaSubtab('assigned');
-}
-
-function renderTaRecentImports(){
-  const wrap = document.getElementById('ta-recent-imports');
-  if(!wrap) return;
-  if(!_taRecentImportBatches.length){ wrap.innerHTML = ''; return; }
-  wrap.innerHTML = `<div style="font-size:11px;color:var(--text-light);margin-bottom:6px;">Recent imports (this session)</div>` +
-    _taRecentImportBatches.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px;">
-      <span>${b.taskIds.length} task(s) added</span>
-      <button class="btn btn-xs btn-outline" onclick="undoCommittedImportBatch('${b.id}')">↩ Undo this import</button>
-    </div>`).join('');
-}
-
-// Reverses an already-committed import — a genuine per-record delete (see
-// tombstones.taskIds in api/ops-sync.js; ops_tasks has no deleted_at, so
-// this is a real SQL DELETE, not a soft tombstone). Only ever targets the
-// specific task ids THIS batch created (never a merge's additive edits to
-// a pre-existing task) — see the commitStagedTasks() comment above.
-function undoCommittedImportBatch(batchId){
-  const batch = _taRecentImportBatches.find(b=>b.id===batchId);
-  if(!batch) return;
-  if(!confirm(`Remove ${batch.taskIds.length} task(s) from this import? This can't be undone.`)) return;
-  const tasks = _taTasks().filter(t=>!batch.taskIds.includes(t.id));
-  _taSaveTasks(tasks);
-  const tomb = dbGet(DB_KEYS.deletedTaskIds)||[];
-  batch.taskIds.forEach(id=>{ if(!tomb.includes(id)) tomb.push(id); });
-  dbSet(DB_KEYS.deletedTaskIds, tomb);
-  cloudAutoSync();
-  _taRecentImportBatches = _taRecentImportBatches.filter(b=>b.id!==batchId);
-  renderTaRecentImports();
-  renderTaskAssignments();
-  showToast(`Removed ${batch.taskIds.length} task(s) from that import`);
 }
 
 // ═══════════════════════════════════════════════════════════

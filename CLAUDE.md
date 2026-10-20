@@ -1244,6 +1244,163 @@ Don't relitigate them without an explicit decision from the user.
   assignee list can include deactivated/on-leave users (Assmaa, Jacob) —
   worth a separate look at whether `_taBuildEveryoneClones()`'s roster
   source should filter to active-only.
+- Urgent fix: members could not edit ANY self-assigned task
+  (2026-10-15 — **merged**, PR #472, `api/ops-sync.js`): reported live —
+  the server rejected every status edit on a self-assigned task with
+  `"members cannot edit tasks.selfAssignedAt"`, blocking all 9 team
+  members (659 tasks across them carry `selfAssignedAt`). Root cause:
+  the member task-write branch rejected the WHOLE write the instant ANY
+  `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` field merely differed from the
+  server's current row — including when the mismatch was pure
+  staleness (the member's local cache hadn't seen a field like
+  `selfAssignedAt` yet) rather than an actual attempted edit. Same
+  false-positive class #469 fixed for client/service writes
+  (`restrictClientWriteToOwnItems()`), now recurring on tasks. Fix:
+  pin-not-reject, extended to task fields — new
+  `pinMemberForbiddenTaskFields(cur, inc)`, run before the write is
+  evaluated at all, forces every `TASK_KEYS_MEMBER_MAY_NOT_TOUCH` field
+  to the server's own CURRENT value regardless of what the payload
+  said; `dueDate` keeps its pre-existing fill-only rule (pinned to
+  `cur.dueDate` only when already set, not a flat pin). A member still
+  can NEVER actually change a protected field — always forced back to
+  `cur`'s value — but staleness on one can no longer block or roll back
+  a legitimate edit to an allowed field (status, notes) on a task
+  that's theirs. Every `inc.*` reference downstream in the member
+  branch now reads the pinned `safeInc` instead of the raw payload.
+  `TASK_KEYS_MEMBER_MAY_NOT_TOUCH`/`pinMemberForbiddenTaskFields()` are
+  now exported, matching #469's precedent. Verified with a 7-check Node
+  suite: 3 direct unit tests on the exported pin function (own edit
+  survives, every protected field pins to cur; a genuine attempted edit
+  to a protected field is silently pinned, never applied; dueDate
+  fill-only semantics preserved) plus 4 full end-to-end runs of the
+  real, unmodified `handler()` against a real signed session token and
+  an in-memory fake Supabase client (no live DB access, rule #11):
+  reproduces + fixes the exact reported bug, a tamper attempt is pinned
+  not rejected, the "not your task" ownership check is unchanged
+  (regression guard), dueDate fill-only holds end-to-end. Confirmed via
+  `git stash` the suite fails pre-fix. Per rule #9: both a bare `node
+  --check` and the module-mode `node --input-type=module --check`
+  clean.
+- Notification sound turned off by default, with a persisted on/off
+  toggle (2026-10-15 — **merged**, PR #473, `index.html`+`user.html`,
+  display-only): reported as playing "constantly," even after reading
+  all notifications. Traced before guessing (rule #7): the bell sound's
+  trigger (`refreshAdminNotifBadge()`/`updateAssignmentsBadge()`) is a
+  bare unread-COUNT comparison destabilized by a real, separate
+  instability source — `api/ops-state.js`'s notifications query caps at
+  the 200 most recent rows SYSTEM-WIDE, so a heavy recipient's own
+  local notification window can churn between polls independent of
+  anything they've actually read. Rather than chasing that triggering
+  logic (a bigger, separate fix — real notification pagination, out of
+  this ticket's scope), turned the sound OFF by default in both
+  portals, with a persisted per-browser toggle. `index.html`: a new
+  "Sound" checkbox next to "Mark all read" in the notif panel header
+  (`wl_admin_notif_sound_enabled`, localStorage-only, never synced);
+  `_playNotifBing()` gated on it alongside the existing gesture-unlock
+  check. `user.html`: added to the existing local-only "🔔
+  Notifications" settings panel — `getNotifSettings()`/
+  `setNotifSettings()` gained a `sound` field (default `false`, same
+  explicit-opt-in shape `dueSoon` already uses for its own opposite
+  default). Bell icon/unread-count badge completely unaffected either
+  way — only the sound itself is gated. Verified with a 9-check
+  Playwright suite against the real files: sound defaults OFF (proven
+  via a real `window.AudioContext` construction counter — a faithful
+  proxy for "did a sound play," since `_playNotifBing()` only
+  constructs one on an actual gate-passing attempt) while badges still
+  update; toggling ON (both directly and via the real `user.html` form
+  save path) lets exactly one sound play; both checkboxes start
+  unchecked and persist via their real save paths; zero-JS-error load
+  check across all three portals. Confirmed via `git stash` the suite
+  fails pre-fix (sound played by default). No `api/*.js` touched (rule
+  #9's module-mode check doesn't apply); div-balance unchanged on both
+  files vs. baseline.
+- Transcript paste/upload parsing-import feature removed, meeting-parse
+  auto-update removed, inbound email kept fully working (2026-10-15 —
+  held for preview approval, `index.html`+`user.html`+`api/`): mapped
+  first (report-only, no code changes), then removed on explicit go-ahead.
+  Removed: `index.html`'s "📝 Add / Import" Task Assignments sub-tab (the
+  paste/upload UI, staging-review card, recent-imports list) and its JS
+  (`_onTaParseFilesChosen`, `runTaskEmailParse`, `_taUpdateStaged`,
+  `discardStagedTask`, `undoStagedImportBatch`, `commitStagedTasks`,
+  `_taRecentImportBatches`/`renderTaRecentImports`, `_taStagedTasks`,
+  `_taParseFileTexts`, plus the now-orphaned `undoCommittedImportBatch` —
+  not explicitly named in the ticket but unreachable without the removed
+  UI and sharing no other caller); new default Task Assignments sub-tab is
+  "My Tasks" (`taSubtabMyTasksBtn` now carries the default
+  `btn-toggle-active` class in the HTML itself, same mechanism "parse" used
+  before — no JS reset-on-every-load added, so a sticky mid-session tab
+  choice behaves exactly as before). `user.html`'s parallel "Add / import
+  tasks" tab and its hand-duplicated JS
+  (`_onDtParseFilesChosen`/`runDtEmailParse`/`_dtUpdateStaged`/
+  `discardDtStagedTask`/`undoDtStagedImportBatch`/`commitDtStagedTasks`/
+  `undoDtCommittedImportBatch`/`_dtStagedTasks`/`_dtParseFileTexts`) also
+  removed — no replacement delete button added, per explicit instruction;
+  this was already the member portal's only reachable path to the
+  tombstones.taskIds member-delete permission (the general delete UI was
+  already removed 2026-08-26), so member task deletion stays gone, as
+  before this feature ever existed. `api/ops-sync.js`'s meeting-parse
+  write/notify functions (`applyMeetingParseTaskStatusUpdate`,
+  `fireMeetingParseNotifyEvents`, `resolveMeetingParseRecipients`) deleted
+  outright. In `api/process-transcript.js`: deleted the
+  existingItemMentions matching/gating logic (`matchExistingTask`,
+  `activeServiceCandidates`, `matchExistingService`,
+  `evaluateMeetingParseGate`, and the whole existingItemMentions block
+  inside `parseTaskEmailForSession` that called them) and the
+  existingItemMentions instructions/schema from the taskEmail system
+  prompt. Deliberate, flagged deviation from the ticket's literal function
+  list (rule #7): `isSameTask`/`subjectSimilarity`/`subjectTokens` were
+  also named for removal, but investigation found they're shared with (a)
+  `dedupeWithinBatch()` (collapsing duplicate mentions WITHIN one parse
+  batch — core extraction, not matching-against-existing) and (b) the
+  `mergeIntoId` computation in `parseTaskEmailForSession` that flags a
+  newly-extracted task as a likely duplicate of an EXISTING open task —
+  confirmed via direct reading of `api/inbound-email.js`'s
+  `createTasksFromParsed()` that inbound email actively depends on
+  `mergeIntoId` (skips re-adding a task flagged as a duplicate, reports it
+  in the confirmation reply) — a completely different feature from the
+  meeting-parse status-auto-update being removed. Kept all three
+  functions; only the existing-item status-matching/auto-update consumers
+  were deleted. `api/inbound-email.js` itself: confirmed **zero diff**
+  (verified via `git diff --stat`) — still imports and calls
+  `parseTaskEmailForSession` exactly as before; it keeps creating tasks
+  from email exactly as before, it simply never again receives an
+  existingItemMentions-driven auto-update (that capability no longer
+  exists anywhere, not something inbound email opted out of). The separate
+  "My Roadmap" transcript-paste feature (`rmExtractTranscript()`,
+  `extractRoadmapTasks()`) was out of scope and is untouched — confirmed
+  via grep it shares no removed symbol. `client.html` has zero dependency
+  on any of this (confirmed clean via grep in the mapping step) — fully
+  unaffected. Verified with a new 6-check Node suite against the real,
+  unmodified `parseTaskEmailForSession()` (fake in-memory Supabase client
+  + mocked Gemini fetch, no live access per rule #11): a brand-new task is
+  still extracted with no existing tasks to match; the `mergeIntoId` dedup
+  against an existing open task still works (the exact mechanism
+  `inbound-email.js` depends on); a model response that still emits
+  `existingItemMentions` (proving the code path is gone, not just the
+  prompt instruction) triggers zero `ops_tasks` updates and zero
+  notification inserts; `ops-sync.js` no longer exports the three removed
+  functions; the removed function names no longer appear anywhere in
+  `process-transcript.js`'s source while `isSameTask`/`dedupeWithinBatch`
+  still do. Plus a 13-check Playwright suite against the real, live-served
+  files (no import UI/buttons/inputs in either portal's DOM, the new
+  default tab's active class, "+ New Task" still present in both) and a
+  baseline-vs-branch console-error comparison on all three portals (same
+  2 pre-existing network-only console lines on both `main` and this
+  branch — confirms zero NEW JS errors introduced). `node --check` AND
+  `node --input-type=module --check` (rule #9) both clean on all 4 touched
+  `api/*.js` files (including `api/cron-overdue-check.js`, where only a
+  stale comment referencing a removed function name was fixed — no
+  behavior change); div-balance delta unchanged vs. baseline on both
+  touched HTML files (index.html -2, user.html -1, matching `main`).
+  `api/ops-sync.js`'s `insertNotifications()` `opts.directory` override
+  mechanism (still used by `api/cron-overdue-check.js`) and its
+  `meetingParseNotify` notification-type icon/label entries in
+  `index.html` (still needed to render any already-existing historical
+  notification rows of that type) were deliberately left in place — not
+  dead code, just no longer fed by any new write. Held per rule #10 —
+  touches `api/ops-sync.js`'s notification/write logic and
+  `api/process-transcript.js`'s task-extraction logic, even though no
+  schema/migration/auth change is involved.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
