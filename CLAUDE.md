@@ -1116,8 +1116,8 @@ Don't relitigate them without an explicit decision from the user.
   --check` (rule #9) both clean on `api/ops-sync.js`; inline-JS syntax
   clean on `user.html`; div-balance unchanged vs. baseline (delta -1).
 - Deleted tasks must stay deleted — whole-team task resurrection fixed
-  (2026-10-20 — held for preview approval + migration apply, `api/`+
-  `index.html`+`user.html`+migration): reported live — 2 whole-team/
+  (2026-10-20 — **merged**, PR #476, `api/`+`index.html`+`user.html`+
+  migration): reported live — 2 whole-team/
   imported tasks (`assigneeIds` = all 8 members, `importBatchId`-tagged)
   kept reappearing after every delete, each time under a brand-new
   `ops_tasks.id` sharing the SAME base timestamp as the original "Everyone"
@@ -1230,19 +1230,53 @@ Don't relitigate them without an explicit decision from the user.
   (per rule #9's module-mode addendum); inline-JS syntax clean on both
   HTML files; div-balance delta 0 on both (pure `<script>` content
   changes, confirmed via diff — no HTML markup touched).
-  **Migration not yet applied to production** — this agent has no live
-  DB access (rule #11); per rule #12 this cannot be merged until the DB
-  operator runs the dry-run → apply → verify cycle and confirms the
-  Business Setup schema-drift panel shows 0 pending for
-  `ops_deleted_task_ids`. **Data cleanup is a separate, POST-merge DB-
-  operator step** (per the ticket's own instruction): once this fix is
-  live, delete the 3 currently-resurrecting rows
+  **Merged by the repo owner directly on GitHub (2026-10-20 10:05 UTC)
+  ahead of rule #12's own gate being confirmed** — this agent never
+  confirmed the `ops_deleted_task_ids` migration as applied to
+  production (still no live DB access, rule #11) before the merge
+  happened; the owner opened PR #476 to "ready for review" and merged
+  it themselves. Flagging this explicitly rather than silently treating
+  it as fully closed: **the migration-applied + schema-drift-panel-
+  shows-0-pending confirmation from rule #12 is still outstanding** and
+  is a DB-operator action, not something this agent can do or verify
+  itself. Practical exposure while it's outstanding is low, not zero —
+  every new `ops_deleted_task_ids` read/write in `api/ops-sync.js` is
+  wrapped to degrade to a warning on error (fails open), so a missing
+  table does not block any task create/delete; it only means Part 2's
+  tombstone defense-in-depth is inert until the table exists, while
+  Part 1 (the actual root-cause `_applyServerArray()` snapshot-guard
+  fix, which needs no new table at all) is fully live and effective as
+  of this merge. **Still needed from the DB operator:** run the
+  dry-run → apply → verify cycle for
+  `20261020120000_ops_deleted_task_ids.sql` and confirm the Business
+  Setup schema-drift panel shows 0 pending for `ops_deleted_task_ids` —
+  only then is Part 2 actually active, and only then should the
+  post-merge data cleanup below be done.
+  Also re-verified post-merge, since the merge commit onto this branch
+  (`main` → `fix/deleted-tasks-stay-deleted`) was itself a **merge**, not
+  a rebase, pulling in PR #474's large same-day removal of the
+  transcript-parse-import feature (258-line diff in `api/ops-sync.js`
+  alone) — the exact action that caused PR #467's duplicate-declaration
+  outage 6 days earlier. Confirmed clean this time: `computeTaskDeleteKey`/
+  `ops_deleted_task_ids`/the `snapById` guard in both HTML files/the
+  migration file/the schema-drift entry all survived with no duplication;
+  `node --input-type=module --check` clean on all 4 touched `api/*.js`
+  files; the full 63-check regression suite re-run clean on the merged
+  head (`--experimental-test-module-mocks` is required for the suites
+  using `mock.module` — a local invocation quirk, not a code issue);
+  inline-JS syntax clean on all three HTML files; div-balance delta on
+  `index.html`/`user.html` unchanged vs. `main`'s own baseline (-2/-1).
+  **Data cleanup is a separate, POST-migration-apply DB-operator step**
+  (per the ticket's own instruction): once the migration above is
+  confirmed applied, delete the 3 currently-resurrecting rows
   (`task_1787933180295_wqc9hza`/`_rxoxisx`/`_m47ifdt`) and confirm they
-  stay gone across a load/sync — doing this BEFORE the fix ships would
-  just resurrect them again. Also flagged, not fixed (out of this
-  ticket's stated scope, noted in the ticket itself): a whole-team
-  assignee list can include deactivated/on-leave users (Assmaa, Jacob) —
-  worth a separate look at whether `_taBuildEveryoneClones()`'s roster
+  stay gone across a load/sync — doing this before the migration is
+  applied risks the tombstone write itself failing (table doesn't exist
+  yet), though Part 1's fix means they likely won't resurrect either way
+  at this point. Also flagged, not fixed (out of this ticket's stated
+  scope, noted in the ticket itself): a whole-team assignee list can
+  include deactivated/on-leave users (Assmaa, Jacob) — worth a separate
+  look at whether `_taBuildEveryoneClones()`'s roster
   source should filter to active-only.
 - Urgent fix: members could not edit ANY self-assigned task
   (2026-10-15 — **merged**, PR #472, `api/ops-sync.js`): reported live —
