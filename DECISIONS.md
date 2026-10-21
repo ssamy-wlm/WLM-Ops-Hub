@@ -12682,6 +12682,48 @@ written or altered by this change itself (only new tombstone rows going
 forward); the 3 known-bad live rows are an explicit, separate, deliberately-
 deferred cleanup step for after the fix ships.
 
+**Update — merged ahead of rule #12's gate (2026-10-20 10:05 UTC):** PR
+#476 was opened as a draft, then the owner (ssamy-wlm) marked it ready for
+review and merged it directly on GitHub — this agent never confirmed the
+`ops_deleted_task_ids` migration as applied to production (no live DB
+access, rule #11) before that happened, and no DB-operator confirmation of
+the dry-run → apply → verify cycle or the Business Setup schema-drift
+panel showing 0 pending was received. This is flagged here rather than
+quietly treated as fully closed: **that confirmation is still owed** and
+is the DB operator's action to take, not this agent's. Practical exposure
+in the meantime is low: every `ops_deleted_task_ids` read/write in
+`api/ops-sync.js` was deliberately built to fail open (a missing-table
+error degrades to a warning, never blocks the actual task create/delete),
+so Part 1 — the real root-cause fix, `_applyServerArray()`'s snapshot
+guard, which needs no new table — is fully live and effective as of the
+merge; only Part 2's tombstone defense-in-depth sits inert until the
+table exists.
+
+Before trusting the merged head, re-verified it wasn't a repeat of PR
+#467's incident: the merge commit onto `fix/deleted-tasks-stay-deleted`
+was `main` merged in (not rebased), and `main` had moved by PR #474 in the
+interim — a large same-day removal of the transcript-parse-import feature
+(258-line diff in `api/ops-sync.js` alone, plus changes to
+`api/process-transcript.js`, `index.html`, `user.html`) — the same shape
+of event (a sizeable concurrent PR merging into `main` while this branch
+was open) that caused the PR #467 duplicate-declaration outage. Checked
+directly rather than assumed clean: `computeTaskDeleteKey`,
+`ops_deleted_task_ids`, both HTML files' `snapById` resurrection guard
+(and `user.html`'s new `_opsReadSnapshot()`), the migration file, and the
+`schema-drift.js` `EXPECTED_TABLES` entry all survived the merge with
+exactly one occurrence each, no duplication. `node --input-type=module
+--check` clean on all 4 touched `api/*.js` files. Re-ran the full 63-check
+regression suite (the 2 new suites from this ticket plus every
+pre-existing related suite) against the merged head — all clean; the
+suites using `mock.module` require Node's
+`--experimental-test-module-mocks` flag, which the first run in this
+session's environment omitted (producing a wall of `mock.module is not a
+function` failures that looked alarming but were a local invocation
+mistake, not a code regression — re-running with the flag passed 45/45).
+Inline-JS syntax clean on all three HTML files. Div-balance delta on
+`index.html`/`user.html` unchanged vs. `main`'s own current baseline
+(-2/-1). No duplicate-declaration bug this time.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —
