@@ -931,6 +931,23 @@ export function collectServiceUpdateEvents(client, curClient, incClient) {
 // transitioning to a new value (completed this cycle), or a sub-item's done
 // flag flipping from falsy to true. Same current-vs-incoming, same-request
 // diff pattern as every collector above — never a load-time scan.
+//
+// Requires `prev` (the service/sub-item must have already been seen by the
+// server under this exact id) before firing ANY event here (2026-10-23,
+// "Stop phantom assigned/submitted/done notifications") — a service whose id
+// the server has never seen before is a (re)appearance, not a live
+// transition: if it already carries a non-blank lastDone/subitem.done (e.g.
+// an admin logging already-completed historical work as a brand-new entry,
+// or any other path that hands the server a fresh id with pre-populated
+// state), the old `prev?.lastDone` comparison read as undefined !== truthy
+// and fired "marked done" for something that never just happened. Reported
+// live: a service first-seen by the server with lastDone/reviewSubmittedAt/
+// assigneeIds already set fired assignment + submittedForReview + serviceDone
+// simultaneously, naming a long-inactive employee as the actor. Does NOT
+// touch the assignment detectors (collectServiceAssignmentEvents/
+// collectSubitemAssignmentEvents/collectTaskAssignmentEvents) — a genuinely
+// new service+assignment should still notify its assignee; only the
+// completion/review TRANSITION detectors are guarded here.
 export function collectServiceDoneEvents(client, curClient, incClient) {
   const events = [];
   const scanServices = (curList, incList, locationName) => {
@@ -938,7 +955,7 @@ export function collectServiceDoneEvents(client, curClient, incClient) {
     (incList || []).forEach(s => {
       if (!s?.id) return;
       const prev = curById.get(s.id);
-      if (s.lastDone && s.lastDone !== prev?.lastDone) {
+      if (prev && s.lastDone && s.lastDone !== prev.lastDone) {
         events.push({
           serviceId: s.id, serviceName: s.name, locationName,
           assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
@@ -947,7 +964,9 @@ export function collectServiceDoneEvents(client, curClient, incClient) {
       if (Array.isArray(s.subitems)) {
         const prevSubById = new Map((prev?.subitems || []).filter(si => si?.id).map(si => [si.id, si]));
         s.subitems.forEach(si => {
-          if (!si?.id || !si.done || prevSubById.get(si.id)?.done) return;
+          if (!si?.id) return;
+          const prevSi = prevSubById.get(si.id);
+          if (!prevSi || !si.done || prevSi.done) return;
           events.push({
             serviceId: s.id, serviceName: s.name, locationName, subitemId: si.id, subitemText: si.text,
             assigneeId: si.assigneeId || s.assigneeId, clientId: client.id, clientName: client.name,
@@ -973,6 +992,12 @@ export function collectServiceDoneEvents(client, curClient, incClient) {
 // once per service whose reviewSubmittedAt newly became truthy in THIS
 // write, so a resave of an already-submitted service (or any other edit to
 // it) produces zero events.
+//
+// Requires `prev` before firing (2026-10-23, same fix and same reasoning as
+// collectServiceDoneEvents's own comment above) — a service first-seen by
+// the server with reviewSubmittedAt already set is a (re)appearance, not a
+// live submission, and must never fire "submitted for review" naming
+// whoever's name happens to be stamped in reviewSubmittedByName.
 export function collectSubmittedForReviewEvents(client, curClient, incClient) {
   const events = [];
   const scanServices = (curList, incList, locationName) => {
@@ -980,7 +1005,7 @@ export function collectSubmittedForReviewEvents(client, curClient, incClient) {
     (incList || []).forEach(s => {
       if (!s?.id) return;
       const prev = curById.get(s.id);
-      if (s.reviewSubmittedAt && s.reviewSubmittedAt !== prev?.reviewSubmittedAt) {
+      if (prev && s.reviewSubmittedAt && s.reviewSubmittedAt !== prev.reviewSubmittedAt) {
         events.push({
           serviceId: s.id, serviceName: s.name, locationName,
           assigneeId: s.assigneeId, clientId: client.id, clientName: client.name,
@@ -1068,6 +1093,13 @@ async function fireAssignmentNotifications(supabase, events, warnings) {
     if (ev.assignedById && ev.assignedById === ev.assigneeId) return;
     const kind = users.find(u => u.id === ev.assigneeId) ? 'user' : 'admin';
     const person = personOf(ev.assigneeId, kind, { users, admins });
+    // A deactivated person is never a legitimate assignment target — never
+    // notified (in-app row, not just the email PR #470 already suppresses),
+    // never named as the "newly assigned" actor (2026-10-23, "Stop phantom
+    // assigned/submitted/done notifications"). `person` undefined here means
+    // "unresolvable id", not "inactive" — left alone, same fail-open
+    // convention every other status check in this file already uses.
+    if (person && person.status === 'inactive') return;
     const isTask = !!ev.taskId;
     const isSubitem = !!ev.subitemId;
     const title = isSubitem ? `New sub-item assigned: ${ev.subitemText}`
@@ -1109,6 +1141,9 @@ async function fireOpsTaskAssignmentNotifications(supabase, events, warnings) {
     if (ev.assignedById && ev.assignedById === ev.assigneeId) return;
     const kind = users.find(u => u.id === ev.assigneeId) ? 'user' : 'admin';
     const person = personOf(ev.assigneeId, kind, { users, admins });
+    // See fireAssignmentNotifications()'s own comment above — same guard,
+    // same reasoning, same fail-open-on-unresolvable-id behavior.
+    if (person && person.status === 'inactive') return;
     rows.push({
       type: 'taskAssignment', recipientId: ev.assigneeId, recipientKind: kind,
       recipientName: person?.name || '', recipientEmail: person?.email || '',

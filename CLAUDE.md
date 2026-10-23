@@ -1478,6 +1478,127 @@ Don't relitigate them without an explicit decision from the user.
   `node --check` on extracted inline JS clean; div-balance unchanged vs.
   baseline (delta -2). No `api/*.js` touched, so rule #9's module-mode
   check doesn't apply.
+- Stop phantom assigned/submitted/done notifications (2026-10-23 — held for
+  preview approval, `api/ops-sync.js`+`index.html`, no migration): reported
+  live — deactivated employee Assmaa (no session since Oct 5) was shown by
+  email as having "submitted Training Time / New service page for review,"
+  in bursts where the same item fired `assignment` + `submittedForReview` +
+  `serviceDone` in the same second to multiple recipients. **The ticket's
+  own attributed root cause did not hold up under direct code reading, and
+  is flagged here rather than silently force-fit (rule #7):** it named
+  `_taBuildEveryoneClones()` (index.html, `ops_tasks` "Everyone" whole-team
+  task expansion) regenerating ids as feeding `collectServiceDoneEvents()`/
+  `collectSubmittedForReviewEvents()` — but those two functions, confirmed
+  by reading every call site, ONLY ever scan a CLIENT's `services[]`/
+  `locations[].services[]` (`ops_clients`), a completely separate data
+  model from `ops_tasks`; `ops_tasks` has no "done"/"submittedForReview"
+  notification type at all (only `assignment`/`taskAssignment`), confirmed
+  via a full grep of every `type: '…'` literal in the file. **Real,
+  independently-verified mechanism:** any time the id-keyed current-vs-
+  incoming diff these collectors run sees a service id it has never stored
+  before (a genuinely brand-new service — e.g. an admin adding a new
+  service entry to an EXISTING client while also logging its `lastDone`/
+  assignees for already-completed historical work, the one live UI path
+  that lets both be set in the same create — or any other future vector
+  that could someday hand the server a never-before-seen id with
+  pre-populated state), `prev` is `undefined`, so the old
+  `prev?.lastDone`/`prev?.reviewSubmittedAt` reads as `undefined` and
+  "transitioned" relative to any truthy incoming value — firing a done/
+  review notification for something that never just happened, and (via
+  `newlyAssignedServiceIds` treating every one of that brand-new service's
+  `assigneeIds` as "newly assigned" since `prevIds` is empty) an assignment
+  notification per assignee too — reproducing the exact reported
+  multi-type, multi-recipient, same-second burst regardless of what put the
+  stale/historical state on the new id. **Fix A** (`api/ops-sync.js`):
+  `collectServiceDoneEvents()` (service-level AND its sub-item-level scan)
+  and `collectSubmittedForReviewEvents()` now both require `prev` to exist
+  before firing anything — a service/sub-item the server has never stored
+  before is a (re)appearance, never a live transition, exactly matching the
+  ticket's own prescribed requirement #2, applied to the subsystem that
+  actually produces these two notification types. Assignment detectors
+  (`collectServiceAssignmentEvents`/`collectSubitemAssignmentEvents`/
+  `collectTaskAssignmentEvents`) are deliberately NOT guarded with `prev`
+  — per the ticket's own explicit instruction, a genuinely new service+
+  assignment should still notify its assignee. **Fix B**
+  (`api/ops-sync.js`): `fireAssignmentNotifications()`/
+  `fireOpsTaskAssignmentNotifications()` now skip generating a notification
+  row entirely for a recipient whose own roster status is `'inactive'` —
+  closes a gap PR #470 (2026-10-15) left open: that fix suppressed only the
+  EMAIL half for an inactive recipient (`sendResendEmail()`'s own guard);
+  the in-app bell/`ops_notifications` row for an assignment event still
+  reached (named) a deactivated person. `fireServiceDoneNotifications()`/
+  `fireSubmittedForReviewNotifications()` were deliberately left
+  untouched — Fix A already eliminates every phantom firing of those two
+  types outright, so there's no remaining live path where an inactive
+  person's name would ride along as a false "just happened" actor. **Fix
+  C — separate, independently-confirmed real bug, exactly matching the
+  ticket's requirement #1's own given line number/code snippet**
+  (`index.html`'s `_taBuildEveryoneClones()`): every clone past the first
+  got a fresh `_taGenId()` on EVERY call — and this function re-runs on
+  EVERY resave of an already-"Everyone" task (any edit — notes, status,
+  priority — not just the initial conversion), not only once at creation.
+  A fresh random id each time meant the server had never seen that id
+  before, so `assigneeChanged(undefined, row)` read as a brand-new
+  assignment and fired a spurious whole-team "assignment" notification on
+  every unchanged resave. Investigating the caller
+  (`saveTaskEdit()`'s Everyone branch) surfaced a second, more severe bug
+  in the SAME code block, not named in the ticket: the non-first clones
+  were unconditionally `tasks.push()`-ed on every resave with NO id-match
+  check at all — so even before this fix, a resave didn't just regenerate
+  ids, it silently DUPLICATED the entire whole-team clone set in local
+  storage (and therefore `ops_tasks`) every single time, accumulating
+  without bound. Fixed both together: `_taBuildEveryoneClones()` now
+  builds a stable, deterministic id per clone (`${baseId}__${p.id}`,
+  `baseId` computed once) so the SAME roster member always gets the SAME
+  id across repeated expansions of the SAME task, and the caller now
+  upserts each clone by id (find-and-`Object.assign`, push only if
+  genuinely absent) instead of push-only — a resave of an unchanged
+  Everyone task now correctly produces zero events and zero new rows,
+  while a genuinely new roster member (a new hire) still gets a real,
+  never-before-seen id and correctly fires one real notification.
+  `_timeOffRoster()` (the roster `_taBuildEveryoneClones()` is always
+  called with — confirmed its only call site, index.html ~12955) already
+  filters both `ops_users`/`ops_admins` to `status==='active'` — verified,
+  not fixed: this ticket's requirement #3 ("exclude inactive users from
+  the everyone-clone roster") was already true before this ticket, no
+  code change needed there. Requirement #4 ("no re-expansion on load/
+  sync") also verified already true and unchanged:
+  `_taBuildEveryoneClones()` has exactly one call site, inside
+  `saveTaskEdit()`, triggered only by an explicit admin Save click —
+  never from a load/poll/sync path. `client.html`/`user.html` confirmed
+  (grep) to have neither this "Everyone" task-clone feature nor the
+  service-event collectors at all — nothing to duplicate-fix per rule #3.
+  Verified with a new 14-check Node suite: `collectServiceDoneEvents`/
+  `collectSubmittedForReviewEvents` as pure unit tests (a first-seen
+  service/sub-item with pre-set lastDone/reviewSubmittedAt/done fires
+  nothing; a genuine transition on an already-known id still fires;
+  resaving an unchanged already-done service still fires nothing) against
+  the real, unmodified exports; the REAL reported incident reproduced
+  end-to-end against the real handler (fake in-memory Supabase client, no
+  live access per rule #11) — a brand-new service on an EXISTING client
+  with lastDone/reviewSubmittedAt/assigneeIds=[active,inactive] already
+  set fires zero serviceDone/submittedForReview rows and exactly one
+  assignment row, to the active assignee only; a brand-new service
+  assigned solely to an inactive person fires nothing at all; a brand-new
+  service assigned to an active person still correctly fires (assignment
+  is NOT guarded by prev, matching the ticket's own instruction); and,
+  via a brace-matching extractor exercising the real, unmodified
+  `_taBuildEveryoneClones()`/upsert logic from index.html directly (no
+  Playwright needed — pure sync array logic, nothing visual): identical
+  ids across repeated expansions of the same task, a new roster member
+  still getting a fresh id, and — reproducing the actual duplicate-rows
+  bug found during investigation — 3 resaves of an already-Everyone task
+  converging to exactly 3 rows instead of accumulating to 12. Confirmed
+  via `git stash` that 9 of these 14 checks correctly fail against the
+  pre-fix code. Full pre-existing regression surface (task-resurrection,
+  task-delete-tombstones, due-date-approval-lock, daily-reminder,
+  leave-aware-alerts ×2, name-fallback, PTO-report,
+  inactive-user-suppression) re-run clean — 77 checks total, 0 failures.
+  `node --input-type=module --check` clean on `api/ops-sync.js`;
+  inline-JS syntax clean on `index.html`; div-balance unchanged vs.
+  `main` (delta -2, pure `<script>` content change — no HTML markup
+  touched). Held per rule #10 — touches `api/ops-sync.js`'s real
+  notification-firing logic.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

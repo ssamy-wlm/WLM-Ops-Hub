@@ -12953,12 +12953,22 @@ function saveTaskEdit(){
     const roster = _timeOffRoster();
     if(roster.length){
       const clones = _taBuildEveryoneClones(t, roster);
+      // Upsert by id, never unconditionally push (2026-10-23) — with the
+      // now-stable clone ids above, a resave's clones[1..] match ids already
+      // in `tasks` from the prior expansion; pushing them again regardless
+      // (the old behavior, which pre-dates this fix and was unconditional
+      // even with the OLD random ids) silently duplicated the entire
+      // whole-team clone set in local storage — and therefore in
+      // ops_tasks — on every single resave of an already-Everyone task.
+      // isNew still takes the fast path (nothing to find-or-replace yet).
       if(isNew){
         clones.forEach(c=>tasks.push(c));
       } else {
-        const [first, ...rest] = clones;
-        Object.assign(tasks.find(x=>x.id===id), first);
-        rest.forEach(c=>tasks.push(c));
+        clones.forEach(c=>{
+          const match = tasks.find(x=>x.id===c.id);
+          if(match) Object.assign(match, c);
+          else tasks.push(c);
+        });
       }
       _taSaveTasks(tasks);
       cloudAutoSync();
@@ -13007,15 +13017,37 @@ async function _ptSafeJson(res){
 // something the model resolved. The FIRST clone reuses baseTask.id (so
 // editing an existing task into Everyone doesn't orphan its original row —
 // it just becomes one specific person's copy); every other clone gets a
-// fresh id via _taGenId(). assigneeIds carries the full roster id set on
-// every clone, purely informational, matching the same field the parser's
-// own clones already carry.
+// STABLE, DETERMINISTIC id — `${baseId}__${p.id}` — not a fresh _taGenId()
+// (2026-10-23, "Stop phantom assigned/submitted/done notifications"): this
+// function re-runs on every resave of an already-Everyone task (any edit —
+// notes, status, priority — not just the initial conversion), and a fresh
+// random id on every call meant the server had never seen that id before,
+// so api/ops-sync.js's assigneeChanged(undefined, row) read as a brand-new
+// assignment and fired a spurious "assignment" notification to the whole
+// team on every unchanged resave — on top of silently accumulating a brand
+// new set of duplicate ops_tasks rows each time (see the caller below,
+// which now upserts by id instead of unconditionally pushing). A
+// deterministic id means a resave reuses the SAME id for the SAME roster
+// member every time: the server finds `cur`, assigneeChanged is false, zero
+// events fire — exactly like resaving any other unchanged task. A roster
+// member who's new since the last expansion still gets a genuinely fresh,
+// never-before-seen id (correctly fires one real "newly assigned"
+// notification — see collectServiceDoneEvents's own comment in
+// api/ops-sync.js for why only the done/submittedForReview detectors, not
+// assignment, are guarded against this). roster is already active-only
+// (see _timeOffRoster()'s own status filter) — a deactivated person is
+// never cloned/assigned here, satisfying this ticket's "exclude inactive
+// users from the everyone-clone roster" requirement with no code change
+// needed. assigneeIds carries the full roster id set on every clone, purely
+// informational, matching the same field the parser's own clones already
+// carry.
 function _taBuildEveryoneClones(baseTask, roster){
   const nowIso = new Date().toISOString();
   const ids = roster.map(p=>p.id);
+  const baseId = baseTask.id || _taGenId();
   return roster.map((p,i)=>({
     ...baseTask,
-    id: (i===0 && baseTask.id) ? baseTask.id : _taGenId(),
+    id: i===0 ? baseId : `${baseId}__${p.id}`,
     assigneeId: p.id,
     assigneeIds: ids,
     lastAssignedAt: nowIso,
