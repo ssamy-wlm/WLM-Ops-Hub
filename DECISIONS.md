@@ -12919,6 +12919,13 @@ logic (`collectServiceDoneEvents`/`collectSubmittedForReviewEvents`/
 `index.html`'s task-write path feeding it. No data writes beyond the
 existing notification-insert mechanism, no schema change, no migration.
 
+**Merged (PR #478, 2026-10-23 13:09 UTC)** by the repo owner directly on
+GitHub shortly after marking the draft ready for review — no separate
+back-and-forth preview-approval message was exchanged first, same pattern
+as PR #476. No migration was involved this time, so none of rule #12's
+concerns apply; CI (Vercel preview build) was green on the merged head at
+merge time.
+
 ## Deferred / known gaps — not built, flagged rather than silently skipped
 
 - **Pending Supabase migrations reaching prod before they're applied** —

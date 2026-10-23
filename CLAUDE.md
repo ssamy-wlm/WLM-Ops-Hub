@@ -1478,8 +1478,8 @@ Don't relitigate them without an explicit decision from the user.
   `node --check` on extracted inline JS clean; div-balance unchanged vs.
   baseline (delta -2). No `api/*.js` touched, so rule #9's module-mode
   check doesn't apply.
-- Stop phantom assigned/submitted/done notifications (2026-10-23 — held for
-  preview approval, `api/ops-sync.js`+`index.html`, no migration): reported
+- Stop phantom assigned/submitted/done notifications (2026-10-23 —
+  **merged**, PR #478, `api/ops-sync.js`+`index.html`, no migration): reported
   live — deactivated employee Assmaa (no session since Oct 5) was shown by
   email as having "submitted Training Time / New service page for review,"
   in bursts where the same item fired `assignment` + `submittedForReview` +
