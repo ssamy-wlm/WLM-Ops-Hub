@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>WebLight Media – Client & Production Tracker</title>
+<!-- PWA metadata only (Option 1 — installable, Add to Home Screen). This
+     file has no login of its own and is normally embedded as an iframe in
+     index.html/user.html (see CLAUDE.md) — the service worker is
+     registered from those two top-level pages (root scope covers this
+     file's own requests too when it IS opened directly); no separate
+     registration or install-prompt UI is added here. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#256DB5">
+<link rel="icon" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -41,6 +51,18 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
+
+/* ── PWA (Option 1) — phone polish: 16px+ inputs at phone widths prevents
+   iOS Safari's auto-zoom-on-focus, same fix as index.html/user.html's
+   identical copy (zero-shared-code rule). No install-prompt/update-banner
+   CSS here — this file has no login of its own and is normally embedded
+   as an iframe (see its own <head> comment). */
+@media (max-width: 480px){
+  input, select, textarea, .form-input, .form-select { font-size: 16px; }
+}
+/* Safe-area insets — purely additive, see index.html's identical comment. */
+body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.sidebar{ padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 
 /* ── SIDEBAR ── */
 .sidebar{width:240px;min-height:100vh;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:50;box-shadow:2px 0 12px rgba(45,107,182,.06);}
