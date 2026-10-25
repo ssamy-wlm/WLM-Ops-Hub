@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>WebLight Media – Ops Hub</title>
+<!-- PWA (Option 1 — installable, Add to Home Screen; no Capacitor/App Store, same Vercel static hosting). -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#256DB5">
+<link rel="icon" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="WebLight Ops">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -41,6 +49,39 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg) 0%,var(--bg2) 100%);color:var(--text);min-height:100vh;overflow-x:hidden;}
+
+/* ── PWA (Option 1) — phone polish ──
+   16px+ on every text input/select at phone widths only (desktop keeps its
+   existing 14px) — this is the standard fix for iOS Safari's auto-zoom-on-
+   focus behavior; a smaller font forces it, 16px+ doesn't, and nothing about
+   the input's own accessible name/label/contrast changes. */
+@media (max-width: 480px){
+  input, select, textarea, .form-input, .form-select { font-size: 16px; }
+}
+/* Safe-area insets (notch/home-indicator, standalone PWA mode) — purely
+   additive: env() resolves to 0px on any device without an inset, so this
+   has zero visual effect anywhere today; only matters once viewport-fit=
+   cover (set on <meta name=viewport> above) is actually honored, which
+   only happens running installed/standalone on a notched device. Neither
+   .sidebar nor .admin-sidebar declare their own padding today (their
+   children do), so adding top/bottom padding here can't conflict with or
+   override anything existing. */
+body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.sidebar, .admin-sidebar{ padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+/* "Update available" banner — see registerServiceWorker() below. Fixed to
+   the very top so it's visible regardless of scroll position; padding-top
+   also respects a notch via env(safe-area-inset-top). */
+.pwa-update-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:var(--text-dark);color:#fff;font-size:13px;font-weight:700;text-align:center;padding:10px 16px;padding-top:max(10px, env(safe-area-inset-top));cursor:pointer;}
+.pwa-update-banner.visible{display:block;}
+/* "Install app" (Chrome/Edge/Android via beforeinstallprompt) — hidden
+   until the browser actually offers an install, per spec; never shown on
+   iOS Safari (no beforeinstallprompt event there — see the iOS tip instead). */
+.pwa-install-btn{display:none;}
+.pwa-install-btn.visible{display:inline-flex;}
+/* iPhone one-time "Add to Home Screen" tip — shown once (localStorage
+   flag), discreetly, inside the profile/settings area only. */
+.pwa-ios-tip{display:none;font-size:11px;color:var(--text-light);background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.4;text-align:left;}
+.pwa-ios-tip.visible{display:block;}
 
 /* ── LOGIN ── */
 .login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#152444;}
@@ -598,6 +639,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 </head>
 <body>
 
+<!-- PWA (Option 1) — "new version available" banner. Always in the DOM;
+     toggled via the .visible class from registerServiceWorker() below. -->
+<div id="pwaUpdateBanner" class="pwa-update-banner" onclick="_pwaApplyUpdate()">🔄 Update available — tap to refresh</div>
+
 <!-- ══════════════ LOGIN ══════════════ -->
 <div id="loginScreen" class="login-screen">
   <div class="login-box">
@@ -680,9 +725,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
       </div>
       <div class="su-actions">
+        <div class="su-btn pwa-install-btn" id="pwaInstallBtnUserApp" onclick="_pwaInstall()">📲 Install</div>
         <div class="su-btn" onclick="showSection('profile',document.querySelector('.nav-item'))">⚙️ Profile</div>
         <div class="su-btn" onclick="openAppearanceModal()">🎨 Appear</div>
         <div class="su-btn" onclick="logout()">↩ Out</div>
+      </div>
+      <div class="pwa-ios-tip" id="pwaIosTipUserApp">
+        📲 On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.
+        <span style="display:block;margin-top:4px;cursor:pointer;color:var(--text-mid);text-decoration:underline;" onclick="_pwaDismissIosTip('userApp')">Got it</span>
       </div>
     </div>
   </div>
@@ -1319,7 +1369,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
              an employee profile (see _updateModeSwitcherUI()). Single-role admins
              never see this. -->
         <button class="btn btn-outline btn-sm" id="adminModeSwitchBtn" onclick="switchToEmployeeView()" style="display:none;">⇄ Switch to Employee view</button>
+        <button class="btn btn-outline btn-sm pwa-install-btn" id="pwaInstallBtnAdmin" onclick="_pwaInstall()">📲 Install app</button>
         <button class="btn btn-outline btn-sm" onclick="logout()">Sign out</button>
+      </div>
+      <!-- iPhone has no beforeinstallprompt — a one-time, discreet tip
+           instead (see _pwaMaybeShowIosTip()), dismissed for good once seen. -->
+      <div class="pwa-ios-tip" id="pwaIosTipAdmin" style="position:absolute;top:100%;right:0;max-width:240px;box-shadow:var(--shadow-md);z-index:50;">
+        📲 On iPhone: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.
+        <span style="display:block;margin-top:4px;cursor:pointer;color:var(--text-mid);text-decoration:underline;" onclick="_pwaDismissIosTip('admin')">Got it</span>
       </div>
     </div>
 
@@ -17914,6 +17971,119 @@ function scrollToTop(){ window.scrollTo({top:0,behavior:'smooth'}); }
   document.addEventListener('DOMContentLoaded', _checkVisibility);
   window.addEventListener('pagehide', ()=>{ if(started) _sendPing('end', sessionToken); });
 })();
+</script>
+
+<!-- PWA (Option 1) — installable/Add to Home Screen. Service worker at root
+     scope (/sw.js), so it also covers client.html/user.html's own requests
+     once registered from here; purely additive — nothing above this block
+     changes, no existing feature/data/auth path is touched. Hand-
+     duplicated in user.html per CLAUDE.md's zero-shared-code rule;
+     client.html gets no copy of this script (metadata-only, see its own
+     <head> comment). -->
+<script>
+// ── Install prompt (Chrome/Edge/Android) ──
+let _pwaDeferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _pwaDeferredPrompt = e;
+  document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.add('visible'));
+});
+async function _pwaInstall(){
+  if(!_pwaDeferredPrompt) return;
+  _pwaDeferredPrompt.prompt();
+  await _pwaDeferredPrompt.userChoice;
+  _pwaDeferredPrompt = null;
+  document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.remove('visible'));
+}
+window.addEventListener('appinstalled', () => {
+  document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.remove('visible'));
+});
+
+// ── iPhone "Add to Home Screen" tip — no beforeinstallprompt exists on iOS
+// Safari at all, so this is the only install guidance possible there.
+// Shown once (localStorage flag), discreetly, next to Sign out (admin) /
+// in the sidebar user menu (embedded userApp) — never if already running
+// standalone (already installed) or on a non-iOS device. ──
+function _pwaIsIos(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+}
+function _pwaIsStandalone(){
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+function _pwaMaybeShowIosTip(){
+  if(!_pwaIsIos() || _pwaIsStandalone()) return;
+  let dismissed = false;
+  try{ dismissed = localStorage.getItem('wl_pwa_ios_tip_dismissed') === '1'; }catch(e){}
+  if(dismissed) return;
+  document.querySelectorAll('.pwa-ios-tip').forEach(el => el.classList.add('visible'));
+}
+function _pwaDismissIosTip(){
+  try{ localStorage.setItem('wl_pwa_ios_tip_dismissed', '1'); }catch(e){}
+  document.querySelectorAll('.pwa-ios-tip').forEach(el => el.classList.remove('visible'));
+}
+
+// ── Service worker registration + "update available" banner. Never
+// registered until after 'load' (doesn't compete with the real page/data
+// load), and never calls skipWaiting() on its own — only an explicit tap
+// on the banner does, via postMessage, exactly like the task's own spec:
+// "show a small banner... skipWaiting + reloads on tap." ──
+let _pwaWaitingWorker = null;
+function _pwaApplyUpdate(){
+  if(!_pwaWaitingWorker) return;
+  _pwaWaitingWorker.postMessage('SKIP_WAITING');
+}
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', async () => {
+    try{
+      const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      if(reg.waiting){ _pwaWaitingWorker = reg.waiting; document.getElementById('pwaUpdateBanner')?.classList.add('visible'); }
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if(!nw) return;
+        nw.addEventListener('statechange', () => {
+          if(nw.state === 'installed' && navigator.serviceWorker.controller){
+            _pwaWaitingWorker = nw;
+            document.getElementById('pwaUpdateBanner')?.classList.add('visible');
+          }
+        });
+      });
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if(reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
+    }catch(e){ /* SW registration failing must never block the app itself */ }
+  });
+}
+registerServiceWorker();
+// Called directly, not via a 'DOMContentLoaded' listener — this script tag
+// sits at the end of <body>, so DOMContentLoaded has already fired (or is
+// about to, non-deterministically) by the time it runs; a listener here
+// would race and frequently never fire at all. Every element this touches
+// (.pwa-ios-tip) is already parsed by this point either way.
+_pwaMaybeShowIosTip();
+
+// ── Sign-out cache clear — wired into the existing logout(), never a new
+// sign-out path of its own. Posts to the active SW (if any) and also
+// clears Cache Storage directly from this page context, so caches are
+// gone even if no SW controller is active yet on this tab. Session
+// tokens/localStorage are untouched here — logout() itself already
+// clears those; this only ever touches Cache Storage (static assets). ──
+function _pwaClearCachesOnSignOut(){
+  if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+    navigator.serviceWorker.controller.postMessage('CLEAR_CACHES');
+  }
+  if(window.caches){
+    caches.keys().then(names => names.forEach(n => caches.delete(n))).catch(()=>{});
+  }
+}
+const _pwaOrigLogout = window.logout;
+window.logout = function(){
+  _pwaClearCachesOnSignOut();
+  return _pwaOrigLogout.apply(this, arguments);
+};
 </script>
 
 <!-- Vercel Web Analytics -->
