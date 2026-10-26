@@ -1765,6 +1765,43 @@ Don't relitigate them without an explicit decision from the user.
   automatic reload a few seconds after the very first visit, never
   again after that). `node --check` clean; div-balance unchanged vs.
   baseline on both files (`index.html` -2, `user.html` -1).
+  **Follow-up, same PR (2026-10-26):** asked to confirm the employee
+  portal specifically (`user.html` — the version most of the team uses)
+  gets the same working Install button/iOS tip as the admin portal.
+  Found a second, independent, real bug while confirming: 3 of the 4
+  Install buttons across both files (the admin header button, the
+  employee topbar button, the employee Profile-page button — every one
+  EXCEPT `index.html`'s userApp sidebar button, class `su-btn`) also
+  carry the generic `.btn` class (`display:inline-flex`), defined LATER
+  in each stylesheet than `.pwa-install-btn{display:none}` — so by plain
+  CSS cascade rules (equal specificity, later source wins), `.btn`'s
+  rule silently won, making those 3 buttons **permanently visible**
+  regardless of whether a real install prompt was ever captured, since
+  before this fix existed at all (a second instance of the exact cascade
+  class documented above for the `.sidebar` bug in the mobile-audit
+  entry — same root mechanism, different rule pair). This is the inverse
+  of what was asked to check for ("hidden because the prompt wasn't
+  captured") but just as real a bug: the button looked tappable at all
+  times, and tapping before a real prompt was captured was a silent
+  no-op (`_pwaInstall()`'s own early-return already prevented a crash,
+  but the UI falsely implied install was always available). Fixed with
+  `!important` on both `.pwa-install-btn` rules in both files — makes
+  this visibility gate immune to any future class combination, not
+  dependent on getting stylesheet ordering right forever (a more durable
+  fix than reordering again, since a new button variant could easily
+  reintroduce the same class of conflict). Reverified clean: before any
+  `beforeinstallprompt`, `getComputedStyle().display` is `none` for
+  every one of the 4 buttons in both files (previously `flex`/
+  `inline-flex` for 3 of them); after a real event, the employee
+  portal's buttons correctly become visible and tapping correctly calls
+  `prompt()`; the iOS tip still shows correctly with Install correctly
+  absent. All 10 + 13 pre-existing checks re-run clean (23/23) — this
+  CSS-only change doesn't touch any JS logic the earlier suites
+  exercise. Screenshots captured for the employee portal specifically
+  (Android Chrome: hidden-before/visible-after/Profile-page card; iOS
+  Safari: tip shown, Install absent) and sent to the user directly (not
+  embeddable in this file). `node --check` clean; div-balance unchanged
+  vs. baseline on both files (same deltas as above — pure CSS change).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

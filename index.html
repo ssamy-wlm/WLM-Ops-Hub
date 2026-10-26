@@ -101,9 +101,19 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .pwa-update-banner.visible{display:block;}
 /* "Install app" (Chrome/Edge/Android via beforeinstallprompt) — hidden
    until the browser actually offers an install, per spec; never shown on
-   iOS Safari (no beforeinstallprompt event there — see the iOS tip instead). */
-.pwa-install-btn{display:none;}
-.pwa-install-btn.visible{display:inline-flex;}
+   iOS Safari (no beforeinstallprompt event there — see the iOS tip instead).
+   !important on both: a real bug found auditing both portals — the admin
+   header's Install button also carries the generic .btn class (display:
+   inline-flex), defined LATER in this stylesheet than .pwa-install-btn's
+   own display:none, so by plain CSS cascade rules .btn's rule silently
+   WON regardless of source order, making that button permanently visible
+   whether or not a real install prompt was ever captured. !important
+   makes this visibility gate immune to any future class combination, not
+   dependent on stylesheet ordering. (The userApp sidebar's own copy,
+   class su-btn, was unaffected by this specific bug — su-btn never sets
+   display — but gets the same !important for the same future-proofing.) */
+.pwa-install-btn{display:none!important;}
+.pwa-install-btn.visible{display:inline-flex!important;}
 /* iPhone one-time "Add to Home Screen" tip — shown once (localStorage
    flag), discreetly, inside the profile/settings area only. */
 .pwa-ios-tip{display:none;font-size:11px;color:var(--text-light);background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.4;text-align:left;}

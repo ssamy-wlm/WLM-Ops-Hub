@@ -87,8 +87,16 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .sidebar{ padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 .pwa-update-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:var(--text-dark);color:#fff;font-size:13px;font-weight:700;text-align:center;padding:10px 16px;padding-top:max(10px, env(safe-area-inset-top));cursor:pointer;}
 .pwa-update-banner.visible{display:block;}
-.pwa-install-btn{display:none;}
-.pwa-install-btn.visible{display:inline-flex;}
+/* !important on both: a real bug found auditing the employee portal — 3
+   of 4 Install buttons also carry the generic .btn class (display:
+   inline-flex), defined LATER in this stylesheet than .pwa-install-btn's
+   own display:none, so by plain CSS cascade rules .btn's rule silently
+   WON regardless of source order fixes elsewhere, making those buttons
+   permanently visible whether or not a real install prompt was ever
+   captured. !important makes this visibility gate immune to any future
+   class combination, not dependent on stylesheet ordering. */
+.pwa-install-btn{display:none!important;}
+.pwa-install-btn.visible{display:inline-flex!important;}
 .pwa-ios-tip{display:none;font-size:11px;color:var(--text-light);background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.4;text-align:left;}
 .pwa-ios-tip.visible{display:block;}
 
