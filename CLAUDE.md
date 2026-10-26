@@ -1710,6 +1710,61 @@ Don't relitigate them without an explicit decision from the user.
   touches `logout()` in both portals and ships a new root-scope
   service-worker network layer, even though no data write, schema
   change, or permission logic is involved.
+- PWA Install button fixed on Android Chrome — listener registered too late
+  (2026-10-26 — held for preview approval, `index.html`+`user.html`,
+  display-only): reported live — tapping "Install" did nothing on mobile.
+  Traced before guessing: the single `beforeinstallprompt` listener (added
+  in the PWA PR, #480) lived in a `<script>` block near the very end of
+  `<body>` — after ~17,000 lines of markup/CSS/JS had to parse and
+  execute first. Chrome can fire `beforeinstallprompt` as soon as it
+  decides a page is installable, which can happen before that point
+  (especially on a repeat visit where engagement heuristics are already
+  satisfied) — an event fired before any listener exists is gone for
+  good for that page load, leaving `_pwaDeferredPrompt` permanently
+  `null` and the tap a silent no-op. Fixed by moving the capture itself
+  to a new, tiny script that is the literal first thing in `<head>`
+  (before any CSS/other script) in both files: it only sets
+  `window._pwaDeferredPrompt` and calls two optional callback hooks
+  (`window._pwaOnPromptCaptured`/`window._pwaOnInstalled`) — it can't
+  touch the DOM yet since the body hasn't parsed. The pre-existing
+  bottom-of-body script (unchanged in spirit, still where the actual
+  button elements get wired) now just registers those two hooks and
+  checks `window._pwaDeferredPrompt` for an already-captured event on
+  its own first run — covering the real race this bug was about: the
+  event arriving in the gap between the two scripts, not only after
+  both have run. `_pwaInstall()` now reads `window._pwaDeferredPrompt`
+  fresh at tap time instead of a closed-over local, so it works
+  regardless of which script captured it. iOS's own "Add to Home
+  Screen" tip path (no `beforeinstallprompt` exists on iOS Safari) and
+  the per-portal button markup/CSS are completely untouched — this is a
+  pure JS-timing fix, no data/API/auth/sign-in path touched. Verified
+  with two suites (no live Supabase access, rule #11 — not that this
+  needed any): a 10-check pure-logic Node suite extracting the real,
+  unmodified head-capture and bottom-wiring script bodies and running
+  them through a minimal `EventTarget`-style stub in the exact order
+  that matters (head script runs, event fires in the gap, THEN the
+  bottom script finally runs) — confirms the event survives that gap,
+  the button becomes visible once the bottom script catches up, and
+  tapping Install actually calls `prompt()`; confirmed via `git stash`
+  that this suite can't even run against the pre-fix code (the head
+  script it extracts doesn't exist yet) — direct proof the fix is new,
+  not a no-op. A 13-check Playwright suite against the real, live-served
+  files confirms the end-to-end behavior (button shows after a
+  dispatched event and tapping calls `prompt()`; `appinstalled` hides
+  it again; the button stays hidden with no event at all; the iOS tip
+  still shows on an iPhone UA, unaffected; zero new JS errors on load
+  across all three portals). A real, pre-existing quirk of the
+  already-merged PWA feature surfaced during this verification (not
+  introduced by this fix, and not something this ticket's scope
+  covers): a brand-new browser profile's first-ever page load registers
+  `sw.js`, and once it activates and calls `self.clients.claim()`, the
+  resulting `controllerchange` fires on that very page, triggering the
+  existing one-time `location.reload()` — the test suite accounts for
+  this by waiting for it to settle before asserting anything, but it is
+  a real characteristic of real first-time visits too (one extra,
+  automatic reload a few seconds after the very first visit, never
+  again after that). `node --check` clean; div-balance unchanged vs.
+  baseline on both files (`index.html` -2, `user.html` -1).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

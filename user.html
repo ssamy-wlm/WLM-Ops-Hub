@@ -12,6 +12,22 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="WebLight Ops">
+<!-- PWA install-prompt capture: MUST be the very first script in <head>,
+     before any CSS/other script. See index.html's identical copy of this
+     comment for the full root-cause explanation (a listener registered
+     near the end of <body> misses an event Chrome can fire earlier). -->
+<script>
+window._pwaDeferredPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e){
+  e.preventDefault();
+  window._pwaDeferredPrompt = e;
+  if (typeof window._pwaOnPromptCaptured === 'function') window._pwaOnPromptCaptured();
+});
+window.addEventListener('appinstalled', function(){
+  window._pwaDeferredPrompt = null;
+  if (typeof window._pwaOnInstalled === 'function') window._pwaOnInstalled();
+});
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -6520,23 +6536,28 @@ document.addEventListener('DOMContentLoaded', ()=>{
      nothing above this block changes, no existing feature/data/auth path
      is touched. -->
 <script>
-// ── Install prompt (Chrome/Edge/Android) ──
-let _pwaDeferredPrompt = null;
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault();
-  _pwaDeferredPrompt = e;
+// ── Install prompt (Chrome/Edge/Android) ── the event itself is captured
+// as early as possible by the <head> script above (see its own comment);
+// this just wires that captured event to the actual button UI, which
+// doesn't exist in the DOM until now, and handles the case where the
+// event was already captured before this script ran. ──
+function _pwaShowInstallButtons(){
   document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.add('visible'));
-});
-async function _pwaInstall(){
-  if(!_pwaDeferredPrompt) return;
-  _pwaDeferredPrompt.prompt();
-  await _pwaDeferredPrompt.userChoice;
-  _pwaDeferredPrompt = null;
+}
+function _pwaHideInstallButtons(){
   document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.remove('visible'));
 }
-window.addEventListener('appinstalled', () => {
-  document.querySelectorAll('.pwa-install-btn').forEach(b => b.classList.remove('visible'));
-});
+window._pwaOnPromptCaptured = _pwaShowInstallButtons;
+window._pwaOnInstalled = _pwaHideInstallButtons;
+if (window._pwaDeferredPrompt) _pwaShowInstallButtons();
+async function _pwaInstall(){
+  const evt = window._pwaDeferredPrompt;
+  if(!evt) return;
+  evt.prompt();
+  await evt.userChoice;
+  window._pwaDeferredPrompt = null;
+  _pwaHideInstallButtons();
+}
 
 // ── iPhone "Add to Home Screen" tip — shown once (localStorage flag),
 // discreetly, in the sidebar user menu and on the Profile page; never if
