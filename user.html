@@ -267,6 +267,16 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .card-body{padding:18px 22px;}
 .ops-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
 .ops-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px;}
+/* Mobile audit (2026-10-26) — .ops-grid's 2-column layout (and .ops-grid-3's
+   3-column one, same family) never collapsed at phone widths, squeezing
+   Chain of Command's .coc-item rows into a track too narrow for their
+   fixed-width icon + text to fit, overflowing the page. One column at
+   phone widths, same as every other responsive grid in this file;
+   desktop (>600px) is completely unchanged. */
+@media(max-width:600px){
+  .ops-grid, .ops-grid-3{grid-template-columns:1fr;}
+  .ops-grid > *, .ops-grid-3 > *{min-width:0;}
+}
 .stat-card{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:20px;box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s;}
 .stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
 .stat-label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
@@ -372,6 +382,12 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .cred-set{background:#e8f8f0;color:var(--green);}
 .cred-notset{background:var(--bg2);color:var(--text-light);}
 .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+/* Mobile audit (2026-10-26) — same 2-column-never-collapses issue as
+   .ops-grid above, on the Profile page's card grid. */
+@media(max-width:600px){
+  .profile-grid{grid-template-columns:1fr;}
+  .profile-grid > *{min-width:0;}
+}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(30,50,80,.35);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
 .modal-overlay.open{display:flex;}
 .modal{background:var(--card);border-radius:18px;padding:0;width:600px;max-width:96vw;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(30,50,80,.2);}
@@ -479,6 +495,16 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
   .main{margin-left:0;}
   .nav-item.active{color:#fff;}
   .nav-item:active{background:var(--gold);color:#fff;}
+}
+/* Mobile audit (2026-10-26) — at very narrow phone widths (≤400px) even
+   this already-compacted topbar (help/notif/avatar/Sign Out on one line
+   next to the hamburger+title) is still too wide for a single row.
+   Lets it wrap onto a second line instead of hiding anything or forcing
+   a narrower fixed width — same elements, same click targets, just two
+   rows when there's truly no room for one. */
+@media(max-width:400px){
+  .topbar{flex-wrap:wrap;row-gap:8px;}
+  .topbar-right{flex-wrap:wrap;justify-content:flex-end;}
 }
 
 /* ── Onboarding tour + contextual tips (SPEC-onboarding-tips.md) ──────────
