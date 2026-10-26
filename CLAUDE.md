@@ -1802,6 +1802,71 @@ Don't relitigate them without an explicit decision from the user.
   Safari: tip shown, Install absent) and sent to the user directly (not
   embeddable in this file). `node --check` clean; div-balance unchanged
   vs. baseline on both files (same deltas as above — pure CSS change).
+- Mobile-width layout audit (2026-10-26 — **merged**, PR #482,
+  `index.html`+`user.html`, CSS/layout only, max-width media queries so
+  desktop stays unchanged, no data/API/sign-in logic touched): audited
+  every main screen at 360-430px (Playwright, fixture-seeded, forced past
+  login) and fixed every overflow found.
+  (1) **Per-Person Breakdown table** (`index.html` Overview) — its 7
+  numeric columns spilled outside the card frame on phone. Turned into
+  one stacked card per person at ≤480px via the classic CSS-only
+  responsive-table-to-card technique (`thead{display:none}`, each `tr`
+  becomes a bordered card, each `td` becomes a label/value flex row via
+  `::before{content:attr(data-label)}`) — added `data-label` attributes
+  to the existing row-template in `renderTeamProductionAnalytics()`
+  (markup only, no logic change) and a `tpa-person-tbl` class on the
+  `<table>` to scope the rule. Desktop table (>480px) is byte-identical.
+  (2) **~335px overflow on Operations** (`index.html`'s embedded userApp
+  AND `user.html`'s own Operations, both previously flagged) —
+  root-caused to the embedded userApp's `.sidebar` (`index.html` only;
+  `user.html`'s own `.sidebar` already had a working hamburger/off-canvas
+  pattern at 768px, confirmed, not touched) being unconditionally
+  `position:fixed;width:240px` with NO collapse at any width, while
+  `.main`'s `margin-left:240px` left almost no room for content on a
+  375px phone. Fixed by giving the embedded userApp's `.sidebar` the
+  SAME hamburger-collapse pattern `.admin-sidebar` already uses
+  elsewhere in this same file (same 900px breakpoint, same transform/
+  transition/off-canvas behavior) — a real bug found and fixed during
+  this work: the new media query was first placed BEFORE the plain
+  `.sidebar`/`.main` base rules in the stylesheet, so by CSS cascade
+  rules (equal specificity, later source order wins) the later plain
+  rules silently won even when the media query's condition matched —
+  moved it to directly after those base rules (mirroring exactly where
+  `.admin-sidebar`'s own working media query already sits relative to
+  its base rule) to fix it for real. A second, independent cause on
+  BOTH files' Operations screen: `.ops-grid`/`.ops-grid-3` (Today's
+  Pulse + Chain of Command, 2-3 columns) never collapsed to one column
+  at phone widths, squeezing Chain of Command's fixed-width icon+text
+  rows into a track too narrow to fit — fixed with one column at
+  ≤600px + `min-width:0` on grid children, hand-duplicated in both
+  files (rule #3). `.profile-grid` (Profile page, both files) had the
+  identical 2-column-never-collapses issue, fixed the same way,
+  hand-duplicated. A remaining ~17px overflow surfaced only at 360px on
+  `user.html`'s topbar (help/notif/avatar/Sign Out already compacted at
+  768px, still too wide as one row at the narrowest tested width) —
+  fixed by letting it wrap onto a second line at ≤400px
+  (`flex-wrap:wrap`) rather than hiding any control or redesigning.
+  Verified at 360/375/414/430px via a new Playwright audit script
+  against the real, live-served files (every listed screen force-shown
+  past login, `document.documentElement.scrollWidth` vs `window.
+  innerWidth`, plus an offending-element dump when non-zero): zero
+  horizontal overflow on every screen at every tested width after the
+  fix, confirmed via `git stash`/`git stash pop` A/B testing that each
+  fix's own screen genuinely overflowed before and doesn't after (the
+  Per-Person table's `before` screenshot shows the real pre-fix
+  cut-off "OVERD..." column; the userApp Operations `before` screenshot
+  shows the real pre-fix sidebar eating ~2/3 of a 375px viewport with
+  content cut off on the right) — before/after screenshots at 375px
+  captured for both. Desktop (1440px) computed styles confirmed
+  byte-identical before/after (`.sidebar{transform:none}`,
+  `.main{margin-left:240px}`, hamburger `display:none`). Zero JS errors
+  on load across all three portals at 375px. `node --check` clean on
+  extracted inline JS (both files); div-balance unchanged vs. baseline
+  (`index.html` -2, `user.html` -1). `client.html` audited too (no
+  login, iframe-embedded) — zero overflow found at any tested width,
+  nothing to fix there. Held per rule #10 — broad-reaching CSS, several
+  screens touched across two portals, even though no data/logic path is
+  involved.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
