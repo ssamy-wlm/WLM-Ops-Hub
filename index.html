@@ -58,6 +58,23 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
 @media (max-width: 480px){
   input, select, textarea, .form-input, .form-select { font-size: 16px; }
 }
+/* ── Mobile audit (2026-10-26) — Per-Person Breakdown table (7 numeric
+   columns + name) overflowed its card at phone widths. Turned into one
+   stacked card per person — classic responsive-table-to-card technique,
+   pure CSS, no JS/markup logic change beyond the data-label attributes
+   already added to each <td> (used only as the mobile row label via
+   ::before; invisible/no-op at any width above this breakpoint). Desktop
+   table markup/behavior (sorting-by-click-row via onclick, column
+   widths, borders) is completely untouched above 480px. */
+@media (max-width: 480px){
+  .tpa-person-tbl thead{display:none;}
+  .tpa-person-tbl, .tpa-person-tbl tbody, .tpa-person-tbl tr, .tpa-person-tbl td{display:block;width:100%;}
+  .tpa-person-tbl tr{border:1px solid var(--border);border-radius:10px;margin:10px;padding:4px 0;}
+  .tpa-person-tbl td{text-align:right!important;padding:6px 14px!important;border-bottom:none!important;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .tpa-person-tbl td[data-label]::before{content:attr(data-label);font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;text-align:left;}
+  .tpa-person-tbl td[data-label=""]{font-size:14px!important;padding-bottom:8px!important;border-bottom:1px solid var(--border)!important;margin-bottom:4px;}
+  .tpa-person-tbl td[data-label=""]::before{content:none;}
+}
 /* Safe-area insets (notch/home-indicator, standalone PWA mode) — purely
    additive: env() resolves to 0px on any device without an inset, so this
    has zero visual effect anywhere today; only matters once viewport-fit=
@@ -174,6 +191,29 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 
 /* ── MAIN ── */
 .main{margin-left:240px;flex:1;min-width:0;min-height:100vh;display:flex;flex-direction:column;}
+/* ── Mobile audit (2026-10-26) — embedded userApp's own .sidebar (240px,
+   always position:fixed, no collapse at any width before this) was the
+   root cause of the ~335px overflow reported on its Operations screen and
+   every other userApp screen: .main's unconditional margin-left:240px
+   left almost no room for content at phone widths. Mirrors the EXISTING
+   .admin-sidebar hamburger-collapse pattern already used elsewhere in
+   this same file (see .admin-sidebar-hamburger below) rather than
+   inventing a new interaction — same breakpoint, same transform/
+   transition, same off-canvas behavior; just applied to this second,
+   previously-unhandled sidebar. Placed AFTER the plain .sidebar/.main
+   rules above on purpose — same selector + specificity, so source order
+   decides, and a media query placed BEFORE its target rule loses the
+   cascade to a later plain rule even when its condition matches (the
+   bug this exact placement avoids). Desktop (>900px) is completely
+   unchanged: .sidebar-hamburger stays display:none and .sidebar/.main
+   keep their existing always-visible layout. */
+.sidebar-hamburger{display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:14px;cursor:pointer;color:var(--text-dark);align-items:center;justify-content:center;}
+@media(max-width:900px){
+  .sidebar-hamburger{display:inline-flex;}
+  .sidebar{transform:translateX(-100%);transition:transform .2s;z-index:600;box-shadow:0 0 40px rgba(0,0,0,.35);}
+  .sidebar.open{transform:translateX(0);}
+  .main{margin-left:0;}
+}
 .topbar{background:var(--card);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40;}
 .topbar::after{content:'';position:absolute;left:0;right:0;bottom:-3px;height:3px;background:linear-gradient(90deg,var(--gold),var(--accent),#7C5CFC,var(--green));}
 .topbar-title{font-family:'Poppins',sans-serif;font-size:20px;color:var(--text-dark);}
@@ -201,6 +241,12 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 /* ── OPERATIONS PAGE ── */
 .ops-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
 .ops-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px;}
+/* Mobile audit (2026-10-26) — see user.html's identical copy of this
+   comment (rule #3, hand-duplicated). */
+@media(max-width:600px){
+  .ops-grid, .ops-grid-3{grid-template-columns:1fr;}
+  .ops-grid > *, .ops-grid-3 > *{min-width:0;}
+}
 .stat-card{background:var(--card);border-radius:14px;border:1px solid var(--border);padding:20px;box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s;}
 .stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);}
 .stat-label{font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
@@ -323,6 +369,12 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 
 /* ── PROFILE / APPEARANCE ── */
 .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+/* Mobile audit (2026-10-26) — see user.html's identical copy of this
+   comment (rule #3, hand-duplicated). */
+@media(max-width:600px){
+  .profile-grid{grid-template-columns:1fr;}
+  .profile-grid > *{min-width:0;}
+}
 .appear-opt{display:flex;align-items:center;gap:14px;padding:12px;border-radius:10px;border:2px solid var(--border);cursor:pointer;margin-bottom:8px;transition:border-color .2s;}
 .appear-opt.selected{border-color:var(--text);}
 .appear-opt-preview{width:48px;height:32px;border-radius:6px;flex-shrink:0;}
@@ -740,9 +792,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
   <!-- MAIN CONTENT -->
   <div class="main">
     <div class="topbar">
-      <div>
-        <div class="topbar-title" id="pageTitle">Operations</div>
-        <div class="topbar-sub" id="pageSubtitle" id="pageSub"></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="sidebar-hamburger" onclick="document.querySelector('#userApp .sidebar').classList.toggle('open')" aria-label="Toggle navigation menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <div>
+          <div class="topbar-title" id="pageTitle">Operations</div>
+          <div class="topbar-sub" id="pageSubtitle" id="pageSub"></div>
+        </div>
       </div>
       <div class="topbar-right">
         <div class="notif-btn">🔔<div class="notif-dot"></div></div>
@@ -1537,7 +1594,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             </div>
           </div>
           <div class="card-body" style="padding:0;">
-            <table style="width:100%;">
+            <table class="tpa-person-tbl" style="width:100%;">
               <thead>
                 <tr>
                   <th style="padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Person</th>
@@ -8796,14 +8853,14 @@ function renderTeamProductionAnalytics(){
       const pctColor=_pctDoneColor(r.pctDone);
       const pctLabel=r.pctDone==null?'—':r.pctDone+'%';
       return `<tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="_ovOpenPersonDailyView('${r.id}')" title="View ${escHtmlAdmin(r.name)}'s tasks (Team's Tasks)">
-        <td style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesAssigned}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesDone}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.overdue?700:400};color:${r.overdue?'var(--red)':'var(--text-light)'};">${r.overdue||''}</td>
-        <td style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.blocked?700:400};color:${r.blocked?'var(--orange)':'var(--text-light)'};">${r.blocked||''}</td>
-        <td style="padding:10px 14px;text-align:right;font-size:12.5px;font-weight:700;color:${pctColor};">${pctLabel}</td>
+        <td data-label="" style="padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--text-dark);">${escHtmlAdmin(r.name)}</td>
+        <td data-label="Tasks" style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksAssigned}</td>
+        <td data-label="Done" style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.tasksDone}</td>
+        <td data-label="Svcs" style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesAssigned}</td>
+        <td data-label="Done" style="padding:10px 10px;text-align:right;font-size:12px;color:var(--text-dark);">${r.servicesDone}</td>
+        <td data-label="Overdue" style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.overdue?700:400};color:${r.overdue?'var(--red)':'var(--text-light)'};">${r.overdue||''}</td>
+        <td data-label="Blocked/Stuck" style="padding:10px 10px;text-align:right;font-size:12px;font-weight:${r.blocked?700:400};color:${r.blocked?'var(--orange)':'var(--text-light)'};">${r.blocked||''}</td>
+        <td data-label="Total %" style="padding:10px 14px;text-align:right;font-size:12.5px;font-weight:700;color:${pctColor};">${pctLabel}</td>
       </tr>`;
     }).join('');
   }
