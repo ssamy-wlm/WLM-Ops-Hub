@@ -13711,7 +13711,21 @@ function restoreArchivedUser(uid){
 function renderAdminTimeOff(){
   const requests = dbGet('wl_timeoff_requests')||[];
   const filterVal = document.getElementById('to-filter-status')?.value||'';
-  const filtered = filterVal ? requests.filter(r=>r.status===filterVal) : requests;
+  const filteredUnsorted = filterVal ? requests.filter(r=>r.status===filterVal) : requests;
+  // Sort/display only, no data mutation — requests[] itself is left exactly
+  // as stored. Pending requests (need action) always sort before everything
+  // else, then within each status group, newest submittedAt first (falling
+  // back to createdAt for a row somehow missing it, though every current
+  // write path only ever sets submittedAt). Previously rendered in raw
+  // array order (whatever order the list happened to be stored/synced in),
+  // so a just-submitted request could appear anywhere in the middle.
+  const _toSortTs = r => new Date(r.submittedAt || r.createdAt || 0).getTime();
+  const filtered = [...filteredUnsorted].sort((a,b) => {
+    const aPending = a.status==='pending' ? 0 : 1;
+    const bPending = b.status==='pending' ? 0 : 1;
+    if(aPending !== bPending) return aPending - bPending;
+    return _toSortTs(b) - _toSortTs(a);
+  });
   const pending  = requests.filter(r=>r.status==='pending').length;
   const approved = requests.filter(r=>r.status==='approved').length;
   const denied   = requests.filter(r=>r.status==='denied').length;

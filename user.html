@@ -5993,13 +5993,25 @@ function submitTimeOffRequest(){
 function renderMyTimeOff(){
   const userName = document.getElementById('sidebarName')?.textContent || currentUserData?.name || '';
   const all = dbGet('wl_timeoff_requests')||[];
-  const myRequests = all.filter(r=>r.userName===userName);
+  const myRequestsUnsorted = all.filter(r=>r.userName===userName);
   const list = document.getElementById('myTimeOffList');
   if(!list) return;
-  if(!myRequests.length){
+  if(!myRequestsUnsorted.length){
     list.innerHTML='<div style="font-size:13px;color:var(--text-light);">No requests submitted yet.</div>';
     return;
   }
+  // Sort/display only, no data mutation — identical to index.html's
+  // renderAdminTimeOff() fix (hand-duplicated per rule #3, zero shared
+  // code across portals): pending first (needs action), then newest
+  // submittedAt first within each status group, falling back to
+  // createdAt for a row somehow missing it.
+  const _toSortTs = r => new Date(r.submittedAt || r.createdAt || 0).getTime();
+  const myRequests = [...myRequestsUnsorted].sort((a,b) => {
+    const aPending = a.status==='pending' ? 0 : 1;
+    const bPending = b.status==='pending' ? 0 : 1;
+    if(aPending !== bPending) return aPending - bPending;
+    return _toSortTs(b) - _toSortTs(a);
+  });
   list.innerHTML = myRequests.map(r=>{
     const statusColor = r.status==='approved'?'var(--green)':r.status==='denied'?'var(--red)':'var(--orange)';
     const statusBg = r.status==='approved'?'rgba(46,158,110,.1)':r.status==='denied'?'rgba(224,85,85,.1)':'rgba(245,185,66,.1)';

@@ -1867,6 +1867,69 @@ Don't relitigate them without an explicit decision from the user.
   nothing to fix there. Held per rule #10 — broad-reaching CSS, several
   screens touched across two portals, even though no data/logic path is
   involved.
+- Admin Time Off list sort fixed — pending-first, newest-first within
+  group (2026-10-26 — held for preview approval, `index.html`, display-
+  only, no data mutation): reported live — a request submitted today
+  appeared in the middle of the list instead of with the newest.
+  `renderAdminTimeOff()` rendered `requests.filter(...)` directly with
+  no sort at all — list order was just whatever order
+  `wl_timeoff_requests` happened to be stored/synced in (effectively
+  insertion order), confirmed via a live reproduction. Fixed with a
+  pure display-time sort: pending requests always first (they need
+  action), then within each status group newest `submittedAt` first
+  (falling back to `createdAt` for a row somehow missing it, though
+  every current write path — `submitAdminMyTimeOffRequest()` and the
+  employee-side equivalent in `user.html` — only ever sets
+  `submittedAt`). Mirrors the exact sort shape `renderAdminMyTimeOff()`
+  already uses correctly for the admin's own request history
+  (`.sort((a,b)=>new Date(b.submittedAt||0)-new Date(a.submittedAt||0))`)
+  — same recency direction, just with the pending-first grouping added
+  on top since this list (unlike that one) shows every status mixed
+  together with no separate pending/history sections to sort
+  individually. The underlying `requests[]` array and `wl_timeoff_
+  requests` storage are completely untouched — only the rendered
+  `filtered` array is a new, sorted copy (`[...filteredUnsorted].sort
+  (...)`), so the existing status-filter dropdown, approve/deny
+  buttons (which still operate on `r.id` from the original unsorted
+  `requests[]`), and every other reader of `wl_timeoff_requests` are
+  unaffected. Originally flagged, not fixed (out of this ticket's
+  initial explicit scope — "admin portal" only): `user.html`'s own
+  `renderMyTimeOff()` (an employee's "My Requests History" card) had
+  the identical no-sort bug — **since fixed in a same-PR follow-up, see
+  below.** Verified with a new 9-check Playwright suite against
+  the real, unmodified `renderAdminTimeOff()` (fixture-seeded via
+  `localStorage`, no live Supabase per rule #11): a 7-row fixture with
+  deliberately scrambled submittedAt/status order renders in the exact
+  expected pending-first/newest-first order, including the `createdAt`
+  fallback for a row with no `submittedAt`; the existing status filter
+  (`to-filter-status`) still works and its filtered subset is still
+  correctly sorted; the underlying `wl_timeoff_requests` storage order
+  is proven byte-identical before/after (display-only); zero JS errors
+  on load across all three portals — confirmed via `git stash` that 2
+  of these 9 checks (the two directly asserting the fixed order) fail
+  against the pre-fix code, reproducing the exact reported bug (raw
+  insertion order). `node --check` clean; div-balance unchanged vs.
+  baseline (delta -2). Held per rule #10 out of caution even though
+  this is purely sort/display with no data write — touches the same
+  render function the approve/deny buttons live inside.
+  **Follow-up, same PR (2026-10-26):** asked to apply the identical
+  sort to `user.html`'s own `renderMyTimeOff()` ("My Requests History")
+  for consistency across both portals — hand-duplicated per rule #3,
+  same pending-first/newest-first/`createdAt`-fallback shape, same
+  display-only guarantee (`[...myRequestsUnsorted].sort(...)`, original
+  `all`/storage array untouched). Verified with a new 8-check
+  Playwright suite against the real, unmodified `renderMyTimeOff()`: an
+  8-row fixture (7 for the signed-in employee, scrambled submittedAt/
+  status order, 1 for a different person) renders exactly 7 rows in the
+  correct pending-first/newest-first order including the `createdAt`
+  fallback, the other person's row correctly excluded (the existing
+  `userName` filter is unaffected by the sort), storage order proven
+  untouched, zero JS errors across all three portals — confirmed via
+  `git stash` that 2 of these 8 checks fail against the pre-fix code,
+  reproducing the same raw-insertion-order bug on this portal too. Both
+  suites (index.html's 9 + user.html's 8, 17 total) re-run together
+  clean with both fixes in place. `node --check` clean on `user.html`;
+  div-balance unchanged vs. baseline on both files.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
