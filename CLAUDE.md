@@ -1710,7 +1710,99 @@ Don't relitigate them without an explicit decision from the user.
   touches `logout()` in both portals and ships a new root-scope
   service-worker network layer, even though no data write, schema
   change, or permission logic is involved.
-- Mobile-width layout audit (2026-10-26 — held for preview approval,
+- PWA Install button fixed on Android Chrome — listener registered too late
+  (2026-10-26 — held for preview approval, `index.html`+`user.html`,
+  display-only): reported live — tapping "Install" did nothing on mobile.
+  Traced before guessing: the single `beforeinstallprompt` listener (added
+  in the PWA PR, #480) lived in a `<script>` block near the very end of
+  `<body>` — after ~17,000 lines of markup/CSS/JS had to parse and
+  execute first. Chrome can fire `beforeinstallprompt` as soon as it
+  decides a page is installable, which can happen before that point
+  (especially on a repeat visit where engagement heuristics are already
+  satisfied) — an event fired before any listener exists is gone for
+  good for that page load, leaving `_pwaDeferredPrompt` permanently
+  `null` and the tap a silent no-op. Fixed by moving the capture itself
+  to a new, tiny script that is the literal first thing in `<head>`
+  (before any CSS/other script) in both files: it only sets
+  `window._pwaDeferredPrompt` and calls two optional callback hooks
+  (`window._pwaOnPromptCaptured`/`window._pwaOnInstalled`) — it can't
+  touch the DOM yet since the body hasn't parsed. The pre-existing
+  bottom-of-body script (unchanged in spirit, still where the actual
+  button elements get wired) now just registers those two hooks and
+  checks `window._pwaDeferredPrompt` for an already-captured event on
+  its own first run — covering the real race this bug was about: the
+  event arriving in the gap between the two scripts, not only after
+  both have run. `_pwaInstall()` now reads `window._pwaDeferredPrompt`
+  fresh at tap time instead of a closed-over local, so it works
+  regardless of which script captured it. iOS's own "Add to Home
+  Screen" tip path (no `beforeinstallprompt` exists on iOS Safari) and
+  the per-portal button markup/CSS are completely untouched — this is a
+  pure JS-timing fix, no data/API/auth/sign-in path touched. Verified
+  with two suites (no live Supabase access, rule #11 — not that this
+  needed any): a 10-check pure-logic Node suite extracting the real,
+  unmodified head-capture and bottom-wiring script bodies and running
+  them through a minimal `EventTarget`-style stub in the exact order
+  that matters (head script runs, event fires in the gap, THEN the
+  bottom script finally runs) — confirms the event survives that gap,
+  the button becomes visible once the bottom script catches up, and
+  tapping Install actually calls `prompt()`; confirmed via `git stash`
+  that this suite can't even run against the pre-fix code (the head
+  script it extracts doesn't exist yet) — direct proof the fix is new,
+  not a no-op. A 13-check Playwright suite against the real, live-served
+  files confirms the end-to-end behavior (button shows after a
+  dispatched event and tapping calls `prompt()`; `appinstalled` hides
+  it again; the button stays hidden with no event at all; the iOS tip
+  still shows on an iPhone UA, unaffected; zero new JS errors on load
+  across all three portals). A real, pre-existing quirk of the
+  already-merged PWA feature surfaced during this verification (not
+  introduced by this fix, and not something this ticket's scope
+  covers): a brand-new browser profile's first-ever page load registers
+  `sw.js`, and once it activates and calls `self.clients.claim()`, the
+  resulting `controllerchange` fires on that very page, triggering the
+  existing one-time `location.reload()` — the test suite accounts for
+  this by waiting for it to settle before asserting anything, but it is
+  a real characteristic of real first-time visits too (one extra,
+  automatic reload a few seconds after the very first visit, never
+  again after that). `node --check` clean; div-balance unchanged vs.
+  baseline on both files (`index.html` -2, `user.html` -1).
+  **Follow-up, same PR (2026-10-26):** asked to confirm the employee
+  portal specifically (`user.html` — the version most of the team uses)
+  gets the same working Install button/iOS tip as the admin portal.
+  Found a second, independent, real bug while confirming: 3 of the 4
+  Install buttons across both files (the admin header button, the
+  employee topbar button, the employee Profile-page button — every one
+  EXCEPT `index.html`'s userApp sidebar button, class `su-btn`) also
+  carry the generic `.btn` class (`display:inline-flex`), defined LATER
+  in each stylesheet than `.pwa-install-btn{display:none}` — so by plain
+  CSS cascade rules (equal specificity, later source wins), `.btn`'s
+  rule silently won, making those 3 buttons **permanently visible**
+  regardless of whether a real install prompt was ever captured, since
+  before this fix existed at all (a second instance of the exact cascade
+  class documented above for the `.sidebar` bug in the mobile-audit
+  entry — same root mechanism, different rule pair). This is the inverse
+  of what was asked to check for ("hidden because the prompt wasn't
+  captured") but just as real a bug: the button looked tappable at all
+  times, and tapping before a real prompt was captured was a silent
+  no-op (`_pwaInstall()`'s own early-return already prevented a crash,
+  but the UI falsely implied install was always available). Fixed with
+  `!important` on both `.pwa-install-btn` rules in both files — makes
+  this visibility gate immune to any future class combination, not
+  dependent on getting stylesheet ordering right forever (a more durable
+  fix than reordering again, since a new button variant could easily
+  reintroduce the same class of conflict). Reverified clean: before any
+  `beforeinstallprompt`, `getComputedStyle().display` is `none` for
+  every one of the 4 buttons in both files (previously `flex`/
+  `inline-flex` for 3 of them); after a real event, the employee
+  portal's buttons correctly become visible and tapping correctly calls
+  `prompt()`; the iOS tip still shows correctly with Install correctly
+  absent. All 10 + 13 pre-existing checks re-run clean (23/23) — this
+  CSS-only change doesn't touch any JS logic the earlier suites
+  exercise. Screenshots captured for the employee portal specifically
+  (Android Chrome: hidden-before/visible-after/Profile-page card; iOS
+  Safari: tip shown, Install absent) and sent to the user directly (not
+  embeddable in this file). `node --check` clean; div-balance unchanged
+  vs. baseline on both files (same deltas as above — pure CSS change).
+- Mobile-width layout audit (2026-10-26 — **merged**, PR #482,
   `index.html`+`user.html`, CSS/layout only, max-width media queries so
   desktop stays unchanged, no data/API/sign-in logic touched): audited
   every main screen at 360-430px (Playwright, fixture-seeded, forced past
