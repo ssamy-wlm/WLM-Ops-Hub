@@ -1987,6 +1987,57 @@ Don't relitigate them without an explicit decision from the user.
   check doesn't apply. Held per rule #10 out of caution even though this
   is a pure read/render fix with zero data writes — touches the member's
   own live sync-and-render path.
+- Member-created tasks saving with a blank `assigneeName` for `u_<timestamp>`-
+  id members (2026-11-02 — held for preview approval, `user.html` only, no
+  data-model/server change): reported as 234 production rows with a correct
+  `assigneeId` but a blank `assigneeName`, specifically for auto-generated
+  `u_<timestamp>` member ids (Rana `u_1783926410583`, Michael
+  `u_1783268590854`) and not for human-readable ids (sherine, abby),
+  allegedly making those tasks invisible on the member's own My Tasks page.
+  Investigated rather than force-fitting the given hypothesis (rule #7):
+  `user.html`'s `saveNewDtTask()` ("+ New Task," the only member-create
+  path, no assignee picker — always self) never stamped `assigneeName` at
+  all, for ANY member, id shape irrelevant — it only ever sent `assigneeId`/
+  `assignedById`, relying entirely on `api/ops-sync.js`'s
+  `resolveAssigneeName()` (already present since 2026-09-04) to fill it in
+  server-side from a fresh roster lookup by id. That resolver was already
+  correct for both id shapes (a plain `users.find(u=>u.id===assigneeId)`
+  against `ops_users` rows keyed by that exact id — no name-shape-dependent
+  logic anywhere in it) and is a fallback-fill only, never a retroactive
+  backfill of already-stored rows — which is why any of the 234 rows
+  created before 2026-09-04 stay blank forever by design. Also confirmed
+  `_dtMyTasks()` (My Tasks' own data source, since 2026-09-25) already
+  matches by `assigneeId` only, never by name, and the list's row markup
+  (`_renderDtListTable()`) renders the assignee pill from `currentUser`
+  directly, never from the stored `t.assigneeName` — so a blank stored name
+  was never actually capable of hiding a task from this page for EITHER id
+  shape, confirmed with a fixture task carrying `assigneeId:
+  'u_1783926410583', assigneeName: ''` that rendered correctly with no code
+  change. The one real, narrow gap against the two-part ask: STEP 2a
+  ("on create, ALWAYS stamp assigneeName from the member's own session/
+  profile") wasn't actually happening client-side — fixed by adding
+  `assigneeName: currentUser?.name||''` to the pushed task object in
+  `saveNewDtTask()`, so the local/optimistic row (and therefore the synced
+  row) always carries the correct name immediately, independent of the
+  server fallback. STEP 2b ("match/show by assigneeId, not only
+  assigneeName") needed no change — already true. Verified with a new
+  Playwright suite against the real, unmodified `user.html`: a fixture
+  pre-existing task (blank `assigneeName`, `assigneeId: 'u_1783926410583'`,
+  signed in as that same id) renders in My Tasks with zero code change;
+  calling the real `saveNewDtTask()` as that same u_-id member produces a
+  new task with `assigneeName` correctly set to the session's own name and
+  the task visible in the list immediately, with zero page errors —
+  confirmed via `git stash`/`git stash pop` that the new-task assertion
+  (only) fails against the pre-fix code (`assigneeName` key entirely
+  absent), while the pre-existing-task-renders assertion already passed
+  pre-fix, isolating exactly what changed. `node --check`-equivalent
+  (extracted inline JS, `new Function()` parse) clean; div-balance
+  unchanged vs. baseline (778/779, no HTML touched — JS-only edit).
+  `api/ops-sync.js` read but not modified (already correct; no live
+  Supabase access available per rule #11, so its behavior was verified by
+  code reading plus the client-side fixture above, not a live write). Held
+  per rule #10 — touches the member task-creation write path even though
+  the change is additive (one new field, no existing field altered).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
