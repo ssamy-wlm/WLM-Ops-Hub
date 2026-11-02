@@ -5830,7 +5830,17 @@ function showToast(msg){
       checkAnnouncements();
       updateAssignmentsBadge(); // check for new client assignments
       if(document.getElementById('sec-timeoff')?.classList.contains('active')){
-        cloudFetchUsers(true).then(renderMyTimeOffLedger);
+        // renderMyTimeOff() added (2026-11-02 fix) — this pull already
+        // correctly lands an admin's approve/deny into DB_KEYS.timeOffRequests
+        // (status/reviewedBy/reviewedAt are server-authoritative and this
+        // member-side record is never edited again after creation, so
+        // _applyServerArray()'s own dirty-protection never blocks it — see
+        // CLAUDE.md's 2026-11-02 entry for the direct proof), but only
+        // renderMyTimeOffLedger() ever re-ran here — the "My Requests
+        // History" list (renderMyTimeOff()) kept showing whatever status it
+        // was last rendered with until the member switched sections or
+        // fully reloaded. Both now re-render on every background pull.
+        cloudFetchUsers(true).then(()=>{ renderMyTimeOff(); renderMyTimeOffLedger(); });
       }
       // Company Overview: same pattern — pick up an admin's org chart save
       // within 20s if a member has this tab open, without a manual refresh.
@@ -6042,7 +6052,13 @@ function renderMyTimeOff(){
 const _origShowSectionUser = window.showSection;
 window.showSection = function(id, el){
   _origShowSectionUser(id, el);
-  if(id==='timeoff'){ setTimeout(renderMyTimeOff, 80); cloudFetchUsers().then(renderMyTimeOffLedger); }
+  // cloudFetchUsers().then() now re-renders renderMyTimeOff() too, not just
+  // renderMyTimeOffLedger() (2026-11-02 fix, same gap as the background
+  // tick above) — opening this tab pulls fresh data (correctly updating an
+  // admin's approve/deny into storage) but used to only refresh the
+  // ledger/balance card, leaving the initial setTimeout's stale pre-fetch
+  // render of "My Requests History" on screen until the next full reload.
+  if(id==='timeoff'){ setTimeout(renderMyTimeOff, 80); cloudFetchUsers().then(()=>{ renderMyTimeOff(); renderMyTimeOffLedger(); }); }
   if(id==='credentials') setTimeout(renderUserCredVault, 80);
 };
 
