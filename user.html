@@ -3442,7 +3442,19 @@ function saveNewDtTask(){
     id: _dtGenId(),
     subject, notes, tags: [],
     clientId, clientName: client ? client.name : '',
-    assigneeId: currentUser?.id||null, assignedById: currentUser?.id||null,
+    // assigneeName stamped straight from this device's own session
+    // (2026-11-02 fix) — never omitted and left for the server to fill.
+    // api/ops-sync.js's resolveAssigneeName() is still the real authority
+    // (a fresh re-lookup by assigneeId whenever the incoming name is
+    // blank — see its own comment), but that's a FALLBACK for a client
+    // that sent nothing, not a substitute for sending the name this
+    // device already has. Every member — human-readable id (sherine,
+    // abby) or auto-generated u_<timestamp> id (Rana, Michael) — has a
+    // currentUser.name by the time they can reach this modal at all
+    // (set at login, see doLogin()'s own `found` resolution), so there is
+    // no lookup here that can come back empty for one id shape and not
+    // the other.
+    assigneeId: currentUser?.id||null, assigneeName: currentUser?.name||'', assignedById: currentUser?.id||null,
     category, priority,
     status: 'Not started', dueDate: clampToWeekday(_dtToday()), dueDateLocked: false,
     source: 'manual', origin: 'self',
