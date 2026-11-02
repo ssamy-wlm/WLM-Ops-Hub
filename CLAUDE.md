@@ -1930,6 +1930,63 @@ Don't relitigate them without an explicit decision from the user.
   suites (index.html's 9 + user.html's 8, 17 total) re-run together
   clean with both fixes in place. `node --check` clean on `user.html`;
   div-balance unchanged vs. baseline on both files.
+- Member's own Time Off status stuck on "Pending" after admin approval —
+  a missing re-render, not a merge-protection bug (2026-11-02 — held for
+  preview approval, `user.html` only, no data-model/server change, no data
+  writes): reported live — admin approved Michael's PTO (`to_1790261075219`,
+  single correct DB record, `status:'approved'`, no duplicate), but his own
+  "My Requests History" kept showing PENDING. Investigated the given
+  hypothesis directly rather than assuming it (rule #7): traced
+  `_applyServerArray('timeOffRequests', ...)` (called from
+  `cloudFetchUsers()`) and its `_opsDirty()` dirty-protection guard end to
+  end — a time-off request is only ever written once, at creation
+  (`submitTimeOffRequest()`); nothing in this file ever mutates it again
+  after that, so its local copy and its last-pulled snapshot are identical
+  by the time an admin acts on it, meaning `_opsDirty()` correctly reports
+  it as NOT dirty and `_applyServerArray()` takes the server's current
+  status normally — confirmed directly with a fixture (a pending request
+  whose snapshot already matches local, fed a server response with
+  `status:'approved'`) that the merge lands `'approved'` into
+  `DB_KEYS.timeOffRequests` with no change needed to the dirty-protection
+  logic at all. **Real root cause:** the two places that actually fetch
+  fresh server data while the member has the Time Off tab open — the
+  section-open handler (`showSection('timeoff')`) and the 20s background-
+  stats tick's own `sec-timeoff`-active branch — both call
+  `cloudFetchUsers()...then(renderMyTimeOffLedger)`, re-rendering only the
+  balance/ledger card. Neither one also calls `renderMyTimeOff()` (the "My
+  Requests History" list that actually shows the status pill), unlike
+  every other section's own pull-reaction (`renderDailyTasks()` for
+  dailyTasks, `_cdReloadData()` for clientDirectory, etc., all gated the
+  same `if(...'active')` way). The data was correct in storage the whole
+  time; the visible list simply never got told to redraw — explaining
+  exactly why nothing short of a full reload (which calls `renderMyTimeOff()`
+  fresh on login) ever showed the real status. Fixed by adding the missing
+  call at both sites: `cloudFetchUsers(...).then(()=>{ renderMyTimeOff();
+  renderMyTimeOffLedger(); })`. Members still cannot write
+  `status`/`reviewedBy`/`reviewedAt`/a denial reason themselves (no UI path
+  ever existed for that) — this is purely "show what the server already
+  sent," no permission/write-path change. Verified with two Node+Playwright
+  suites against the real, unmodified `user.html` (served statically, no
+  live Supabase per rule #11): a direct-call suite proving the merge itself
+  is NOT the problem (a fixture pending request's local copy already
+  matches its own snapshot, so it's correctly treated as non-dirty and the
+  server's `'approved'` lands in storage, yet the DOM right after that pull
+  stays PENDING until an explicit `renderMyTimeOff()` call) and a full
+  end-to-end suite exercising the REAL `showSection('timeoff')` path and
+  the REAL 20s background-tick closure (captured via a `setTimeout` wrapper
+  installed before page load, identified by its own source rather than
+  hand-duplicated, then invoked directly) against a mocked, deliberately
+  delayed (250ms) `/api/ops-state` response standing in for real network
+  latency — both call sites now show APPROVED without any re-login;
+  confirmed via `git stash`/`git stash pop` that both fail against the
+  pre-fix code (while the underlying stored status is `'approved'` even
+  pre-fix, proving the merge was never at fault) and pass clean after.
+  `new Function()` parse check on every extracted inline `<script>` block
+  clean; div-balance unchanged vs. baseline (778/779 — pure JS edit, no
+  HTML touched). No `api/*.js` file touched, so rule #9's module-mode
+  check doesn't apply. Held per rule #10 out of caution even though this
+  is a pure read/render fix with zero data writes — touches the member's
+  own live sync-and-render path.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
