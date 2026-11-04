@@ -2071,15 +2071,13 @@ Don't relitigate them without an explicit decision from the user.
   only during EST (roughly Nov–Mar) and one hour late during EDT, the same
   DST-drift class CLAUDE.md's own "Cron / utcHour lockstep" lesson already
   documents for Vercel's crons; not worth real timezone-aware gating logic
-  for a low-stakes weekly maintenance job. Also flagged: this migration's
-  3-day/read window for `ops_notifications` is strictly tighter than
-  `api/cron-prune-notifications.js`'s existing, separate 30-day/read Vercel
-  cron (added earlier, still present, still scheduled in `vercel.json`) —
-  once this starts running weekly, nothing will ever survive to 30 days
-  old for that older job to find, so it becomes a harmless, always-empty
-  no-op rather than broken. Deliberately NOT removed here (one feature per
-  PR, per this task's own explicit instruction) — a separate, later
-  decision. Source-side fix, so the noise never re-accumulates: removed
+  for a low-stakes weekly maintenance job. Also flagged at the time: this
+  migration's 3-day/read window for `ops_notifications` is strictly
+  tighter than `api/cron-prune-notifications.js`'s separate, older
+  30-day/read Vercel cron, making that older job a harmless, always-empty
+  no-op rather than broken — deliberately NOT removed in this same PR (one
+  feature per PR); **removed in a follow-up PR the same day, see
+  below.** Source-side fix, so the noise never re-accumulates: removed
   every `logActivity('nav', ...)`/`logActivity('login', ...)` call site in
   both `index.html` (member/admin sign-in, the `window.showSection`
   nav-logging patch — deleted outright, it had no other purpose) and
@@ -2128,6 +2126,22 @@ Don't relitigate them without an explicit decision from the user.
   production, and the Business Setup schema-drift panel showing 0 pending
   (though this migration adds no new table/column, so drift exposure here
   is low) — none of which this agent can do itself without live DB access.
+- `api/cron-prune-notifications.js` removed, its own PR
+  (2026-11-04 — held for preview approval, `api/`+`vercel.json`, no data
+  write of its own — a deletion): explicit follow-up to the entry directly
+  above, which deliberately left this older cron in place as a harmless,
+  always-empty no-op rather than remove it in the same change. Deleted the
+  file outright and its `vercel.json` cron entry (`"0 10 * * *"`); grepped
+  for any remaining reference afterward — none, other than this file's own
+  historical write-up above (left as-is, it's the record of why this
+  existed and why it's gone now, not a live reference). `ops_prune_logs()`
+  (the pg_cron job from the entry above) now fully covers
+  `ops_notifications` retention — strictly tighter (3 days vs. 30), same
+  `read`-required condition. `vercel.json` confirmed still valid JSON
+  after the edit. No other file referenced this endpoint. Held per rule
+  #10 out of caution even though this is a pure deletion with no new
+  logic — removes a scheduled job that was itself a new-automated-write-
+  path per rule #13 when it was added.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
