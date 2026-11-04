@@ -7936,7 +7936,10 @@ window.doLogin = async function(){
   const storedUser = storedUsers.find(u=>u.id===authData.id) || {id:authData.id, name:authData.name, email:authData.email, title:authData.title};
   currentRole='user';
   currentUserData = storedUser;
-  logActivity('login', storedUser.name, 'User signed in', storedUser.title||'');
+  // 'login' is no longer logged to the live feed (2026-11-04) — see
+  // CLAUDE.md's "Current state" entry for this date: ops_feed is now
+  // auto-pruned, and login/nav rows were pure noise there (session
+  // tracking already lives in ops_session_activity via api/session-ping.js).
   showUserApp();
 };
 
@@ -7946,7 +7949,8 @@ window.doLogin = async function(){
 function _enterAdminApp(authData, fullAdmin){
   currentRole='admin';
   currentAdminInfo = {email: authData.email, name: fullAdmin.name||authData.name||'Admin', title: fullAdmin.title||authData.title||''};
-  logActivity('login',`Admin (${currentAdminInfo.name})`,'Admin signed in','admin panel');
+  // 'login' is no longer logged to the live feed (2026-11-04) — see this
+  // file's other logActivity('login',...) removal above for the full note.
   try{ localStorage.setItem('wl_admin_session', JSON.stringify({role:'admin', level:authData.level||fullAdmin.level||'admin', adminId:authData.id, ts:Date.now()})); }catch(e){}
   showAdminApp();
   setTimeout(()=>_updateSidebarForAdmin({...fullAdmin, name:currentAdminInfo.name, title:currentAdminInfo.title}), 50);
@@ -8060,13 +8064,11 @@ function _updateSidebarForAdmin(adminObj){
   if(profileTitleEl) profileTitleEl.value      = adminObj.title || '';
 }
 
-// Patch showSection to log navigation
-const _origShowSection = window.showSection;
-window.showSection = function(id, el){
-  _origShowSection(id, el);
-  const userName = _getCurrentUserName();
-  logActivity('nav', userName, 'Navigated to ' + id, id);
-};
+// The showSection-patching 'nav' logger that used to live here was removed
+// (2026-11-04) — it had no other purpose than logActivity('nav',...), which
+// was pure live-feed noise (see CLAUDE.md's "Current state" entry for this
+// date). window.showSection is now simply whatever the base function above
+// already defines, unwrapped.
 
 
 // ── LIVE FEED FUNCTIONS ──

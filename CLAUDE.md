@@ -2038,13 +2038,104 @@ Don't relitigate them without an explicit decision from the user.
   code reading plus the client-side fixture above, not a live write). Held
   per rule #10 — touches the member task-creation write path even though
   the change is additive (one new field, no existing field altered).
+- Automatic pruning added for the four disposable log tables
+  (2026-11-04 — held for preview approval + the user's own dry-run,
+  `supabase/migrations/`+`index.html`+`user.html`, no new table/column —
+  see rule #12, this agent cannot confirm a migration applied without live
+  DB access per rule #11): `ops_session_activity`, `ops_feed`,
+  `ops_error_log`, `ops_notifications` all accumulated rows indefinitely —
+  a one-time manual purge had already cleared the backlog by hand; this is
+  what stops it recurring. New migration
+  `20261104120000_ops_prune_logs.sql`: `ops_block_mutations()` (guards
+  `ops_feed`/`ops_session_activity`) and `ops_error_log_archive_guard()`
+  both get a single sanctioned bypass — they only skip their usual
+  raise-exception/archived-at-only enforcement when the current
+  transaction has `current_setting('ops.allow_prune', true) = 'on'`; every
+  other UPDATE/DELETE is blocked exactly as before, unchanged. The ONLY
+  place that ever sets this flag is a new `SECURITY DEFINER` function,
+  `ops_prune_logs()`, via `set_config('ops.allow_prune','on', true)` — the
+  `true` third argument gives it `SET LOCAL` semantics, so the bypass
+  reverts automatically at the end of that function's own transaction and
+  can never leak into a later, unrelated statement on a reused connection.
+  `ops_prune_logs()` does nothing else — no seeding, no updates, no
+  load-time call site anywhere. Retention: `ops_session_activity` >7
+  days; `ops_feed` >45 days OR a `'nav'`/`'login'` event of any age
+  (`coalesce(data->>'type', data->>'kind', '')`); `ops_error_log` >30
+  days; `ops_notifications` read (`data->>'read'` in `'true'`/`'1'`/`'t'`
+  — the exact string forms this app's own JSON serialization produces)
+  AND older than 3 days — an unread notification is never deleted
+  regardless of age. Scheduled weekly via `pg_cron`
+  (`cron.schedule('ops-prune-logs', '0 9 * * 0', ...)`, Sundays). Flagged,
+  not silently decided (rule #7): pg_cron has no per-job timezone
+  parameter on Supabase's hosted setup — `09:00 UTC` is exact for "4am ET"
+  only during EST (roughly Nov–Mar) and one hour late during EDT, the same
+  DST-drift class CLAUDE.md's own "Cron / utcHour lockstep" lesson already
+  documents for Vercel's crons; not worth real timezone-aware gating logic
+  for a low-stakes weekly maintenance job. Also flagged: this migration's
+  3-day/read window for `ops_notifications` is strictly tighter than
+  `api/cron-prune-notifications.js`'s existing, separate 30-day/read Vercel
+  cron (added earlier, still present, still scheduled in `vercel.json`) —
+  once this starts running weekly, nothing will ever survive to 30 days
+  old for that older job to find, so it becomes a harmless, always-empty
+  no-op rather than broken. Deliberately NOT removed here (one feature per
+  PR, per this task's own explicit instruction) — a separate, later
+  decision. Source-side fix, so the noise never re-accumulates: removed
+  every `logActivity('nav', ...)`/`logActivity('login', ...)` call site in
+  both `index.html` (member/admin sign-in, the `window.showSection`
+  nav-logging patch — deleted outright, it had no other purpose) and
+  `user.html` (first-login password-set, `logout()`, `showSection()`'s own
+  inline nav log) — `client.html` has neither call (confirmed via grep,
+  nothing to touch there). Session/"time in app" tracking is unaffected —
+  that's `api/session-ping.js` writing `ops_session_activity` directly,
+  never routed through `logActivity()`/`ops_feed` at all. Flagged, not
+  fixed (out of this ticket's scope): the admin Live Feed's "Logins"
+  stat/filter dropdown option (`index.html`, `LIVE_FEED_USER_ACTIVITY_
+  TYPES`, `feed-stat-logins`) will now only ever show historical rows
+  until those age out under the 45-day/pruned-immediately rule above, then
+  permanently read zero for anything going forward — the UI itself was
+  left untouched since removing it is a separate, more visible product
+  decision this ticket didn't ask for.
+  Verified locally against a real, throwaway PostgreSQL 16 instance (this
+  agent has no live Supabase access, rule #11, so this is the strongest
+  verification available short of the user's own dry-run) — extracted the
+  real, unmodified trigger/table definitions from this repo's own already-
+  applied migration files, applied this migration's guard/function SQL on
+  top (everything except the `create extension pg_cron`/`cron.schedule`
+  lines themselves, since the `pg_cron` extension isn't installed in this
+  sandboxed environment — flagged, not silently skipped): confirmed an
+  ordinary DELETE on `ops_feed` is still blocked with no bypass active
+  (negative control); running the real `ops_prune_logs()` against a mixed
+  fixture (old/new rows, `nav`/`login`/other feed events, all three `read`
+  string forms, an old-but-unread notification) deletes exactly the rows
+  each retention rule says and nothing else; the bypass is confirmed to
+  revert immediately after — the very next statement's ordinary DELETE on
+  `ops_feed` is blocked again; `ops_error_log`'s existing archived-at-only
+  update path and its DELETE-is-never-allowed rule are both confirmed
+  completely unaffected; a low-privilege role granted ONLY `EXECUTE` on
+  `ops_prune_logs()` (no direct table grants at all) successfully runs the
+  full prune via that one function call, while a direct `DELETE` from that
+  same role on any of the four tables is still denied — proving
+  `SECURITY DEFINER` is actually doing real work here, not redundant.
+  `node --check`-equivalent (extracted inline JS, `new Function()` parse)
+  clean on both touched HTML files; div-balance unchanged vs. baseline on
+  both (2199/2201 `index.html`, 778/779 `user.html` — no HTML markup
+  touched, pure JS removals). **Still needed before this can merge** (per
+  rule #12 and this task's own explicit instruction): the user's own
+  dry-run of the prune counts against the real Vercel preview/production
+  data (a read-only `select count(*) ... where <same condition>` per table,
+  no `ops_prune_logs()` call, is the safe way to preview this without
+  actually deleting anything), confirming the migration is applied to
+  production, and the Business Setup schema-drift panel showing 0 pending
+  (though this migration adds no new table/column, so drift exposure here
+  is low) — none of which this agent can do itself without live DB access.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
   column) + capture-size cap; W1 fire-and-forget (67/70 admin writes don't
   confirm the server before showing success). Phase 3: report-flag data
-  repair (4 tasks + the blog-posts task). Hygiene: feed/session retention
-  windows.
+  repair (4 tasks + the blog-posts task). Hygiene — feed/session retention
+  windows: addressed 2026-11-04, see that entry above (pending the user's
+  own dry-run + migration-applied confirmation before merge).
 
 ## Disabled seed/auto-run functions ("gremlins") — never re-enable
 

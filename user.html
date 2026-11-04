@@ -3941,7 +3941,8 @@ async function submitForcedPasswordChange(){
     dbSet(DB_KEYS.users, allUsers);
     currentUser = allUsers[idx];
   }
-  logActivity('login', currentUser.name, 'User set new password (first login)', '');
+  // 'login' is no longer logged to the live feed (2026-11-04) — see
+  // CLAUDE.md's "Current state" entry for this date.
   // Save session so refresh keeps user logged in
   try{ localStorage.setItem('wl_user_session',JSON.stringify({email:currentUser.email,id:currentUser.id,name:currentUser.name,ts:Date.now()})); }catch(e){}
   document.getElementById('changePasswordScreen').style.display='none';
@@ -3956,8 +3957,8 @@ function showApp(){
 }
 
 function logout(){
-  const name = currentUser?.name || 'User';
-  logActivity('nav', name, 'Signed out', '');
+  // 'nav' is no longer logged to the live feed (2026-11-04) — see
+  // CLAUDE.md's "Current state" entry for this date.
   try{ localStorage.removeItem('wl_user_session'); }catch(e){}
   try{ localStorage.removeItem('wl_admin_session'); }catch(e){}
   // Clear this portal's own token, and the other portal's token too — logging
@@ -5638,8 +5639,8 @@ function showSection(id, el){
   if(el) el.classList.add('active');
   const titles = {operations:'Operations',myreports:'My Reports',tracker:'Tracker',clientDirectory:'Client Directory',downtimeTasks:'Downtime Tasks',brandRights:'Brand Rights',decisionRights:'Decision Rights',bizSetup:'Business Setup',credentials:'Credentials',profile:'Profile',messages:'Messages',mywork:'My Services',myassignments:'My Services',companyOverview:'Company Overview',dailyTasks:'My Tasks',mycommissions:'My Commissions',salesFunnel:'Sales Funnel'};
   document.getElementById('pageTitle').textContent = titles[id]||id;
-  const name = currentUser?.name||'User';
-  logActivity('nav', name, 'Navigated to '+id, id);
+  // 'nav' is no longer logged to the live feed (2026-11-04) — see
+  // CLAUDE.md's "Current state" entry for this date.
 
   if(id==='operations'){ renderMyServiceSchedule(); renderRoadmap(); }
   if(id==='myreports') loadMyReports();
