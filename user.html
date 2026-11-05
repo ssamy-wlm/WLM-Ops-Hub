@@ -2074,14 +2074,23 @@ function _pushSafeClient(c, myId, myName){
 // forget debounced _scheduleCloudPush() path every other write here still
 // uses. Existing callers that don't read the return value are unaffected.
 //
-// opts.onlyToastFor ({table, id}, 2026-10-14) — when given, the generic
-// "❌ Not saved: <reason>" toast below only fires for a rejection matching
-// THAT specific table+id; a rejection of an unrelated item (another table,
-// or the same table but a different record — e.g. a stale, unrelated
-// client write bundled into the same push) is surfaced to nobody, since it
-// has nothing to do with what this particular caller is trying to save.
-// Omit it (every other existing caller) to keep the original behavior:
-// surface the first rejection in the batch, whatever it is.
+// opts.onlyToastFor ({table, id}, 2026-10-14; `id` made optional 2026-11-05)
+// — when given, the generic "❌ Not saved: <reason>" toast below only fires
+// for a rejection matching THAT table (and, when `id` is also given, that
+// specific record too); a rejection of an unrelated item (another table
+// entirely, or — with an `id` given — the same table but a different
+// record, e.g. a stale, unrelated client write bundled into the same push)
+// is surfaced to nobody, since it has nothing to do with what this
+// particular caller is trying to save. Omitting `id` (markAssignNotifRead()
+// — there's no single notification id to scope to, it marks every synced
+// notification read in one push) still fully suppresses every OTHER
+// table's rejection, which is the actual bug this exists to fix: clearing
+// notifications flushes the member's whole local cache, and a client
+// record with a merely-stale admin-only field (e.g. `logo`) riding along
+// in that same push must never surface as a "Not saved" toast for an
+// action that has nothing to do with clients. Omit `onlyToastFor` entirely
+// (every other existing caller) to keep the original behavior: surface the
+// first rejection in the batch, whatever it is.
 async function cloudPushData(opts){
   const token = _opsToken();
   if(!token) return {ok:false, rejected:[]};
@@ -2142,7 +2151,7 @@ async function cloudPushData(opts){
     // game, same as always.
     if(Array.isArray(body.rejected) && body.rejected.length && typeof showToast==='function'){
       const toastRejections = (opts && opts.onlyToastFor)
-        ? body.rejected.filter(r=>r.table===opts.onlyToastFor.table && r.id===opts.onlyToastFor.id)
+        ? body.rejected.filter(r=>r.table===opts.onlyToastFor.table && (opts.onlyToastFor.id===undefined || r.id===opts.onlyToastFor.id))
         : body.rejected;
       if(toastRejections.length) showToast(`❌ Not saved: ${toastRejections[0].reason}`);
     }
@@ -5625,8 +5634,20 @@ function markAssignNotifRead(){
     localStorage.setItem(_ASSIGN_USER_KEY,JSON.stringify(ua));
     // Mark server-synced notifications read too, and push just that change —
     // same "current vs incoming, same request" write api/ops-sync.js expects.
+    // Pushed via cloudPushData({onlyToastFor:{table:'notifications'}}) rather
+    // than the old debounced _scheduleCloudPush() (2026-11-05) — this write
+    // flushes the member's WHOLE local cache (every other dirty table too,
+    // not just notifications), and a client record with a merely-stale
+    // admin-only field (api/ops-sync.js's CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_
+    // TOUCH, e.g. `logo`) riding along in the same push used to surface a
+    // "❌ Not saved: members cannot edit client.logo" toast completely
+    // unrelated to clearing notifications. onlyToastFor with no `id` scopes
+    // the toast to the notifications table only — see cloudPushData()'s own
+    // comment for why that's now supported (any OTHER table's rejection,
+    // e.g. a genuine client write issue, stays silent here, exactly as
+    // intended for an action this unrelated to clients).
     const opsNotifs = (dbGet(DB_KEYS.notifications)||[]).map(n=>({...n,read:true}));
-    if(opsNotifs.length){ dbSet(DB_KEYS.notifications, opsNotifs); if(typeof _scheduleCloudPush==='function') _scheduleCloudPush(); }
+    if(opsNotifs.length){ dbSet(DB_KEYS.notifications, opsNotifs); if(typeof cloudPushData==='function') cloudPushData({onlyToastFor:{table:'notifications'}}); }
   }catch(e){}
   loadMyAssignments();
 }

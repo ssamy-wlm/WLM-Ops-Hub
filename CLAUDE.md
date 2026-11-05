@@ -2142,6 +2142,70 @@ Don't relitigate them without an explicit decision from the user.
   #10 out of caution even though this is a pure deletion with no new
   logic — removes a scheduled job that was itself a new-automated-write-
   path per rule #13 when it was added.
+- Misleading "❌ Not saved" toast on clearing notifications fixed —
+  pin-not-reject extended to client scalar fields (2026-11-05 — held for
+  preview approval, `api/ops-sync.js`+`user.html`): reported live —
+  clearing/reading notifications (`markAssignNotifRead()`) pushed via the
+  generic debounced `_scheduleCloudPush()`, which flushes the member's
+  WHOLE local cache in one request; a client record whose admin-only
+  scalar field (e.g. `logo`) had merely drifted vs. the server (another
+  admin's unrelated edit, not anything this member touched) got
+  `checkMemberClientWrite()`'s old flat reject-the-whole-write rule,
+  surfaced via a scary "❌ Not saved: members cannot edit client.logo"
+  toast completely unrelated to what the member actually did. Same
+  false-positive class #469 (`restrictClientWriteToOwnItems()`, list
+  items) and #472 (`pinMemberForbiddenTaskFields()`, tasks) already fixed
+  — extended here to client scalar fields, the one remaining instance of
+  "a merely-stale field blocks/alarms on an unrelated write." New exported
+  `pinMemberForbiddenClientFields(cur, inc)` forces every
+  `CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH` field to the server's own
+  CURRENT value, applied at the one real call site right alongside
+  `restrictClientWriteToOwnItems()`, BEFORE `checkMemberClientWrite()`
+  ever sees the payload. `checkMemberClientWrite()`'s own scalar-field
+  reject loop was removed outright (not kept as now-dead code) — same
+  precedent as `pinMemberForbiddenTaskFields()`, which fully replaced
+  (not duplicated) the equivalent task-field reject loop in 2026-10-15.
+  A member still can NEVER actually change one of these fields (always
+  pinned back to `cur`), but a merely-stale copy of one can no longer
+  block or alarm on an unrelated write. The genuinely-unowned-list-item
+  protection (`restrictClientWriteToOwnItems()`, franchise/location
+  structural checks) is completely untouched — a real attempt to edit
+  someone else's service, or rename/add/remove a franchise, is still
+  exactly as ineffective/rejected as before. Second part:
+  `cloudPushData()`'s `opts.onlyToastFor` (#469, 2026-10-14) gained an
+  optional-`id` mode — `{table}` alone now scopes the toast to that whole
+  table (any other table's rejection stays silent), not just one `{table,
+  id}` record — and `markAssignNotifRead()` now pushes via
+  `cloudPushData({onlyToastFor:{table:'notifications'}})` instead of the
+  generic debounced `_scheduleCloudPush()`, so a client-write rejection
+  bundled into the same flush never surfaces here regardless of which
+  client/field it was about. Verified with a 6-check Node suite against
+  the real, unmodified `pinMemberForbiddenClientFields()`/
+  `checkMemberClientWrite()`/`restrictClientWriteToOwnItems()` exports
+  (pure functions, no live Supabase needed per rule #11 — a stub
+  `@supabase/supabase-js` package was added to `node_modules` ONLY for
+  this local run, since importing `api/ops-sync.js` at all pulls in
+  `lib/supabaseAdmin.js`'s top-level import; removed immediately after,
+  never committed, `node_modules/` is gitignored): a drifted `logo` pins
+  to `cur` and a genuine attempted edit to it is still ineffective; a
+  field NOT in the forbidden list passes through completely untouched;
+  the exact reported drifted-field scenario now passes
+  `checkMemberClientWrite()` end-to-end; unowned-service and franchise-
+  rename structural rejections are both confirmed still intact,
+  unaffected by this change. Plus a Playwright suite against the real,
+  unmodified `user.html` reproducing the exact reported bug end-to-end
+  (a stale, dirty `logo` client record + an unread notification, a mocked
+  `/api/ops-sync` returning the real rejection shape): zero toast fires
+  and the notification still correctly clears — confirmed via `git stash`
+  that this exact scenario DOES show the misleading toast against the
+  pre-fix code (while the notification still clears either way, same as
+  today — this was never a "did it save" bug, only a false-alarm one).
+  `node --check` AND `node --input-type=module --check` (rule #9) both
+  clean on `api/ops-sync.js`; inline-JS syntax clean on `user.html`;
+  div-balance unchanged vs. baseline (778/779 — pure JS edit, no HTML
+  touched). Held per rule #10 — touches `api/ops-sync.js`'s real
+  member-write validation logic, even though the change only widens
+  what's tolerated, never what's permitted.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

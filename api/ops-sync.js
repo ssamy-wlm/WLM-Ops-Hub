@@ -462,6 +462,35 @@ const CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH = [
   'sitePlatform', 'registrar', 'hostingProvider',
 ];
 
+// Pin-not-reject for client scalar fields (2026-11-05 — same fix, same
+// reasoning, as pinMemberForbiddenTaskFields() below: a member clearing/
+// reading their own notifications flushes their WHOLE local cache via the
+// generic cloudPushData(), which can carry a client record whose
+// CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH field (e.g. `logo`) simply went
+// stale — an admin changed it elsewhere — with no actual attempted edit
+// by this member at all. The OLD behavior (checkMemberClientWrite()
+// rejecting the WHOLE client write the instant any one of these fields
+// merely differed from `cur`) surfaced as a scary, unrelated "❌ Not
+// saved: members cannot edit client.logo" toast on an action that has
+// nothing to do with clients. Every CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH
+// field is forced to the server's own CURRENT value here, BEFORE
+// checkMemberClientWrite() ever looks at the payload — a member still can
+// NEVER actually change one of these fields (always pinned back to
+// `cur`'s value, same outcome a genuine attempted edit would have gotten
+// from the old reject), but a merely-stale copy of one can no longer
+// block an unrelated write that happens to carry it along. Applied at the
+// same call site, right alongside restrictClientWriteToOwnItems() — list-
+// item ownership is a completely separate protection and is NOT touched
+// here (a member genuinely trying to edit/delete someone else's service
+// must still be rejected/ineffective exactly as today).
+export function pinMemberForbiddenClientFields(cur, inc) {
+  const safe = { ...inc };
+  for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
+    safe[key] = cur[key];
+  }
+  return safe;
+}
+
 // A member editing an EXISTING task assigned to them (Daily Tasks) may only
 // touch status/notes/tags — everything else (who it's for, what it's
 // about, where it lives) is admin-only, same allow-list-of-untouchable-
@@ -621,24 +650,15 @@ function finalizeRecurring(cur, row) {
 }
 
 // Returns { allowed: true } or { allowed: false, reason } — never a partial merge.
+// CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH is deliberately NOT checked here
+// any more (2026-11-05) — pinMemberForbiddenClientFields() is applied to
+// `incoming` at the one real call site BEFORE this function ever runs, so
+// every one of those fields already equals `current`'s value by the time
+// this check sees it; a flat reject-if-differs loop here would now be
+// permanently dead code, same reasoning as TASK_KEYS_MEMBER_MAY_NOT_TOUCH's
+// own reject loop being fully replaced (not kept alongside) by
+// pinMemberForbiddenTaskFields() below.
 export function checkMemberClientWrite(current, incoming, memberId, memberName) {
-  for (const key of CLIENT_SCALAR_KEYS_MEMBER_MAY_NOT_TOUCH) {
-    // A key entirely ABSENT from `incoming` (not just falsy) means this
-    // caller's local cache predates that field ever being set — the same
-    // staleness preserveMissingClientFields() protects against at write
-    // time, below. Treat it as "not touched," not "cleared" — omitting a
-    // key can never sneak a value change through, since the write-time
-    // merge always falls back to the CURRENT stored value for anything
-    // missing here; at most this lets a stale-cache save through, never a
-    // stale-cache save that silently changes a restricted field. A key
-    // present with an actually different value is still rejected exactly
-    // as before.
-    if (!(key in incoming)) continue;
-    if (JSON.stringify(current[key]) !== JSON.stringify(incoming[key])) {
-      return { allowed: false, reason: `members cannot edit client.${key}` };
-    }
-  }
-
   for (const listKey of ['services', 'recurringServices']) {
     if (listKeyMissingButNonEmpty(current, incoming, listKey)) {
       return { allowed: false, reason: `client.${listKey} is missing from the payload — refusing to treat that as "remove everything"` };
@@ -2701,7 +2721,12 @@ export default async function handler(req, res) {
           // so checkMemberClientWrite() below only ever judges this member's
           // OWN items — a stale/incomplete copy of someone ELSE's service can
           // no longer reject (or quietly drop) this member's legitimate edit.
-          const safeInc = restrictClientWriteToOwnItems(inc, cur.data, session.id, session.name);
+          // Pin the client's own admin-only scalar fields the same way
+          // (2026-11-05 — see pinMemberForbiddenClientFields()'s own comment):
+          // a stale `logo`/`website`/etc. riding along on an unrelated write
+          // (e.g. flushing the whole local cache just to mark a notification
+          // read) must not reject that write either.
+          const safeInc = pinMemberForbiddenClientFields(cur.data, restrictClientWriteToOwnItems(inc, cur.data, session.id, session.name));
           const check = checkMemberClientWrite(cur.data, safeInc, session.id, session.name);
           if (!check.allowed) {
             rejected.push({ table: 'clients', id: inc.id, reason: check.reason });
