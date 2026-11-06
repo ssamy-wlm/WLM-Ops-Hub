@@ -578,6 +578,86 @@ function resolveAttendeeIds(attendeesRaw, roster) {
   return ids;
 }
 
+// Deterministic "Name: task" / "Name — task" line guarantee (2026-11-06) —
+// see this file's own header note / CLAUDE.md for the full incident this
+// closes. Every owner-matching function above (matchOwner,
+// matchOwnerWithAlias, resolveTaskOwners) only ever operates on whatever
+// string the MODEL put in a task's "ownerName" field — none of them look
+// at the raw input text itself. The documented email-task contract
+// ("Name: task, due <date>", one task per line) was promised to always
+// assign, but nothing actually enforced that independent of the model
+// correctly extracting ownerName for every line, every time — a single
+// real LLM miss (confirmed live: a genuine Jacob Joslin task came through
+// with an empty ownerName despite his line following the documented
+// format exactly) silently broke that promise. This scans `text` directly,
+// completely independent of anything the model returned, and is applied
+// per-task below REGARDLESS of what ownerName the model produced — not a
+// fallback for only the empty-ownerName case.
+//
+// Only a line matching a leading `Name:` or `Name —` marker (the exact two
+// forms the documented format and buildTaskEmailSystemPrompt's own
+// structured-marker instructions both use) is a candidate — never a bare
+// hyphen, which risks a false match on a hyphenated word at the start of
+// an ordinary sentence. The name itself must still match the roster via
+// matchOwnerWithAlias — the SAME exact-or-unambiguous-first-name rule (plus
+// the Sarah alias) every other owner-match in this file already uses, so
+// this never introduces a second, looser matching standard. "Task: ...",
+// "Due: ...", "Assignee: ..." and similar labeled-field lines are
+// automatically excluded for free, since none of those leading words is a
+// real roster name.
+function extractLeadingNameLines(text, roster) {
+  const results = [];
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const m = /^\s*([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){0,2})\s*(?::|—)\s+(\S.*)$/.exec(line);
+    if (!m) return;
+    const person = matchOwnerWithAlias(m[1], roster);
+    if (!person) return;
+    results.push({ person, taskText: m[2].trim() });
+  });
+  return results;
+}
+
+const TASK_LINE_STOPWORDS = new Set(['the', 'and', 'for', 'with', 'this', 'that', 'from', 'about', 'into', 'your', 'our']);
+function significantTaskWords(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 3 && !TASK_LINE_STOPWORDS.has(w));
+}
+
+// A model-written "subject" is a concise COMPRESSION of the fuller line it
+// came from (the prompt's own instruction: "under 12 words"), so every
+// significant word in the subject should still appear somewhere in the
+// original line's own task text — checked as a word-set containment, not a
+// literal substring, since the model may reorder or lightly reword while
+// summarizing. Returns false (never guesses) when the subject has no
+// significant words at all, so an unusually short/vague subject never
+// matches everything by default.
+function subjectMatchesLeadingLine(subject, lineTaskText) {
+  const subjWords = significantTaskWords(subject);
+  if (!subjWords.length) return false;
+  const lineWords = new Set(significantTaskWords(lineTaskText));
+  return subjWords.every(w => lineWords.has(w));
+}
+
+// The one place the override above actually applies: for a given raw task
+// from the model, finds every leading-name line whose task text contains
+// that task's subject. Overrides ONLY when every matching line agrees on
+// the SAME person — two different qualifying lines naming two different
+// people is treated as genuinely ambiguous and left to the model's own
+// ownerName instead (never guess which one — rule #7), same as
+// matchOwner()'s own ambiguous-first-name behavior. Returns null when
+// there's no qualifying override, in which case the caller uses the
+// model's ownerName completely unchanged.
+function deterministicOwnerOverride(task, leadingNameLines) {
+  const matches = leadingNameLines.filter(l => subjectMatchesLeadingLine(task.subject, l.taskText));
+  if (!matches.length) return null;
+  const uniquePeopleIds = new Set(matches.map(l => l.person.id));
+  if (uniquePeopleIds.size !== 1) return null;
+  return matches[0].person;
+}
+
 // Resolves one task's owner(s) into 1+ {assigneeId, assigneeIds, ownerRaw}
 // pieces — a caller then clones the task once per piece. This is where
 // "co-assign" and "never silently unassign a named task" both actually
@@ -1169,6 +1249,11 @@ export async function parseTaskEmailForSession(session, text) {
     // see resolveTaskOwners()'s own comment for exactly how/when this is
     // used (only for tasks explicitly assigned to "the group").
     const attendeeIds = resolveAttendeeIds(parsed.attendees, roster);
+    // Deterministic "Name: task" / "Name — task" line scan — see
+    // extractLeadingNameLines()'s own comment for the full rationale.
+    // Computed once per parse, independent of any individual task, since
+    // it's a property of the raw TEXT, not of the model's own output.
+    const leadingNameLines = extractLeadingNameLines(text, roster);
 
     // Owner-matching and the role-scoped filter below run over EVERY
     // extracted task before any of it is returned — a member/manager-tier
@@ -1196,7 +1281,14 @@ export async function parseTaskEmailForSession(session, text) {
         // fallback — same precedence relationship ownerName/matchOwner()
         // already has.
         const matchedClient = matchClientByName(t.clientName, activeClients) || matchClient(t, activeClients);
-        const ownerVariants = resolveTaskOwners(t.ownerName, t.groupOwner === true, roster, attendeeIds, allowEveryone);
+        // Deterministic override wins regardless of what the model itself
+        // returned for ownerName (see deterministicOwnerOverride()'s own
+        // comment) — but only ever for a task that isn't already a
+        // explicit group assignment, so "the group"/"the team" handling
+        // below is completely untouched by this.
+        const leadingNameOverride = t.groupOwner === true ? null : deterministicOwnerOverride(t, leadingNameLines);
+        const ownerNameForResolve = leadingNameOverride ? leadingNameOverride.name : t.ownerName;
+        const ownerVariants = resolveTaskOwners(ownerNameForResolve, t.groupOwner === true, roster, attendeeIds, allowEveryone);
         return ownerVariants.map(ov => ({
           subject: t.subject.trim(),
           notes: typeof t.notes === 'string' ? t.notes : '',

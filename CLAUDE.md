@@ -2206,6 +2206,79 @@ Don't relitigate them without an explicit decision from the user.
   touched). Held per rule #10 — touches `api/ops-sync.js`'s real
   member-write validation logic, even though the change only widens
   what's tolerated, never what's permitted.
+- Documented email-task format ("Name: task, due <date>") now a hard,
+  deterministic contract — `Name:`/`Name —` lines guaranteed to assign
+  (2026-11-06 — held for preview approval, `api/process-transcript.js`
+  only): reported live — a real email to `task@opshub.wlmsend.com`
+  assigning a task to Jacob Joslin via the exact documented format parsed
+  but came through with no assignee. **Root cause, investigated per rule
+  #7 rather than guessed**: `matchOwner()`/`matchOwnerWithAlias()`/
+  `activeRoster()`/`resolveTaskOwners()` are all correct on their own
+  terms — read every one end-to-end, nothing wrong with the matching
+  logic itself. The real gap: EVERY one of them only ever operates on
+  whatever string the MODEL put in a task's `ownerName` field; nothing in
+  this file ever independently inspects the raw input text's own
+  structured markers. `buildTaskEmailSystemPrompt()`'s own instructions
+  already tell the model to treat a `Name:`/`Name —` line as at least as
+  strong a signal as prose, but that's a prompt instruction, not an
+  enforced guarantee — a single real LLM miss (confirmed: Jacob's line
+  came back with an empty `ownerName` despite following the format
+  exactly) silently breaks the "always works" promise given to the team,
+  since there was no deterministic fallback checking the text itself.
+  **Fix**: new `extractLeadingNameLines(text, roster)` scans the raw input
+  directly (independent of anything the model returned) for a line
+  matching a leading `Name:` or `Name —` marker (deliberately NOT a bare
+  hyphen, to avoid a false match on a hyphenated word starting a sentence)
+  whose name resolves via the SAME `matchOwnerWithAlias()` exact-or-
+  unambiguous-first-name rule (plus the Sarah alias) every other owner-
+  match in this file already uses — no second, looser matching standard.
+  New `deterministicOwnerOverride()` correlates each model-extracted task
+  back to a qualifying line via word-set containment
+  (`subjectMatchesLeadingLine()` — every significant word in the model's
+  own concise `subject` must appear in that line's fuller task text, the
+  natural relationship between a summary and what it was compressed
+  from), and only overrides when exactly one person is named across every
+  qualifying line (two different qualifying lines naming two different
+  people is genuinely ambiguous and left to the model's own ownerName,
+  same "never guess" conviction `matchOwner()` itself already has for a
+  duplicate first name). Wired in right before `resolveTaskOwners()`,
+  **REGARDLESS of what the model itself returned for ownerName** — not a
+  fallback for only the empty case, per the explicit ask — but skipped
+  entirely for an explicit `groupOwner:true` task, so "the group"/"the
+  team" co-assignment is completely untouched. `api/inbound-email.js`
+  (the real `task@`/`service@` webhook handler) calls this exact function
+  directly — confirmed via grep — so this closes the gap on the actual
+  production path that failed, not just the UI's own parse endpoint.
+  Verified with a 6-check Node test-runner suite against the real,
+  unmodified `parseTaskEmailForSession()` export (a fake in-memory
+  Supabase client + `node:test`'s `mock.module` for `lib/supabaseAdmin.js`/
+  `lib/errorLog.js`, a mocked Gemini fetch — no live DB or model access
+  per rule #11): the three literal documented example lines (Jacob/Rana/
+  Michael) each extract, assign to the correct roster person, and resolve
+  the right due date when the model ALSO returns the correct ownerName
+  (confirms no regression to the already-working case, including a
+  Sunday due date correctly weekend-clamped by the pre-existing,
+  untouched `clampToWeekday()`); the exact reported scenario (Jacob's
+  line, model returns an empty ownerName) still assigns to Jacob; the
+  model returning the WRONG owner for Jacob's line is overridden by the
+  deterministic match (proving this truly runs "regardless of what the
+  model returned," not just as an empty-string fallback); a vague prose
+  line with no leading-name marker is completely unaffected (still left
+  unassigned for an admin-tier caller, exactly as before); an explicit
+  `groupOwner:true` task still correctly co-assigns to every attendee
+  even when its subject happens to textually overlap a leading-name line
+  (proving the groupOwner skip works); two different qualifying lines
+  naming two different people for the same subject are correctly left
+  ambiguous, never guessed. Confirmed via `git stash` that exactly the
+  two tests exercising the new override (the real reported bug, and the
+  "wrong owner overridden" case) fail against the pre-fix code, while
+  every other test — including the already-working happy path — passes
+  unchanged on both sides, isolating exactly what this fix changes.
+  `node --check` AND `node --input-type=module --check` (rule #9) both
+  clean. No HTML touched, so no div-balance check applies. Held per rule
+  #10 — touches live parse logic, even though the change only widens
+  when an owner is deterministically assigned, never removes an existing
+  assignment path.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
