@@ -91,15 +91,35 @@ body{font-family:'Poppins',sans-serif;background:linear-gradient(160deg,var(--bg
    already added to each <td> (used only as the mobile row label via
    ::before; invisible/no-op at any width above this breakpoint). Desktop
    table markup/behavior (sorting-by-click-row via onclick, column
-   widths, borders) is completely untouched above 480px. */
+   widths, borders) is completely untouched above 480px.
+   Mobile table audit (2026-11-10) — generalized into a reusable class,
+   `.mobile-stack-tbl`, so every other admin table in this file (Client
+   Health, Workload, My Team's Work, Admins, Users, Commissions, Backups,
+   Reported) can opt into the exact same technique instead of overflowing
+   or clipping on a phone. Selectors below just gained `, .mobile-stack-tbl
+   ...` alongside the existing `.tpa-person-tbl ...` ones — one shared
+   implementation, not a second copy; `.tpa-person-tbl`'s own behavior is
+   completely unchanged. A <td> with no data-label attribute at all (e.g.
+   a bare status dot, or an Actions cell full of buttons) simply falls
+   back to the base rule below with no ::before label — right-aligned raw
+   content, no broken-looking blank label. */
 @media (max-width: 480px){
-  .tpa-person-tbl thead{display:none;}
-  .tpa-person-tbl, .tpa-person-tbl tbody, .tpa-person-tbl tr, .tpa-person-tbl td{display:block;width:100%;}
-  .tpa-person-tbl tr{border:1px solid var(--border);border-radius:10px;margin:10px;padding:4px 0;}
-  .tpa-person-tbl td{text-align:right!important;padding:6px 14px!important;border-bottom:none!important;display:flex;align-items:center;justify-content:space-between;gap:10px;}
-  .tpa-person-tbl td[data-label]::before{content:attr(data-label);font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;text-align:left;}
-  .tpa-person-tbl td[data-label=""]{font-size:14px!important;padding-bottom:8px!important;border-bottom:1px solid var(--border)!important;margin-bottom:4px;}
-  .tpa-person-tbl td[data-label=""]::before{content:none;}
+  .tpa-person-tbl thead, .mobile-stack-tbl thead{display:none;}
+  .tpa-person-tbl, .tpa-person-tbl tbody, .tpa-person-tbl tr, .tpa-person-tbl td,
+  .mobile-stack-tbl, .mobile-stack-tbl tbody, .mobile-stack-tbl tfoot, .mobile-stack-tbl tr, .mobile-stack-tbl td{display:block;width:100%;}
+  .tpa-person-tbl tr, .mobile-stack-tbl tr{border:1px solid var(--border);border-radius:10px;margin:10px;padding:4px 0;}
+  .tpa-person-tbl td, .mobile-stack-tbl td{text-align:right!important;padding:6px 14px!important;border-bottom:none!important;display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:none!important;white-space:normal!important;text-overflow:clip!important;}
+  .tpa-person-tbl td[data-label]::before, .mobile-stack-tbl td[data-label]::before{content:attr(data-label);font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;text-align:left;}
+  .tpa-person-tbl td[data-label=""], .mobile-stack-tbl td[data-label=""]{font-size:14px!important;padding-bottom:8px!important;border-bottom:1px solid var(--border)!important;margin-bottom:4px;}
+  .tpa-person-tbl td[data-label=""]::before, .mobile-stack-tbl td[data-label=""]::before{content:none;}
+  /* Workload/My Team's Work detail sub-rows (colspan-based, expanded via
+     "▸ Details") have no data-label of their own — their text is already
+     self-descriptive ("↳ client — service", "🏷 category", etc.), so the
+     flex label/value layout above (meant for a labeled value) would just
+     misplace this plain text. Explicitly classed `.wl-detail-row` (added
+     where these rows are built) rather than targeted by exclusion, so
+     this can never accidentally affect any other table's rows. */
+  .mobile-stack-tbl tr.wl-detail-row td{display:block!important;text-align:left!important;padding:4px 14px 4px 28px!important;}
 }
 /* Safe-area insets (notch/home-indicator, standalone PWA mode) — purely
    additive: env() resolves to 0px on any device without an inset, so this
@@ -1713,7 +1733,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="card">
         <div class="card-body" style="padding:0;">
-          <table style="width:100%;">
+          <table style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Client</th>
@@ -1777,7 +1797,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="card">
         <div class="card-body" style="padding:0;">
-          <table style="width:100%;">
+          <table style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Person</th>
@@ -1820,7 +1840,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
       <div class="card">
         <div class="card-body" style="padding:0;">
-          <table style="width:100%;">
+          <table style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Person</th>
@@ -2100,7 +2120,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <button class="btn btn-primary btn-sm" onclick="openAddAdminModal()">+ Add Admin</button>
         </div>
         <div class="card-body" style="padding:0;">
-          <table style="width:100%;">
+          <table style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Admin</th>
@@ -2112,7 +2132,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <tbody id="adminTableBody">
               <!-- Primary Admin — protected, cannot be removed -->
               <tr style="background:rgba(45,107,182,.03);">
-                <td style="padding:14px 18px;">
+                <td data-label="" style="padding:14px 18px;">
                   <div style="display:flex;align-items:center;gap:10px;">
                     <div class="avatar" style="width:34px;height:34px;font-size:12px;background:linear-gradient(135deg,#e05555,#f08080);">SS</div>
                     <div>
@@ -2121,8 +2141,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                     </div>
                   </div>
                 </td>
-                <td style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">Super Admin</span></td>
-                <td style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
+                <td data-label="Access Level" style="padding:14px 18px;"><span class="status-badge" style="background:rgba(45,107,182,.1);color:var(--text);">Super Admin</span></td>
+                <td data-label="Status" style="padding:14px 18px;"><span class="cred-status cred-set">Active</span></td>
                 <td style="padding:14px 18px;">
                   <div class="td-actions" style="align-items:center;">
                     <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('__primary__',true)">View</button>
@@ -2143,7 +2163,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="table-title">All Users</div>
           <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">+ Add New User</button>
         </div>
-        <table>
+        <table class="mobile-stack-tbl">
           <thead>
             <tr>
               <th>User</th>
@@ -2493,7 +2513,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div class="card-body">
           <div id="commSavedEmpty" style="display:none;font-size:13px;color:var(--text-light);padding:16px 4px;">No saved commission records yet for this recipient.</div>
-          <table id="commSavedTable" style="width:100%;">
+          <table id="commSavedTable" style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th>Month</th>
@@ -2527,7 +2547,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         </div>
         <div class="card-body">
           <div id="commYearEmpty" style="display:none;font-size:13px;color:var(--text-light);padding:20px 4px;text-align:center;">No commission records for this recipient in this year.</div>
-          <table id="commYearTable" style="width:100%;">
+          <table id="commYearTable" style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th>Month</th>
@@ -2540,11 +2560,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <tbody id="commYearRows"></tbody>
             <tfoot>
               <tr style="font-weight:800;border-top:2px solid var(--border);">
-                <td>Year total</td>
-                <td style="text-align:right;" id="comm-year-total-net">$0.00</td>
+                <td data-label="">Year total</td>
+                <td data-label="Month net" style="text-align:right;" id="comm-year-total-net">$0.00</td>
                 <td></td>
-                <td style="text-align:right;" id="comm-year-total-commission">$0.00</td>
-                <td id="comm-year-total-owed">Owed $0.00</td>
+                <td data-label="Commission" style="text-align:right;" id="comm-year-total-commission">$0.00</td>
+                <td data-label="Payout status" id="comm-year-total-owed">Owed $0.00</td>
               </tr>
             </tfoot>
           </table>
@@ -3147,7 +3167,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                lives — _renderBackupReminderBanner() renders into BOTH. -->
           <div id="backupsCardReminderWrap" style="display:none;"></div>
           <div id="backupsListStatus" style="font-size:13px;color:var(--text-mid);margin-bottom:10px;">Loading snapshots…</div>
-          <table style="width:100%;">
+          <table style="width:100%;" class="mobile-stack-tbl">
             <thead>
               <tr>
                 <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-light);text-transform:uppercase;letter-spacing:.05em;">Date</th>
@@ -4940,17 +4960,17 @@ function renderUserTable(){
       : `<button role="menuitem" class="row-actions-menu-danger" onclick="_closeAllRowActionsMenus();deactivateUser(null,'${u.id}')">Deactivate</button>`;
     const rowMenuId = `rowActionsMenu-u-${u.id}`;
     return `<tr>
-      <td style="${isInactive?'opacity:.6;':''}"><div style="display:flex;align-items:center;gap:10px;">
+      <td data-label="" style="${isInactive?'opacity:.6;':''}"><div style="display:flex;align-items:center;gap:10px;">
         <div class="avatar" style="width:32px;height:32px;font-size:12px;background:${color}">${escHtml(initials)}</div>
         <div><div>${escHtml(u.name)}</div><div class="td-sub">${escHtml(u.email)}</div></div>
       </div></td>
-      <td><div>${escHtml(u.title||'—')}</div><div class="td-sub">${escHtml(u.resp||'')}</div></td>
-      <td>
+      <td data-label="Job Title & Responsibilities"><div>${escHtml(u.title||'—')}</div><div class="td-sub">${escHtml(u.resp||'')}</div></td>
+      <td data-label="Role">
         <span class="status-badge ${badgeClass}">${escHtml(u.role||'Contractor')}</span>
         ${probation?`<span class="status-badge" style="background:#f59e0b18;color:#d97706;border:1px solid #d97706aa;margin-left:4px;" title="Probation ends ${probEnd}">Probation</span>`:''}
         ${dualBadge}
       </td>
-      <td><span class="cred-status ${statusClass}">${statusLabel}</span></td>
+      <td data-label="Status"><span class="cred-status ${statusClass}">${statusLabel}</span></td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}',true)">View</button>
         ${isSuperAdminViewer?`<button class="btn btn-sm btn-outline" onclick="openEditUserModal('${u.id}')">Edit</button>`:''}
@@ -6141,11 +6161,11 @@ function renderClientHealthDashboard(){
   if(empty) empty.style.display='none';
   body.innerHTML=rows.map(r=>`
     <tr style="cursor:pointer;" onclick="openAdminTrackerToClient('${r.id}')" title="Open ${r.name} in the Tracker">
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:var(--green);">${r.ok}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.pending>0?'var(--accent)':'var(--text-light)'};">${r.pending}</span></td>
+      <td data-label="" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td data-label="On Track" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:var(--green);">${r.ok}</span></td>
+      <td data-label="Due Soon" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td data-label="Overdue" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td data-label="Pending" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.pending>0?'var(--accent)':'var(--text-light)'};">${r.pending}</span></td>
     </tr>`).join('');
 }
 
@@ -6460,20 +6480,20 @@ function renderWorkloadDashboard(){
   body.innerHTML=rows.map(r=>{
     const expanded=_workloadExpanded.has(r.id);
     const detailRows=r.services.map(s=>`
-      <tr style="background:var(--bg2,#f4f6f9);">
+      <tr class="wl-detail-row" style="background:var(--bg2,#f4f6f9);">
         <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
         <td style="padding:8px 18px;font-size:11px;color:${s.statusColor};font-weight:700;">${s.statusLabel}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
-      </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
+      </tr>`).join('') || `<tr class="wl-detail-row" style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
     <tr class="workload-person-row" style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
+      <td data-label="" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td data-label="Total Active" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
+      <td data-label="Due Soon" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td data-label="Overdue" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td data-label="Stuck" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
+      <td data-label="Assigned Steps" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);white-space:nowrap;" onclick="event.stopPropagation();toggleWorkloadDetail('${r.id}')">
         <span style="font-size:11px;color:#2E5DA6;font-weight:700;cursor:pointer;">${expanded?'▾ Hide':'▸ Details'}</span>
       </td>
@@ -6566,20 +6586,20 @@ function renderMyTeamsWork(){
   body.innerHTML=rows.map(r=>{
     const expanded=_workloadExpanded.has('mtw_'+r.id);
     const detailRows=r.services.map(s=>`
-      <tr style="background:var(--bg2,#f4f6f9);">
+      <tr class="wl-detail-row" style="background:var(--bg2,#f4f6f9);">
         <td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-dark);" colspan="2">↳ ${s.clientName} — ${s.name}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">🏷 ${s.category}</td>
         <td style="padding:8px 18px;font-size:11px;color:${s.statusColor};font-weight:700;">${s.statusLabel}</td>
         <td style="padding:8px 18px;font-size:11px;color:var(--text-light);" colspan="2">Due: ${s.due}</td>
-      </tr>`).join('') || `<tr style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
+      </tr>`).join('') || `<tr class="wl-detail-row" style="background:var(--bg2,#f4f6f9);"><td style="padding:8px 18px 8px 36px;font-size:11.5px;color:var(--text-light);" colspan="6">No individually assigned services (steps only).</td></tr>`;
     return `
     <tr class="workload-person-row" style="cursor:pointer;" onclick="openWorkloadPersonInTracker('${r.id}','${(r.name||'').replace(/'/g,"\\'")}')" title="Open ${r.name}'s assignments in the Tracker">
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
-      <td style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
+      <td data-label="" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text-dark);">${r.name}</td>
+      <td data-label="Total Active" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text-dark);">${r.total}</td>
+      <td data-label="Due Soon" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.soon>0?'var(--orange)':'var(--text-light)'};">${r.soon}</span></td>
+      <td data-label="Overdue" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.overdue>0?'var(--red)':'var(--text-light)'};">${r.overdue}</span></td>
+      <td data-label="Stuck" style="padding:12px 18px;border-bottom:1px solid var(--border);"><span style="font-size:12px;font-weight:700;color:${r.stuck>0?'var(--red)':'var(--text-light)'};">${r.stuck||''}</span></td>
+      <td data-label="Assigned Steps" style="padding:12px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);">${r.steps||''}</td>
       <td style="padding:12px 18px;border-bottom:1px solid var(--border);white-space:nowrap;" onclick="event.stopPropagation();toggleWorkloadDetail('mtw_${r.id}')">
         <span style="font-size:11px;color:#2E5DA6;font-weight:700;cursor:pointer;">${expanded?'▾ Hide':'▸ Details'}</span>
       </td>
@@ -9535,9 +9555,9 @@ function _renderBackupsTable(){
     const kindLabel = s.kind==='daily-auto' ? 'Daily (auto)' : 'Manual';
     return `
     <tr>
-      <td style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(dateLabel)}</td>
-      <td style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(kindLabel)}</td>
-      <td style="padding:8px 10px;font-size:12px;">${_fmtBackupBytes(s.size_bytes)}</td>
+      <td data-label="" style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(dateLabel)}</td>
+      <td data-label="Kind" style="padding:8px 10px;font-size:12px;">${escHtmlAdmin(kindLabel)}</td>
+      <td data-label="Size" style="padding:8px 10px;font-size:12px;">${_fmtBackupBytes(s.size_bytes)}</td>
       <td style="padding:8px 10px;">
         <button class="btn btn-xs btn-outline" onclick="downloadBackup('${s.id}')">⬇ Download</button>
         <button class="btn btn-xs btn-danger" onclick="openRestoreBackupModal('${s.id}')">Restore…</button>
@@ -11576,7 +11596,7 @@ function renderTaReported(){
   }
   container.innerHTML = `<div class="card">
     <div class="card-body" style="padding:0;">
-      <table style="width:100%;">
+      <table style="width:100%;" class="mobile-stack-tbl">
         <thead><tr>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Submitter</th>
           <th style="padding:12px 18px;text-align:left;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);">Task</th>
@@ -11587,11 +11607,11 @@ function renderTaReported(){
         </tr></thead>
         <tbody>${items.map((it,i)=>`
           <tr onclick="_taOpenReportedItem(${i})" style="cursor:pointer;${i%2?'':'background:rgba(45,107,182,.02);'}">
-            <td style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
-            <td style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
-            <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.reason||'—')}</td>
-            <td style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
-            <td style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
+            <td data-label="" style="padding:12px 18px;font-size:13px;">${escHtmlAdmin(it.submitterName)}</td>
+            <td data-label="Task" style="padding:12px 18px;font-size:13px;font-weight:600;color:var(--text-dark);">${TA_REPORTED_KIND_ICON[it.kind]||''} ${escHtmlAdmin(it.itemLabel)}${it.kind==='dueDateChange'?' <span style="font-weight:400;color:var(--text-light);font-size:11px;">— due-date change requested</span>':''}</td>
+            <td data-label="Reason" style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.reason||'—')}</td>
+            <td data-label="Client" style="padding:12px 18px;font-size:13px;color:var(--text-light);">${escHtmlAdmin(it.clientName)}</td>
+            <td data-label="Reported" style="padding:12px 18px;font-size:12px;color:var(--text-light);white-space:nowrap;">${it.date?new Date(it.date).toLocaleString():'—'}</td>
             <td style="padding:12px 18px;font-size:12px;white-space:nowrap;" onclick="event.stopPropagation()">
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 ${it.kind==='reported' ? `
@@ -15160,12 +15180,12 @@ function renderCommissionSavedSection(){
     const statusOpts = Object.keys(COMM_STATUS_LABELS).map(s=>
       `<option value="${s}" ${s===status?'selected':''}>${escHtml(COMM_STATUS_LABELS[s])}</option>`).join('');
     return `<tr data-record-id="${escHtml(r.id)}">
-      <td>${escHtml(_commMonthLabel(r.month))}</td>
-      <td style="text-align:right;">$${net.toFixed(2)}</td>
-      <td style="text-align:center;">${rate}</td>
-      <td style="text-align:right;">$${commission.toFixed(2)}</td>
-      <td><input type="date" class="form-select" value="${escHtml(r.payoutDate||'')}" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','payoutDate',this.value,this)"></td>
-      <td><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','status',this.value,this)">${statusOpts}</select></td>
+      <td data-label="">${escHtml(_commMonthLabel(r.month))}</td>
+      <td data-label="Net" style="text-align:right;">$${net.toFixed(2)}</td>
+      <td data-label="Rate" style="text-align:center;">${rate}</td>
+      <td data-label="Commission" style="text-align:right;">$${commission.toFixed(2)}</td>
+      <td data-label="Payout"><input type="date" class="form-select" value="${escHtml(r.payoutDate||'')}" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','payoutDate',this.value,this)"></td>
+      <td data-label="Status"><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','status',this.value,this)">${statusOpts}</select></td>
     </tr>`;
   }).join('');
 }
@@ -15283,11 +15303,11 @@ function renderCommissionYearView(){
     totalCommission += commission;
     if(status==='paid') totalPaid += commission;
     return `<tr>
-      <td>${escHtml(_commMonthLabel(r.month))}</td>
-      <td style="text-align:right;">$${net.toFixed(2)}</td>
-      <td style="text-align:center;">${escHtml(rateLabel)}</td>
-      <td style="text-align:right;">$${commission.toFixed(2)}</td>
-      <td>${escHtml(COMM_STATUS_LABELS[status]||status)}</td>
+      <td data-label="">${escHtml(_commMonthLabel(r.month))}</td>
+      <td data-label="Month net" style="text-align:right;">$${net.toFixed(2)}</td>
+      <td data-label="Rate" style="text-align:center;">${escHtml(rateLabel)}</td>
+      <td data-label="Commission" style="text-align:right;">$${commission.toFixed(2)}</td>
+      <td data-label="Payout status">${escHtml(COMM_STATUS_LABELS[status]||status)}</td>
     </tr>`;
   }).join('');
   document.getElementById('comm-year-total-net').textContent = '$'+totalNet.toFixed(2);
@@ -16556,7 +16576,7 @@ window._renderAdminTableImpl = function(){
     const tr = document.createElement('tr');
     tr.dataset.adminId = a.id;
     tr.innerHTML = `
-      <td style="padding:14px 18px;${isInactive?'opacity:.6;':''}">
+      <td data-label="" style="padding:14px 18px;${isInactive?'opacity:.6;':''}">
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="avatar" style="width:34px;height:34px;font-size:12px;background:${color};">${escHtml(initials)}</div>
           <div>
@@ -16566,12 +16586,12 @@ window._renderAdminTableImpl = function(){
           </div>
         </div>
       </td>
-      <td style="padding:14px 18px;">
+      <td data-label="Access Level" style="padding:14px 18px;">
         <span class="status-badge" style="background:${info.color}18;color:${info.color};border:1px solid ${info.color}33;">
           ${escHtml(info.label)}
         </span>
       </td>
-      <td style="padding:14px 18px;"><span class="cred-status ${isInactive?'cred-notset':'cred-set'}">${isInactive?'Inactive':'Active'}</span></td>
+      <td data-label="Status" style="padding:14px 18px;"><span class="cred-status ${isInactive?'cred-notset':'cred-set'}">${isInactive?'Inactive':'Active'}</span></td>
       <td style="padding:14px 18px;">
         <div class="td-actions">
           <button class="btn btn-sm btn-outline" onclick="openEditAdminModal('${escHtml(a.id)}',true)">View</button>

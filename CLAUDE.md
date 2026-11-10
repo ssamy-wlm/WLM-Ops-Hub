@@ -2356,6 +2356,98 @@ Don't relitigate them without an explicit decision from the user.
   its counterpart in the dynamic fallback overlay's template string,
   both self-closing on the same line, net zero imbalance). Held per rule
   #10 — new `api/` send path, even though it performs no data writes.
+- Mobile tables audit — every data table now usable on a phone, app-wide
+  (2026-11-10 — held for preview approval, `index.html`+`client.html`+
+  `user.html`, display-only, max-width media queries only): only
+  `.tpa-person-tbl` (the Overview "Per-Person Breakdown" table) had the
+  responsive stacked-card treatment before this; every other data table —
+  Users, Admins, Client Health, Workload, My Team's Work, Commissions
+  (Saved + Year), Backups, Reported (`index.html`); the Sales Funnel table
+  and the Services/My Work tables (`client.html`); My Services
+  (`user.html`) — either overflowed the page outright or sat inside an
+  `overflow-x:auto` wrapper that kept the PAGE from overflowing but still
+  made the table itself unusable without an internal horizontal scroll.
+  **Fix**: generalized the existing per-person-breakdown technique
+  (`thead{display:none}` + each `<tr>` becomes a bordered card + each
+  `<td>` becomes a label/value row via a `data-label` attribute and
+  `::before`) into a reusable class, `.mobile-stack-tbl`. In `index.html`
+  this is folded into `.tpa-person-tbl`'s own existing `@media
+  (max-width:480px)` block (one shared implementation, not a second copy
+  — `.tpa-person-tbl`'s own behavior is byte-identical); `client.html`/
+  `user.html` each got their OWN hand-duplicated copy of the same rules
+  (CLAUDE.md rule #3 — zero shared code across the three frontends), not
+  an import from `index.html`'s. Every identified table gained the class
+  plus `data-label` on each `<td>` (the leading name/title column uses
+  `data-label=""`, the existing convention for a card's "title" row; a
+  bare status-dot column and an Actions column full of buttons
+  deliberately carry NO `data-label` at all, falling back to the base
+  rule's right-aligned raw content with no broken-looking blank label —
+  confirmed this fallback already existed and needed no new CSS).
+  Workload/My Team's Work's colspan-based "▸ Details" sub-rows (whose
+  text is already self-descriptive — "↳ client — service", "🏷
+  category") got their own explicitly-classed `tr.wl-detail-row`
+  override instead of being excluded by any guess-the-main-row
+  heuristic, so this can never accidentally mis-style a different
+  table's rows. Also added one shared override, `max-width:none;
+  white-space:normal;text-overflow:clip` (all `!important`, since the
+  base rule already is), to the `.mobile-stack-tbl td`/`.tpa-person-tbl
+  td` rule itself — several tables (Sales Funnel's Next Step/Notes
+  columns especially) set an inline `max-width:240px;text-overflow:
+  ellipsis;white-space:nowrap` for the DESKTOP table's fixed-width
+  columns, which would otherwise have kept truncating a stacked card's
+  value to a tiny sliver of its own full-width row for no reason once
+  there's no column width to truncate for anymore. **A second, real,
+  independently-found bug surfaced auditing `client.html`'s Services tab
+  with the table's own overflow now fixed** (previously large enough to
+  mask it): the "All Clients" page's top stat-row
+  (`Total Clients`/`Active`/`Inactive`/`Services Due Soon`) is `display:
+  flex` with no `flex-wrap`, unlike every other stat-row in this same
+  file (e.g. My Work's own, which already has `flex-wrap:wrap`) — fixed
+  by adding the same `flex-wrap:wrap`. Scope note (flagged, not silently
+  skipped — rule #7): the three Super-Admin-only DIAGNOSTIC tables
+  (Error Log ungrouped/grouped, Schema Drift, the Restore dry-run
+  comparison table) were deliberately left as-is — each already sits in
+  its own `overflow-x:auto` wrapper (genuinely never breaks the PAGE's
+  width, confirmed via the audit script below), and their content is
+  free-text error messages/migration paths, not short labeled values —
+  the stacked-card label/value layout actively reads worse for a long
+  sentence than an internal horizontal scroll does, so converting them
+  was judged a regression in usability, not an improvement, and out of
+  this ticket's own "every table" framing once weighed against that.
+  Verified with a new Playwright suite against the real, live-served
+  files at all 4 required widths (360/375/414/430px, fixture-seeded via
+  each file's own real localStorage keys/session-bypass globals, forced
+  past login — no live Supabase per rule #11): zero horizontal page
+  overflow (`document.documentElement.scrollWidth` vs. `window.
+  innerWidth`) on every audited table/page; `thead` confirmed hidden
+  (stacking genuinely active, not just "didn't overflow by luck") on
+  every one; the last row's own action button confirmed horizontally
+  reachable (actually inside the viewport's own bounds, not just present
+  in the DOM) on the Users/Admins/Services tables specifically — the
+  exact control class the ticket named; zero JS errors across all three
+  files at every width. A real test-harness gotcha found and fixed along
+  the way, not a product bug: `user.html`'s `currentUser` is a top-level
+  `let`, not a window property — `window.currentUser=...` silently
+  creates an unrelated property while every real function keeps reading
+  the actual (still-null) lexical binding; fixed by assigning the bare
+  identifier instead, which does correctly reach the same binding a real
+  login's own code path sets. Confirmed via `git stash` that the exact
+  same suite fails against the pre-fix code — concretely, not just
+  "overflow": the Users/Admins tables' own last-row action buttons sit
+  far outside the viewport (e.g. `x:578` on a 360px-wide screen),
+  `client.html`'s Services tab has real page-level overflow
+  (scrollWidth=394 on a 360px viewport) before the stat-row fix, and
+  every table's `thead` is still a visible `table-header-group` — then
+  passes clean after. Before/after screenshots captured at 375px for the
+  three representative screens most exercised day-to-day (`index.html`
+  Users tab, `client.html`'s Services tab, `user.html`'s My Services) and
+  sent directly to the user. `node --check` on extracted inline JS clean
+  on all three files; div-balance unchanged vs. baseline on all three
+  (pure CSS/attribute changes — no HTML markup structure touched). No
+  `api/*.js` touched, so rule #9's module-mode check doesn't apply. Held
+  per rule #10 — broad-reaching across all three frontends, even though
+  every change is additive CSS/markup-attribute only with no data write
+  and no behavior change above the 480px breakpoint.
 - Row "Actions ▾" menu no longer clips under the next section for a
   bottom-of-table row (2026-11-10 — held for preview approval,
   `index.html` only, display-only): reported live — `.row-actions-menu`
