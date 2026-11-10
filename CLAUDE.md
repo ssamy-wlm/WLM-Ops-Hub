@@ -2279,6 +2279,83 @@ Don't relitigate them without an explicit decision from the user.
   #10 — touches live parse logic, even though the change only widens
   when an owner is deterministically assigned, never removes an existing
   assignment path.
+- "Send Invitation Email" now actually sends, for both users and admins
+  (2026-11-10 — held for preview approval, new `api/send-welcome-email.js`
+  + `index.html`): both invitation flows (`sendWelcomeEmail()` for
+  members, `_sendAdminWelcomeEmail()` for admins) previously only built
+  forward-to-Sarah text for her to copy/paste or open in her own mail
+  client — nothing was ever actually sent; the admin had to manually
+  relay credentials to every new hire/admin by hand. New endpoint
+  `api/send-welcome-email.js` (admin-only, via `requireSession()`/
+  `tierOf()` — same gate as `api/send-assignment-email.js`) sends the
+  real welcome email directly to the new person's own address via the
+  existing `sendResendEmail()`/`buildEmailHtml()`, from the standard Ops
+  Hub sender (`notifications@opshub.wlmsend.com` via
+  `RESEND_FROM_EMAIL`/the resendClient default) — **no admin signature**:
+  the old "Have a great day, Sarah Samy / Director of Systems &
+  Operations" sign-off is dropped from the email body, since this no
+  longer comes from Sarah personally. Member vs. admin wording is
+  otherwise unchanged (same credentials/access-level copy as before,
+  just minus that sign-off and the "Hi Sarah, forward this" wrapper,
+  which has no purpose once the send is real). On success, a short
+  best-effort confirmation ("The team/admin invitation for `<name>` was
+  sent directly to `<email>`") is also emailed to
+  `ssamy@weblightmedia.com` — its own failure is logged via `logError()`
+  but does NOT turn the overall response into a failure, since the
+  actual job (the new person getting their credentials) already
+  succeeded; a failure on the PRIMARY send, by contrast, does fail the
+  whole request with a real error message, logged the same way — never
+  a silent success either way. Read-only with respect to app data: this
+  endpoint never writes to `ops_users`/`ops_admins`/anything else — a
+  `welcomeEmailSentAt` stamp, if ever wanted, is flagged as a separate,
+  explicitly-approved follow-up (would go through normal per-record
+  sync, not a side write bolted onto a send endpoint). Server-side,
+  triggered only by an explicit button click in the invitation preview
+  modal — never on page load, never auto-fired from `addUser()`/the
+  admin-add handler on account creation (CLAUDE.md rule #2's load-time/
+  background-write discipline applied to "when this fires," even though
+  this endpoint itself does no writes). The temp password stays
+  plaintext in the email, unchanged — the admin's existing choice,
+  already covered by forcing a password change on first login.
+  `index.html`'s invitation preview modal (`emailPreviewModal`) gained a
+  real `📧 Send Invitation Email` button (`_sendInvitationEmailNow()`,
+  calling the new endpoint) plus an inline status line, replacing the
+  old `📨 Open Mail Client` button — `_openMailClient()` itself was
+  removed outright as genuinely dead code once nothing called it
+  anymore, not left as an unreferenced gremlin. The preview's "To" field
+  now shows the real recipient (the new user/admin's own address, since
+  that's who the direct send actually reaches) instead of Sarah's —
+  `_showEmailPreview()` gained an optional `sendPayload` parameter
+  (`{kind, name, email, title, password, hubUrl, levelLabel?, levelDesc?}`)
+  that both `sendWelcomeEmail()` and `_sendAdminWelcomeEmail()` now
+  populate, and resets the Send button/status every time the modal
+  (re)opens so a previous invite's "✅ Sent" state can never silently
+  carry over and block sending a different one. `addUser()`'s and the
+  admin-add handler's own call sites are otherwise completely
+  unchanged — the admin still creates the account first (pay,
+  assignments, level, etc.), exactly as before; only what happens when
+  they click the modal's send step changed. Verified with a new 6-check
+  `node:test` suite against the real, unmodified exported `handler()`
+  (fake in-memory Supabase client for `requireSession()`'s revocation
+  check + `sendResendEmail()`'s roster-status read, a swappable
+  `global.fetch` standing in for the real Resend API — no live DB/Resend
+  access per rule #11): a member-tier caller is rejected (admin only); a
+  request missing a required field is rejected with nothing sent; a
+  member invite sends exactly two emails (the new user's own welcome
+  email — containing their real credentials and no "Sarah Samy"
+  signature — and the admin's confirmation); an admin invite does the
+  same with the access-level wording included; a Resend failure on the
+  primary send surfaces a real error, is logged, and never even attempts
+  the admin confirmation; a primary send that succeeds but whose
+  confirmation send fails still reports `ok:true` overall while logging
+  the confirmation failure under its own `endpoint` tag, never silently
+  dropping it. `node --check` AND `node --input-type=module --check`
+  (rule #9) both clean on `api/send-welcome-email.js`; inline-JS syntax
+  clean on `index.html`; div-balance delta unchanged vs. baseline (+2
+  open/+2 close — the new status-line `<div>` in the static modal plus
+  its counterpart in the dynamic fallback overlay's template string,
+  both self-closing on the same line, net zero imbalance). Held per rule
+  #10 — new `api/` send path, even though it performs no data writes.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
