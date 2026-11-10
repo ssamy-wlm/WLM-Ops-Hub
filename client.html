@@ -303,6 +303,27 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .service-table{width:100%;border-collapse:collapse;}
 .service-table th{text-align:left;font-size:9px;font-weight:600;color:var(--text-light);text-transform:uppercase;letter-spacing:.07em;padding:7px 11px;border-bottom:1px solid var(--border);}
 .service-table td{padding:9px 11px;border-bottom:0.5px solid var(--border);font-size:11px;color:var(--text-dark);vertical-align:middle;}
+/* Mobile table audit (2026-11-10) — every .service-table here (the main
+   Services tab's per-location tables, and My Work) already sat inside an
+   `overflow-x:auto` wrapper, so it never broke the PAGE's own width — but
+   that's an internal horizontal scrollbar, not real mobile usability.
+   `.mobile-stack-tbl` turns it into one stacked card per row instead —
+   same technique/selectors as index.html's identical `.tpa-person-tbl`/
+   `.mobile-stack-tbl` media query (hand-duplicated per CLAUDE.md rule #3,
+   not shared code — this file has no import from that one). A <td> with
+   no data-label (the leading status-dot column, and the Actions column)
+   falls back to the base rule with no ::before label — right-aligned raw
+   content, exactly as index.html's own version already does for the same
+   kind of column. Desktop (>480px) is completely untouched. */
+@media (max-width: 480px){
+  .mobile-stack-tbl thead{display:none;}
+  .mobile-stack-tbl, .mobile-stack-tbl tbody, .mobile-stack-tbl tfoot, .mobile-stack-tbl tr, .mobile-stack-tbl td{display:block;width:100%;}
+  .mobile-stack-tbl tr{border:1px solid var(--border);border-radius:10px;margin:10px 0;padding:4px 0;}
+  .mobile-stack-tbl td{text-align:right!important;padding:6px 14px!important;border-bottom:none!important;display:flex;align-items:center;justify-content:space-between;gap:10px;max-width:none!important;white-space:normal!important;text-overflow:clip!important;}
+  .mobile-stack-tbl td[data-label]::before{content:attr(data-label);font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;text-align:left;}
+  .mobile-stack-tbl td[data-label=""]{font-size:14px!important;padding-bottom:8px!important;border-bottom:1px solid var(--border)!important;margin-bottom:4px;}
+  .mobile-stack-tbl td[data-label=""]::before{content:none;}
+}
 .service-table tr:last-child td{border-bottom:none;}
 .service-table tr:hover td{background:var(--bg);}
 /* Calmer card chrome for the client detail / service card view specifically
@@ -498,7 +519,7 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 
     <!-- ═══ PAGE: ALL CLIENTS ═══ -->
     <div id="page-clients" class="page-section active">
-      <div class="stat-row" style="display:flex;">
+      <div class="stat-row" style="display:flex;flex-wrap:wrap;">
         <div class="stat-card stat-card-clickable" onclick="_clDrillStatCard('')" title="Show all clients"><div class="stat-label">Total Clients</div><div class="stat-value" id="st-total">0</div></div>
         <div class="stat-card stat-card-clickable" onclick="_clDrillStatCard('active')" title="Filter to active clients"><div class="stat-label">Active</div><div class="stat-value" id="st-active" style="color:var(--green);">0</div></div>
         <div class="stat-card stat-card-clickable admin-only" onclick="_clDrillStatCard('not-active')" title="Filter to inactive/paused clients"><div class="stat-label">Inactive / Paused</div><div class="stat-value" id="st-inactive" style="color:#aaa;">0</div></div>
@@ -735,7 +756,7 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
       </div>
 
       <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
-        <table style="width:100%;border-collapse:collapse;">
+        <table style="width:100%;border-collapse:collapse;" class="mobile-stack-tbl">
           <thead>
             <tr>
               <th style="text-align:left;padding:12px 18px;font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Business</th>
@@ -4277,11 +4298,11 @@ function _serviceRow(c, svc, locationId){
   return `
       <tr data-svc-id="${svc.id}"${inactive?' style="opacity:.6;"':''}>
         <td><div style="display:flex;align-items:center;justify-content:center;"><span style="width:9px;height:9px;border-radius:50%;background:${dot};display:inline-block;"></span></div></td>
-        <td><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.registrar?`<div style="font-size:9px;color:var(--text-light);">Registrar: ${escHtmlClient(svc.registrar)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
-        <td><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
-        <td><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
-        <td>${_renderAssignCell('svc',c.id,svc,locationId)}</td>
-        <td>${statusCell}${reviewBadge}</td>
+        <td data-label=""><div style="font-weight:500;font-size:11px;">${escHtmlClient(svc.name)}${statusBadge}${subitemsBadge}</div>${svc.bundle?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.bundle)}</div>`:''}${categoryChip}${_platformsDisplayString(svc)?`<div style="font-size:9px;color:var(--text-light);">📱 ${escHtmlClient(_platformsDisplayString(svc))}</div>`:''}${svc.sitePlatform?`<div style="font-size:9px;color:var(--text-light);">Platform: ${escHtmlClient(svc.sitePlatform)}</div>`:''}${svc.registrar?`<div style="font-size:9px;color:var(--text-light);">Registrar: ${escHtmlClient(svc.registrar)}</div>`:''}${svc.hostingProvider?`<div style="font-size:9px;color:var(--text-light);">Hosting Provider: ${escHtmlClient(svc.hostingProvider)}</div>`:''}${svc.notes?`<div style="font-size:9px;color:var(--text-light);">${escHtmlClient(svc.notes)}</div>`:''}</td>
+        <td data-label="Frequency"><span class="chip chip-${svc.freq}">${svc.freq}</span></td>
+        <td data-label="Next Due"><span class="next-due ${cls}">${svc.due||'—'}</span><div style="font-size:9px;color:var(--text-light);">${daysLabel}</div></td>
+        <td data-label="Assigned To">${_renderAssignCell('svc',c.id,svc,locationId)}</td>
+        <td data-label="Status">${statusCell}${reviewBadge}</td>
         ${svcCanEdit?`<td style="white-space:nowrap;">
           ${inactive
             ?`${SESSION.isAdmin?`<button class="btn btn-xs btn-outline" onclick="reactivateClientService('${c.id}','${svc.id}'${locArg})" title="Reactivate">${ICON_UNDO}</button>`:''}${commentBtn}${subitemsBtn}`
@@ -4306,7 +4327,7 @@ function _serviceTable(c, svcs, locationId){
   const visible=_showInactiveServices?svcs:svcs.filter(s=>!_isInactiveService(s));
   if(!visible.length) return '<div class="empty-state" style="padding:16px 0;"><div class="empty-state-title">No recurring services added yet</div></div>';
   return `<div style="overflow-x:auto;">
-    <table class="service-table">
+    <table class="service-table mobile-stack-tbl">
       <thead><tr><th></th><th>Service</th><th>Frequency</th><th>Next Due</th><th>Assigned To</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>${visible.map(svc=>_serviceRow(c,svc,locationId!==undefined?locationId:svc._locationId)).join('')}</tbody>
     </table>
@@ -6811,17 +6832,17 @@ function _myWorkServicesTable(items){
   });
   const rows=items.map(({c,svc,locationId,locationName})=>`
     <tr onclick="openMyWorkItemInTracker('${c.id}')" style="cursor:pointer;">
-      <td>
+      <td data-label="">
         <div style="font-weight:700;color:var(--text-dark);">${escHtmlClient(svc.name)}${_myWorkBadges(c.id,svc,locationId)}</div>
         <div style="font-size:10px;color:var(--text-light);margin-top:2px;">
           <span onclick="event.stopPropagation();toggleEmployeeFavorite('${c.id}');renderMyWork();" style="cursor:pointer;" title="${isEmployeeFavorite(c.id)?'Remove from favorites':'Add to favorites'}">${isEmployeeFavorite(c.id)?'⭐':'☆'}</span>
           ${escHtmlClient(c.name)}${locationName?` (${escHtmlClient(locationName)})`:''} · ${escHtmlClient(svc.freqLabel||svc.freq||'monthly')}
         </div>
       </td>
-      <td>${_myWorkCategoryPill(svc.category)}</td>
-      <td>${_myWorkDuePill(svc)}</td>
-      <td>${_myWorkStatusCell(c.id,svc.id,locationId,svc)}</td>
-      <td>${_myWorkNotesCell(svc)}</td>
+      <td data-label="Category">${_myWorkCategoryPill(svc.category)}</td>
+      <td data-label="Due">${_myWorkDuePill(svc)}</td>
+      <td data-label="Status">${_myWorkStatusCell(c.id,svc.id,locationId,svc)}</td>
+      <td data-label="Notes">${_myWorkNotesCell(svc)}</td>
     </tr>`).join('');
   return `
     <div class="stat-row" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
@@ -6831,7 +6852,7 @@ function _myWorkServicesTable(items){
       <div class="stat-card"><div class="stat-label">Due This Month</div><div class="stat-value" style="color:#2E5DA6;">${dueMonth}</div></div>
     </div>
     <div style="overflow-x:auto;">
-      <table class="service-table">
+      <table class="service-table mobile-stack-tbl">
         <thead><tr><th>Service / Client</th><th>Category</th><th>Due</th><th>Status</th><th>Notes / Next Steps</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -7065,14 +7086,14 @@ function renderFunnelTable(){
     body.innerHTML=list.map(p=>{
       const stage=FUNNEL_STAGES[p.stage]||FUNNEL_STAGES.lead;
       return `<tr class="funnel-row" onclick="openFunnelModal('${p.id}')">
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13.5px;font-weight:600;color:var(--text-dark);">${escHtmlClient(p.name)}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${escHtmlClient(p.contact||'—')}${p.meetingType?` <span style="color:var(--text-light);">· ${escHtmlClient(p.meetingType)}</span>`:''}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700;color:${stage.color};">${stage.label}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(p.nextSteps||'—')}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);">${_funnelShowArchived?'<span style="font-size:11px;color:var(--text-light);">—</span>':_funnelFollowUpCell(p)}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedByCell(p)}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedAtCell(p)}</td>
-        <td style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_funnelNotesCell(p)}</td>
+        <td data-label="" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13.5px;font-weight:600;color:var(--text-dark);">${escHtmlClient(p.name)}</td>
+        <td data-label="Contact" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${escHtmlClient(p.contact||'—')}${p.meetingType?` <span style="color:var(--text-light);">· ${escHtmlClient(p.meetingType)}</span>`:''}</td>
+        <td data-label="Stage" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700;color:${stage.color};">${stage.label}</td>
+        <td data-label="Next Step" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtmlClient(p.nextSteps||'—')}</td>
+        <td data-label="Follow-up" style="padding:14px 18px;border-bottom:1px solid var(--border);">${_funnelShowArchived?'<span style="font-size:11px;color:var(--text-light);">—</span>':_funnelFollowUpCell(p)}</td>
+        <td data-label="Updated By" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedByCell(p)}</td>
+        <td data-label="Updated" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-mid);">${_funnelUpdatedAtCell(p)}</td>
+        <td data-label="Notes" style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-light);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_funnelNotesCell(p)}</td>
       </tr>`;
     }).join('');
   }
