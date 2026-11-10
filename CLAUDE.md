@@ -2448,6 +2448,72 @@ Don't relitigate them without an explicit decision from the user.
   per rule #10 — broad-reaching across all three frontends, even though
   every change is additive CSS/markup-attribute only with no data write
   and no behavior change above the 480px breakpoint.
+- Row "Actions ▾" menu no longer clips under the next section for a
+  bottom-of-table row (2026-11-10 — held for preview approval,
+  `index.html` only, display-only): reported live — `.row-actions-menu`
+  (currently only the Users table's Grant/Revoke-Manager-Role +
+  Deactivate menu, but written to be reusable by any future row-actions
+  menu, per its own existing header comment) was `position:absolute`
+  inside `.user-table-wrap`, which is `overflow:hidden` for its own
+  rounded-corner styling — a bottom row's opened menu rendered past that
+  ancestor's clipped edge and was invisible/unclickable, with no way to
+  scroll it into view since it wasn't really "below the table," just cut
+  off by the ancestor's own overflow box. Fixed by switching the menu to
+  `position:fixed` and computing its `top`/`left` in JS
+  (`_positionRowActionsMenu()`, called from the existing
+  `_toggleRowActionsMenu()`) from the toggle button's own
+  `getBoundingClientRect()` at open time — this is what actually escapes
+  the clipping ancestor, since `position:fixed` is relative to the
+  viewport, not any scrollable/overflow:hidden parent. Right-aligned
+  under the button by default (matching the old `right:0` look), clamped
+  horizontally to stay fully onscreen, and — the actual fix for the
+  reported bug — flips to render ABOVE the button instead of below when
+  there isn't enough room beneath it in the viewport. Close behavior:
+  outside-click/Escape were already wired and untouched; added closing
+  on scroll or resize too, since those invalidate the fixed coordinates
+  computed at open time (the button may have moved under the menu, or
+  off-screen entirely) — simpler and more robust than continuously
+  repositioning on every scroll tick. A real, independently-found bug
+  surfaced while verifying this against an actual click (not just a
+  direct function call): clicking the toggle button also FOCUSES it —
+  the browser's own default action, not something this code does — and
+  a focused element inside an `overflow:hidden` ancestor like
+  `.user-table-wrap` is still a real, programmatically-scrollable
+  container even with no visible scrollbar, so Chromium's native
+  focus-into-view behavior fired a `scroll` event on that ancestor
+  *synchronously as part of the very click that opens the menu* — which
+  the new scroll-closes-the-menu listener then used to immediately close
+  the menu it had just opened, before the admin could ever see it. Fixed
+  with a short (150ms) grace window after open
+  (`_rowActionsMenuOpenedAt`/`ROW_ACTIONS_MENU_SCROLL_GRACE_MS`) that the
+  scroll/resize-close listener checks before acting — a real user scroll
+  never happens inside that same tick, so this reliably tells the two
+  apart without weakening the actual "scroll away → close" behavior in
+  any way a user would notice. Verified with a Playwright suite against
+  the real, live-served `index.html` (fixture-seeded via `dbSet`, forced
+  past login the same way this session's other table-audit PRs already
+  do — no live Supabase access per rule #11): the last row's menu (30
+  fixture users) is fully onscreen AND actually hit-test-clickable (not
+  just visually present — `document.elementFromPoint` resolves to an
+  element inside the menu, not something covering/clipping it) at both a
+  1440×900 desktop viewport and a 375×700 phone viewport; a dedicated
+  third case with the viewport height cropped to just past the last row's
+  naturally-measured button position (no scrolling at all, so nothing to
+  confound it) directly exercises the upward-flip branch and confirms the
+  flipped menu is still fully onscreen; scrolling (past the grace window)
+  correctly closes the menu in both of the first two cases; zero page
+  errors. Confirmed via `git stash` that the exact same suite fails
+  against the pre-fix code — specifically the hit-test-clickable
+  assertion at the desktop viewport (`hitTestsInsideMenu: false`,
+  `document.elementFromPoint` at the menu's own reported coordinates
+  resolves to something else — direct proof of the clipping, not just an
+  inference from style) — then passes clean after. `node --check` on
+  extracted inline JS clean; div-balance unchanged vs. baseline (pure
+  CSS/JS change, no HTML markup touched). No `api/*.js` touched, so rule
+  #9's module-mode check doesn't apply. Held per rule #10 out of caution
+  even though this is a pure display/interaction fix with no data write
+  — broad-reaching (every row-actions menu in the app, present and
+  future).
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

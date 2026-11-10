@@ -559,9 +559,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
    dropdown style, just anchored under its own toggle button instead of
    the bell. display:none by default; opened per-row via
    _toggleRowActionsMenu(), closed by the shared outside-click/Escape
-   listeners below so only one can be open across the whole table. */
+   listeners below so only one can be open across the whole table.
+   position:fixed (not absolute) — every row table this pattern is used in
+   (e.g. .user-table-wrap) is overflow:hidden for its own rounded-corner
+   styling, which clipped/hid the menu for any row near the bottom of the
+   table; _toggleRowActionsMenu() computes top/left in JS from the toggle
+   button's own getBoundingClientRect() at open time (see below), so this
+   rule carries no top/left/right of its own — those are set inline per
+   open, same escape-the-clipping-ancestor technique position:fixed always
+   needs. */
 .row-actions-dropdown{position:relative;display:inline-block;}
-.row-actions-menu{display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:190px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:60;padding:6px;}
+.row-actions-menu{display:none;position:fixed;min-width:190px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:2000;padding:6px;}
 .row-actions-menu button{display:block;width:100%;text-align:left;padding:8px 10px;border:none;background:none;cursor:pointer;font-size:12.5px;font-weight:600;border-radius:7px;color:var(--text-dark);}
 .row-actions-menu button:hover,.row-actions-menu button:focus-visible{background:var(--bg);outline:none;}
 .row-actions-menu button.row-actions-menu-danger{color:var(--red);}
@@ -10404,12 +10412,65 @@ document.addEventListener('click', (e)=>{
 });
 
 // Row-level "Actions ▾" dropdown (Users table row menu — Grant/Revoke
-// Manager Role + Deactivate). Only one open at a time across the table;
-// closed by clicking anywhere outside it, Escape, or picking an item.
+// Manager Role + Deactivate; the same .row-actions-menu/.row-actions-dropdown
+// markup is meant to be reusable for any other row-actions menu in the app).
+// Only one open at a time across the table; closed by clicking anywhere
+// outside it, Escape, picking an item, or scrolling/resizing the window.
+//
+// position:fixed (see the CSS comment above this menu's rule) means it's no
+// longer clipped by an overflow:hidden ancestor like .user-table-wrap, but
+// it also means its position is no longer automatic — every open computes
+// top/left here from the toggle button's own getBoundingClientRect(),
+// right-aligned under the button (matching the old `right:0` look) and
+// clamped to stay fully onscreen, flipping to render ABOVE the button
+// instead of below when there isn't enough room beneath it in the
+// viewport (the exact "clipped under the next section for bottom rows"
+// bug this was built to fix — a bottom-of-table row's menu now opens
+// upward instead of being cut off).
 function _closeAllRowActionsMenus(){
   document.querySelectorAll('.row-actions-menu').forEach(m=>{ m.style.display='none'; });
   document.querySelectorAll('[data-row-actions-toggle]').forEach(b=>b.setAttribute('aria-expanded','false'));
 }
+function _positionRowActionsMenu(btn, menu){
+  const VIEWPORT_MARGIN = 8;
+  const btnRect = btn.getBoundingClientRect();
+  // Measure with the real content in place but not yet visible to the
+  // user, so offsetWidth/offsetHeight reflect this menu's actual rendered
+  // size (which can vary per row — e.g. "Grant" vs "Revoke Manager Role")
+  // rather than guessing a fixed size.
+  menu.style.visibility = 'hidden';
+  menu.style.display = 'block';
+  const menuRect = menu.getBoundingClientRect();
+
+  let left = btnRect.right - menuRect.width; // right-align under the button, same as the old `right:0`
+  if(left < VIEWPORT_MARGIN) left = VIEWPORT_MARGIN;
+  if(left + menuRect.width > window.innerWidth - VIEWPORT_MARGIN) left = window.innerWidth - VIEWPORT_MARGIN - menuRect.width;
+
+  let top = btnRect.bottom + 4; // default: open below the button
+  const fitsBelow = (top + menuRect.height) <= (window.innerHeight - VIEWPORT_MARGIN);
+  if(!fitsBelow){
+    const above = btnRect.top - 4 - menuRect.height;
+    top = above >= VIEWPORT_MARGIN ? above : Math.max(VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN - menuRect.height);
+  }
+
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+  menu.style.visibility = 'visible';
+}
+// Guards the scroll/resize-closes-the-menu listeners below against a real,
+// reproduced false-close: clicking the toggle button also FOCUSES it (the
+// browser's own default action on click, not something this code does),
+// and a focused element inside an overflow:hidden ancestor like
+// .user-table-wrap — which the DOM still treats as a real, programmatically
+// scrollable container even with no visible scrollbar — can trigger the
+// browser's native focus-into-view auto-scroll on that ancestor the instant
+// focus lands, firing a 'scroll' event synchronously as part of the very
+// click that opens the menu. Without this guard that self-inflicted scroll
+// immediately closed the menu it had just opened. A real user scroll never
+// happens inside this same tick, so ignoring scroll/resize for a brief
+// window right after open is enough to tell the two apart.
+let _rowActionsMenuOpenedAt = 0;
+const ROW_ACTIONS_MENU_SCROLL_GRACE_MS = 150;
 function _toggleRowActionsMenu(e, menuId){
   e.stopPropagation();
   const menu = document.getElementById(menuId);
@@ -10417,8 +10478,9 @@ function _toggleRowActionsMenu(e, menuId){
   const opening = getComputedStyle(menu).display==='none';
   _closeAllRowActionsMenus();
   if(opening){
-    menu.style.display='block';
+    _positionRowActionsMenu(e.currentTarget, menu);
     e.currentTarget.setAttribute('aria-expanded','true');
+    _rowActionsMenuOpenedAt = Date.now();
   }
 }
 document.addEventListener('click', (e)=>{
@@ -10427,6 +10489,18 @@ document.addEventListener('click', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape') _closeAllRowActionsMenus();
 });
+// Scroll/resize invalidates the fixed-position coordinates computed at
+// open time (the button may have moved under the menu, or off-screen
+// entirely) — simplest correct behavior is to close rather than
+// continuously reposition. `true` (capture) on scroll so this also fires
+// for a scroll inside a nested scrollable container, not just the window
+// itself, since scroll events don't bubble.
+function _closeRowActionsMenusOnScrollOrResize(){
+  if(Date.now() - _rowActionsMenuOpenedAt < ROW_ACTIONS_MENU_SCROLL_GRACE_MS) return;
+  _closeAllRowActionsMenus();
+}
+window.addEventListener('scroll', _closeRowActionsMenusOnScrollOrResize, true);
+window.addEventListener('resize', _closeRowActionsMenusOnScrollOrResize);
 
 // ── Notification settings toggles (Super Admin/CEO only, same visibility as
 // otPolicy/coc) — the actual on/off check happens server-side in
