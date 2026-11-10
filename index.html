@@ -3649,10 +3649,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <!-- Email body -->
       <div id="emailPreviewBody" style="padding:20px 24px;font-size:13.5px;line-height:1.75;color:var(--text-dark);white-space:pre-wrap;max-height:340px;overflow-y:auto;background:var(--card);font-family:'Segoe UI',sans-serif;border-bottom:1px solid var(--border);"></div>
     </div>
+    <div id="emailSendStatus" style="padding:0 20px;font-size:12.5px;font-weight:600;"></div>
     <div class="modal-footer" style="gap:10px;flex-wrap:wrap;">
       <button class="btn btn-outline" onclick="closeModal('emailPreviewModal');document.getElementById('emailPreviewModal').style.display='none';">Close</button>
       <button class="btn btn-outline" id="emailCopyBtn" onclick="_copyEmailContent()" style="gap:6px;">📋 Copy Email</button>
-      <button class="btn btn-primary" onclick="_openMailClient()" style="gap:6px;">📨 Open Mail Client</button>
+      <button class="btn btn-primary" id="emailSendBtn" onclick="_sendInvitationEmailNow()" style="gap:6px;">📧 Send Invitation Email</button>
     </div>
   </div>
 </div>
@@ -15682,8 +15683,8 @@ function collectNewUserCreds(){
 // ═══════════════════════════════════════════════════════════════════
 let _currentEmailData = {};
 
-function _showEmailPreview({ to, subject, body, subtitle }){
-  _currentEmailData = { to, subject, body };
+function _showEmailPreview({ to, subject, body, subtitle, sendPayload }){
+  _currentEmailData = { to, subject, body, sendPayload };
 
   // First, try to use the existing persistent modal
   const existing = document.getElementById('emailPreviewModal');
@@ -15693,11 +15694,18 @@ function _showEmailPreview({ to, subject, body, subtitle }){
     const subEl     = document.getElementById('emailPreviewSubtitle');
     const bodyEl    = document.getElementById('emailPreviewBody');
     const copyBtn   = document.getElementById('emailCopyBtn');
+    const sendBtn   = document.getElementById('emailSendBtn');
+    const statusEl  = document.getElementById('emailSendStatus');
     if(toEl)   toEl.textContent   = to;
     if(subjEl) subjEl.textContent = subject;
     if(subEl)  subEl.textContent  = subtitle || 'Review and send the welcome email';
     if(bodyEl) bodyEl.textContent = body;
     if(copyBtn) copyBtn.textContent = '📋 Copy Email';
+    // Reset the send button/status every time the modal is (re)opened —
+    // otherwise a previous invite's "✅ Sent"/disabled state would silently
+    // carry over and block sending THIS one.
+    if(sendBtn){ sendBtn.textContent = '📧 Send Invitation Email'; sendBtn.disabled = !sendPayload; }
+    if(statusEl){ statusEl.textContent = ''; }
     // Force display using both class and inline style to ensure it shows
     existing.classList.add('open');
     existing.style.display = 'flex';
@@ -15722,10 +15730,11 @@ function _showEmailPreview({ to, subject, body, subtitle }){
         <div style="display:flex;gap:8px;align-items:center;font-size:13px;"><span style="font-weight:700;min-width:58px;">Subject:</span><span>${escHtml(subject)}</span></div>
       </div>
       <div style="padding:20px 24px;font-size:13.5px;line-height:1.75;white-space:pre-wrap;overflow-y:auto;max-height:340px;border-bottom:1px solid #e2e8f0;font-family:'Segoe UI',sans-serif;">${escHtml(body)}</div>
+      <div id="dynEmailSendStatus" style="padding:0 20px;font-size:12.5px;font-weight:600;"></div>
       <div style="padding:14px 20px;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
         <button onclick="this.closest('[id]').remove()" style="padding:8px 18px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;">Close</button>
         <button id="dynCopyBtn" onclick="_copyEmailContent();this.textContent='✅ Copied!';setTimeout(()=>{this.textContent='📋 Copy Email';},2500);" style="padding:8px 18px;border:1px solid #2E5DA6;border-radius:8px;background:#fff;color:#2E5DA6;cursor:pointer;font-size:13px;">📋 Copy Email</button>
-        <button onclick="_openMailClient()" style="padding:8px 18px;border:none;border-radius:8px;background:#2E5DA6;color:#fff;cursor:pointer;font-size:13px;">📨 Open Mail Client</button>
+        <button id="dynSendBtn" onclick="_sendInvitationEmailNow()" ${sendPayload?'':'disabled'} style="padding:8px 18px;border:none;border-radius:8px;background:#2E5DA6;color:#fff;cursor:pointer;font-size:13px;">📧 Send Invitation Email</button>
       </div>
     </div>`;
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
@@ -15754,39 +15763,16 @@ function _copyEmailContent(){
   });
 }
 
-function _openMailClient(){
-  const { to, subject, body } = _currentEmailData;
-  const a = document.createElement('a');
-  a.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  a.target = '_blank';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
-
 function sendWelcomeEmail(userData){
   const { name, email, title, password } = userData;
   const hubUrl = window.location.origin + '/user.html';
-  const subject = `New User Login Details — ${name}`;
+  // Preview shows exactly what the new user will actually receive — this
+  // used to be a forward-to-Sarah draft (no real send existed); now the
+  // real send goes straight to `email` via /api/send-welcome-email, so the
+  // preview's "To" is that real recipient, not Sarah.
+  const subject = 'Welcome to WebLight Media — Your Operations Hub Access';
   const body =
-`Hi Sarah,
-
-A new user account has been created. Here are their login details to forward:
-
-👤 Name: ${name}
-💼 Title: ${title||'Team Member'}
-📧 Email (Username): ${email}
-🔑 Temporary Password: ${password}
-🔗 Login Link: ${hubUrl}
-
-Please forward the following invitation to ${email}:
-
-─────────────────────────────────────────
-Subject: Welcome to WebLight Media — Your Operations Hub Access
-
-Hello ${name},
-
-Welcome to the team! 🎉
+`Welcome to the team! 🎉
 
 This is your official invitation to join our Operations Hub as ${title||'a Team Member'} with WebLight Media.
 
@@ -15798,19 +15784,49 @@ Your login credentials are below:
 Please log in at your earliest convenience and change your password to something you will remember.
 
 If you run into any trouble logging in or have any questions, don't hesitate to reach out.
-Looking forward to working with you!
-
-Have a great day,
-Sarah Samy
-Director of Systems & Operations at WebLight Media
-─────────────────────────────────────────`;
+Looking forward to working with you!`;
 
   _showEmailPreview({
-    to: 'ssamy@weblightmedia.com',
+    to: email,
     subject,
     body,
-    subtitle: `Login details for ${name} — forward to ${email}`
+    subtitle: `Will be emailed directly to ${email} — a confirmation lands in your inbox too`,
+    sendPayload: { kind: 'user', name, email, title, password, hubUrl }
   });
+}
+
+// ── Actually send the invitation (new user path AND admin path share this
+// one send call — see sendWelcomeEmail()/_sendAdminWelcomeEmail() above for
+// where each builds its own sendPayload) ──
+// Triggered ONLY by the modal's "Send Invitation Email" button click —
+// never automatically. Server endpoint sends the real welcome email
+// directly to the new person, then a best-effort confirmation to the
+// admin; see api/send-welcome-email.js.
+async function _sendInvitationEmailNow(){
+  const { sendPayload } = _currentEmailData || {};
+  if(!sendPayload){ showToast('Nothing to send'); return; }
+  const btn      = document.getElementById('emailSendBtn') || document.getElementById('dynSendBtn');
+  const statusEl = document.getElementById('emailSendStatus') || document.getElementById('dynEmailSendStatus');
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  if(statusEl){ statusEl.textContent = ''; statusEl.style.color = ''; }
+  try{
+    const token = _opsToken();
+    if(!token) throw new Error('Not signed in — please log in again and retry.');
+    const res = await fetch('/api/send-welcome-email', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+token},
+      body: JSON.stringify(sendPayload)
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
+    showToast(`✅ Invitation email sent to ${sendPayload.email}`);
+    if(btn) btn.textContent = '✅ Sent';
+    if(statusEl){ statusEl.textContent = `✅ Sent to ${sendPayload.email} — confirmation emailed to you too.`; statusEl.style.color = 'var(--green,#2e9e6e)'; }
+  }catch(e){
+    showToast('❌ Failed to send invitation: '+e.message);
+    if(btn){ btn.disabled = false; btn.textContent = '📧 Send Invitation Email'; }
+    if(statusEl){ statusEl.textContent = '❌ '+e.message; statusEl.style.color = 'var(--red)'; }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -16872,31 +16888,16 @@ async function saveEditAdmin(){
   logActivity('admin','Admin','Updated admin account: '+name+' → '+_getLevelInfo(level).label, email);
 }
 
-// ── Admin welcome email — sends to Sarah so she can forward ──
+// ── Admin welcome email — sent directly to the new admin via Resend ──
 function _sendAdminWelcomeEmail({ name, email, title, password, level }){
   const info   = _getLevelInfo(level);
   const hubUrl = window.location.origin + '/index.html';
-  const subject = `New Admin Login Details — ${name}`;
+  // Same real-recipient preview convention as sendWelcomeEmail() above —
+  // "To" is the new admin's own address, since that's who actually gets
+  // this email now.
+  const subject = 'Welcome to WebLight Media — Your Admin Panel Access';
   const body =
-`Hi Sarah,
-
-A new admin account has been created. Here are their login details to forward:
-
-👤 Name: ${name}
-💼 Title: ${title||'Admin'}
-📧 Email (Username): ${email}
-🔑 Temporary Password: ${password}
-🔐 Access Level: ${info.label}
-🔗 Admin Panel: ${hubUrl}
-
-Please forward the following invitation to ${email}:
-
-─────────────────────────────────────────
-Subject: Welcome to WebLight Media — Your Admin Panel Access
-
-Hello ${name},
-
-Welcome to the team! 🎉
+`Welcome to the team! 🎉
 
 You have been granted ${info.label} access to the WebLight Media Operations Hub${title ? ' as ' + title : ''}.
 
@@ -16908,18 +16909,14 @@ Your login credentials are below:
 
 Please log in at your earliest convenience and change your password on first login.
 
-If you have any questions, don't hesitate to reach out.
-
-Have a great day,
-Sarah Samy
-Director of Systems & Operations at WebLight Media
-─────────────────────────────────────────`;
+If you have any questions, don't hesitate to reach out.`;
 
   _showEmailPreview({
-    to: 'ssamy@weblightmedia.com',
+    to: email,
     subject,
     body,
-    subtitle: `Admin login details for ${name} — forward to ${email}`
+    subtitle: `Will be emailed directly to ${email} — a confirmation lands in your inbox too`,
+    sendPayload: { kind: 'admin', name, email, title, password, hubUrl, levelLabel: info.label, levelDesc: info.desc }
   });
 }
 
