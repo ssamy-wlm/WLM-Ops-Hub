@@ -1563,6 +1563,18 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            that decides visibility is still in flight. -->
       <div id="overviewBackupReminderWrap" style="display:none;"></div>
 
+      <!-- Monthly (resettable) Tasks Assigned/Done scope (2026-11-13) — UI
+           only (localStorage), read by renderTeamProductionAnalytics(). Scope
+           is TASKS ONLY: Services Assigned/Done and Team % Done stay
+           all-time regardless of this control (see that function's own
+           comments for why) — the sub-note here says so explicitly, same
+           convention as the "Tasks have no frequency" caption below for the
+           services filter. The ⓘ tooltip surfaces the real, flagged data-
+           coverage gap (only ~46% of tasks have createdAt vs ~95% with
+           completedAt) rather than letting a past month's "Assigned" count
+           silently read as more complete than it is. -->
+      <div id="ov-task-scope-control" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;"></div>
+
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px;" id="tpa-team-stats"></div>
 
       <!-- My Roadmap (admin, 2026-09-01) — per-admin, read-only, own
@@ -1662,8 +1674,13 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
               <thead>
                 <tr>
                   <th style="padding:10px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Person</th>
-                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Tasks</th>
-                  <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
+                  <!-- Text/title set by renderTeamProductionAnalytics() to reflect
+                       the Tasks Assigned/Done scope toggle (2026-11-13) — these two
+                       columns are the ones that actually change with it; Svcs/Done
+                       stay the plain static labels since services are always
+                       all-time regardless. -->
+                  <th id="tpa-th-tasks" style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Tasks</th>
+                  <th id="tpa-th-tasks-done" style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Svcs</th>
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Done</th>
                   <th style="padding:10px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);">Overdue</th>
@@ -8251,6 +8268,65 @@ function _ovDueWindowBucket(dueDate, endOfWeek, endOfMonth){
 // already relies on. Populated fresh on every renderTeamProductionAnalytics()
 // call; read-only, nothing here writes any data.
 let _ovDrillData = { tasksAssigned:[], tasksDone:[], servicesAssigned:[], servicesDone:[], overdue:[], blocked:[] };
+// Monthly (resettable) Tasks Assigned/Done scope (2026-11-13) — UI-only
+// state via localStorage, read ONLY by renderTeamProductionAnalytics()
+// (and openOvStatDrill()'s drill-modal title below). Deliberately scoped
+// to TASKS only — Services Assigned/Done and Team % Done stay all-time
+// regardless, per the task's own explicit flag about the two metrics
+// mixing scopes; see renderTeamProductionAnalytics()'s own comments for
+// exactly where that split is enforced.
+//   - wl_ov_task_scope_mode: 'month' (default) | 'all'.
+//   - wl_ov_task_scope_month: an explicit 'YYYY-MM' pin, absent by default
+//     so the view always tracks the REAL current calendar month and keeps
+//     auto-advancing as months pass — the "(resettable)" behavior named in
+//     the task. Explicitly picking the current month from the dropdown (or
+//     just switching back to "This month") clears this key rather than
+//     writing today's month string, so a session that never deviates never
+//     "freezes" on a month that will eventually become stale.
+function _ovTaskScopeMode(){ return localStorage.getItem('wl_ov_task_scope_mode')||'month'; }
+function _ovCurrentMonthStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function _ovTaskScopeMonth(){ return localStorage.getItem('wl_ov_task_scope_month') || _ovCurrentMonthStr(); }
+function setOvTaskScopeMode(mode){
+  localStorage.setItem('wl_ov_task_scope_mode', mode);
+  renderTeamProductionAnalytics();
+}
+function setOvTaskScopeMonth(monthStr){
+  if(monthStr===_ovCurrentMonthStr()) localStorage.removeItem('wl_ov_task_scope_month');
+  else localStorage.setItem('wl_ov_task_scope_month', monthStr);
+  renderTeamProductionAnalytics();
+}
+function _ovMonthLabel(monthStr){
+  const parts=(monthStr||'').split('-').map(Number);
+  if(parts.length!==2||!parts[0]||!parts[1]) return monthStr||'';
+  return new Date(parts[0], parts[1]-1, 1).toLocaleDateString('en-US', {month:'long', year:'numeric'});
+}
+// Current month first, then 11 months back — plenty for "pick a past
+// month" without an unbounded/empty-looking list.
+function _ovTaskMonthOptions(){
+  const opts=[]; const now=new Date();
+  for(let i=0;i<12;i++){
+    const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
+    opts.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+  return opts;
+}
+function _ovTaskScopeControlHtml(){
+  const mode=_ovTaskScopeMode();
+  const monthStr=_ovTaskScopeMonth();
+  const monthOpts=_ovTaskMonthOptions().map(m=>{
+    const label=_ovMonthLabel(m)+(m===_ovCurrentMonthStr()?' (this month)':'');
+    return `<option value="${m}"${m===monthStr?' selected':''}>${label}</option>`;
+  }).join('');
+  return `
+    <span style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;">Tasks Assigned/Done</span>
+    <div style="display:flex;gap:4px;">
+      <button type="button" class="btn btn-sm btn-outline${mode==='month'?' btn-toggle-active':''}" onclick="setOvTaskScopeMode('month')">This month</button>
+      <button type="button" class="btn btn-sm btn-outline${mode==='all'?' btn-toggle-active':''}" onclick="setOvTaskScopeMode('all')">All time</button>
+    </div>
+    ${mode==='month' ? `<select class="form-select" style="width:auto;font-size:12.5px;padding:4px 8px;" onchange="setOvTaskScopeMonth(this.value)" title="Pick a past month">${monthOpts}</select>` : ''}
+    ${mode==='month' ? `<span title="Only ~46% of all-time tasks have a createdAt date (older tasks predate it) vs. ~95% with a completedAt date — so a past month's Assigned count is a partial/floor count, not a full one. Current and future months are accurate, since every new task gets a createdAt. Done counts aren't affected by this gap." style="font-size:11px;color:var(--text-light);cursor:help;border-bottom:1px dotted var(--text-light);">ⓘ about this count</span>` : ''}
+    <span style="font-size:11px;color:var(--text-light);">· Services and Team % Done stay all-time</span>`;
+}
 const OV_DRILL_TITLES = {
   tasksAssigned:'Tasks Assigned', tasksDone:'Tasks Done',
   servicesAssigned:'Services Assigned', servicesDone:'Services Done',
@@ -8331,7 +8407,13 @@ function openOvStatDrill(key){
     if(tbl) { tbl.style.outline='2px solid var(--accent,#4a7fd6)'; tbl.style.outlineOffset='2px'; setTimeout(()=>{ tbl.style.outline=''; tbl.style.outlineOffset=''; }, 1500); }
     return;
   }
-  _openDrillModal(OV_DRILL_TITLES[key]||'', _ovDrillData[key]||[]);
+  // Tasks Assigned/Done's drill title carries the active month scope
+  // (2026-11-13) so the modal can never silently disagree with the card/
+  // table it was opened from — "Keep everything consistent" per the
+  // task's own requirement.
+  let title=OV_DRILL_TITLES[key]||'';
+  if((key==='tasksAssigned'||key==='tasksDone') && _ovTaskScopeMode()==='month') title += ` — ${_ovMonthLabel(_ovTaskScopeMonth())}`;
+  _openDrillModal(title, _ovDrillData[key]||[]);
 }
 // Jump from a drill-down row to the item's real home view — reusing the
 // exact same navigation this app already uses elsewhere for the same job
@@ -8666,6 +8748,30 @@ function renderTeamProductionAnalytics(){
   const {endOfWeek, endOfMonth}=_ovWeekMonthBoundaries();
   const svcClientInfo=_ovServiceClientInfo();
 
+  // Monthly (resettable) Tasks Assigned/Done scope (2026-11-13) — see the
+  // _ovTaskScope*() functions' own comments above. Scope is TASKS ONLY:
+  // servicesAssigned/servicesDone and Team % Done (below) are completely
+  // untouched by this and stay all-time. "Assigned" in month M = createdAt
+  // falls in M; "Done" in M = completedAt falls in M — a task missing the
+  // relevant date simply doesn't count toward any specific month (never
+  // silently falls back to all-time for that one task). Both dates are
+  // full ISO timestamps (new Date().toISOString()) everywhere they're
+  // written in this file, so a plain slice(0,7) prefix compare against
+  // 'YYYY-MM' is exact — no timezone-aware parsing needed.
+  const taskScopeMode=_ovTaskScopeMode();
+  const taskScopeMonth=_ovTaskScopeMonth();
+  const scopeEl=document.getElementById('ov-task-scope-control');
+  if(scopeEl) scopeEl.innerHTML=_ovTaskScopeControlHtml();
+  const _ovInScopeMonth=(dateStr)=>!!dateStr && dateStr.slice(0,7)===taskScopeMonth;
+  // Per-Person Breakdown's own Tasks/Done column headers (2026-11-13) — the
+  // "Keep everything consistent" requirement: these two columns show the
+  // SAME scoped counts as the Tasks card/drills above, so their headers say
+  // so too, rather than reading like a plain, unscoped "Tasks"/"Done".
+  const thTasks=document.getElementById('tpa-th-tasks'), thTasksDone=document.getElementById('tpa-th-tasks-done');
+  const taskColSuffix = taskScopeMode==='all' ? ' (all time)' : ` (${_ovMonthLabel(taskScopeMonth)})`;
+  if(thTasks){ thTasks.textContent='Tasks'+taskColSuffix; thTasks.title='Tasks assigned — createdAt in the selected month, or all time; see the scope control above.'; }
+  if(thTasksDone){ thTasksDone.textContent='Done'+taskColSuffix; thTasksDone.title='Tasks done — completedAt in the selected month, or all time; see the scope control above.'; }
+
   // Services frequency filter (2026-09-25) — computed ONCE, directly off
   // allServices, completely independent of the per-person roster loop
   // below. This is the core fix: the OLD Services summary/donut were both
@@ -8757,6 +8863,16 @@ function renderTeamProductionAnalytics(){
     const servicesForPerson=allServices.filter(s=>_wlSvcAssignedTo(s, person.id, person.name));
     const tasksDoneItems=sum.tasksForPerson.filter(t=>t.status==='Done');
     const servicesDoneItems=servicesForPerson.filter(s=>s.workStatus==='done');
+    // Monthly Tasks Assigned/Done scope (2026-11-13) — "all time" is just
+    // sum.tasksForPerson/tasksDoneItems unchanged; "this month" re-filters
+    // those SAME two all-time sets by createdAt/completedAt falling in the
+    // selected month, never a separate query. A task missing the relevant
+    // date is excluded from the month-scoped set (never falls back to
+    // counting it anyway) — exactly the "doesn't count toward any specific
+    // month" rule the task calls for. Services are completely untouched —
+    // servicesForPerson/servicesDoneItems above are never filtered by this.
+    const scopedTasksAssignedItems = taskScopeMode==='all' ? sum.tasksForPerson : sum.tasksForPerson.filter(t=>_ovInScopeMonth(t.createdAt));
+    const scopedTasksDoneItems = taskScopeMode==='all' ? tasksDoneItems : sum.tasksForPerson.filter(t=>_ovInScopeMonth(t.completedAt));
     // _taCountsAsOverdueBurden (2026-09-08), not the raw _taIsOverdue — a
     // recurring task due again on schedule doesn't count toward this
     // person's overdue "burden" here either, same reasoning as Needs
@@ -8789,8 +8905,8 @@ function renderTeamProductionAnalytics(){
     const servicesDueTodayItems=servicesForPerson.filter(s=>_svcStatus(s)!=='done'&&_svcStatus(s)!=='stuck'&&s.due===todayStr);
     const dueToday=tasksDueTodayItems.length+servicesDueTodayItems.length;
 
-    sum.tasksForPerson.forEach(t=>drill.tasksAssigned.push(_ovTaskRow(t, person.name)));
-    tasksDoneItems.forEach(t=>drill.tasksDone.push(_ovTaskRow(t, person.name)));
+    scopedTasksAssignedItems.forEach(t=>drill.tasksAssigned.push(_ovTaskRow(t, person.name)));
+    scopedTasksDoneItems.forEach(t=>drill.tasksDone.push(_ovTaskRow(t, person.name)));
     servicesForPerson.forEach(s=>drill.servicesAssigned.push(_ovServiceRow(s, person.name, svcClientInfo)));
     servicesDoneItems.forEach(s=>drill.servicesDone.push(_ovServiceRow(s, person.name, svcClientInfo)));
     tasksOverdueItems.forEach(t=>drill.overdue.push(_ovTaskRow(t, person.name)));
@@ -8824,7 +8940,18 @@ function renderTeamProductionAnalytics(){
       const bucket=_ovDueWindowBucket(s.due, endOfWeek, endOfMonth);
       if(bucket==='dueThisWeek') servicesDueThisWeek++; else if(bucket==='dueThisMonth') servicesDueThisMonth++; else servicesUpcoming++;
     });
-    return { id:person.id, name:person.name||'(unnamed)', ...sum, overdue, blocked, dueToday,
+    // tasksAssignedAllTime/tasksDoneAllTime (2026-11-13) — sum.tasksAssigned/
+    // tasksDone, kept under their own name BEFORE being overridden by the
+    // spread below, so Team % Done (computed from totals further down) can
+    // stay genuinely all-time even once tasksAssigned/tasksDone themselves
+    // become month-scoped for the Tasks card/table/drills. totalAssigned/
+    // pctDone (still spread in from sum, unchanged) are what the Per-Person
+    // Breakdown table's own "Total %" column reads — also deliberately
+    // left all-time, consistent with Team % Done.
+    return { id:person.id, name:person.name||'(unnamed)', ...sum,
+      tasksAssignedAllTime:sum.tasksAssigned, tasksDoneAllTime:sum.tasksDone,
+      tasksAssigned:scopedTasksAssignedItems.length, tasksDone:scopedTasksDoneItems.length,
+      overdue, blocked, dueToday,
       tasksOverdue, servicesOverdue, tasksDueToday:tasksDueTodayItems.length,
       tasksDueThisWeek, tasksDueThisMonth, tasksUpcoming,
       servicesDueThisWeek, servicesDueThisMonth, servicesUpcoming };
@@ -8834,18 +8961,28 @@ function renderTeamProductionAnalytics(){
   // renders, so the totals row can never disagree with what's in the table.
   const totals=rows.reduce((acc,r)=>{
     acc.tasksAssigned+=r.tasksAssigned; acc.tasksDone+=r.tasksDone;
+    acc.tasksAssignedAllTime+=r.tasksAssignedAllTime; acc.tasksDoneAllTime+=r.tasksDoneAllTime;
     acc.servicesAssigned+=r.servicesAssigned; acc.servicesDone+=r.servicesDone;
     acc.overdue+=r.overdue; acc.blocked+=r.blocked; acc.dueToday+=r.dueToday;
     acc.tasksOverdue+=r.tasksOverdue; acc.servicesOverdue+=r.servicesOverdue; acc.tasksDueToday+=r.tasksDueToday;
     acc.tasksDueThisWeek+=r.tasksDueThisWeek; acc.tasksDueThisMonth+=r.tasksDueThisMonth; acc.tasksUpcoming+=r.tasksUpcoming;
     acc.servicesDueThisWeek+=r.servicesDueThisWeek; acc.servicesDueThisMonth+=r.servicesDueThisMonth; acc.servicesUpcoming+=r.servicesUpcoming;
     return acc;
-  }, {tasksAssigned:0,tasksDone:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueToday:0,
+  }, {tasksAssigned:0,tasksDone:0,tasksAssignedAllTime:0,tasksDoneAllTime:0,servicesAssigned:0,servicesDone:0,overdue:0,blocked:0,dueToday:0,
       tasksOverdue:0,servicesOverdue:0,tasksDueToday:0,tasksDueThisWeek:0,tasksDueThisMonth:0,tasksUpcoming:0,
       servicesDueThisWeek:0,servicesDueThisMonth:0,servicesUpcoming:0});
-  const totalAssigned=totals.tasksAssigned+totals.servicesAssigned;
-  const totalDone=totals.tasksDone+totals.servicesDone;
-  const teamPct=totalAssigned?Math.round(totalDone/totalAssigned*100):null;
+  // Team % Done stays genuinely all-time (2026-11-13) — uses
+  // tasksAssignedAllTime/tasksDoneAllTime, NOT the (possibly month-scoped)
+  // tasksAssigned/tasksDone below, so this one headline number can never
+  // silently mix an all-time services share with a monthly tasks share.
+  // The card itself is relabeled "Team % Done (all-time)" below so this is
+  // surfaced, not just true-by-construction. tasksPct (the Tasks ratio
+  // card) is the one number that's SUPPOSED to track the toggle — it reads
+  // totals.tasksAssigned/tasksDone, which the per-person loop above already
+  // scopes.
+  const totalAssignedAllTime=totals.tasksAssignedAllTime+totals.servicesAssigned;
+  const totalDoneAllTime=totals.tasksDoneAllTime+totals.servicesDone;
+  const teamPct=totalAssignedAllTime?Math.round(totalDoneAllTime/totalAssignedAllTime*100):null;
   const tasksPct=totals.tasksAssigned?Math.round(totals.tasksDone/totals.tasksAssigned*100):null;
 
   // Every card is clickable — see openOvStatDrill()/openOvStatDrillKey
@@ -8902,13 +9039,20 @@ function renderTeamProductionAnalytics(){
     <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${label}</div>
     <div style="font-size:10.5px;color:var(--text-light);margin-top:2px;">+ ${taskExtra} tasks</div>
   </div>`;
+  // Tasks card label reflects the active scope (2026-11-13) — "this
+  // month"/"Nov 2026"/"all time" — so the card itself, not just the
+  // separate control row above, says what it's counting. Team % Done is
+  // explicitly labeled "(all-time)" since it's the one card that
+  // deliberately does NOT follow the toggle (see teamPct's own comment
+  // above) — surfacing that choice rather than leaving it to be inferred.
+  const tasksCardLabel = taskScopeMode==='all' ? 'Tasks (all time)' : `Tasks (${_ovMonthLabel(taskScopeMonth)})`;
   statsEl.innerHTML=[
-    ratioStatCard('Tasks', totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
+    ratioStatCard(tasksCardLabel, totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
     svcSummaryCard,
     urgencyStatCard('Overdue · services', svcOverdueAllCount, totals.tasksOverdue, svcOverdueAllCount?'var(--red)':null, 'overdue'),
     urgencyStatCard('Due today · services', svcDueTodayAllCount, totals.tasksDueToday, svcDueTodayAllCount?'var(--orange)':null, 'dueToday'),
     statCard('Blocked/Stuck', totals.blocked, totals.blocked?'var(--orange)':null, 'blocked'),
-    statCard('Team % Done', teamPct==null?'—':teamPct+'%', 'var(--accent)', 'teamPct'),
+    statCard('Team % Done (all-time)', teamPct==null?'—':teamPct+'%', 'var(--accent)', 'teamPct'),
   ].join('');
   _ovDrillData = drill;
 
