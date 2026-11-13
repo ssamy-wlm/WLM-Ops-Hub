@@ -2514,6 +2514,45 @@ Don't relitigate them without an explicit decision from the user.
   even though this is a pure display/interaction fix with no data write
   — broad-reaching (every row-actions menu in the app, present and
   future).
+- Overview stat drill-down rows now explicitly labeled Task vs. Service
+  (2026-11-13 — held for preview approval, `index.html`, display-only):
+  `_openDrillModal()`'s rows only distinguished a task from a service by a
+  small leading emoji (✅ vs 🧩) with no text — not legible at a glance,
+  especially in a mixed list like "Due Today" (`_ovDrillData.dueToday`,
+  populated from both `_ovTaskRow()`/`_ovServiceRow()`, confirmed each
+  already stamps `type:'task'`/`type:'service'` on its own row). Fixed by
+  turning that leading emoji into a small colored pill with the type
+  spelled out ("✅ Task"/"🧩 Service"), driven directly by `it.type` —
+  same alpha-background/solid-text/alpha-border pill convention every
+  other per-row badge in this file already uses (e.g. the Admins table's
+  access-level badge), so it reads as the app's one pill style, not a new
+  one. Task = blue (`#5B84C4`, matches `--accent`), Service = green
+  (`#22A06B`, matches `--green`) — colors spelled out as literal hex
+  (same as every other pill here) since a CSS var can't take the
+  `${color}18`-style alpha-suffix this codebase's pill convention already
+  relies on. Contrast comes from the pill's own background/border, not
+  the page's background color, so it reads the same regardless of theme
+  — moot in practice since this app has no dark-mode toggle at all
+  (confirmed via grep: no `prefers-color-scheme`/`data-theme` anywhere),
+  but the pill was still built the theme-independent way on principle.
+  Click behavior (`openOvDrillItem(...)`), the row's own layout/other
+  cells (title, client · assignee · due, status label), and every other
+  stat-card/drill call site are completely untouched — only the leading
+  icon span's content and styling changed. Verified with a new Playwright
+  suite against the real, unmodified `_openDrillModal()`/
+  `openOvStatDrill()` (seeded directly into `_ovDrillData.dueToday` with
+  one task row + one service row, no live Supabase per rule #11): both
+  rows render an explicit "Task"/"Service" pill with visually distinct
+  colors, zero JS errors. Confirmed via `git stash` that this exact
+  suite fails against the pre-fix code — the pill text is just the bare
+  emoji with no word at all, and both rows resolve to the IDENTICAL
+  color (`_ovDrillData`'s own `blue` wasn't even used by the icon) rather
+  than two distinct ones — then passes clean after. `node --check` on
+  extracted inline JS clean; div-balance unchanged vs. baseline (pure JS
+  template change, no HTML markup touched). No `api/*.js` touched, so
+  rule #9's module-mode check doesn't apply. Held per rule #10 out of
+  caution even though this is a pure display-only change with no data
+  write and no behavior change.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

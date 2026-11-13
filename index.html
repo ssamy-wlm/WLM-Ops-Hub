@@ -8293,15 +8293,30 @@ function _openDrillModal(title, items){
   if(!items.length){
     body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-light);font-size:13px;">Nothing here right now.</div>`;
   } else {
-    body.innerHTML = items.map(it=>`
+    body.innerHTML = items.map(it=>{
+      // Explicit Task/Service label (2026-11-13) — the emoji-only distinction
+      // (✅ vs 🧩) wasn't legible at a glance, especially in a mixed list
+      // like "Due Today". A small colored pill, driven by it.type, same as
+      // every other status-badge-style pill elsewhere in this file (solid
+      // text color + a light alpha background/border of the same hue) —
+      // works the same regardless of light/dark, since it never relies on
+      // the page's own background color for contrast. Task = blue (matches
+      // --accent), Service = green (matches --green); colors spelled out as
+      // literal hex here, same as every other per-row pill in this file
+      // (e.g. the Admins table's access-level badge), since a CSS var can't
+      // have an alpha suffix appended the way `${color}18` already is here.
+      const kindColor = it.type==='task' ? '#5B84C4' : '#22A06B';
+      const kindLabel = it.type==='task' ? '✅ Task' : '🧩 Service';
+      return `
       <div class="ov-drill-row" style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border);cursor:pointer;" onclick="openOvDrillItem('${it.type}','${it.id}',${it.clientId?`'${it.clientId}'`:'null'})">
-        <span style="font-size:14px;flex-shrink:0;">${it.type==='task'?'✅':'🧩'}</span>
+        <span style="font-size:10.5px;font-weight:700;flex-shrink:0;white-space:nowrap;padding:3px 8px;border-radius:20px;background:${kindColor}18;color:${kindColor};border:1px solid ${kindColor}33;">${kindLabel}</span>
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;color:var(--text-dark);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtmlAdmin(it.title)}</div>
           <div style="font-size:11.5px;color:var(--text-light);">${escHtmlAdmin(it.client)} · ${escHtmlAdmin(it.assignee)} · Due ${escHtmlAdmin(it.due)}</div>
         </div>
         <span style="font-size:11px;font-weight:700;color:${it.statusColor};flex-shrink:0;">${escHtmlAdmin(it.statusLabel)}</span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
   openModal('ovDrillModal');
 }
