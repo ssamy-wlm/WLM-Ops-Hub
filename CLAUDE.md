@@ -2554,7 +2554,7 @@ Don't relitigate them without an explicit decision from the user.
   caution even though this is a pure display-only change with no data
   write and no behavior change.
 - Monthly (resettable) Tasks Assigned/Done view added to the Overview
-  (2026-11-13 — held for preview approval, `index.html`, display-only, no
+  (2026-11-13 — **merged**, PR #494, `index.html`, display-only, no
   data writes, no load-time data mutation): `renderTeamProductionAnalytics()`'s
   Tasks Assigned/Done counts were all-time only (`tasksForPerson.length`/
   a `status==='Done'` count); added a per-viewer scope control, UI state
@@ -2632,6 +2632,104 @@ Don't relitigate them without an explicit decision from the user.
   check doesn't apply. Held per rule #10 out of caution even though this
   is a pure display-only change with no data write and no load-time
   mutation.
+- Approving a time off request now actually deducts from the balance
+  (2026-11-14 — held for preview approval, `index.html` only, data-path PR
+  → needs a post-merge integrity check per rule #13): root cause confirmed
+  exactly as reported — `reviewTimeOff(id,'approved')` only ever flipped
+  the request's own `status`; it never wrote to `ops_time_off_ledger`, and
+  `getTimeOffBalance()` computes used/remaining ONLY from that ledger —
+  so an approval never deducted anything, regardless of how many got
+  approved. Fixed by posting a matching ledger entry on approval, reusing
+  `logTimeOffEntry()`'s own entry shape and `undoTimeOffEntry()`'s own
+  reversal shape verbatim (4 new helpers:
+  `_toPostApprovalLedgerEntry()`/`_toReverseApprovalLedgerEntry()`/
+  `_toActiveLedgerEntryForRequest()`/`_toResolveEmployeeId()`, plus
+  `_toLedgerTypeForRequest()`/`_toUnrecognizedTypeNote()`), wired into
+  `reviewTimeOff()` itself. **Idempotent**: every posted entry carries a
+  new `requestId` field; `_toActiveLedgerEntryForRequest()` (an entry for
+  this requestId exists AND nothing else's `reversalOf` points at it) is
+  checked first — approving/re-saving an already-active request is a
+  silent no-op, never a duplicate. **Reversible**: a request that goes
+  approved→denied posts a reversal (negated days, `reversalOf` pointing at
+  the original) exactly like a manual Undo — the original ledger entry is
+  never mutated/deleted (DB-guarded append-only); re-approving after a
+  reversal correctly posts a fresh, new, active entry (full audit trail
+  across multiple approve/deny cycles, not permanently blocked after one
+  reversal). An ordinary pending→denied decision (the overwhelmingly
+  common case) never even looks for an entry to reverse — only a PRIOR
+  status of `'approved'` triggers the reversal path. **Type mapping**
+  (flagged, not guessed — rule #7): a request's own `type` is free-form
+  text defaulting to "PTO"; the ledger only ever tracks sick/vacation. An
+  exact, case-insensitive "sick" → sick; "vacation"/"PTO"/blank/anything
+  else → vacation (the ledger's one general-purpose bucket — documented
+  explicitly, not inferred). An unrecognized literal (e.g. "Bereavement")
+  is still logged as vacation — the whole point of this fix is that the
+  balance actually moves — but is surfaced in the posted entry's own
+  `note` (`_toUnrecognizedTypeNote()`) rather than silently indistinguish­
+  able from a real vacation request. **Employee identity resolution**
+  (also flagged, not guessed): a request only ever carries a free-text
+  `userName`, never an id on the client's own object, but
+  `api/ops-sync.js` has server-stamped a `userId` on every request since
+  2026-09-17 (confirmed by reading that write path directly) for both an
+  employee's self-submission and a manager-tier admin's own "My Time Off"
+  submission — `_toResolveEmployeeId()` uses that `userId` first (only
+  when it actually matches a live `_timeOffRoster()` entry), falling back
+  to an EXACT, UNIQUE name match for legacy pre-2026-09-17 requests. Two
+  cases correctly resolve to null rather than guessing: an unmatched
+  name/id (e.g. the Super Admin/Owner's own "primary-admin" sentinel,
+  confirmed via grep to never be a real `ops_admins` row and to have no
+  tracked balance anywhere in this file by the same existing design), and
+  an AMBIGUOUS duplicate name (2+ roster members sharing it) — in both
+  cases the approval itself still goes through (the request's own status
+  write is independent), but the ledger write is skipped with a reason
+  surfaced via toast + a logged activity entry, so it's never silently
+  lost. **No double-count / no auto-backfill** (explicit instruction, also
+  rule #7): existing already-approved requests that predate this fix have
+  no ledger entries and this deliberately does NOT backfill them — some
+  (e.g. Michael's/Rana's) were already logged manually via Log Time Off,
+  and a blind backfill would double-count those; any real backfill is a
+  separate, explicit dry-run → approve → write step, never automatic or
+  silent. **Server-side write, no load-time mutation**: this only ever
+  runs from the explicit Approve/Deny button click
+  (`reviewTimeOff()` has no other call site); the new ledger entry is
+  `dbSet()` locally exactly like every other ledger writer in this file
+  already does, and travels to the server in the SAME `cloudAutoSync()`
+  request as the request's own status change (confirmed by reading
+  `cloudPushAll()`'s dirty-diff collection — both `timeOffRequests` and
+  `timeOffLedger` are read into the same `changes` object, one POST).
+  `ops_time_off_ledger` writes are already restricted server-side to
+  `tier==='super'` (confirmed in `api/ops-sync.js`), and `#admin-timeoff`
+  (where `reviewTimeOff()` lives) is already Super Admin/Owner-only client
+  side — the caller who can trigger this write is always the tier allowed
+  to make it. Failure handling extended to match: `reviewTimeOff()`
+  already rolled back the request's own status fields on a failed
+  `cloudAutoSync()`; now also snapshots and restores the WHOLE ledger
+  array on that same failure, so a half-landed ledger entry can never
+  survive a rolled-back status. Verified with a new Playwright suite
+  against the real, unmodified helpers and `reviewTimeOff()` (fixture-
+  seeded via `dbSet`, no live Supabase per rule #11): posting by `userId`;
+  idempotent re-post (still exactly 1 entry); sick-type mapping; an
+  unrecognized type mapping to vacation with the surfaced note; legacy
+  name-fallback resolution; an unresolvable identity correctly flagged
+  (no entry posted); an ambiguous duplicate name correctly flagged;
+  reversal nets to zero days and leaves no active entry; re-reversing an
+  already-reversed request is a no-op; re-approving after a reversal
+  posts a genuinely new active entry; a full end-to-end approve (mocked
+  `/api/ops-sync` success) producing exactly the right ledger entry; a
+  full end-to-end un-approval (deny after approved) posting the reversal
+  and clearing the active entry; and a full end-to-end rollback on a
+  mocked server failure, confirming BOTH the request status and the
+  ledger array revert together. Confirmed via `git stash` that this exact
+  suite fails against the pre-fix code (the new functions don't exist
+  yet) and passes clean after. `node --check`-equivalent (extracted
+  inline JS, `new Function()` parse) clean; div-balance unchanged vs.
+  baseline (2201/2203, delta -2 — pure JS change, no HTML markup
+  touched). No `api/*.js` touched, so rule #9's module-mode check doesn't
+  apply. Held per rule #10 — touches live data-write/notification-
+  adjacent logic (the time off ledger); per rule #13, needs a post-merge
+  read-only Supabase integrity check (counts, orphans, and the specific
+  fields this writes — `requestId`/`employeeId`/`type`/`days` — on a real
+  approval) before being considered fully closed, not just "app loads."
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
