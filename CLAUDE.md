@@ -2553,6 +2553,85 @@ Don't relitigate them without an explicit decision from the user.
   rule #9's module-mode check doesn't apply. Held per rule #10 out of
   caution even though this is a pure display-only change with no data
   write and no behavior change.
+- Monthly (resettable) Tasks Assigned/Done view added to the Overview
+  (2026-11-13 — held for preview approval, `index.html`, display-only, no
+  data writes, no load-time data mutation): `renderTeamProductionAnalytics()`'s
+  Tasks Assigned/Done counts were all-time only (`tasksForPerson.length`/
+  a `status==='Done'` count); added a per-viewer scope control, UI state
+  only (localStorage). New row above the stat cards (`#ov-task-scope-
+  control`, `_ovTaskScopeControlHtml()`): a "This month"/"All time" toggle
+  (`setOvTaskScopeMode()`, defaults to `'month'`) and, in month mode, a
+  12-month dropdown (`setOvTaskScopeMonth()`, current month first). Scoped
+  strictly to TASKS, per the task's own instruction — Services Assigned/
+  Done (`servicesForPerson`/`servicesDoneItems`) are completely untouched
+  anywhere in this change. Definitions, exactly as specified: "Assigned"
+  in month M = `createdAt` falls in M; "Done" in M = `completedAt` falls
+  in M (both are full ISO timestamps everywhere they're written in this
+  file, so a plain `slice(0,7)` prefix compare is exact — confirmed via
+  grep, no timezone-aware parsing needed); a task missing the relevant
+  date simply doesn't count toward any specific month — never silently
+  falls back to all-time for that one task (verified directly in the test
+  suite: a legacy task with no `createdAt` at all correctly never counts
+  as "Assigned" in ANY month, in either direction). "(Resettable)" (the
+  task's own title): no month is ever persisted to localStorage while the
+  dropdown's current-month option is selected — re-selecting the current
+  month (including just by switching back to "This month") clears any
+  earlier explicit pin, so the view keeps auto-advancing on its own as
+  real months pass rather than freezing on whatever month a user once
+  picked; a genuinely pinned past month stays pinned across reloads until
+  explicitly changed back. **Consistency** (the task's own "keep
+  everything consistent" requirement): the Tasks card, its two drill-down
+  modals (`_ovDrillData.tasksAssigned`/`tasksDone`, now populated from the
+  SAME scoped item sets the card sums — never a separately-filtered
+  query), and the Per-Person Breakdown table's own Tasks/Done columns all
+  read from one scoped computation per person
+  (`scopedTasksAssignedItems`/`scopedTasksDoneItems`, re-filtering the
+  already-existing all-time `sum.tasksForPerson`/`tasksDoneItems` rather
+  than querying separately) — all three can never disagree with each
+  other by construction. The drill modal's own title additionally appends
+  the active month (e.g. "Tasks Assigned — November 2026") so the popup
+  itself states its scope, not just the card it was opened from. The
+  Per-Person table's two column headers (`#tpa-th-tasks`/`#tpa-th-tasks-
+  done`) are relabeled the same way ("Tasks (November 2026)"/"Done (all
+  time)") rather than staying bare "Tasks"/"Done" while their own values
+  silently changed meaning. **Flag 1 — data coverage** (only ~46% of
+  all-time tasks have `createdAt` vs. ~95% with `completedAt`, given as
+  fact by the user): surfaced, not silently under-counted — an "ⓘ about
+  this count" tooltip (native `title` attribute, shown only in month mode)
+  spells out the gap and that current/future months are accurate while a
+  past month's Assigned count is a partial/floor count. **Flag 2 — Team %
+  Done mixes tasks+services**: decided to keep it genuinely all-time
+  regardless of the toggle (new `tasksAssignedAllTime`/`tasksDoneAllTime`
+  carried on each person's row, from `sum.tasksAssigned`/`tasksDone`
+  BEFORE those two field names get overridden by the scoped counts;
+  summed into their own `totals.tasksAssignedAllTime`/`tasksDoneAllTime`
+  accumulators) and relabeled the card itself "Team % Done (all-time)" so
+  the choice is stated on the page, not just made silently; the Tasks
+  ratio card's own % (`tasksPct`, "N% done") is the one number that DOES
+  track the toggle, by design — it's the Tasks-specific figure, not the
+  team-wide blended one. The Per-Person table's "Total %" column
+  (`r.pctDone`) is likewise left all-time, unchanged — consistent with
+  Team % Done, and outside the task's own "task columns" instruction
+  (which named only the Tasks/Done columns, not Total %). Verified with a
+  new Playwright suite against the real, unmodified `renderTeamProduction
+  Analytics()`/`openOvStatDrill()` (fixture-seeded via `dbSet`, no live
+  Supabase per rule #11): a 4-task fixture exercising every date-coverage
+  case (created-and-done this month; created prev month but done this
+  month; no `createdAt` at all but done this month; fully in the prev
+  month) confirms the exact expected Assigned/Done counts in both month
+  and all-time mode, that drill-down counts match the card, that pinning
+  a past month persists it to localStorage and re-selecting the current
+  month clears that pin, that Team % Done is byte-identical whether the
+  Tasks toggle is "month" or "all time," and that the coverage tooltip is
+  present. Confirmed via `git stash` that this suite fails against the
+  pre-fix code (the new control/headers/functions don't exist yet) and
+  passes clean after. `node --check`-equivalent (extracted inline JS,
+  `new Function()` parse) clean; div-balance unchanged vs. baseline
+  (2203/2205, delta -2 — pure net-balanced additions, no HTML markup
+  structure altered). No `api/*.js` touched, so rule #9's module-mode
+  check doesn't apply. Held per rule #10 out of caution even though this
+  is a pure display-only change with no data write and no load-time
+  mutation.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
