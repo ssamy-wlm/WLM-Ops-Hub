@@ -2632,6 +2632,131 @@ Don't relitigate them without an explicit decision from the user.
   check doesn't apply. Held per rule #10 out of caution even though this
   is a pure display-only change with no data write and no load-time
   mutation.
+- Monthly "backlinks renewal" urgent reminder to David, with escalation to
+  Sarah (2026-11-16 — held for preview approval; NEW automated write path
+  + cron, flagged per rule #13 BEFORE merge; needs a post-merge integrity
+  check too): new `api/cron-backlinks-reminder.js` +
+  `api/backlinks-confirm.js` + `lib/backlinksToken.js`, plus two small
+  additive changes to `lib/resendClient.js`. No new table/migration — state
+  lives in `ops_settings`, key `backlinksReminder:<YYYY-MM>`.
+  **Schedule**: fires on the 15th of the month, weekend-adjusted
+  (`scheduledReminderDay()`: Saturday → the 14th, Sunday → the 16th, else
+  the 15th — pure calendar math, confirmed via `Date.UTC(...).getUTCDay()`,
+  no timezone dependency since a calendar date's weekday doesn't vary by
+  zone), ~9:00 AM America/New_York, DST-aware. Reuses
+  `api/cron-pto-report.js`'s own hourly-Vercel-cron +
+  `localPartsInTz()`-gate pattern (`vercel.json`: `"0 * * * *"`, every
+  hour, every day — gated in-handler on `ny.hour===9`), but unlike that
+  cron's fixed two-UTC-day schedule, this one genuinely needs to run EVERY
+  day of the month: the weekend-adjusted target day moves between
+  14th/15th/16th per month, and the 3-day repeat/escalation checks need a
+  daily tick regardless of which day the month's initial send landed on.
+  **State machine** (`ops_settings` value shape: `{status: 'pending'|
+  'renewed'|'not_yet', firstSentAt, lastSentAt, nextReminderDate,
+  escalationDueDate ('YYYY-MM-DD' NY calendar dates), escalatedAt,
+  respondedAt, via}`): no existing row + today is the scheduled day →
+  send the initial urgent reminder, create the row `pending`, both
+  `nextReminderDate`/`escalationDueDate` set to `today+3`. Row exists,
+  `status!=='pending'` → no-op, month fully resolved (a response of EITHER
+  kind stops everything — the goal is forcing a check-in, not a specific
+  answer). Row exists, still `pending` → independently checks (a)
+  `!escalatedAt && today>=escalationDueDate` → one-time email to Sarah
+  (`ssamy@weblightmedia.com`), `escalatedAt` stamped so it can never fire
+  twice even though the repeat keeps recurring every 3 days after it; (b)
+  `today>=nextReminderDate` → another urgent reminder to David,
+  `nextReminderDate` advanced to `today+3`. Both conditions can fire in
+  the same run (e.g. exactly at the 3-day mark) — verified directly.
+  **Idempotency** (flagged, not silently assumed — rule #7): the date
+  fields are always advanced past `today` in the SAME request that sends,
+  immediately after sending — so any later invocation the same NY calendar
+  day (a platform retry, or another hourly tick) finds "not due yet" and
+  sends nothing further; verified by calling the real handler twice at an
+  identical fixed `now` and confirming only the first call sends anything.
+  This is the same race-tolerance level already accepted by every other
+  cron in this codebase (one invocation per scheduled tick, not truly
+  concurrent) — not a new, weaker guarantee introduced here. A missed
+  scheduled day (e.g. a deploy outage) does NOT get a later catch-up send,
+  matching `cron-pto-report.js`'s own same-day-only precedent.
+  **The email**: urgent, To David only
+  (`lib/resendClient.js`'s `DAVID_EMAIL`), from
+  `notifications@opshub.wlmsend.com` via `sendResendEmail()`, using
+  `buildPlainEmailHtml()` (PR #441's minimal, non-branded template, for
+  Primary-tab/inbox placement — not the colored-card `buildEmailHtml()`
+  every routine notification uses) with subject "URGENT: Monthly
+  backlinks renewal — action needed" and new `X-Priority: 1`/
+  `Importance: high` headers. `sendResendEmail()` gained an additive,
+  optional `headers` param (passed straight through to Resend's own
+  `headers` request field, omitted entirely when not given — every
+  existing caller's request body is byte-identical to before). **Real gap
+  caught and closed before it could silently break this feature**: David
+  is suppressed from every email type not on `resendClient.js`'s own
+  3-item `DAVID_EMAIL_ALLOWED_TYPES` allowlist (the 2026-09-25/09-28
+  "David email overhaul") — without adding this feature's own
+  `'backlinksReminder'` type to that allowlist, `sendResendEmail()` would
+  have silently no-op'd (`{suppressed:true}`) on every single send to the
+  one person this whole feature exists to reach; added it, and a test
+  confirms the allowlist still correctly suppresses an unrelated type
+  (not just "always true" now). **One-click safety** (flagged, not
+  guessed — rule #7): a bare record-on-GET link can be auto-triggered by
+  an email client's own link-prescanning/security-scanning bot before a
+  human ever opens the email, which would falsely mark the month done
+  with no real response from David at all. Fixed with a genuine two-step
+  flow in `api/backlinks-confirm.js`: `GET ?token=...` only RENDERS a tiny
+  confirmation page ("Confirm you renewed/have not renewed the backlinks
+  for `<month>`?") — no database write at all, verified directly (the
+  in-memory store is asserted untouched after a GET); the page's own
+  `<form method="POST">` is what actually records the answer, since a
+  prescanning bot does not submit forms. A second click on the OTHER
+  button after a month is already resolved is a no-op (status already
+  `!=='pending'`), confirmed not to overwrite the first real answer.
+  **Token**: a new, deliberately SEPARATE small HMAC signer,
+  `lib/backlinksToken.js` (`signBacklinksToken`/`verifyBacklinksToken`),
+  rather than reusing `lib/opsSession.js`'s `signSession`/`verifySession`
+  — same `SESSION_SECRET` env var (no new secret to configure), but kept
+  as its own code path on purpose: this token has nothing to do with
+  being signed into the app at all (David clicks it with zero session),
+  and a future change to the real session signer's expiry/shape for
+  login-session reasons must never be able to silently change how long a
+  backlinks-confirm link stays valid, or the reverse. Verified: a signed
+  token round-trips; a tampered token and arbitrary garbage both fail
+  verification without throwing. **No quiet-hours gate applies** — this
+  calls `sendResendEmail()` directly, never
+  `insertNotifications()` (the only place quiet-hours logic lives in this
+  codebase), so there's nothing to bypass, consistent with every other
+  precisely-scheduled report/reminder cron's own "bypass quiet hours"
+  reasoning. Verified with a new 21-check `node:test` suite (fake
+  in-memory Supabase client + `node:test`'s `mock.module` for
+  `lib/supabaseAdmin.js`, a captured `global.fetch` standing in for the
+  real Resend API, a `withFixedNow()` helper overriding the global `Date`
+  constructor so the hour/day/3-day-math gates are exercised at exact,
+  deterministic instants rather than whatever the real clock happens to
+  be — no live Supabase/Resend access per rule #11): the weekend-
+  adjustment formula for a plain weekday/Saturday/Sunday 15th; token
+  round-trip/tamper/garbage handling; the David-allowlist gap described
+  above, both fixed and still correctly selective; the full reminder
+  email's exact subject/from/urgent-headers/both-tokenized-links shape;
+  the confirm endpoint's GET-never-writes and POST-writes-once/
+  already-resolved-is-a-no-op/invalid-token-400 behavior; and the full
+  state-machine lifecycle end-to-end against the real, unmodified
+  handler — initial send on the scheduled day, a no-op the day before,
+  no-op while still inside the 3-day window, repeat+escalation both
+  firing together exactly at the 3-day mark, the same-day idempotency
+  guarantee (two calls at an identical fixed `now`, only the first
+  sends), escalation never firing a second time while repeats keep
+  recurring, and a responded month staying a total no-op at its next
+  scheduled-hour tick. Confirmed via `git stash -u` that the ENTIRE suite
+  fails against the pre-fix code (the new files don't exist yet) and
+  passes clean after. `node --input-type=module --check` (rule #9) clean
+  on all 4 touched/new `api/*.js`/`lib/*.js` files; `vercel.json`
+  confirmed still valid JSON after adding the new hourly cron entry. No
+  HTML touched, so no div-balance check applies. Held per rule #10 and
+  flagged per rule #13 BEFORE merge — a brand-new automated write path
+  (a cron that mutates `ops_settings` and sends email with no human
+  clicking save) is exactly the highest-risk category that rule calls
+  out; still needs a post-merge read-only Supabase integrity check (the
+  `backlinksReminder:*` rows' shape/status transitions, and that no
+  duplicate sends actually reached Resend) before being considered fully
+  closed, not just "app loads."
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
