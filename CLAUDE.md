@@ -2855,6 +2855,57 @@ Don't relitigate them without an explicit decision from the user.
   read-only Supabase integrity check (counts, orphans, and the specific
   fields this writes — `requestId`/`employeeId`/`type`/`days` — on a real
   approval) before being considered fully closed, not just "app loads."
+- Meaningless "% done" on the monthly Tasks card fixed (2026-11-17 —
+  held for preview approval, `index.html` only, display-only, no data
+  writes): follow-up to #494 (the monthly Tasks Assigned/Done scope
+  toggle) — reported live, This-month mode showed e.g. "116/27 · 430%
+  done." Root cause exactly as reported: `tasksDone` (tasks whose
+  `completedAt` falls in the selected month) and `tasksAssigned` (tasks
+  whose `createdAt` falls in the selected month) are two DIFFERENT task
+  sets — a task created in October and completed in November counts
+  toward November's Done but not its Created, so `tasksDone/
+  tasksAssigned` (`tasksPct`) can run well past 100% and is meaningless
+  as a ratio; worsened by only ~46% of tasks even having `createdAt`
+  (the #494 tooltip's own documented gap), undercounting "Created"
+  further. Fixed by dropping the ratio entirely in month mode — the
+  Tasks card now shows only the two counts, clearly labeled ("Created N
+  · Completed M"), no percentage anywhere on the card
+  (`tasksStatCard`, a new conditional branch right where `ratioStatCard`
+  used to be called unconditionally for the Tasks card). All-time mode
+  is completely untouched: there, Done IS a genuine subset of Assigned
+  (every task ever marked Done was assigned at some point), so
+  done/total · pct% stays valid and still uses the exact same
+  `ratioStatCard()` every other ratio card on this page already uses —
+  same markup, same click target, byte-identical to before this fix.
+  Click-to-drill behavior is unchanged in both modes (still opens the
+  'tasksAssigned' drill list). **Per-Person table and drill-downs kept
+  consistent, per the task's own instruction** — confirmed, not just
+  assumed: neither ever showed a tasks-only percentage in the first
+  place (the Per-Person table's Tasks/Done columns are plain counts; its
+  only percentage column, "Total %," blends tasks+services all-time and
+  was deliberately left untouched by #494 already), and both drill-down
+  modals are plain item lists with no ratio — so no further change was
+  needed there, verified directly rather than guessed. Verified with a
+  new Playwright suite against the real, unmodified
+  `renderTeamProductionAnalytics()` (fixture-seeded via `dbSet`, no live
+  Supabase per rule #11): a 4-task fixture reproducing the EXACT
+  reported bug shape (1 task created this month, 3 tasks created in the
+  prior month but completed this month — Done=3 genuinely exceeding
+  Assigned=1) confirms the month-mode card shows "Created 1 · Completed
+  3" with zero `%` characters anywhere on the card, the month label line
+  still present, and clicking the card still opens the "Tasks Assigned"
+  drill with the correct count; switching to all-time mode shows the
+  valid "3/4 · 75% done" (4 tasks total, 3 done) with the all-time
+  label; the Per-Person row and `_ovDrillData` counts match the card
+  exactly in month mode. Confirmed via `git stash` that this suite
+  reproduces the real pre-fix bug LIVE — the unfixed code renders
+  exactly "3/1" and "300% done" on the identical fixture — before
+  passing clean after the fix. `node --check`-equivalent (extracted
+  inline JS, `new Function()` parse) clean; div-balance unchanged vs.
+  baseline (2206/2208, delta -2 — pure net-balanced additions, no HTML
+  markup structure altered). No `api/*.js` touched, so rule #9's
+  module-mode check doesn't apply. Held per rule #10 out of caution even
+  though this is a pure display-only change with no data write.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

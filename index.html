@@ -9046,8 +9046,33 @@ function renderTeamProductionAnalytics(){
   // deliberately does NOT follow the toggle (see teamPct's own comment
   // above) — surfacing that choice rather than leaving it to be inferred.
   const tasksCardLabel = taskScopeMode==='all' ? 'Tasks (all time)' : `Tasks (${_ovMonthLabel(taskScopeMonth)})`;
+  // Tasks card ratio fixed (2026-11-17, #494 follow-up): in This-month
+  // mode, "Created" (createdAt in the month) and "Done" (completedAt in
+  // the month) are TWO DIFFERENT task sets — a task created in October
+  // and completed in November counts toward November's Done but not its
+  // Created, so done/assigned can run well past 100% (reported live:
+  // "116/27 · 430% done") and is meaningless as a ratio, worsened by only
+  // ~46% of tasks even having createdAt (undercounting "Created" further,
+  // per the ⓘ tooltip already on the scope control above). Fixed by
+  // dropping the ratio entirely in month mode — just the two counts,
+  // clearly labeled ("Created N · Completed M"), no percentage anywhere
+  // on the card. All-time mode is untouched: there, Done IS a genuine
+  // subset of Assigned (every task ever marked Done was assigned at some
+  // point), so done/total · pct% stays valid and keeps using the exact
+  // same ratioStatCard() every other ratio card on this page already
+  // uses — same markup, same onclick/drill target as before this fix.
+  // The Per-Person Breakdown table's Tasks/Done columns and both drill-
+  // down modals already show nothing but the two counts/item lists, no
+  // tasks-only percentage anywhere — already consistent with this, no
+  // change needed there.
+  const tasksStatCard = taskScopeMode==='all'
+    ? ratioStatCard(tasksCardLabel, totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned')
+    : `<div class="card ov-stat-card" style="padding:12px 14px;margin:0;text-align:center;" onclick="openOvStatDrill('tasksAssigned')" title="View the items behind this number">
+        <div style="font-size:15px;font-weight:800;color:var(--text-dark);line-height:1.3;">Created ${totals.tasksAssigned} · Completed ${totals.tasksDone}</div>
+        <div style="font-size:10px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;">${tasksCardLabel}</div>
+      </div>`;
   statsEl.innerHTML=[
-    ratioStatCard(tasksCardLabel, totals.tasksDone, totals.tasksAssigned, tasksPct, 'tasksAssigned'),
+    tasksStatCard,
     svcSummaryCard,
     urgencyStatCard('Overdue · services', svcOverdueAllCount, totals.tasksOverdue, svcOverdueAllCount?'var(--red)':null, 'overdue'),
     urgencyStatCard('Due today · services', svcDueTodayAllCount, totals.tasksDueToday, svcDueTodayAllCount?'var(--orange)':null, 'dueToday'),
