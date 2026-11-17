@@ -6031,7 +6031,7 @@ function renderMyTimeOffLedger(){
       const todayStr = new Date().toISOString().slice(0,10);
       const holidays = usHolidaysForYear(year);
       return `<div style="padding:12px 14px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">
-        <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">🇺🇸 ${year} US Paid Holidays <span style="font-weight:400;color:var(--text-light);">(computed — not deducted from the balance above)</span></div>
+        <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">${year} US Paid Holidays <span style="font-weight:400;color:var(--text-light);">(computed — not deducted from the balance above)</span></div>
         ${holidays.map(h=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0;${h.date<todayStr?'opacity:.55;':''}">
           <span style="color:var(--text-dark);">🎉 ${escHtmlUser(h.name)}</span>
           <span style="color:var(--text-light);">${escHtmlUser(h.date)}</span>
