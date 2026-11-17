@@ -2906,6 +2906,95 @@ Don't relitigate them without an explicit decision from the user.
   markup structure altered). No `api/*.js` touched, so rule #9's
   module-mode check doesn't apply. Held per rule #10 out of caution even
   though this is a pure display-only change with no data write.
+- Monthly backlinks reminder fixed per David's feedback — broken confirm
+  link, unbranded email, wrong schedule/month (2026-11-17 — held for
+  preview approval, `api/cron-backlinks-reminder.js`+`lib/resendClient.js`,
+  no new table/migration, no `vercel.json` change needed): four issues
+  reported live against the 2026-11-16 feature.
+  **(1) Broken confirm link (404)**: `confirmUrl()` joined
+  `process.env.APP_URL` directly onto `/api/backlinks-confirm`, but APP_URL
+  in production is set to the USER portal's own URL — every other call
+  site's own fallback default already documents this convention (e.g.
+  `lib/resendClient.js`'s own `.../user` default, `api/cron-overdue-
+  check.js`'s `.../user` default) — so the link came out as `.../user/api/
+  backlinks-confirm` and 404'd. Fixed with a new `siteRoot()` helper that
+  parses whatever APP_URL resolves to and keeps only `protocol+host`,
+  discarding any path — correct regardless of which portal path APP_URL
+  happens to be configured to, not a guess at its exact current value.
+  **(2) Unbranded + bare-URL "buttons"**: switched `sendDavidReminder()`
+  from `buildPlainEmailHtml()` to the branded `buildEmailHtml()` template.
+  Since that template only ever rendered one default "Open Ops Hub" CTA
+  driven by a single `link`, gave it a new, additive, backward-compatible
+  `buttons` param (`lib/resendClient.js`) — an array of `{label, href,
+  background?}`; every existing caller (6 call sites, confirmed via grep)
+  omits it and renders byte-identical output to before (verified directly:
+  a no-`buttons` call still produces the exact old single-anchor markup).
+  When provided, it replaces that single anchor with one real styled
+  button-link per entry — used here for the "✅ I renewed it" (green,
+  `#1F9D55`) / "❌ Not done yet" (red, `#C0392B`) pair, so David sees two
+  actual branded buttons, not raw URL text pasted into a plain-text body.
+  The GET→confirmation-page→POST-records one-click flow itself (the
+  anti-prescanning-bot design) is completely unchanged — only the email's
+  own template/markup changed, not `api/backlinks-confirm.js`. Sarah's
+  escalation email is unchanged (still `buildPlainEmailHtml()`, out of this
+  ticket's named scope — David's feedback was about the reminder he
+  receives, not Sarah's escalation).
+  **(3) Rescheduled to the start of the month**: `scheduledReminderDay()`
+  now targets the 1st, weekend-adjusted FORWARD to the next business day
+  (Saturday the 1st → Monday the 3rd; Sunday the 1st → Monday the 2nd;
+  else the 1st itself) — unlike the old mid-month (15th) schedule, which
+  could move either direction, there's no earlier business day to move the
+  1st to within the same month, so this one only ever moves forward.
+  `vercel.json`'s existing cron entry (`"0 * * * *"`, hourly, every day)
+  needed NO change — it already ran every day of the month (required
+  before for the old 14th/15th/16th spread, still required now for the new
+  1st/2nd/3rd spread), confirmed directly rather than assumed. The
+  DST-aware `localPartsInTz(..., 'America/New_York')` 9 AM gate is
+  unchanged.
+  **(4) Tracked month fixed to the PRIOR month**: a run firing in December
+  (even though triggered by December's own 1st-of-month schedule) was
+  wording/keying everything off "December" instead of the November
+  backlinks it's actually asking about. New `priorMonthKeyOf(year, month)`
+  derives the tracked `YYYY-MM` from the firing date (handles the January →
+  December-of-the-prior-year rollover) and is used consistently for
+  EVERYTHING keyed off "month" — the `ops_settings` row
+  (`backlinksReminder:<trackedMonth>`), the confirm token's own `month`
+  payload field, and the email wording (a new `monthLabel()` renders it as
+  "November 2026") — so the 3-day repeat and the escalation-to-Sarah,
+  which both key off that same settings row, are automatically correct
+  with no separate change needed, exactly as the ticket asked. Subject
+  line now reads e.g. "URGENT: November 2026 backlinks renewal — action
+  needed" instead of the old generic, month-less subject.
+  Verified with a new 11-check `node:test` suite against the real,
+  unmodified exports (a fake in-memory Supabase client + `node:test`'s
+  `mock.module` for `lib/supabaseAdmin.js`, a captured `global.fetch`
+  standing in for the real Resend API, `withFixedNow()`-style `Date`
+  overrides for deterministic day/schedule checks — no live Supabase/
+  Resend access per rule #11): `scheduledReminderDay()`'s three cases
+  (plain weekday, Saturday, Sunday 1st); `priorMonthKeyOf()`'s normal case
+  and the January rollover; `buildEmailHtml()`'s new `buttons` rendering
+  AND its unchanged no-`buttons` regression case; a full end-to-end run of
+  the real, unmodified handler (APP_URL deliberately set to the real
+  reported-bug value, `.../user`) confirming the actual sent email never
+  contains `/user/api/backlinks-confirm`, DOES resolve to the site root,
+  carries two distinct styled-button confirm links, and that one of those
+  tokens verifies end-to-end through the real, unmodified
+  `verifyBacklinksToken()`/`api/backlinks-confirm.js` with the correct
+  tracked month; a full end-to-end "weekend 1st" run (August 2026, 1st is
+  a Saturday) proving no send on the 1st or 2nd and the real send landing
+  on the 3rd; a regression run of `api/backlinks-confirm.js`'s own GET-
+  never-writes/POST-records-once behavior against the new token shape.
+  Confirmed via `git stash` that 9 of these 11 checks fail against the
+  pre-fix code (the 2 pure-`buildEmailHtml`-regression checks pass on
+  both sides, as expected — that behavior was never broken). `node
+  --input-type=module --check` (rule #9) clean on both touched files. No
+  HTML touched, so no div-balance check applies. Held per rule #10 — this
+  still touches the same brand-new automated write path flagged under
+  rule #13 when the feature was first added (2026-11-16); still needs the
+  same post-merge read-only Supabase integrity check once a real month's
+  cycle runs in production (confirming `ops_settings` rows key off the
+  correct prior month, and that the live confirm links actually resolve
+  — not just "app loads").
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
