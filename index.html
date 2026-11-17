@@ -2678,8 +2678,17 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div id="admin-ptoLedger" class="page-section">
       <div style="margin-bottom:18px;">
         <div style="font-size:20px;font-weight:800;color:var(--text-dark);">📒 Time Off Ledger</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">6 sick days + 15 vacation days per year, starting the day probation ends. Entries are permanent — corrections are made with a new offsetting entry, never by editing or deleting the original.</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;" id="ptoLedgerCaption">6 sick days + 15 vacation days per year, starting the day probation ends. Entries are permanent — corrections are made with a new offsetting entry, never by editing or deleting the original.</div>
       </div>
+
+      <!-- US paid-holiday calendar (2026-11-17) — read-only, computed on
+           the fly (_renderUsHolidaysCard()), never written to ops_time_off_
+           ledger. Applies to the whole US team identically (the SOP's 7
+           holidays aren't a per-person allowance), so this is one shared
+           list, not one row per employee. Clearly separate from the real
+           ledger history below it, and explicitly labeled as not deducted
+           from vacation/sick. -->
+      <div class="card" style="margin-bottom:18px;" id="usHolidaysCard"></div>
 
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header"><div class="card-title">Log Time Off</div></div>
@@ -8565,15 +8574,22 @@ function _myRoadmapCalendarHtml(items){
     const isToday = dateStr===todayStr;
     const dow = new Date(y,m,d).getDay();
     const isWeekend = dow===0 || dow===6;
+    // US paid-holiday marking (2026-11-17) — read-only, derived on the fly
+    // from usHolidaysForYear() (never stored). Labeled explicitly "(US)"
+    // since this calendar has no per-viewer team scoping of its own — an
+    // Egypt-team admin viewing this same calendar should never read a US
+    // holiday as a day off for everyone.
+    const holiday = isUsHolidayDate(dateStr);
     // Cell/chip tokens (Option A, 2026-09-11) — pure restyle, the isToday/
     // isWeekend/overdue classification above is untouched. Weekend cells
     // deliberately keep their pre-existing var(--bg2) background/border,
     // per instruction to leave them as-is.
-    const cellBg     = isToday ? 'background:#FFFBE9;' : (isWeekend ? 'background:var(--bg2);' : 'background:#FFFEF8;');
-    const cellBorder = isToday ? '#F0D98A' : (isWeekend ? 'var(--border)' : '#EFE3BA');
+    const cellBg     = isToday ? 'background:#FFFBE9;' : (holiday ? 'background:rgba(45,107,182,.06);' : (isWeekend ? 'background:var(--bg2);' : 'background:#FFFEF8;'));
+    const cellBorder = isToday ? '#F0D98A' : (holiday ? 'var(--btn)' : (isWeekend ? 'var(--border)' : '#EFE3BA'));
     const dateColor  = isToday ? 'color:#C98A12;font-weight:700;' : 'color:var(--text-light);';
-    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid ${cellBorder};border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid ${cellBorder};border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday&&!holiday?'opacity:.7;':''}">
       <div style="font-size:11px;margin-bottom:2px;${dateColor}">${d}${isToday?' · Today':''}</div>
+      ${holiday?`<div style="font-size:10px;font-weight:700;color:var(--btn);margin-bottom:2px;">🇺🇸 ${escHtmlAdmin(holiday.name)} (US holiday)</div>`:''}
       ${dayItems.map(i=>`<div style="background:#FFFFFF;border-radius:4px;font-size:11px;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:4px 6px;margin-bottom:2px;border-left:3px solid ${dateStr<todayStr?'#E5484D':'#3667B0'};color:${dateStr<todayStr?'#B23036':'#22344A'};white-space:normal;overflow-wrap:anywhere;">${escHtmlAdmin(i.name)}</div>`).join('')}
     </div>`;
   }
@@ -14474,10 +14490,47 @@ function logTimeOffEntry(){
   cloudAutoSync();
 }
 
+// Current admin's own team, for the team-aware ledger caption below — a
+// fresh lookup by email every call (never cached), same "re-derive, don't
+// trust a stale closure" discipline as every other admin-identity lookup
+// in this file.
+function _myAdminTeam(){
+  const email = (currentAdminInfo?.email||'').toLowerCase();
+  const rec = (dbGet(DB_KEYS.admins)||[]).find(a=>(a.email||'').toLowerCase()===email);
+  return rec?.team || '';
+}
+
+// US paid-holiday card (2026-11-17) — read-only, computed fresh every
+// render from usHolidaysForYear(); never reads/writes ops_time_off_ledger.
+// One shared list (not per-employee) since the SOP's 7 holidays apply
+// identically to the whole US team.
+function _renderUsHolidaysCard(){
+  const el = document.getElementById('usHolidaysCard');
+  if(!el) return;
+  const year = new Date().getFullYear();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const holidays = usHolidaysForYear(year);
+  el.innerHTML = `
+    <div class="card-header"><div class="card-title">🇺🇸 ${year} US Paid Holidays</div></div>
+    <div class="card-body">
+      <div style="font-size:12px;color:var(--text-light);margin-bottom:10px;">US team only — computed from the US Time Off SOP's 7 paid holidays, not stored in the ledger and not deducted from the 9 vacation / 5 sick days above.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
+        ${holidays.map(h=>`<div style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;${h.date<todayStr?'opacity:.55;':''}">
+          <div style="font-size:12px;font-weight:700;color:var(--text-dark);">🎉 ${escHtml(h.name)}</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:2px;">${escHtml(h.date)}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+}
+
 function renderAdminTimeOffLedger(){
   _populateTimeOffEmployeeSelect();
   _tolSetMode(_tolMode);
   _tolRenderSpecificDaysList();
+
+  const captionEl = document.getElementById('ptoLedgerCaption');
+  if(captionEl) captionEl.textContent = _timeOffCaptionFor({ team: _myAdminTeam() });
+  _renderUsHolidaysCard();
 
   const roster = _timeOffRoster().slice().sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   const balGrid = document.getElementById('tolBalanceGrid');
@@ -15891,6 +15944,66 @@ const TIME_OFF_ENTITLEMENT = { sick: 6, vacation: 15 };
 const TIME_OFF_ENTITLEMENT_US = { sick: 5, vacation: 9 };
 function _timeOffEntitlementFor(person){
   return (person && person.team==='US') ? TIME_OFF_ENTITLEMENT_US : TIME_OFF_ENTITLEMENT;
+}
+
+// US paid-holiday calendar (2026-11-17) — the US Time Off SOP's 7 paid
+// holidays, computed on the fly per calendar year. Deliberately NOT a
+// ledger write and NOT a load-time mutation (CLAUDE.md rule #2/#6) —
+// every one of these is derived fresh, every call, never stored anywhere.
+// Hand-duplicated in user.html and api/cron-overdue-check.js (rule #3).
+// Floating-date math is plain LOCAL calendar arithmetic (this file's own
+// existing convention for date math, e.g. _calcBusinessDays() above —
+// never new Date('YYYY-MM-DD'), which parses as UTC and can misclassify
+// the weekday in a negative-UTC-offset timezone).
+//
+// Observed-date handling (flagged per rule #7, not guessed): when a FIXED
+// holiday (New Year's/Independence Day/Christmas) falls on a weekend
+// (e.g. Jul 4, 2026 is a Saturday), the US Time Off SOP does not specify
+// an observed-Friday/Monday rule — this uses the literal calendar date,
+// not an invented observed day. Flagged to the user, not assumed.
+function _nthWeekdayOfMonth(year, month, weekday, n){
+  const firstWeekday = new Date(year, month-1, 1).getDay();
+  const offset = (weekday - firstWeekday + 7) % 7;
+  return 1 + offset + (n-1)*7;
+}
+function _lastWeekdayOfMonth(year, month, weekday){
+  const lastDay = new Date(year, month, 0).getDate();
+  const lastDow = new Date(year, month-1, lastDay).getDay();
+  return lastDay - ((lastDow - weekday + 7) % 7);
+}
+function _usHolidayDs(y,m,d){ return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+function usHolidaysForYear(year){
+  const memorialDay = _lastWeekdayOfMonth(year, 5, 1); // last Monday in May
+  const laborDay = _nthWeekdayOfMonth(year, 9, 1, 1); // 1st Monday in September
+  const thanksgiving = _nthWeekdayOfMonth(year, 11, 4, 4); // 4th Thursday in November
+  return [
+    { date: _usHolidayDs(year,1,1), name: "New Year's Day" },
+    { date: _usHolidayDs(year,5,memorialDay), name: 'Memorial Day' },
+    { date: _usHolidayDs(year,7,4), name: 'Independence Day' },
+    { date: _usHolidayDs(year,9,laborDay), name: 'Labor Day' },
+    { date: _usHolidayDs(year,11,thanksgiving), name: 'Thanksgiving' },
+    { date: _usHolidayDs(year,11,thanksgiving+1), name: 'Day After Thanksgiving' },
+    { date: _usHolidayDs(year,12,25), name: 'Christmas' },
+  ];
+}
+// Fail-open: a bad date never throws out of this, it just reads as "not a
+// holiday" — matters most at the cron's own copy of this function, but
+// kept identical here for consistency.
+function isUsHolidayDate(dateStr){
+  try {
+    const year = Number(String(dateStr||'').slice(0,4));
+    if(!year || !dateStr) return null;
+    return usHolidaysForYear(year).find(h=>h.date===dateStr) || null;
+  } catch { return null; }
+}
+// Team-aware entitlement caption, shared by the Admin Time Off Ledger
+// header (2026-11-17 fix — was a hardcoded "6 sick + 15 vacation", never
+// reflecting a US-team viewer's real 9/5/7 entitlement). Pulls from
+// TIME_OFF_ENTITLEMENT/TIME_OFF_ENTITLEMENT_US directly, never hardcoded.
+function _timeOffCaptionFor(person){
+  const ent = _timeOffEntitlementFor(person);
+  const holidayPart = (person && person.team==='US') ? ` + ${usHolidaysForYear(new Date().getFullYear()).length} paid holidays` : '';
+  return `${ent.vacation} vacation + ${ent.sick} sick${holidayPart} days per year, starting the day probation ends. Entries are permanent — corrections are made with a new offsetting entry, never by editing or deleting the original.`;
 }
 
 // Every admin AND every regular user automatically gets entitlement tracking —

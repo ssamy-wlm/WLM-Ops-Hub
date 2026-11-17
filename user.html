@@ -4213,16 +4213,23 @@ function _myRoadmapCalendarHtml(items){
     const isToday = dateStr===todayStr;
     const dow = new Date(y,m,d).getDay();
     const isWeekend = dow===0 || dow===6;
+    // US paid-holiday marking (2026-11-17) — read-only, derived on the fly
+    // from usHolidaysForYear() (never stored). Labeled explicitly "(US)"
+    // since this calendar has no per-viewer team scoping of its own — an
+    // Egypt-team employee viewing this same calendar should never read a
+    // US holiday as a day off for everyone.
+    const holiday = isUsHolidayDate(dateStr);
     // Cell/chip tokens (Option A, 2026-09-11) — pure restyle, own copy of
     // index.html's identical change (zero-shared-code rule); the isToday/
     // isWeekend/overdue classification above is untouched. Weekend cells
     // deliberately keep their pre-existing var(--cream-dark) border and
     // var(--bg2) background, per instruction to leave them as-is.
-    const cellBg     = isToday ? 'background:#FFFBE9;' : (isWeekend ? 'background:var(--bg2);' : 'background:#FFFEF8;');
-    const cellBorder = isToday ? '#F0D98A' : (isWeekend ? 'var(--cream-dark)' : '#EFE3BA');
+    const cellBg     = isToday ? 'background:#FFFBE9;' : (holiday ? 'background:rgba(45,107,182,.06);' : (isWeekend ? 'background:var(--bg2);' : 'background:#FFFEF8;'));
+    const cellBorder = isToday ? '#F0D98A' : (holiday ? 'var(--btn)' : (isWeekend ? 'var(--cream-dark)' : '#EFE3BA'));
     const dateColor  = isToday ? 'color:#C98A12;font-weight:700;' : 'color:var(--text-light);';
-    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid ${cellBorder};border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday?'opacity:.7;':''}">
+    grid += `<div style="min-height:${isWeekend&&!isToday?'32px':'70px'};min-width:0;border:1px solid ${cellBorder};border-radius:6px;padding:4px;${cellBg}${isWeekend&&!isToday&&!holiday?'opacity:.7;':''}">
       <div style="font-size:11px;margin-bottom:2px;${dateColor}">${d}${isToday?' · Today':''}</div>
+      ${holiday?`<div style="font-size:10px;font-weight:700;color:var(--btn);margin-bottom:2px;">🇺🇸 ${escHtmlUser(holiday.name)} (US holiday)</div>`:''}
       ${dayItems.map(i=>`<div style="background:#FFFFFF;border-radius:4px;font-size:11px;box-shadow:0 1px 1px rgba(0,0,0,.04);padding:4px 6px;margin-bottom:2px;border-left:3px solid ${dateStr<todayStr?'#E5484D':'#3667B0'};color:${dateStr<todayStr?'#B23036':'#22344A'};white-space:normal;overflow-wrap:anywhere;">${escHtmlUser(i.name)}</div>`).join('')}
     </div>`;
   }
@@ -5908,6 +5915,51 @@ function _timeOffEntitlementFor(person){
   return (person && person.team==='US') ? TIME_OFF_ENTITLEMENT_US : TIME_OFF_ENTITLEMENT;
 }
 
+// US paid-holiday calendar (2026-11-17) — own hand-duplicated copy of
+// index.html's identical functions (CLAUDE.md rule #3 — zero shared code
+// across the three frontends/backend); see that file's own comment for
+// the full rationale (computed on the fly, never a ledger write/load-time
+// mutation; observed-date handling flagged, not guessed, per rule #7).
+function _nthWeekdayOfMonth(year, month, weekday, n){
+  const firstWeekday = new Date(year, month-1, 1).getDay();
+  const offset = (weekday - firstWeekday + 7) % 7;
+  return 1 + offset + (n-1)*7;
+}
+function _lastWeekdayOfMonth(year, month, weekday){
+  const lastDay = new Date(year, month, 0).getDate();
+  const lastDow = new Date(year, month-1, lastDay).getDay();
+  return lastDay - ((lastDow - weekday + 7) % 7);
+}
+function _usHolidayDs(y,m,d){ return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+function usHolidaysForYear(year){
+  const memorialDay = _lastWeekdayOfMonth(year, 5, 1); // last Monday in May
+  const laborDay = _nthWeekdayOfMonth(year, 9, 1, 1); // 1st Monday in September
+  const thanksgiving = _nthWeekdayOfMonth(year, 11, 4, 4); // 4th Thursday in November
+  return [
+    { date: _usHolidayDs(year,1,1), name: "New Year's Day" },
+    { date: _usHolidayDs(year,5,memorialDay), name: 'Memorial Day' },
+    { date: _usHolidayDs(year,7,4), name: 'Independence Day' },
+    { date: _usHolidayDs(year,9,laborDay), name: 'Labor Day' },
+    { date: _usHolidayDs(year,11,thanksgiving), name: 'Thanksgiving' },
+    { date: _usHolidayDs(year,11,thanksgiving+1), name: 'Day After Thanksgiving' },
+    { date: _usHolidayDs(year,12,25), name: 'Christmas' },
+  ];
+}
+function isUsHolidayDate(dateStr){
+  try {
+    const year = Number(String(dateStr||'').slice(0,4));
+    if(!year || !dateStr) return null;
+    return usHolidaysForYear(year).find(h=>h.date===dateStr) || null;
+  } catch { return null; }
+}
+// Team-aware entitlement caption (2026-11-17) — pulls from
+// TIME_OFF_ENTITLEMENT/TIME_OFF_ENTITLEMENT_US directly, never hardcoded.
+function _timeOffCaptionFor(person){
+  const ent = _timeOffEntitlementFor(person);
+  const holidayPart = (person && person.team==='US') ? ` + ${usHolidaysForYear(new Date().getFullYear()).length} paid holidays` : '';
+  return `${ent.vacation} vacation + ${ent.sick} sick${holidayPart} days per year.`;
+}
+
 function _isOnProbation(u){
   if(!u || !u.probationEnd) return false;
   const today = new Date().toISOString().slice(0,10);
@@ -5963,15 +6015,33 @@ function renderMyTimeOffLedger(){
           <div style="font-size:24px;font-weight:800;color:var(--text-dark);">${bal.vacation.remaining}/${bal.vacation.entitlement}</div>
           <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-top:4px;">🏖 Vacation Days Remaining</div>
         </div>
-      </div>${probNote}`;
+      </div>
+      <div style="font-size:12px;color:var(--text-light);margin-top:10px;">${_timeOffCaptionFor(currentUser)}</div>
+      ${probNote}`;
   }
   const list = document.getElementById('myTimeOffLedgerList');
   if(list){
     const entries = bal.allEntries.slice().sort((a,b)=>new Date(b.loggedAt)-new Date(a.loggedAt));
+    // US paid-holiday card (2026-11-17) — read-only, computed fresh from
+    // usHolidaysForYear(); never read/written against ops_time_off_ledger,
+    // and never deducted from the entitlement above. US team only — an
+    // Egypt-team viewer sees nothing here, same as before this feature.
+    const holidaysHtml = (currentUser?.team==='US') ? (() => {
+      const year = new Date().getFullYear();
+      const todayStr = new Date().toISOString().slice(0,10);
+      const holidays = usHolidaysForYear(year);
+      return `<div style="padding:12px 14px;margin-bottom:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);">
+        <div style="font-size:12px;font-weight:700;color:var(--text-dark);margin-bottom:6px;">🇺🇸 ${year} US Paid Holidays <span style="font-weight:400;color:var(--text-light);">(computed — not deducted from the balance above)</span></div>
+        ${holidays.map(h=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;padding:4px 0;${h.date<todayStr?'opacity:.55;':''}">
+          <span style="color:var(--text-dark);">🎉 ${escHtmlUser(h.name)}</span>
+          <span style="color:var(--text-light);">${escHtmlUser(h.date)}</span>
+        </div>`).join('')}
+      </div>`;
+    })() : '';
     if(!entries.length){
-      list.innerHTML = '<div style="font-size:13px;color:var(--text-light);">No time off logged yet.</div>';
+      list.innerHTML = holidaysHtml + '<div style="font-size:13px;color:var(--text-light);">No time off logged yet.</div>';
     } else {
-      list.innerHTML = entries.map(e=>{
+      list.innerHTML = holidaysHtml + entries.map(e=>{
         const typeColor = e.type==='sick' ? 'var(--red)' : 'var(--btn)';
         const typeBg    = e.type==='sick' ? 'rgba(224,85,85,.1)' : 'rgba(45,107,182,.1)';
         const dateLabel = e.daysManuallySet

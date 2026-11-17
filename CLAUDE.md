@@ -2995,6 +2995,123 @@ Don't relitigate them without an explicit decision from the user.
   cycle runs in production (confirming `ops_settings` rows key off the
   correct prior month, and that the live confirm links actually resolve
   — not just "app loads").
+- US paid-holiday calendar added — suppresses alerts, shown on the
+  calendar and in the ledger, US team only (2026-11-17 — held for preview
+  approval, `api/cron-overdue-check.js`+`index.html`+`user.html`, no new
+  table/migration, no load-time data mutation): the US Time Off SOP's 7
+  paid holidays weren't modeled anywhere. Added a shared, COMPUTED
+  calendar — hand-duplicated per rule #3 (no shared module exists) as
+  `usHolidaysForYear(year)`/`isUsHolidayDate(dateStr)` (+
+  `anyUsHolidayInRange()` in the cron only) in all three files — nothing
+  is ever written to a ledger/table; every date is derived fresh on every
+  call. Floating-date math (`_nthWeekdayOfMonth`/`_lastWeekdayOfMonth`) is
+  plain calendar arithmetic, confirmed for 2026: New Year's Day Jan 1,
+  Memorial Day May 25, Independence Day Jul 4, Labor Day Sep 7,
+  Thanksgiving Nov 26, Day After Thanksgiving Nov 27, Christmas Dec 25 —
+  the Nov 26/27 pair matches the ticket's own stated Thanksgiving dates
+  exactly, confirming the calculator. **Observed-date handling flagged,
+  not guessed (rule #7):** when a fixed holiday lands on a weekend (Jul 4,
+  2026 IS a Saturday, confirmed via `Date.UTC(...).getUTCDay()===6`), the
+  US Time Off SOP doesn't specify an observed-Friday/Monday rule — this
+  uses the literal calendar date, no invented observed day; surfaced here
+  rather than assumed, revisit if the SOP is ever updated to say
+  otherwise.
+  **(1) Alert suppression** (`api/cron-overdue-check.js`): extended at
+  exactly the 3 points the ticket named, each scoped strictly to
+  `team==='US'` (Egypt never touched) and fail-open (every holiday check
+  is wrapped so a bad date computation reads as "not a holiday" rather
+  than throwing — it can never silently suppress a REAL alert for
+  everyone): the twice-daily overdue self-nag (`considerForNag`, checked
+  against `nToday`, this block's own already-computed run date); the
+  Tier-3 "Inactive since…" flag (checked against the WHOLE look-back
+  window `{cutoffDateStr, today2}` via `anyUsHolidayInRange()` — same
+  reasoning the existing leave-window check already uses: a holiday
+  anywhere in that window legitimately explains no login/no completed
+  work for the whole stretch, not just a single day); the weekday-morning
+  daily-task reminder (checked against `cairo.dateStr`, this block's own
+  already-computed run date — confirmed by direct reading that 07:00 UTC
+  is already past the US-Eastern midnight boundary, so the UTC/Cairo
+  calendar date and the real US calendar date always agree at this send
+  time, no second "US local date" needed). Deliberately NOT extended to
+  Tier-2 "Manager/admin overdue (5+)" escalation or the owner/focus
+  digests — the ticket named exactly 3 behaviors, and scope-creeping into
+  the others wasn't asked for; flagged here, not silently done.
+  **(2) Overview calendar**: both portals' "My Roadmap" month-grid
+  calendar (`_myRoadmapCalendarHtml()`, embedded in index.html's Overview
+  page and user.html's own My Roadmap) now marks a US-holiday date with a
+  highlighted cell + an explicit "🇺🇸 `<Holiday Name>` (US holiday)" label
+  — labeled "(US holiday)" specifically (not just colored) since this
+  calendar has no per-viewer team scoping of its own, so an Egypt-team
+  admin/employee viewing the same calendar is never left to infer it's a
+  day off for everyone. Read-only, computed on the fly from
+  `isUsHolidayDate()` — nothing stored.
+  **(3) Time Off Ledger**: one shared, read-only "🇺🇸 `<year>` US Paid
+  Holidays" card (not one row per employee — the SOP's 7 holidays apply
+  identically to the whole US team, not as a per-person allowance),
+  explicitly captioned "not stored in the ledger and not deducted from
+  the 9 vacation / 5 sick days" — computed fresh every render from
+  `usHolidaysForYear()`, never reading or writing `ops_time_off_ledger`.
+  `index.html`'s Admin Time Off Ledger page gets this unconditionally
+  (`#usHolidaysCard`, filled by `_renderUsHolidaysCard()`, since that page
+  manages the whole mixed-team roster); `user.html`'s own "My Requests
+  History" list shows it only when `currentUser.team==='US'` (US team
+  only, per the ticket) — an Egypt-team employee sees nothing new there.
+  **(4) Team-aware caption**: the Admin Ledger's header caption (was a
+  hardcoded "6 sick days + 15 vacation days per year," never reflecting a
+  US-team viewer's real 9/5 entitlement) and a new caption line under
+  user.html's own balance box are both now computed by a shared
+  `_timeOffCaptionFor(person)` helper (hand-duplicated per rule #3),
+  pulling from `TIME_OFF_ENTITLEMENT`/`TIME_OFF_ENTITLEMENT_US` directly —
+  never hardcoded. A US viewer reads "9 vacation + 5 sick + 7 paid
+  holidays days per year"; Egypt reads "15 vacation + 6 sick days per
+  year" with no holiday mention at all. In `index.html` "the viewer" is
+  the currently signed-in admin (`_myAdminTeam()`, a fresh lookup by
+  email every render, never cached) — the ADMIN'S own team, since that
+  page's header addresses whoever's looking at it, not any one employee
+  in the roster below it.
+  Verified with a new 5-check `node:test` suite against the real,
+  unmodified cron exports (no live Supabase/Resend access per rule #11 —
+  a fake in-memory Supabase client + `node:test`'s `mock.module` for
+  `lib/supabaseAdmin.js`, `RESEND_API_KEY` deliberately left unset so
+  `insertNotifications()`'s own email-send branch never engages, no mock
+  needed there): the full 2026 holiday list including the exact Nov 26/27
+  Thanksgiving pair and the literal unobserved Jul 4 Saturday; the
+  calculator also produces 7 valid dates for 2027 (year-independence);
+  `isUsHolidayDate()`/`anyUsHolidayInRange()` fail open on blank/garbage
+  input; a full end-to-end run of the real, unmodified handler at a fixed
+  `Date` of Nov 26 2026 19:00 UTC (one of the two self-nag hours) with a
+  US-team and an Egypt-team person both carrying 5 overdue tasks each —
+  confirms exactly ONE nag notification is inserted, to the Egypt person
+  only; a second end-to-end run one day earlier (Nov 25, a non-holiday
+  weekday) confirms the SAME US-team person IS nagged then — proving the
+  suppression is genuinely date-specific, not a blanket "US team never
+  nagged" bug. Confirmed via `git stash` that 4 of these 5 checks fail
+  against the pre-fix code (the calculator/predicate exports don't exist
+  yet, and the real Nov-26 nag-suppression case fails exactly as
+  reported) — the 5th (the non-holiday regression case) necessarily
+  already passed either way, since nothing about that date path changed.
+  Plus a new Playwright suite against the real, live-served `index.html`/
+  `user.html`: the Admin Ledger caption reads the full "9 vacation + 5
+  sick + 7 paid holidays" for a US-team viewer and correctly reverts to
+  "15 vacation + 6 sick" (no holiday mention) for an Egypt-team viewer on
+  the SAME page with no reload; the `#usHolidaysCard` lists all 7 2026
+  holidays including Thanksgiving; the My Roadmap calendar, paged to the
+  real Nov-26/27-Thanksgiving year, shows the "(US holiday)" label on
+  both cells; user.html's own balance box shows the matching US caption
+  and its ledger list shows the virtual holiday card for a US-team
+  employee, while an Egypt-team employee sees neither the holiday
+  mention in the caption nor the card at all; zero JS errors. Confirmed
+  via `git stash` that this exact suite fails against the pre-fix code
+  (`#ptoLedgerCaption`/`#usHolidaysCard` don't exist yet — a `null`
+  `textContent` read throws) and passes clean after. `node --input-type=
+  module --check` (rule #9) clean on `api/cron-overdue-check.js`; inline-
+  JS syntax clean on both HTML files; div-balance unchanged vs. baseline
+  on both (`index.html` delta -2, `user.html` delta -1 — the one new
+  static `<div id="usHolidaysCard"></div>` is self-closing on one line,
+  net zero imbalance; every other change is pure JS). Held per rule #10
+  — touches `api/cron-overdue-check.js`'s live suppression logic, even
+  though every change is additive (narrower suppression scoped to
+  `team==='US'` only) and no data write/schema change is involved.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`

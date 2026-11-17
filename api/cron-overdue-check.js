@@ -96,6 +96,71 @@ function cairoLocalParts(now) {
   return { dateStr: `${parts.year}-${parts.month}-${parts.day}`, hour, weekday: parts.weekday };
 }
 
+// US paid-holiday calendar (2026-11-17) — the US Time Off SOP's 7 paid
+// holidays, computed on the fly per calendar year (never written to any
+// table — rule #2/CLAUDE.md, no load-time or background data mutation).
+// Hand-duplicated in index.html/user.html too (rule #3 — zero shared code
+// across the three frontends/backend). Floating-date math is pure UTC
+// calendar arithmetic — a calendar date's weekday doesn't depend on time
+// zone, so Date.UTC() is exact here, same convention already established
+// by cron-backlinks-reminder.js's scheduledReminderDay().
+//
+// Observed-date handling (flagged per rule #7, not guessed): when a FIXED
+// holiday (New Year's/Independence Day/Christmas) falls on a weekend
+// (e.g. Jul 4, 2026 is a Saturday), the US Time Off SOP does not specify
+// an observed-Friday/Monday rule — this deliberately uses the literal
+// calendar date, not an invented observed day. Flagged to the user rather
+// than assumed; revisit if the SOP is ever updated to say otherwise.
+function _nthWeekdayOfMonth(year, month, weekday, n) {
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const offset = (weekday - firstWeekday + 7) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+function _lastWeekdayOfMonth(year, month, weekday) {
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const lastDow = new Date(Date.UTC(year, month - 1, lastDay)).getUTCDay();
+  return lastDay - ((lastDow - weekday + 7) % 7);
+}
+function _usDs(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+export function usHolidaysForYear(year) {
+  const memorialDay = _lastWeekdayOfMonth(year, 5, 1); // last Monday in May
+  const laborDay = _nthWeekdayOfMonth(year, 9, 1, 1); // 1st Monday in September
+  const thanksgiving = _nthWeekdayOfMonth(year, 11, 4, 4); // 4th Thursday in November
+  return [
+    { date: _usDs(year, 1, 1), name: "New Year's Day" },
+    { date: _usDs(year, 5, memorialDay), name: 'Memorial Day' },
+    { date: _usDs(year, 7, 4), name: 'Independence Day' },
+    { date: _usDs(year, 9, laborDay), name: 'Labor Day' },
+    { date: _usDs(year, 11, thanksgiving), name: 'Thanksgiving' },
+    { date: _usDs(year, 11, thanksgiving + 1), name: 'Day After Thanksgiving' },
+    { date: _usDs(year, 12, 25), name: 'Christmas' },
+  ];
+}
+// Fail-open by design (per the ticket's own instruction): any error in the
+// date math returns null/false rather than throwing — a bug here must
+// never be able to crash a suppression loop and silently drop a REAL
+// alert for everyone (US and Egypt alike). Scoped to team==='US' at every
+// call site, never applied unconditionally.
+export function isUsHolidayDate(dateStr) {
+  try {
+    const year = Number(String(dateStr || '').slice(0, 4));
+    if (!year || !dateStr) return null;
+    return usHolidaysForYear(year).find(h => h.date === dateStr) || null;
+  } catch { return null; }
+}
+export function anyUsHolidayInRange(startStr, endStr) {
+  try {
+    if (!startStr || !endStr) return false;
+    let d = new Date(`${startStr}T00:00:00Z`);
+    const end = new Date(`${endStr}T00:00:00Z`);
+    while (d <= end) {
+      if (isUsHolidayDate(d.toISOString().slice(0, 10))) return true;
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return false;
+  } catch { return false; }
+}
+
 function isInactiveService(s) { return s.status === 'cancelled' || s.status === 'archived'; }
 // Shared "is this client active" rule (2026-10-05) — the same literal
 // `status==='active'` equality every UI surface in this codebase already
@@ -269,6 +334,11 @@ export default async function handler(req, res) {
             for (const u of dtrRecipients) {
               if (isWithinQuietHours(u.team, new Date())) { suppressed++; continue; }
               if (onLeaveTodayDtr.has(canonicalId(u.id, dtrCanonMap))) { suppressed++; continue; }
+              // US paid-holiday suppression (2026-11-17) — scoped strictly
+              // to team==='US'; Egypt team is never affected. cairo.dateStr
+              // is this block's own already-computed run-day date (same
+              // date the leave-window check above already uses).
+              if (u.team === 'US' && isUsHolidayDate(cairo.dateStr)) { suppressed++; continue; }
               try {
                 const html = buildEmailHtml({
                   name: u.name,
@@ -369,6 +439,10 @@ export default async function handler(req, res) {
           const count = nOverdueCounts.get(p.id) || 0;
           if (count < OVERDUE_ESCALATION_THRESHOLD) return;
           if (onLeaveToday.has(canonicalId(p.id, nCanonMap))) return;
+          // US paid-holiday suppression (2026-11-17) — scoped strictly to
+          // team==='US'; Egypt team is never affected. nToday is this
+          // block's own already-computed run-day date.
+          if (p.team === 'US' && isUsHolidayDate(nToday)) return;
           if (!p.email) return;
           nagRows.push({
             type: 'overdueNag', recipientId: p.id, recipientKind: kind,
@@ -894,6 +968,13 @@ export default async function handler(req, res) {
         if (canonMap.has(p.id)) return;
         if (activeSince.has(p.id) || completedSince.has(p.id)) return;
         if (onLeaveWindow.has(canonicalId(p.id, canonMap))) return;
+        // US paid-holiday suppression (2026-11-17) — scoped strictly to
+        // team==='US'; Egypt team is never affected. Checks the WHOLE
+        // look-back window {cutoffDateStr, today2}, same reasoning as the
+        // leave-window check above: a US holiday anywhere in that window
+        // legitimately explains no login/no completed work for that
+        // stretch, not just a single day.
+        if (p.team === 'US' && anyUsHolidayInRange(cutoffDateStr, today2)) return;
         inactivePeople.push(p.name || p.id);
       });
 
