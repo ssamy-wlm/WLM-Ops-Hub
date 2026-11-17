@@ -14511,7 +14511,7 @@ function _renderUsHolidaysCard(){
   const todayStr = new Date().toISOString().slice(0,10);
   const holidays = usHolidaysForYear(year);
   el.innerHTML = `
-    <div class="card-header"><div class="card-title">🇺🇸 ${year} US Paid Holidays</div></div>
+    <div class="card-header"><div class="card-title">${year} US Paid Holidays</div></div>
     <div class="card-body">
       <div style="font-size:12px;color:var(--text-light);margin-bottom:10px;">US team only — computed from the US Time Off SOP's 7 paid holidays, not stored in the ledger and not deducted from the 9 vacation / 5 sick days above.</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">

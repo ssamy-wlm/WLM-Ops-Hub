@@ -3112,6 +3112,90 @@ Don't relitigate them without an explicit decision from the user.
   — touches `api/cron-overdue-check.js`'s live suppression logic, even
   though every change is additive (narrower suppression scoped to
   `team==='US'` only) and no data write/schema change is involved.
+- PR #499's reported "ledger shows empty/full balances" root-caused to a
+  pre-existing `sw.js` defect, NOT PR #499 itself — PR #499 was wrongly
+  suspected and rolled back in production (2026-11-17 — held for preview
+  approval, `sw.js` only, no HTML/JS app-logic touched): reported live —
+  after #499 deployed, the admin Time Off Ledger showed full balances
+  (0 used) and an empty history list; a normal browser refresh stayed
+  broken, only a hard refresh fixed it; production was rolled back to
+  #498. Investigated both of the ticket's own named hypotheses rather
+  than picking one on the ticket's own framing alone (rule #7):
+  **Hypothesis A (a runtime throw in `renderAdminTimeOffLedger`/
+  `renderMyTimeOffLedger`/`_renderUsHolidaysCard`/`usHolidaysForYear`)
+  — ruled out.** Re-ran both of #499's own verification suites
+  unmodified against the real functions on `main` (post-#499) with no
+  changes needed: the 5-check `node:test` suite (holiday calculator +
+  the real end-to-end cron handler) and the Playwright UI suite (the
+  real `renderAdminTimeOffLedger()`/`renderMyTimeOffLedger()` against
+  fixture ledger data) both re-ran clean — the caption, the holidays
+  card, and the real balance/history rendering all work correctly
+  against realistic data, with no throw anywhere in that call chain.
+  Also confirmed directly: `_myAdminTeam()`/`_timeOffCaptionFor()`/
+  `_renderUsHolidaysCard()`/`usHolidaysForYear()` are all pure,
+  defensively-guarded reads (`||[]`/`?.`/early-return-if-element-
+  missing) with no code path that throws on a missing/malformed admin
+  or ledger record, and every new identifier (`usHolidaysForYear`,
+  `isUsHolidayDate`, `_nthWeekdayOfMonth`, `_lastWeekdayOfMonth`,
+  `_usHolidayDs`, `_myAdminTeam`, `_renderUsHolidaysCard`,
+  `_timeOffCaptionFor`) is declared exactly once in `index.html` — no
+  duplicate-declaration class of bug (the PR #467 precedent) either.
+  **Hypothesis B (a stale-asset issue from the PWA service worker) —
+  CONFIRMED, and it's a real, independently-reproducible, pre-existing
+  defect `sw.js` has carried since the original PWA PR (#480) — `git log
+  --follow -- sw.js` confirms PR #499 never touched this file at all, so
+  this bug was always there, #499 just happened to be the deploy that
+  exposed it live.** `sw.js`'s navigation handler was already correctly
+  network-first (`fetch(req).then(res => {cache.put...}); return res`)
+  — but a bare `fetch(req)` uses the request's own DEFAULT cache mode,
+  which asks neither the browser's own HTTP cache NOR any cache sitting
+  between the browser and origin (a CDN edge, which is exactly what sits
+  in front of a Vercel deployment) to bypass itself. A plain reload can
+  then keep getting an edge's last-cached copy of the app shell
+  indefinitely after a deploy, with this "network-first" branch never
+  actually reaching genuinely fresh content — only a hard refresh (whose
+  browser-generated request carries its own `Cache-Control: no-cache`)
+  breaks through, exactly matching the reported asymmetry. Ruled out one
+  candidate mechanism directly before landing on this one (rule #7, not
+  guessed): a plain Chromium browser-disk-HTTP-cache model (a bare Node
+  server, `Cache-Control: max-age=3600`, no CDN layer) did NOT reproduce
+  staleness on a plain reload — Chromium's own navigation-reload fetch
+  already revalidates against a bare origin regardless of the SW's own
+  cache option, so the browser's OWN disk cache isn't the mechanism on
+  its own; a CDN-edge-shaped model (a request without a no-cache
+  directive gets the edge's last-cached snapshot; one with it gets the
+  true current content and refreshes the edge) DID reproduce it exactly,
+  which is the realistic shape of what sits between a browser and a
+  Vercel deployment. **Fix**: `fetch(req, { cache: 'no-store' })` on the
+  navigation branch only (the opportunistic re-cache-for-offline-fallback
+  logic right after it, and every other branch — fonts, same-origin
+  static assets — are completely untouched, still cache-first by
+  design). Also bumped `CACHE_VERSION` (`v1`→`v2`) — required for the fix
+  to ever reach an already-visiting browser at all: this file's own
+  update-detection is a byte-comparison of `sw.js` itself, and since
+  `sw.js` was never touched by #499, no already-installed SW was ever
+  offered an update through the existing banner/`skipWaiting()` flow in
+  the first place; bumping it here is what makes THIS fix (and any
+  future `sw.js` fix) actually deployable to existing visitors via that
+  same, unchanged mechanism — not a new mechanism of its own. Verified
+  with a new reproduction+fix test against the real, unmodified files: a
+  real Service Worker registration (not a mock) driving a CDN-edge-
+  shaped local test server — the pre-fix `sw.js` (fetched via `git show
+  HEAD:sw.js`, written to a scratch file) serves the OLD content on a
+  plain `page.reload()` after the origin's content changes (reproducing
+  the exact reported bug); the fixed, current working-tree `sw.js`
+  serves the NEW content on that SAME plain reload, no hard refresh
+  needed, zero page errors. `node --check` clean on `sw.js`. No HTML/JS
+  app file touched — index.html/user.html are byte-identical to #499 as
+  merged; this PR does not re-introduce or re-litigate anything from
+  #499 itself, since #499's own logic was never at fault. **Do NOT
+  re-promote this to production until confirmed working on the Vercel
+  preview** — the user's own instruction, since the whole premise of
+  this fix is specifically about the gap between what works in a quick
+  local check and what a real deploy-behind-a-CDN does; re-enable the
+  holiday feature (currently rolled back to #498 in production) only
+  once this is confirmed on the real preview URL, not merely on `node
+  --check`/this session's own synthetic CDN model.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
