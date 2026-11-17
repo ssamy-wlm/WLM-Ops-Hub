@@ -11,7 +11,7 @@
 // asset — bumping it changes this file's own bytes, which is what makes the
 // browser notice an update is available at all (see the 'install'/'waiting'
 // dance below and each page's own registerServiceWorker()).
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const STATIC_CACHE = `wlm-ops-static-${CACHE_VERSION}`;
 const FONT_CACHE = `wlm-ops-fonts-${CACHE_VERSION}`;
 const ALL_CACHES = [STATIC_CACHE, FONT_CACHE];
@@ -80,9 +80,25 @@ self.addEventListener('fetch', event => {
   // reload) — network-first, so a signed-in user always gets the freshest
   // app shell when online; only falls back to the cached shell, then
   // offline.html, when the network genuinely fails.
+  //
+  // {cache:'no-store'} (2026-11-17 fix — PR #499 was wrongly suspected and
+  // rolled back; the real cause was here) — WITHOUT this, fetch(req) uses
+  // the request's own default cache mode, which does not ask any cache
+  // sitting between the browser and origin (e.g. a CDN edge) to bypass
+  // itself. A plain reload can then keep getting an edge's last-cached
+  // copy of the app shell after a deploy, indefinitely, with no way for
+  // this network-first branch to ever notice — only a hard refresh (which
+  // sends its own Cache-Control: no-cache) breaks through. Reproduced
+  // directly against this exact file with a CDN-edge-shaped test server:
+  // a plain reload after a content change stayed on the OLD content with
+  // this option missing, and picked up the NEW content immediately once
+  // added — see scratchpad's test_sw_stale_navigation.mjs for the
+  // reproduction. `no-store` also skips the browser's own HTTP cache for
+  // this request, which is exactly what "always get the freshest app
+  // shell when online" already promised but didn't fully deliver.
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-store' })
         .then(res => {
           const copy = res.clone();
           caches.open(STATIC_CACHE).then(c => c.put(req, copy));
