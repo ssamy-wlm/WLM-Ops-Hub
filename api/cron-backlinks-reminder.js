@@ -6,19 +6,28 @@
 // Auth: same CRON_SECRET Bearer-token pattern every other cron endpoint in
 // this app already uses (see cron-overdue-check.js's own header comment).
 //
-// Schedule: fires on the 15th of the month, weekend-adjusted (Saturday ->
-// the 14th, Sunday -> the 16th, else the 15th — see
-// scheduledReminderDay()), at ~9:00 AM America/New_York, DST-aware — the
-// same hourly-Vercel-cron + in-handler localPartsInTz() gate pattern
-// api/cron-pto-report.js already established (vercel.json: "0 * * * *",
-// every hour, every day; this handler is a fast no-op for almost every
-// invocation). Unlike cron-pto-report.js's fixed two-UTC-day schedule,
-// this one genuinely needs to run EVERY day of the month — the weekend-
-// adjusted target day moves between the 14th/15th/16th depending on the
-// month, and the 3-day repeat/escalation checks below need to run daily
-// regardless of which day the month's initial send landed on.
+// Schedule (2026-11-17 — rescheduled from the 15th, per David's feedback):
+// fires on the 1ST of the month, weekend-adjusted FORWARD to the next
+// business day (Saturday -> the following Monday, Sunday -> the following
+// Monday, else the 1st itself — see scheduledReminderDay()), at ~9:00 AM
+// America/New_York, DST-aware — the same hourly-Vercel-cron + in-handler
+// localPartsInTz() gate pattern api/cron-pto-report.js already established
+// (vercel.json: "0 * * * *", every hour, every day; this handler is a fast
+// no-op for almost every invocation). This one genuinely needs to run
+// EVERY day of the month — the weekend-adjusted target day moves between
+// the 1st/2nd/3rd depending on the month, and the 3-day repeat/escalation
+// checks below need to run daily regardless of which day the month's
+// initial send landed on.
 //
-// State: one ops_settings row per month, key
+// Tracked month (2026-11-17 fix): the reminder is about the PRIOR
+// calendar month's backlinks — a run firing in December (even though it's
+// triggered by December's own 1st-of-month schedule) is reminding David
+// to confirm NOVEMBER's renewal. priorMonthKeyOf() derives that tracked
+// month from the firing date; everything keyed off it (the ops_settings
+// row, the confirm token's `month`, the wording, the 3-day repeat and the
+// escalation-to-Sarah) all use that SAME tracked month consistently.
+//
+// State: one ops_settings row per TRACKED month, key
 // `backlinksReminder:<YYYY-MM>` — no new table/migration, per the ticket's
 // own instruction. Shape:
 //   { status: 'pending' | 'renewed' | 'not_yet',
@@ -59,14 +68,26 @@
 // opens the email, which would falsely mark the month done. The actual
 // write only happens on that page's own POST (a real form submission a
 // prescanning bot does not perform).
+//
+// Link fix (2026-11-17, David's feedback — the confirm link 404'd):
+// `confirmUrl()` used to join `process.env.APP_URL` directly onto
+// `/api/backlinks-confirm`, but APP_URL in production is set to the USER
+// portal's own URL (every other caller's own fallback default already
+// documents this convention — see e.g. lib/resendClient.js's
+// `.../user` default), so the link came out as `.../user/api/backlinks-
+// confirm` and 404'd. siteRoot() fixes this at the root rather than by
+// guessing at APP_URL's exact value: it parses whatever APP_URL resolves
+// to and keeps only the protocol+host, discarding any path — correct
+// regardless of which portal path APP_URL happens to be set to.
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { logError } from '../lib/errorLog.js';
 import { localPartsInTz } from '../lib/quietHours.js';
-import { sendResendEmail, buildPlainEmailHtml, DAVID_EMAIL } from '../lib/resendClient.js';
+import { sendResendEmail, buildEmailHtml, buildPlainEmailHtml, DAVID_EMAIL } from '../lib/resendClient.js';
 import { signBacklinksToken } from '../lib/backlinksToken.js';
 
 const SARAH_EMAIL = 'ssamy@weblightmedia.com';
 const REPEAT_DAYS = 3;
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function dateStr(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
 
@@ -80,41 +101,67 @@ function addDaysToDateStr(ds, days) {
 // testing, CLAUDE.md rule #9) — pure calendar math: a calendar date's
 // weekday doesn't depend on time zone, so Date.UTC() is exact here with
 // no timezone-conversion concern at all (unlike "what time is it right
-// now," this is just "what weekday does the 15th fall on").
+// now," this is just "what weekday does the 1st fall on"). The 1st is the
+// target; a weekend 1st moves FORWARD to the next business day (Monday),
+// never backward — unlike the old mid-month (15th) schedule, which could
+// move either direction, there's no earlier business day to move the 1st
+// to within the same month.
 export function scheduledReminderDay(year, month) {
-  const dow = new Date(Date.UTC(year, month - 1, 15)).getUTCDay(); // 0=Sun..6=Sat
-  if (dow === 6) return 14; // Saturday -> Friday
-  if (dow === 0) return 16; // Sunday -> Monday
-  return 15;
+  const dow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=Sun..6=Sat
+  if (dow === 6) return 3; // Saturday the 1st -> Monday the 3rd
+  if (dow === 0) return 2; // Sunday the 1st -> Monday the 2nd
+  return 1;
 }
 
 function monthKeyOf(year, month) { return `${year}-${String(month).padStart(2, '0')}`; }
 
-function confirmUrl(month, answer) {
-  const token = signBacklinksToken({ purpose: 'backlinksConfirm', month, answer });
-  const base = process.env.APP_URL || 'https://opshub.weblightmedia.com';
-  return `${base}/api/backlinks-confirm?token=${encodeURIComponent(token)}`;
+// The reminder always refers to the PRIOR calendar month's backlinks
+// (exported for direct unit testing) — a cron firing in December, even
+// though it's December's own 1st-of-month schedule that triggered it, is
+// reminding David about NOVEMBER's renewal. Handles the January ->
+// December-of-the-prior-year rollover.
+export function priorMonthKeyOf(year, month) {
+  return month === 1 ? monthKeyOf(year - 1, 12) : monthKeyOf(year, month - 1);
 }
 
-function reminderEmailBody(month) {
-  return [
-    'URGENT: the monthly backlinks renewal is due.',
-    '',
-    'Please confirm below — one click, no login needed:',
-    '',
-    `✅ I renewed it: ${confirmUrl(month, 'renewed')}`,
-    '',
-    `❌ Not done yet: ${confirmUrl(month, 'not_yet')}`,
-    '',
-    `This will keep reminding you every ${REPEAT_DAYS} days until you respond.`,
-  ].join('\n');
+function monthLabel(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+// Strips any path off APP_URL (or the hardcoded fallback), keeping only
+// the origin — see the header comment above for why this is the actual
+// fix, not just swapping in a different hardcoded string: it's correct
+// regardless of which portal path APP_URL happens to be configured to in
+// production.
+function siteRoot() {
+  const raw = process.env.APP_URL || 'https://opshub.weblightmedia.com';
+  try {
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return 'https://opshub.weblightmedia.com';
+  }
+}
+
+function confirmUrl(month, answer) {
+  const token = signBacklinksToken({ purpose: 'backlinksConfirm', month, answer });
+  return `${siteRoot()}/api/backlinks-confirm?token=${encodeURIComponent(token)}`;
 }
 
 async function sendDavidReminder(month) {
-  const html = buildPlainEmailHtml({ body: reminderEmailBody(month) });
+  const label = monthLabel(month);
+  const html = buildEmailHtml({
+    title: `${label} backlinks renewal — action needed`,
+    body: `The ${label} backlinks renewal is due. Please confirm below — one click, no login needed.\n\nThis will keep reminding you every ${REPEAT_DAYS} days until you respond.`,
+    buttons: [
+      { label: '✅ I renewed it', href: confirmUrl(month, 'renewed'), background: '#1F9D55' },
+      { label: '❌ Not done yet', href: confirmUrl(month, 'not_yet'), background: '#C0392B' },
+    ],
+  });
   await sendResendEmail({
     to: DAVID_EMAIL,
-    subject: 'URGENT: Monthly backlinks renewal — action needed',
+    subject: `URGENT: ${label} backlinks renewal — action needed`,
     html,
     type: 'backlinksReminder',
     from: 'notifications@opshub.wlmsend.com',
@@ -123,12 +170,13 @@ async function sendDavidReminder(month) {
 }
 
 async function sendSarahEscalation(month) {
+  const label = monthLabel(month);
   const html = buildPlainEmailHtml({
-    body: `David hasn't responded to the ${month} backlinks renewal reminder sent ${REPEAT_DAYS} days ago — it's still unacknowledged.`,
+    body: `David hasn't responded to the ${label} backlinks renewal reminder sent ${REPEAT_DAYS} days ago — it's still unacknowledged.`,
   });
   await sendResendEmail({
     to: SARAH_EMAIL,
-    subject: `Unacknowledged: ${month} backlinks renewal reminder to David`,
+    subject: `Unacknowledged: ${label} backlinks renewal reminder to David`,
     html,
     type: 'backlinksEscalation',
     from: 'notifications@opshub.wlmsend.com',
@@ -152,7 +200,7 @@ export default async function handler(req, res) {
   catch (err) { await logError({ endpoint: 'cron-backlinks-reminder', error: err }); return res.status(500).json({ error: err.message }); }
 
   const todayStr = dateStr(ny.year, ny.month, ny.day);
-  const month = monthKeyOf(ny.year, ny.month);
+  const month = priorMonthKeyOf(ny.year, ny.month);
   const settingsKey = `backlinksReminder:${month}`;
 
   try {
