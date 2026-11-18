@@ -3198,7 +3198,7 @@ Don't relitigate them without an explicit decision from the user.
   --check`/this session's own synthetic CDN model.
 - CRITICAL: `api/ops-state.js` silently truncated `ops_tasks` at PostgREST's
   1,000-row cap — ~409 newest tasks invisible app-wide, no hard refresh
-  could fix it (2026-11-18 — held for preview approval, `api/ops-state.js`
+  could fix it (2026-11-18 — **merged**, PR #501, `api/ops-state.js`
   only, read-only, no data writes): reported live — `ops_tasks` had grown
   to 1,409 rows; `supabase.from('ops_tasks').select('id, data')` had no
   `.range()` at all, and PostgREST (Supabase's REST layer) caps a single
