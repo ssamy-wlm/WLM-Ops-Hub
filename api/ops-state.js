@@ -31,6 +31,38 @@ const DEFAULT_TEAM_NOTIF_PREFS = { assigned: false, done: true, comment: false, 
 
 function rows(data) { return (data || []).map(r => ({ id: r.id, ...r.data })); }
 
+// PostgREST (Supabase's REST layer) caps a single response at 1,000 rows
+// regardless of how many rows actually match — a plain .select() with no
+// .range() silently returns only the first 1,000, with no error, no
+// Content-Range warning surfaced to this code, nothing. ops_tasks crossed
+// that line (1,409 live rows, confirmed 2026-11-18) and the ~409 newest
+// rows were silently dropped from every client's snapshot app-wide, with
+// no way for a hard refresh to fix it since the server itself never had
+// them. Fixed generically, not with a raised hardcoded limit (which just
+// moves the same cliff further out) — this pages through .range() in
+// PAGE_SIZE chunks until a page comes back shorter than PAGE_SIZE, which
+// is the one terminal condition that's correct both for an exact multiple
+// of PAGE_SIZE (the final page is legitimately empty) and otherwise.
+// `applyOrder` is required, not optional — pagination with no deterministic
+// ordering can skip or duplicate rows if the table is written to between
+// page fetches, so every call site below orders by that table's own
+// primary key (or, for ops_summaries, its composite key — the stable,
+// never-changing identity columns per CLAUDE.md's document-model
+// convention), never by an unspecified/default order.
+const PAGE_SIZE = 1000;
+async function fetchAllRows(makeQuery, applyOrder) {
+  let offset = 0;
+  const allRows = [];
+  for (;;) {
+    const { data, error } = await applyOrder(makeQuery()).range(offset, offset + PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    allRows.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return { data: allRows, error: null };
+}
+
 // Live Feed entries are free-text (see logActivity() in index.html) — the
 // sensitive ones aren't a separate field to strip, the entire event IS the
 // sensitive content (e.g. a payroll save logs the literal dollar total as
@@ -114,7 +146,7 @@ export default async function handler(req, res) {
       Promise.all([
         supabase.from('ops_users').select('id, data'),
         supabase.from('ops_admins').select('id, data'),
-        supabase.from('ops_clients').select('id, status, data'),
+        fetchAllRows(() => supabase.from('ops_clients').select('id, status, data'), q => q.order('id', { ascending: true })),
         supabase.from('ops_goals').select('id, data'),
         supabase.from('ops_feed').select('id, data').order('created_at', { ascending: false }).limit(300),
         // Overview's "Recent Activity" needs client-service events specifically
@@ -137,21 +169,23 @@ export default async function handler(req, res) {
         // for the render-time filter to keep. Excluding it here instead
         // means the 50-row window is always real team activity.
         supabase.from('ops_feed').select('id, data').eq('data->>type', 'client').neq('data->>user', 'System').order('created_at', { ascending: false }).limit(50),
-        supabase.from('ops_messages').select('id, data'),
-        supabase.from('ops_roadmap_tasks').select('id, data'),
+        fetchAllRows(() => supabase.from('ops_messages').select('id, data'), q => q.order('id', { ascending: true })),
+        fetchAllRows(() => supabase.from('ops_roadmap_tasks').select('id, data'), q => q.order('id', { ascending: true })),
         supabase.from('ops_time_off_requests').select('id, data'),
-        supabase.from('ops_time_off_ledger').select('id, data'),
-        supabase.from('ops_payroll').select('id, data'),
-        supabase.from('ops_summaries').select('client_id, kind, period_key, data'),
+        fetchAllRows(() => supabase.from('ops_time_off_ledger').select('id, data'), q => q.order('id', { ascending: true })),
+        fetchAllRows(() => supabase.from('ops_payroll').select('id, data'), q => q.order('id', { ascending: true })),
+        fetchAllRows(() => supabase.from('ops_summaries').select('client_id, kind, period_key, data'), q => q.order('client_id', { ascending: true }).order('kind', { ascending: true }).order('period_key', { ascending: true })),
         supabase.from('ops_settings').select('key, data'),
         supabase.from('ops_deleted_user_ids').select('user_id'),
         supabase.from('ops_org_nodes').select('id, data').is('deleted_at', null),
         supabase.from('ops_org_links').select('id, data').is('deleted_at', null),
         supabase.from('ops_catalog_suggestions').select('id, data').is('deleted_at', null),
         supabase.from('ops_notifications').select('id, data').order('created_at', { ascending: false }).limit(200),
-        supabase.from('ops_sales_funnel').select('id, data'),
-        supabase.from('ops_tasks').select('id, data'),
-        supabase.from('ops_commissions').select('id, data'),
+        fetchAllRows(() => supabase.from('ops_sales_funnel').select('id, data'), q => q.order('id', { ascending: true })),
+        // ops_tasks — the urgent fix: 1,409 live rows (2026-11-18), well
+        // past PostgREST's 1,000-row cap; see fetchAllRows()'s own comment.
+        fetchAllRows(() => supabase.from('ops_tasks').select('id, data'), q => q.order('id', { ascending: true })),
+        fetchAllRows(() => supabase.from('ops_commissions').select('id, data'), q => q.order('id', { ascending: true })),
       ]),
     ]);
 

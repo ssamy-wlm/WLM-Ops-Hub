@@ -3196,6 +3196,79 @@ Don't relitigate them without an explicit decision from the user.
   holiday feature (currently rolled back to #498 in production) only
   once this is confirmed on the real preview URL, not merely on `node
   --check`/this session's own synthetic CDN model.
+- CRITICAL: `api/ops-state.js` silently truncated `ops_tasks` at PostgREST's
+  1,000-row cap — ~409 newest tasks invisible app-wide, no hard refresh
+  could fix it (2026-11-18 — held for preview approval, `api/ops-state.js`
+  only, read-only, no data writes): reported live — `ops_tasks` had grown
+  to 1,409 rows; `supabase.from('ops_tasks').select('id, data')` had no
+  `.range()` at all, and PostgREST (Supabase's REST layer) caps a single
+  response at 1,000 rows regardless of how many rows actually match, with
+  no error, no `Content-Range` surfaced to this code — nothing. Confirmed
+  exactly as reported: the ~409 newest tasks (whatever ordering the
+  underlying table happened to return with no explicit `.order()`, in
+  practice close to insertion order) were silently dropped from every
+  single client's snapshot, which is why recently-created tasks never
+  appeared for anyone and why a hard refresh couldn't help — the server
+  itself never had them to begin with. Fixed generically, not by raising a
+  hardcoded limit (which just moves the same cliff further out and
+  reintroduces this exact bug the next time row count crosses it): a new,
+  reusable `fetchAllRows(makeQuery, applyOrder)` helper pages through
+  `.range(offset, offset+999)` in 1,000-row chunks, concatenating, until a
+  page comes back shorter than 1,000 rows — the one terminal condition
+  that's correct both when the final page is genuinely partial and when
+  the table's true row count happens to be an exact multiple of 1,000 (the
+  last page is then legitimately empty). `applyOrder` is a required
+  parameter, not optional — pagination with no deterministic ordering can
+  skip or duplicate rows if the table is written to between page
+  fetches — every call site orders by that table's own stable primary key
+  (`id`, per the document-model convention, rule #5), except
+  `ops_summaries`, which has no single `id` column at all (it's keyed by
+  `client_id, kind, period_key`) and orders by all three composite-key
+  columns together instead, never guessed as a single column. Applied to
+  `ops_tasks` (the urgent, actually-reported case) and, per the explicit
+  instruction to paginate rather than patch the one symptom, to every
+  other unbounded `.select()` in this file that could realistically cross
+  1,000 rows later: `ops_clients`, `ops_messages`, `ops_time_off_ledger`,
+  `ops_commissions`, `ops_roadmap_tasks`, `ops_payroll`, `ops_summaries`,
+  `ops_sales_funnel`. Deliberately NOT touched: every query that's already
+  intentionally bounded on purpose, not just unbounded-and-lucky —
+  `ops_feed` (two queries, `.limit(300)`/`.limit(50)`, both already
+  ordered), `ops_notifications` (`.limit(200)`, already ordered) — and
+  every table not named in the report that has no realistic path to 1,000+
+  rows yet (`ops_users`, `ops_admins`, `ops_goals`, `ops_settings`,
+  `ops_deleted_user_ids`, `ops_org_nodes`, `ops_org_links`,
+  `ops_catalog_suggestions`, `ops_time_off_requests`) — flagged, not
+  silently assumed safe forever: any of these could need the same
+  treatment once it grows past 1,000 rows, same as `ops_tasks` just did.
+  The existing per-table error-isolation pattern (a failed query degrades
+  to `null`/`[]` for just that one section rather than 500ing the whole
+  endpoint — see the `ops_org_links.deleted_at` outage write-up) is
+  unaffected — `fetchAllRows()` returns the identical `{data, error}`
+  shape a plain query result has, so the downstream `namedQueries`
+  error-check loop needs no change and still works the same for a
+  paginated table as an unpaginated one. Verified with a new 4-check
+  `node:test` suite against the real, unmodified exported `handler()`
+  (fake in-memory Supabase client that itself enforces PostgREST's real
+  1,000-row-per-request cap — including on a `.range()` request wider
+  than 1,000, so the test can't accidentally pass by requesting one giant
+  range instead of genuinely paginating — no live Supabase access per rule
+  #11): a 1,409-row `ops_tasks` fixture returns all 1,409 rows through the
+  real handler, not 1,000; the single open task assigned to Michael at the
+  very end of that set (the real newest row, past the old 1,000-row
+  cliff) is present and resolves correctly; a direct control proves the
+  fake client's 1,000-row cap is real (an unpaginated select on the same
+  dataset is capped at exactly 1,000, same mechanism as live PostgREST);
+  the composite-key `ops_summaries` table pages correctly too (1,250-row
+  fixture, all returned, ordered by `client_id`/`kind`/`period_key`
+  together). Confirmed via `git stash` that 3 of these 4 checks fail
+  against the pre-fix code, reproducing the exact reported bug (the
+  summaries check reads exactly 1000, not 1250 — the real PostgREST cap).
+  `node --input-type=module --check` (rule #9) clean. No HTML touched, so
+  no div-balance check applies. Held per rule #10 — touches
+  `api/ops-state.js`, the single server-side read-snapshot assembler every
+  tier/portal depends on — even though this is a pure read-path fix with
+  no data write, no schema change, and no change to what any tier is
+  allowed to see, only to how completely it's fetched.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
