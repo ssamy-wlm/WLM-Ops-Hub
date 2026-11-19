@@ -3270,7 +3270,7 @@ Don't relitigate them without an explicit decision from the user.
   no data write, no schema change, and no change to what any tier is
   allowed to see, only to how completely it's fetched.
 - "Due" tiles made honest — true windows, done vs. not-done, both portals
-  (2026-11-19 — held for preview approval, `user.html`+`index.html`,
+  (2026-11-19 — **merged**, PR #502, `user.html`+`index.html`,
   display-only, no data writes, no load-time mutation): reported live —
   `user.html`'s My Services "Due This Week"/"Due This Month" tiles
   (`as-due-week-count`/`as-due-month-count`) actually counted a rolling
