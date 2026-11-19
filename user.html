@@ -297,6 +297,7 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
 .mywork-stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;}
 .mywork-stat-label{font-size:9px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;}
 .mywork-stat-value{font-family:'Poppins',sans-serif;font-size:19px;font-weight:800;color:var(--text-dark);}
+.mywork-stat-sub{font-size:9px;color:var(--text-light);margin-top:2px;white-space:nowrap;}
 /* My Work services table (Monday mockup redesign) — own copy of client.html's
    .service-table, hand-matched rather than shared (zero-shared-code rule). */
 .service-table{width:100%;border-collapse:collapse;}
@@ -1215,8 +1216,8 @@ body{ padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inse
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
           <div class="mywork-stat"><div class="mywork-stat-label">Services</div><div class="mywork-stat-value" id="as-proj-count">0</div></div>
           <div class="mywork-stat"><div class="mywork-stat-label">Clients</div><div class="mywork-stat-value" id="as-client-count">0</div></div>
-          <div class="mywork-stat"><div class="mywork-stat-label">Due This Week</div><div class="mywork-stat-value" id="as-due-week-count" style="color:var(--orange);">0</div></div>
-          <div class="mywork-stat"><div class="mywork-stat-label">Due This Month</div><div class="mywork-stat-value" id="as-due-month-count" style="color:#2E5DA6;">0</div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Due in 7 Days</div><div class="mywork-stat-value" id="as-due-week-count" style="color:var(--orange);">0</div><div class="mywork-stat-sub" id="as-due-week-sub"></div></div>
+          <div class="mywork-stat"><div class="mywork-stat-label">Due in 30 Days</div><div class="mywork-stat-value" id="as-due-month-count" style="color:#2E5DA6;">0</div><div class="mywork-stat-sub" id="as-due-month-sub"></div></div>
         </div>
 
         <div id="my-assignments-list">
@@ -5436,7 +5437,16 @@ function loadMyAssignments(){
   }
 
   // ── Build assignment items ──
-  let projCount=0, dueWeekCount=0, dueMonthCount=0;
+  // dueWeekDone/dueMonthDone track how many of dueWeekCount/dueMonthCount
+  // are already marked Done (the same workStatus==='done' signal the
+  // service row's own status dropdown shows — see _svcStatus()/
+  // _myWorkStatusCell()) — only a Tracker-sourced service (hasStatus:true)
+  // has that signal at all; an index.html-sourced recurring service or a
+  // bundle/project assignment has no Done concept in this view (the row
+  // itself already renders a plain "—" for those, per _myWorkStatusCell()'s
+  // own comment), so those count as not-done here too — never silently
+  // dropped from either count, just honestly never "done" through this UI.
+  let projCount=0, dueWeekCount=0, dueMonthCount=0, dueWeekDone=0, dueMonthDone=0;
   const clientIds=new Set();
   let html=''; let found=false;
   // Recurring services (both data sources) feed the one unified table
@@ -5509,9 +5519,10 @@ function loadMyAssignments(){
         const isOver=due&&due<todayStr;
         const isSoon=due&&!isOver&&due<=in7s&&ns.dueSoon;
         const isMonth=due&&!isOver&&due<=in30s;
+        const isDone=_svcStatus(s)==='done';
         projCount++; // each recurring service is itself a project assignment
-        if(isOver||isSoon) dueWeekCount++;
-        if(isOver||isMonth) dueMonthCount++;
+        if(isOver||isSoon){ dueWeekCount++; if(isDone) dueWeekDone++; }
+        if(isOver||isMonth){ dueMonthCount++; if(isDone) dueMonthDone++; }
         myServiceItems.push({
           clientId:c.id, clientName:c.name, svcId:s.id, name:s.name,
           due, lastDone:s.lastDone||'', freq:s.freqLabel||s.freq||'monthly',
@@ -5634,6 +5645,10 @@ function loadMyAssignments(){
   set('as-proj-count',projCount); set('as-client-count',clientIds.size);
   set('as-due-week-count',dueWeekCount,dueWeekCount>0?'var(--orange)':'var(--text-dark)');
   set('as-due-month-count',dueMonthCount,dueMonthCount>0?'#2E5DA6':'var(--text-dark)');
+  const weekSub=document.getElementById('as-due-week-sub');
+  if(weekSub) weekSub.textContent=`✅ ${dueWeekDone} done · ⏳ ${dueWeekCount-dueWeekDone} to do`;
+  const monthSub=document.getElementById('as-due-month-sub');
+  if(monthSub) monthSub.textContent=`✅ ${dueMonthDone} done · ⏳ ${dueMonthCount-dueMonthDone} to do`;
 
   const list=document.getElementById('my-assignments-list');
   if(list){

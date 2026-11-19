@@ -1613,7 +1613,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
             <div>
               <div class="card-title">Tasks by Urgency</div>
-              <div class="card-sub">Open (not done) tasks — hover a bar segment or row for the count</div>
+              <div class="card-sub">All tasks, including Done — hover a bar segment or row for the count</div>
             </div>
             <div id="ov-tasks-urgency-open-total" style="font-size:13px;font-weight:700;color:var(--text-dark);white-space:nowrap;flex-shrink:0;"></div>
           </div>
@@ -1626,7 +1626,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
             <div>
               <div class="card-title">Services by Urgency</div>
-              <div class="card-sub">Open (not done) services <span id="ov-svc-urgency-freq-sub"></span>— hover a bar segment or row for the count</div>
+              <div class="card-sub">All services, including Done <span id="ov-svc-urgency-freq-sub"></span>— hover a bar segment or row for the count</div>
             </div>
             <div id="ov-services-urgency-open-total" style="font-size:13px;font-weight:700;color:var(--text-dark);white-space:nowrap;flex-shrink:0;"></div>
           </div>
@@ -8438,12 +8438,18 @@ function openOvDrillItem(type, id, clientId){
   }
 }
 
-// The 4 donut slices, in mockup order. Colors per the task's own spec.
+// The 5 donut slices. First 4 are the original mockup order/colors;
+// 'done' (2026-11-19) was added as its own segment so a completed item is
+// shown, not dropped, when a Due-this-week/Due-this-month tile honesty
+// pass found this bar was otherwise silently excluding every Done item —
+// done, color matches --green (#22A06B), consistent with every other
+// "Done" treatment in this app (e.g. SERVICE_STATUSES in user.html).
 const OV_URGENCY_BUCKETS=[
   {key:'overdue', label:'Overdue', color:'#d03b3b'},
   {key:'dueThisWeek', label:'Due this week', color:'#ec835a'},
   {key:'dueThisMonth', label:'Due this month', color:'#fab219'},
   {key:'upcoming', label:'Upcoming', color:'#0ca30c'},
+  {key:'done', label:'Done', color:'#22A06B'},
 ];
 
 // Renders ONE urgency breakdown into its own group's elements — group is
@@ -8455,7 +8461,7 @@ const OV_URGENCY_BUCKETS=[
 // same bucketTotals input/computation, this function only changed HOW it
 // draws them).
 // bucketTotals is JUST that group's own already-summed {overdue,
-// dueThisWeek, dueThisMonth, upcoming} — the caller
+// dueThisWeek, dueThisMonth, upcoming, done} — the caller
 // (renderTeamProductionAnalytics()) is responsible for handing this
 // function its own type-scoped totals; this function only draws. Pure
 // render, no sync/cloud call — innerHTML is built once per call from
@@ -8479,7 +8485,9 @@ function _renderOverviewUrgencyDonut(group, bucketTotals){
     return {...b, val, pct};
   });
 
-  if(openTotalEl) openTotalEl.textContent=`${total} open`;
+  // "total" (2026-11-19), not "open" — the bar now includes the 'done'
+  // segment above, so a plain "N open" label would be wrong on its face.
+  if(openTotalEl) openTotalEl.textContent=`${total} total`;
 
   // Single rounded container, one segment element per NON-ZERO bucket sized
   // by percent width — a zero-value bucket contributes no element (and so no
@@ -8828,13 +8836,18 @@ function renderTeamProductionAnalytics(){
   // remainder bucket: that exclusion existed only because a person's
   // stuck/due-today service still had the separate Blocked/Stuck and Due
   // Today tiles to be counted in instead. This standalone services donut
-  // has no such sibling tiles, so every open (not-done) service must land
-  // in exactly one of the four buckets — overdue, else bucketed by due
-  // date — which is what guarantees the donut's total equals svcOpenCount
-  // above (the summary's own "M open") by construction, not coincidence.
-  let svcUrgOverdue=0, svcUrgDueThisWeek=0, svcUrgDueThisMonth=0, svcUrgUpcoming=0;
+  // has no such sibling tiles, so every service must land in exactly one
+  // of the five buckets — done, else overdue, else bucketed by due date —
+  // which is what guarantees the donut's total equals svcTotal above (the
+  // summary's own total count) by construction, not coincidence.
+  // svcUrgDone (2026-11-19) — a Done service used to be silently excluded
+  // from this bar entirely; now it's its own segment (OV_URGENCY_BUCKETS)
+  // instead of a dropped count, so every service in filteredServices lands
+  // in exactly one of the 5 buckets and `total` below now equals
+  // filteredServices.length, not just the open subset.
+  let svcUrgOverdue=0, svcUrgDueThisWeek=0, svcUrgDueThisMonth=0, svcUrgUpcoming=0, svcUrgDone=0;
   filteredServices.forEach(s=>{
-    if(_svcStatus(s)==='done') return;
+    if(_svcStatus(s)==='done'){ svcUrgDone++; return; }
     if(_chSvcDueStatus(s)==='overdue'){ svcUrgOverdue++; return; }
     const bucket=_ovDueWindowBucket(s.due, endOfWeek, endOfMonth);
     if(bucket==='dueThisWeek') svcUrgDueThisWeek++; else if(bucket==='dueThisMonth') svcUrgDueThisMonth++; else svcUrgUpcoming++;
@@ -9098,14 +9111,23 @@ function renderTeamProductionAnalytics(){
   _ovDrillData = drill;
 
   if(typeof _renderOverviewUrgencyDonut==='function'){
-    _renderOverviewUrgencyDonut('tasks', {overdue:totals.tasksOverdue, dueThisWeek:totals.tasksDueThisWeek, dueThisMonth:totals.tasksDueThisMonth, upcoming:totals.tasksUpcoming});
+    // done:totals.tasksDoneAllTime (2026-11-19) — the SAME roster-scoped,
+    // all-time per-person sum (tasksDoneItems, see the per-person loop
+    // above) the other 4 buckets here already draw from (tasksOverdue/
+    // tasksDueThisWeek/etc. all come from that same sum.tasksForPerson
+    // corpus), so the bar's new Done segment is the same population as
+    // every other segment, not a differently-scoped number bolted on.
+    _renderOverviewUrgencyDonut('tasks', {overdue:totals.tasksOverdue, dueThisWeek:totals.tasksDueThisWeek, dueThisMonth:totals.tasksDueThisMonth, upcoming:totals.tasksUpcoming, done:totals.tasksDoneAllTime});
     // Services donut (2026-09-25) — fed by svcUrgOverdue/svcUrgDueThisWeek/
-    // svcUrgDueThisMonth/svcUrgUpcoming (computed above, directly off
-    // filteredServices), NOT totals.servicesOverdue/servicesDueThisWeek/etc
-    // (still computed a few lines up for the UNCHANGED combined Overdue/
-    // Blocked tiles and Per-Person Breakdown table — deliberately left
-    // alone, out of this filter's scope).
-    _renderOverviewUrgencyDonut('services', {overdue:svcUrgOverdue, dueThisWeek:svcUrgDueThisWeek, dueThisMonth:svcUrgDueThisMonth, upcoming:svcUrgUpcoming});
+    // svcUrgDueThisMonth/svcUrgUpcoming/svcUrgDone (computed above, directly
+    // off filteredServices), NOT totals.servicesOverdue/servicesDueThisWeek/
+    // servicesDone/etc (still computed a few lines up for the UNCHANGED
+    // combined Overdue/Blocked tiles and Per-Person Breakdown table —
+    // deliberately left alone, out of this filter's scope; totals.
+    // servicesDone in particular sums over allServices, not the frequency-
+    // filtered corpus this bar uses, so reusing it here would mix two
+    // different populations in the same bar).
+    _renderOverviewUrgencyDonut('services', {overdue:svcUrgOverdue, dueThisWeek:svcUrgDueThisWeek, dueThisMonth:svcUrgDueThisMonth, upcoming:svcUrgUpcoming, done:svcUrgDone});
   }
 
   // Per-person table — no totalAssigned>0 filter, same acceptance criterion
