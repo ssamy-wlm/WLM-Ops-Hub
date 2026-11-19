@@ -3269,6 +3269,101 @@ Don't relitigate them without an explicit decision from the user.
   tier/portal depends on — even though this is a pure read-path fix with
   no data write, no schema change, and no change to what any tier is
   allowed to see, only to how completely it's fetched.
+- "Due" tiles made honest — true windows, done vs. not-done, both portals
+  (2026-11-19 — **merged**, PR #502, `user.html`+`index.html`,
+  display-only, no data writes, no load-time mutation): reported live —
+  `user.html`'s My Services "Due This Week"/"Due This Month" tiles
+  (`as-due-week-count`/`as-due-month-count`) actually counted a rolling
+  7/30-day window (`isMonth = due<=today+30d`), not the calendar week/
+  month, and blended Done and not-Done services into one number.
+  **user.html fix**: relabeled to the true windows — "Due in 7 Days"/
+  "Due in 30 Days" — and added a sub-line under each tile
+  (`as-due-week-sub`/`as-due-month-sub`) breaking the same total into
+  "✅ N done · ⏳ M to do," never dropping the Done ones. The underlying
+  rolling-window MATH itself (`in7s`/`in30s`, unchanged) was NOT touched —
+  only the label now matches what it's always counted, and the done/to-do
+  split is additive. New `dueWeekDone`/`dueMonthDone` counters, incremented
+  alongside the existing `dueWeekCount`/`dueMonthCount` wherever a Tracker-
+  sourced service (`hasStatus:true`) is already Done
+  (`_svcStatus(s)==='done'`) — the SAME signal the service row's own
+  status dropdown already shows as "Done" (`_myWorkStatusCell()`). An
+  index.html-sourced recurring service or a bundle/project assignment
+  (`hasStatus:false`) has no Done concept in this view at all — the row
+  itself already renders a plain "—" for those (`_myWorkStatusCell()`'s own
+  comment) — so those are honestly counted as not-done here too, never
+  silently dropped from either bucket.
+  **index.html investigation (rule #7 — flagged rather than guessed)**:
+  searched exhaustively for an equivalent admin-side tile with the same
+  bug and found none — every "Due This Week"/"Due This Month"-labeled
+  thing already in `index.html` was already correct: Client Health's
+  "Due This Month" card is genuine calendar-month and already its own
+  separate status bucket (not blended with Done); the Overview "Tasks by
+  Urgency"/"Services by Urgency" segmented bars' "Due this week"/"Due this
+  month" legend rows (`OV_URGENCY_BUCKETS`/`_ovDueWindowBucket()`) already
+  use real Monday-anchored calendar weeks/real end-of-month boundaries
+  (`_ovWeekMonthBoundaries()`), not a rolling window. Flagged back to the
+  user rather than force-fitting the fix onto the wrong tile; the user
+  confirmed the intended admin-side target was actually those same
+  Urgency bars — not because they mislabel the window (they don't), but
+  because they silently EXCLUDE every Done item from the bar entirely
+  (by design, per their own "Open (not done)" header), which is exactly
+  the "don't drop the Done ones" problem from a different angle. Since
+  these bars are explicitly open-only BY DESIGN (their total is
+  guaranteed to equal the open-item count by construction, per the
+  function's own pre-existing comment), splitting each existing segment
+  into done/not-done was not an option without breaking that invariant —
+  asked again, and the user chose to add Done as its own 5th bar segment
+  rather than a sub-caption or a scope-cut to Client Health instead.
+  **index.html fix**: `OV_URGENCY_BUCKETS` gained a 5th bucket,
+  `{key:'done', label:'Done', color:'#22A06B'}` (matches `--green`, the
+  same color this app's Done status already uses everywhere else, e.g.
+  `user.html`'s `SERVICE_STATUSES`). Services bar: the existing
+  `filteredServices.forEach` loop's `if(_svcStatus(s)==='done') return;`
+  early-exit (which silently dropped Done services from the bar) was
+  changed to count into a new `svcUrgDone` instead of skipping — every
+  service in `filteredServices` now lands in exactly one of the 5
+  buckets, so the bar's total now equals `svcTotal` (ALL filtered
+  services) rather than just the open subset. Tasks bar: reused
+  `totals.tasksDoneAllTime` directly — the SAME roster-scoped, all-time
+  per-person sum (`tasksDoneItems`, already computed in the existing
+  per-person loop) every other segment on this bar already draws its own
+  numbers from (`tasksOverdue`/`tasksDueThisWeek`/etc. all come from that
+  same `sum.tasksForPerson` corpus), so the new Done segment is the exact
+  same population as the bar's other 4 segments, not a differently-scoped
+  number bolted on — no new per-item loop needed for tasks. Deliberately
+  did NOT reuse `totals.servicesDone` for the services bar's Done segment
+  — that total sums over `allServices` (unfiltered), while every other
+  segment on this specific bar reads `filteredServices` (frequency-
+  filtered); mixing the two would put a differently-scoped number into
+  the same bar, so `svcUrgDone` is computed fresh, in the same loop, over
+  the same `filteredServices` corpus the other 4 segments use. Both
+  cards' header text updated from "Open (not done) tasks/services" to
+  "All tasks/services, including Done," and `_renderOverviewUrgencyDonut`'s
+  total label changed from "`${total} open`" to "`${total} total`" — both
+  now honest about what the bar actually contains. No drill-down/onclick
+  wiring exists on these bar segments/legend rows at all (hover-only,
+  via a `title` attribute) — the new Done segment needed none either.
+  Verified with a new Playwright suite against the real, unmodified
+  `loadMyAssignments()` (`user.html`) and `renderTeamProductionAnalytics()`
+  (`index.html`), both served statically with no live Supabase per rule
+  #11: `user.html` — a 3-service fixture (one due-in-3-days not-done, one
+  due-in-20-days Done, one overdue not-done) confirms the tiles now read
+  "Due in 7 Days"/"Due in 30 Days" (not the old "Due This Week"/"Due This
+  Month"), the week count is 2 with sub-line "✅ 0 done · ⏳ 2 to do," and
+  the month count is 3 with sub-line "✅ 1 done · ⏳ 2 to do"; `index.html`
+  — a fixture with one not-done service, one Done service, one open task,
+  and one Done task confirms both bars now render a "Done" legend row
+  (count 1 each) and bar segment, and both totals read "2 total" (not the
+  old "1 open"). Confirmed via `git stash` that both suites fail against
+  the pre-fix code exactly as expected (user.html: the new sub-line
+  elements don't exist yet; index.html: no "done" legend row/segment at
+  all, totals still read "1 open") and pass clean after. `node --check`
+  on extracted inline JS clean on both files; div-balance unchanged vs.
+  baseline on both (`index.html` delta -2, `user.html` delta -1 — pure JS/
+  text-content changes, no HTML markup structure altered). No `api/*.js`
+  touched, so rule #9's module-mode check doesn't apply. Held per rule
+  #10 out of caution even though this is a pure display-only change with
+  no data write and no load-time mutation.
 - Open — Phase 2: deferred `salesFunnelLevel`/`earnsCommission` edit-payload
   exclusion (now unblocked by #400); transcript-truncation intake loss;
   assignment-email rate-limiting; error-log pruning (broken `archived_at`
