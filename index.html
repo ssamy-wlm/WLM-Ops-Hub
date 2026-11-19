@@ -11452,20 +11452,39 @@ function loadTaskAssignments(){
   const roster = _taAllAssignablePeople();
   const assigneeSel = document.getElementById('taFilterAssignee');
   const temAssigneeSel = document.getElementById('tem-assignee');
+  // Preserve the FILTER's current selection across this rebuild (2026-11-19).
+  // loadTaskAssignments() is called not just on tab-entry but every time a
+  // category pill is clicked (setTaActiveCategory), and it rebuilds this
+  // <select>'s innerHTML — which, without this, silently reset a chosen
+  // assignee (e.g. filtering by David) back to "All assignees", so the
+  // list the admin had narrowed appeared to vanish. Only the FILTER select
+  // is preserved; the New/Edit-Task picker (temAssigneeSel) is a form field
+  // and still resets intentionally.
+  const prevAssignee = assigneeSel ? assigneeSel.value : '';
   // Whole team / Unassigned folded in as options, right after "All
   // assignees" and before any real person (2026-09-08) — see
   // TA_UNASSIGNED_ID's own comment above for why. A native single-select
   // makes these, and every real person, mutually exclusive automatically.
-  if(assigneeSel) assigneeSel.innerHTML = '<option value="">All assignees</option>'
-    + `<option value="${TA_EVERYONE_ID}">👥 Whole team</option>`
-    + `<option value="${TA_UNASSIGNED_ID}">Unassigned</option>`
-    + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+  if(assigneeSel){
+    assigneeSel.innerHTML = '<option value="">All assignees</option>'
+      + `<option value="${TA_EVERYONE_ID}">👥 Whole team</option>`
+      + `<option value="${TA_UNASSIGNED_ID}">Unassigned</option>`
+      + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
+    // Restore the prior selection only if it's still a valid option (the
+    // assignee could have gone inactive/removed between rebuilds); an
+    // invalid value would otherwise leave the select blank.
+    if(prevAssignee && assigneeSel.querySelector('option[value="'+(window.CSS&&CSS.escape?CSS.escape(prevAssignee):prevAssignee)+'"]')) assigneeSel.value = prevAssignee;
+  }
   if(temAssigneeSel) temAssigneeSel.innerHTML = '<option value="">Unassigned</option>' + `<option value="${TA_EVERYONE_ID}">👥 Everyone (whole team)</option>` + roster.map(p=>`<option value="${p.id}">${escHtmlAdmin(p.name)}</option>`).join('');
 
   const clients = _taActiveClients();
   const clientFilterSel = document.getElementById('taFilterClient');
   const temClientSel = document.getElementById('tem-client');
-  if(clientFilterSel) clientFilterSel.innerHTML = '<option value="">All clients</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
+  const prevClient = clientFilterSel ? clientFilterSel.value : '';
+  if(clientFilterSel){
+    clientFilterSel.innerHTML = '<option value="">All clients</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
+    if(prevClient && clientFilterSel.querySelector('option[value="'+(window.CSS&&CSS.escape?CSS.escape(prevClient):prevClient)+'"]')) clientFilterSel.value = prevClient;
+  }
   if(temClientSel) temClientSel.innerHTML = '<option value="">No client</option>' + clients.map(c=>`<option value="${c.id}">${escHtmlAdmin(c.name)}</option>`).join('');
 
   const temCatSel = document.getElementById('tem-category');
