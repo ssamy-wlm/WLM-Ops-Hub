@@ -15594,7 +15594,13 @@ function renderCommissionSavedSection(){
   if(tableEl) tableEl.style.display = '';
   document.getElementById('commSavedRows').innerHTML = records.map(r=>{
     const net = _commRecordNet(r);
-    const rate = r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
+    // Rate is editable inline (2026-11-23) so a super admin can correct a
+    // saved commission's tier without reopening the full editor — the two
+    // business tiers (5% / 10%), plus the record's own current value if it's
+    // ever something else, so an existing override is never silently dropped.
+    const curPct = Number.isFinite(Number(r.commissionPercent)) ? Number(r.commissionPercent) : 5;
+    const rateVals = [5,10].includes(curPct) ? [5,10] : [curPct,5,10];
+    const rateOpts = rateVals.map(p=>`<option value="${p}" ${p===curPct?'selected':''}>${p}%</option>`).join('');
     const commission = _commRecordCommission(r);
     const status = r.status || 'pending';
     const statusOpts = Object.keys(COMM_STATUS_LABELS).map(s=>
@@ -15602,7 +15608,7 @@ function renderCommissionSavedSection(){
     return `<tr data-record-id="${escHtml(r.id)}">
       <td data-label="">${escHtml(_commMonthLabel(r.month))}</td>
       <td data-label="Net" style="text-align:right;">$${net.toFixed(2)}</td>
-      <td data-label="Rate" style="text-align:center;">${rate}</td>
+      <td data-label="Rate" style="text-align:center;"><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','commissionPercent',this.value,this)">${rateOpts}</select></td>
       <td data-label="Commission" style="text-align:right;">$${commission.toFixed(2)}</td>
       <td data-label="Payout"><input type="date" class="form-select" value="${escHtml(r.payoutDate||'')}" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','payoutDate',this.value,this)"></td>
       <td data-label="Status"><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','status',this.value,this)">${statusOpts}</select></td>
@@ -15621,7 +15627,15 @@ async function _commSaveInlineField(recordId, field, value, el){
   const all = dbGet(DB_KEYS.commissions)||[];
   const idx = all.findIndex(r=>r.id===recordId);
   if(idx<0) return;
-  const record = { ...all[idx], [field]: value, updatedBy: _currentAdminName()||'Admin', updatedAt: new Date().toISOString() };
+  // commissionPercent arrives as a <select> string — coerce to Number, and
+  // re-stamp computedCommission locally (net × new rate) so the Commission
+  // cell is instantly correct rather than showing the old rate's amount until
+  // the server's recomputeCommission() round-trips back. The server computes
+  // the identical value from the same stored commissionPercent, so this never
+  // disagrees with the confirmed copy.
+  const val = field==='commissionPercent' ? Number(value) : value;
+  const record = { ...all[idx], [field]: val, updatedBy: _currentAdminName()||'Admin', updatedAt: new Date().toISOString() };
+  if(field==='commissionPercent') record.computedCommission = _commRecordNet(record) * (Number(val)/100);
   all[idx] = record;
   dbSet(DB_KEYS.commissions, all);
   if(el) el.disabled = true;
