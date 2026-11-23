@@ -4581,6 +4581,14 @@ function renderMyCommissionsUser(){
   list.innerHTML = mine.map(r=>{
     const [color,bg] = STATUS_META[r.status] || STATUS_META.pending;
     const monthNet = (r.entries||[]).reduce((s,e)=>s+(Number(e.net)||0),0);
+    // Prefer the server-stamped computedCommission, else derive net×rate — so
+    // a just-saved record (local copy not yet re-pulled with the server's
+    // value) never shows $0.00. Mirrors index.html's _commRecordCommission()
+    // (zero-shared-code rule — hand-duplicated). net×commissionPercent is
+    // defined to equal computedCommission (recomputeCommission, api/ops-sync.js).
+    const _storedComm = Number(r.computedCommission);
+    const _pct = Number(r.commissionPercent);
+    const commission = (Number.isFinite(_storedComm) && _storedComm>0) ? _storedComm : (Number.isFinite(_pct) ? monthNet*(_pct/100) : 0);
     const rows = (r.entries||[]).map(e=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${escHtmlUser(e.client||'(unnamed client)')}</span><span>net $${(Number(e.net)||0).toFixed(2)}</span></div>`).join('');
     return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -4590,7 +4598,7 @@ function renderMyCommissionsUser(){
           </div>
           <div style="font-size:11px;color:var(--text-light);">Tier ${r.commissionPercent!=null?r.commissionPercent+'%':'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
         </div>
-        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${(Number(r.computedCommission)||0).toFixed(2)}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${commission.toFixed(2)}</div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No client entries</span>'}</div>
     </div>`;
