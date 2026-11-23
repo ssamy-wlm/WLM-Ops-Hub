@@ -15595,7 +15595,7 @@ function renderCommissionSavedSection(){
   document.getElementById('commSavedRows').innerHTML = records.map(r=>{
     const net = _commRecordNet(r);
     const rate = r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
-    const commission = Number(r.computedCommission)||0;
+    const commission = _commRecordCommission(r);
     const status = r.status || 'pending';
     const statusOpts = Object.keys(COMM_STATUS_LABELS).map(s=>
       `<option value="${s}" ${s===status?'selected':''}>${escHtml(COMM_STATUS_LABELS[s])}</option>`).join('');
@@ -15679,6 +15679,23 @@ function _commYearRecords(recipientId, year){
 function _commRecordNet(r){
   return (Array.isArray(r.entries) ? r.entries : []).reduce((s,e)=>s+(Number(e.net)||0),0);
 }
+// Commission for a saved record (2026-11-23). Prefer the server-stamped
+// computedCommission when present, but fall back to the same net×rate math
+// client-side when it's missing/zero. A record saved through
+// saveCommissionMonth()/_commSaveInlineField() only sends entries[] +
+// commissionPercent; the server's recomputeCommission() stamps
+// computedCommission, but the local copy isn't re-pulled with that value
+// immediately after the push — so the Saved/Year/My-Commissions rows showed
+// $0.00 right after saving even though Net and Rate were populated.
+// net×commissionPercent is defined to EQUAL computedCommission (same formula
+// as recomputeCommission() in api/ops-sync.js), so this never disagrees with
+// a correctly-synced value — it only repairs the not-yet-synced display.
+function _commRecordCommission(r){
+  const stored = Number(r.computedCommission);
+  if(Number.isFinite(stored) && stored>0) return stored;
+  const pct = Number(r.commissionPercent);
+  return Number.isFinite(pct) ? _commRecordNet(r)*(pct/100) : 0;
+}
 function _commMonthLabel(monthStr){
   const parts = String(monthStr||'').split('-');
   const idx = parseInt(parts[1],10)-1;
@@ -15716,7 +15733,7 @@ function renderCommissionYearView(){
   let totalNet = 0, totalCommission = 0, totalPaid = 0;
   rowsEl.innerHTML = records.map(r=>{
     const net = _commRecordNet(r);
-    const commission = Number(r.computedCommission)||0;
+    const commission = _commRecordCommission(r);
     const rateLabel = r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
     const status = r.status || 'pending';
     totalNet += net;
@@ -15745,7 +15762,7 @@ function exportCommissionYearCSV(){
   let totalNet = 0, totalCommission = 0, totalPaid = 0;
   records.forEach(r=>{
     const net = _commRecordNet(r);
-    const commission = Number(r.computedCommission)||0;
+    const commission = _commRecordCommission(r);
     const status = r.status || 'pending';
     totalNet += net;
     totalCommission += commission;
@@ -15785,7 +15802,7 @@ function renderMyCommissionsAdmin(){
           </div>
           <div style="font-size:11px;color:var(--text-light);">Tier ${r.commissionPercent!=null?r.commissionPercent+'%':'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
         </div>
-        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${(Number(r.computedCommission)||0).toFixed(2)}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${_commRecordCommission(r).toFixed(2)}</div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:8px;">${rows||'<span style="font-size:12px;color:var(--text-light);">No client entries</span>'}</div>
     </div>`;
