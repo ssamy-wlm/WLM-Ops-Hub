@@ -1553,7 +1553,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
                boundary is server-side (tier!=='super' -> 403), same as every
                other admin-only action in this file. -->
           <button id="emailTeamSummariesBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="openEmailTheTeamModal()">📤 Email the Team</button>
-          <button id="emailOverdueBtn" class="btn btn-outline btn-sm" style="display:none;" onclick="_emailOverdueOwners()">📧 Email overdue owners</button>
           <button class="btn btn-outline btn-sm" onclick="refreshAdminOverviewFromCloud()">↺ Refresh</button>
         </div>
       </div>
@@ -7106,46 +7105,6 @@ function _emailUserAssignment(userId, title, body){
       }).catch(()=>{});
     });
   }catch(e){}
-}
-
-// ── Email each active owner their own overdue-services list, via Resend ──
-// (super/owner only). Previews who would be emailed (dry run), confirms, then
-// sends one auto-generated urgent email per person. Inactive people are
-// skipped (reported so their items can be reassigned). See
-// api/send-overdue-reminders.js.
-async function _emailOverdueOwners(){
-  const btn = document.getElementById('emailOverdueBtn');
-  const call = async (dryRun)=>{
-    const res = await fetch('/api/send-overdue-reminders', {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+_opsToken()},
-      body: JSON.stringify({ dryRun })
-    });
-    const data = await res.json().catch(()=>({}));
-    if(!res.ok || !data.ok) throw new Error(data.error || ('HTTP '+res.status));
-    return data;
-  };
-  if(btn){ btn.disabled = true; btn.textContent = '📧 Checking…'; }
-  try{
-    const preview = await call(true);
-    const willSend = (preview.results||[]).filter(r=>r.status==='would_send');
-    const skipped  = (preview.results||[]).filter(r=>r.status!=='would_send');
-    if(!willSend.length){ alert('No active team members currently have overdue services to email.'); return; }
-    const list = willSend.map(r=>`• ${r.owner} — ${r.count} overdue`).join('\n');
-    const skipNote = skipped.length ? '\n\nSkipped: '+skipped.map(r=>`${r.owner} (${String(r.status).replace(/_/g,' ')})`).join(', ') : '';
-    if(!confirm(`Send an urgent overdue-services email (via Resend) to:\n\n${list}${skipNote}\n\nSend now?`)) return;
-    if(btn){ btn.textContent = '📧 Sending…'; }
-    const done = await call(false);
-    const sent = (done.results||[]).filter(r=>r.status==='sent');
-    const problems = (done.results||[]).filter(r=>['error','suppressed','skipped_no_email'].includes(r.status));
-    let msg = `Sent ${sent.length} urgent overdue email(s):\n\n`+(sent.map(r=>`✅ ${r.owner} — ${r.count}`).join('\n')||'(none)');
-    if(problems.length) msg += '\n\nNot sent:\n'+problems.map(r=>`• ${r.owner} — ${String(r.status).replace(/_/g,' ')}`).join('\n');
-    alert(msg);
-  }catch(e){
-    alert('Could not send overdue reminders: '+e.message);
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = '📧 Email overdue owners'; }
-  }
 }
 
 // ── Send a test assignment email and report the actual result (for admin diagnostics) ──
@@ -13850,8 +13809,6 @@ function refreshAdminOverview(){
   if(dateLabel) dateLabel.textContent = dayNames[now.getDay()]+', '+monthNames[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear();
   const emailSummariesBtn = document.getElementById('emailTeamSummariesBtn');
   if(emailSummariesBtn) emailSummariesBtn.style.display = (_adminLevel==='super'||_adminLevel==='owner') ? '' : 'none';
-  const emailOverdueBtn = document.getElementById('emailOverdueBtn');
-  if(emailOverdueBtn) emailOverdueBtn.style.display = (_adminLevel==='super'||_adminLevel==='owner') ? '' : 'none';
 
   const allUsers  = dbGet(DB_KEYS.users)||[];
   const allClients = JSON.parse(localStorage.getItem('wl_clients_db')||'[]');
