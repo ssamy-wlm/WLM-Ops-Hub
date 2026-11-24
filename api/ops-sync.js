@@ -143,14 +143,39 @@ function recomputeCommission(row, session) {
   const entries = Array.isArray(row.entries) ? row.entries.map(e => {
     const gross = Number(e?.gross) || 0;
     const adSpend = Number(e?.adSpend) || 0;
-    const defaultNet = gross - adSpend;
+    // Net can be entered directly (the agency fee) when there's no gross/
+    // ad-spend to derive it from — honor a provided net >= 0 regardless of
+    // gross. The old `overrideNet <= gross` cap silently REJECTED a real
+    // typed net whenever gross was blank/0, falling back to gross-adSpend and
+    // producing a NEGATIVE net (e.g. agency fee typed into Ad spend with a
+    // blank Gross gave net = 0 - adSpend). The auto-fill is now floored at 0
+    // so a blank gross can never drive the commission negative either.
+    const hasNet = e?.net !== undefined && e?.net !== null && e?.net !== '';
     const overrideNet = Number(e?.net);
-    const net = (Number.isFinite(overrideNet) && overrideNet >= 0 && overrideNet <= gross) ? overrideNet : defaultNet;
-    return { client: e?.client || '', gross, adSpend, net };
+    const defaultNet = Math.max(0, gross - adSpend);
+    const net = (hasNet && Number.isFinite(overrideNet) && overrideNet >= 0) ? overrideNet : defaultNet;
+    // Per-client rate: each entry may carry its own rate (%), so a month can
+    // mix rates (e.g. one client at 10%, the rest at 5%). A finite rate >= 0
+    // is kept per entry; an entry with no rate of its own falls back to the
+    // month-level default (`commissionPercent`) below — which preserves every
+    // legacy record (entries with no `rate`) exactly as before.
+    const rateNum = Number(e?.rate);
+    const rate = (e?.rate !== undefined && e?.rate !== null && e?.rate !== '' && Number.isFinite(rateNum) && rateNum >= 0) ? rateNum : null;
+    const entry = { client: e?.client || '', gross, adSpend, net };
+    if (rate !== null) entry.rate = rate;
+    return entry;
   }) : [];
   const monthNet = entries.reduce((s, e) => s + e.net, 0);
   const commissionPercent = row.commissionPercent;
-  const computedCommission = monthNet * (commissionPercent / 100);
+  const defaultPct = Number(commissionPercent);
+  // Commission = sum over entries of net * that entry's effective rate. An
+  // entry with no rate of its own uses the month-level default; a record with
+  // no per-entry rates at all therefore computes exactly month-net * default,
+  // identical to the old single-rate behavior.
+  const computedCommission = entries.reduce((s, e) => {
+    const r = (e.rate !== undefined && e.rate !== null) ? e.rate : (Number.isFinite(defaultPct) ? defaultPct : 0);
+    return s + e.net * (r / 100);
+  }, 0);
   return { ...row, entries, computedCommission, commissionPercent, updatedBy: session.id, updatedByName: session.name };
 }
 

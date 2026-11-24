@@ -2455,7 +2455,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
           </div>
         </div>
         <div class="card-body">
-          <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;">One row per client this recipient earned commission on this month. Net auto-fills to Gross − Ad spend but can be typed over — an override sticks. Commission = month net × rate, re-verified server-side on save.</div>
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:12px;">One row per client this recipient earned commission on this month. Net auto-fills to Gross − Ad spend but can be typed over (or type the agency fee straight into Net) — an override sticks. Each client has its own Rate, so a month can mix rates; commission = sum of each client's net × its rate, re-verified server-side on save.</div>
           <!-- Column headers — must mirror _commEntryRowHtml()'s real input
                order/flex ratios exactly (Client flex:2, Gross/Ad spend/Net
                flex:1 each, then a fixed-width spacer matching the row's own
@@ -2468,6 +2468,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div style="flex:1;min-width:90px;">Gross</div>
             <div style="flex:1;min-width:90px;">Ad spend</div>
             <div style="flex:1;min-width:90px;text-align:right;">Net (auto, editable)</div>
+            <div style="width:74px;flex-shrink:0;text-align:right;">Rate</div>
             <div style="width:34px;flex-shrink:0;"></div>
           </div>
           <div id="commEntriesRows" style="display:flex;flex-direction:column;gap:10px;"></div>
@@ -15391,7 +15392,7 @@ function _commOnRecipientChange(){
   if(_commViewMode==='year') renderCommissionYearView();
   else renderCommissionEditor();
 }
-function _commEmptyEntry(){ return { client:'', gross:0, adSpend:0, net:0 }; }
+function _commEmptyEntry(){ return { client:'', gross:0, adSpend:0, net:0, rate:5 }; }
 function renderCommissionEditor(){
   const sel = document.getElementById('comm-recipient');
   const card = document.getElementById('commEditorCard');
@@ -15408,7 +15409,16 @@ function renderCommissionEditor(){
   document.getElementById('comm-editor-sub').textContent = month;
   document.getElementById('comm-payout-date').value = existing?.payoutDate || '';
   document.getElementById('comm-status').value = existing?.status || 'pending';
-  const entries = (existing?.entries && existing.entries.length) ? existing.entries : [_commEmptyEntry()];
+  const rawEntries = (existing?.entries && existing.entries.length) ? existing.entries : [_commEmptyEntry()];
+  // Seed a per-row rate for any entry that has none: a legacy single-rate
+  // record (entries carry no `rate`, just a month-level commissionPercent)
+  // shows each row at that same rate, so its total is unchanged; a record
+  // that already has per-client rates keeps them.
+  const _legacyRate = existing && existing.commissionPercent!=null ? Number(existing.commissionPercent) : null;
+  const entries = rawEntries.map(e=>{
+    const hasRate = e.rate!==undefined && e.rate!==null && e.rate!=='';
+    return hasRate ? e : { ...e, rate: (_legacyRate!=null ? _legacyRate : 5) };
+  });
   document.getElementById('commEntriesRows').innerHTML = entries.map((e,i)=>_commEntryRowHtml(e,i)).join('');
   // Rate override: a stored record's commissionPercent counts as a manual
   // override only if it disagrees with what the $20k rule would have
@@ -15433,9 +15443,15 @@ function renderCommissionEditor(){
 }
 function _commEntryRowHtml(e, i){
   const gross = Number(e.gross)||0, adSpend = Number(e.adSpend)||0;
-  const defaultNet = gross - adSpend;
+  // Floor the auto-fill at 0 so a blank Gross with a typed Ad spend never
+  // shows a negative Net; a directly-typed Net (the agency fee) is honored on
+  // its own, clamped at 0. Mirrors recomputeCommission() in api/ops-sync.js.
+  const defaultNet = Math.max(0, gross - adSpend);
   const hasNet = e.net !== undefined && e.net !== null && e.net !== '';
-  const netVal = hasNet ? Number(e.net)||0 : defaultNet;
+  const netVal = Math.max(0, hasNet ? (Number(e.net)||0) : defaultNet);
+  // Per-client rate (%) — blank only if the entry genuinely has none (a new
+  // row is seeded with a default in addCommissionEntryRow / renderCommissionEditor).
+  const rateVal = (e.rate!==undefined && e.rate!==null && e.rate!=='') ? Number(e.rate) : '';
   // A stored net counts as a manual override only if it disagrees with the
   // auto-fill (gross - adSpend) for the same stored gross/adSpend — same
   // "don't treat an unmodified auto-fill as if someone typed over it"
@@ -15447,12 +15463,15 @@ function _commEntryRowHtml(e, i){
     <input type="number" class="form-select comm-gross-input" placeholder="Gross" value="${gross}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commOnGrossAdSpendInput(this)">
     <input type="number" class="form-select comm-adspend-input" placeholder="Ad spend" value="${adSpend}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commOnGrossAdSpendInput(this)">
     <input type="number" class="form-select comm-net-input" placeholder="Net" value="${netVal.toFixed(2)}" style="flex:1;min-width:90px;font-size:13px;text-align:right;" oninput="_commOnNetInput(this)">
+    <input type="number" class="form-select comm-rate-input" placeholder="%" value="${rateVal===''?'':rateVal}" min="0" style="width:74px;flex-shrink:0;font-size:13px;text-align:right;" oninput="_commRecalcTotals()">
     <button class="btn btn-sm btn-danger" onclick="removeCommissionEntryRow(${i})" title="Remove" style="font-size:11px;padding:4px 10px;">✕</button>
   </div>`;
 }
 function addCommissionEntryRow(){
   const rows = _commReadEntriesFromDOM();
-  rows.push(_commEmptyEntry());
+  const e = _commEmptyEntry();
+  e.rate = Number(document.getElementById('comm-rate')?.value) || 5;  // new row inherits the default rate
+  rows.push(e);
   document.getElementById('commEntriesRows').innerHTML = rows.map((e,i)=>_commEntryRowHtml(e,i)).join('');
   _commRecalcTotals();
 }
@@ -15465,8 +15484,14 @@ function removeCommissionEntryRow(idx){
 }
 function _commReadEntriesFromDOM(){
   return Array.from(document.querySelectorAll('.comm-entry-row')).map(row=>{
-    const inputs = row.querySelectorAll('input');
-    return { client: inputs[0].value, gross: Number(inputs[1].value)||0, adSpend: Number(inputs[2].value)||0, net: Number(inputs[3].value)||0 };
+    const rr = row.querySelector('.comm-rate-input')?.value;
+    return {
+      client: row.querySelector('input').value,
+      gross: Number(row.querySelector('.comm-gross-input').value)||0,
+      adSpend: Number(row.querySelector('.comm-adspend-input').value)||0,
+      net: Number(row.querySelector('.comm-net-input').value)||0,
+      rate: (rr===undefined || rr==='') ? null : (Number(rr)||0),
+    };
   });
 }
 // Gross/Ad spend changed on a row — re-drive that row's Net field from the
@@ -15480,7 +15505,7 @@ function _commOnGrossAdSpendInput(inputEl){
   if(row && row.dataset.netOverride !== '1'){
     const gross = Number(row.querySelector('.comm-gross-input').value)||0;
     const adSpend = Number(row.querySelector('.comm-adspend-input').value)||0;
-    row.querySelector('.comm-net-input').value = (gross - adSpend).toFixed(2);
+    row.querySelector('.comm-net-input').value = Math.max(0, gross - adSpend).toFixed(2);
   }
   _commRecalcTotals();
 }
@@ -15508,20 +15533,28 @@ function _commOnRateChange(){
 // whatever's currently showing, auto-filled or overridden alike.
 function _commRecalcTotals(){
   const rows = document.querySelectorAll('.comm-entry-row');
-  let monthNet = 0;
+  let monthNet = 0, commission = 0;
+  const rateSet = new Set();
   rows.forEach(row=>{
     const net = Number(row.querySelector('.comm-net-input').value)||0;
+    const rate = Number(row.querySelector('.comm-rate-input')?.value)||0;
     monthNet += net;
+    commission += net * (rate/100);     // each client at its own rate
+    if(net) rateSet.add(rate);
   });
+  // The month-level select is now only the DEFAULT rate for a newly added
+  // row — it still auto-suggests a tier from month net unless the admin
+  // pinned it, but it no longer drives the monthly total (each row does).
   const card = document.getElementById('commEditorCard');
   const rateSel = document.getElementById('comm-rate');
   if(rateSel && card && card.dataset.rateOverride !== '1'){
     rateSel.value = String(monthNet >= 20000 ? 10 : 5);
   }
-  const commissionPercent = Number(rateSel?.value) || 5;
-  const commission = monthNet * (commissionPercent/100);
-  document.getElementById('comm-tier-label').textContent = `Tier ${commissionPercent}% · Month net $${monthNet.toFixed(2)}`;
-  document.getElementById('comm-total').textContent = '$'+commission.toFixed(2);
+  const rateLabel = rateSet.size===0 ? '—' : (rateSet.size===1 ? [...rateSet][0]+'%' : 'mixed');
+  const tl = document.getElementById('comm-tier-label');
+  if(tl) tl.textContent = `Rate ${rateLabel} · Month net $${monthNet.toFixed(2)}`;
+  const ct = document.getElementById('comm-total');
+  if(ct) ct.textContent = '$'+commission.toFixed(2);
 }
 function _commMarkDirtyPreview(){ /* payout date/status don't affect totals — placeholder hook kept for symmetry with the entry-row oninput handlers */ }
 // Confirmed-write discipline, same as savePayrollWeek(): write local
@@ -15598,9 +15631,9 @@ function renderCommissionSavedSection(){
     // saved commission's tier without reopening the full editor — the two
     // business tiers (5% / 10%), plus the record's own current value if it's
     // ever something else, so an existing override is never silently dropped.
-    const curPct = Number.isFinite(Number(r.commissionPercent)) ? Number(r.commissionPercent) : 5;
-    const rateVals = [5,10].includes(curPct) ? [5,10] : [curPct,5,10];
-    const rateOpts = rateVals.map(p=>`<option value="${p}" ${p===curPct?'selected':''}>${p}%</option>`).join('');
+    // Rate is a single % when uniform, "mixed" when clients differ — open the
+    // editor above to change a client's rate (each row has its own).
+    const rateLabel = _commRecordRateLabel(r);
     const commission = _commRecordCommission(r);
     const status = r.status || 'pending';
     const statusOpts = Object.keys(COMM_STATUS_LABELS).map(s=>
@@ -15608,7 +15641,7 @@ function renderCommissionSavedSection(){
     return `<tr data-record-id="${escHtml(r.id)}">
       <td data-label="">${escHtml(_commMonthLabel(r.month))}</td>
       <td data-label="Net" style="text-align:right;">$${net.toFixed(2)}</td>
-      <td data-label="Rate" style="text-align:center;"><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','commissionPercent',this.value,this)">${rateOpts}</select></td>
+      <td data-label="Rate" style="text-align:center;">${escHtml(rateLabel)}</td>
       <td data-label="Commission" style="text-align:right;">$${commission.toFixed(2)}</td>
       <td data-label="Payout"><input type="date" class="form-select" value="${escHtml(r.payoutDate||'')}" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','payoutDate',this.value,this)"></td>
       <td data-label="Status"><select class="form-select" style="font-size:12px;padding:4px 6px;" onchange="_commSaveInlineField('${escHtml(r.id)}','status',this.value,this)">${statusOpts}</select></td>
@@ -15704,11 +15737,38 @@ function _commRecordNet(r){
 // net×commissionPercent is defined to EQUAL computedCommission (same formula
 // as recomputeCommission() in api/ops-sync.js), so this never disagrees with
 // a correctly-synced value — it only repairs the not-yet-synced display.
+// A per-entry rate wins when present (sum of each client's net × its rate) —
+// the same math recomputeCommission() uses server-side, so a record with
+// per-client rates always shows a consistent total here, in the editor, and
+// for the employee. Falls back to the stored value / single month rate for a
+// legacy record with no per-entry rates.
+function _commEntryRate(e){
+  return (e && e.rate!==undefined && e.rate!==null && e.rate!=='' && Number.isFinite(Number(e.rate))) ? Number(e.rate) : null;
+}
 function _commRecordCommission(r){
+  const entries = Array.isArray(r.entries) ? r.entries : [];
+  if(entries.some(e=>_commEntryRate(e)!==null)){
+    const defPct = Number(r.commissionPercent);
+    return entries.reduce((s,e)=>{
+      const rr = _commEntryRate(e); const use = rr!==null ? rr : (Number.isFinite(defPct)?defPct:0);
+      return s + (Number(e.net)||0)*(use/100);
+    },0);
+  }
   const stored = Number(r.computedCommission);
   if(Number.isFinite(stored) && stored>0) return stored;
   const pct = Number(r.commissionPercent);
   return Number.isFinite(pct) ? _commRecordNet(r)*(pct/100) : 0;
+}
+// Label for a record's rate: a single % when uniform, "mixed" when clients
+// differ, "—" when none.
+function _commRecordRateLabel(r){
+  const entries = Array.isArray(r.entries) ? r.entries : [];
+  const rates = entries.filter(e=>(Number(e.net)||0)!==0).map(e=>{
+    const rr = _commEntryRate(e); return rr!==null ? rr : Number(r.commissionPercent);
+  }).filter(v=>Number.isFinite(v));
+  if(!rates.length) return r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
+  const uniq = [...new Set(rates)];
+  return uniq.length===1 ? uniq[0]+'%' : 'mixed';
 }
 function _commMonthLabel(monthStr){
   const parts = String(monthStr||'').split('-');
@@ -15748,7 +15808,7 @@ function renderCommissionYearView(){
   rowsEl.innerHTML = records.map(r=>{
     const net = _commRecordNet(r);
     const commission = _commRecordCommission(r);
-    const rateLabel = r.commissionPercent!=null ? r.commissionPercent+'%' : '—';
+    const rateLabel = _commRecordRateLabel(r);
     const status = r.status || 'pending';
     totalNet += net;
     totalCommission += commission;
@@ -15781,7 +15841,7 @@ function exportCommissionYearCSV(){
     totalNet += net;
     totalCommission += commission;
     if(status==='paid') totalPaid += commission;
-    const rateLabel = r.commissionPercent!=null ? r.commissionPercent+'%' : '';
+    const rateLabel = _commRecordRateLabel(r)==='—' ? '' : _commRecordRateLabel(r);
     csv += `"${_commMonthLabel(r.month)}","${net.toFixed(2)}","${rateLabel}","${commission.toFixed(2)}","${COMM_STATUS_LABELS[status]||status}"\n`;
   });
   csv += `"Year total","${totalNet.toFixed(2)}","","${totalCommission.toFixed(2)}","Owed ${(totalCommission-totalPaid).toFixed(2)}"\n`;
@@ -15814,7 +15874,7 @@ function renderMyCommissionsAdmin(){
           <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.month}
             <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${bg};color:${color};margin-left:6px;">${(r.status||'pending').replace('_',' ').toUpperCase()}</span>
           </div>
-          <div style="font-size:11px;color:var(--text-light);">Tier ${r.commissionPercent!=null?r.commissionPercent+'%':'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
+          <div style="font-size:11px;color:var(--text-light);">Rate ${_commRecordRateLabel(r)} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
         </div>
         <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${_commRecordCommission(r).toFixed(2)}</div>
       </div>

@@ -4581,22 +4581,33 @@ function renderMyCommissionsUser(){
   list.innerHTML = mine.map(r=>{
     const [color,bg] = STATUS_META[r.status] || STATUS_META.pending;
     const monthNet = (r.entries||[]).reduce((s,e)=>s+(Number(e.net)||0),0);
-    // Prefer the server-stamped computedCommission, else derive net×rate — so
-    // a just-saved record (local copy not yet re-pulled with the server's
-    // value) never shows $0.00. Mirrors index.html's _commRecordCommission()
-    // (zero-shared-code rule — hand-duplicated). net×commissionPercent is
-    // defined to equal computedCommission (recomputeCommission, api/ops-sync.js).
-    const _storedComm = Number(r.computedCommission);
-    const _pct = Number(r.commissionPercent);
-    const commission = (Number.isFinite(_storedComm) && _storedComm>0) ? _storedComm : (Number.isFinite(_pct) ? monthNet*(_pct/100) : 0);
-    const rows = (r.entries||[]).map(e=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${escHtmlUser(e.client||'(unnamed client)')}</span><span>net $${(Number(e.net)||0).toFixed(2)}</span></div>`).join('');
+    // Each client can have its own rate (e.g. one at 10%, the rest at 5%), so
+    // commission is the sum of each client's net × its rate. Falls back to the
+    // month-level commissionPercent for a client/record with no per-entry rate.
+    // Mirrors index.html's _commRecordCommission() (zero-shared-code rule —
+    // hand-duplicated); matches recomputeCommission() in api/ops-sync.js.
+    const _entryRate = e => { const n=Number(e&&e.rate); return (e&&e.rate!==undefined&&e.rate!==null&&e.rate!==''&&Number.isFinite(n)) ? n : null; };
+    const _defPct = Number(r.commissionPercent);
+    const _entries = (r.entries||[]);
+    const _hasPerRate = _entries.some(e=>_entryRate(e)!==null);
+    let commission;
+    if(_hasPerRate){
+      commission = _entries.reduce((s,e)=>{ const rr=_entryRate(e); const use = rr!==null?rr:(Number.isFinite(_defPct)?_defPct:0); return s + (Number(e.net)||0)*(use/100); },0);
+    } else {
+      const _storedComm = Number(r.computedCommission);
+      commission = (Number.isFinite(_storedComm) && _storedComm>0) ? _storedComm : (Number.isFinite(_defPct) ? monthNet*(_defPct/100) : 0);
+    }
+    // Rate label: single % when uniform, "mixed" when clients differ.
+    const _rlist = _entries.filter(e=>(Number(e.net)||0)!==0).map(e=>{ const rr=_entryRate(e); return rr!==null?rr:_defPct; }).filter(v=>Number.isFinite(v));
+    const _rateLabel = !_rlist.length ? (r.commissionPercent!=null?r.commissionPercent+'%':'—') : ([...new Set(_rlist)].length===1 ? [...new Set(_rlist)][0]+'%' : 'mixed');
+    const rows = (r.entries||[]).map(e=>{ const rr=_entryRate(e); const rtxt = rr!==null ? ' · '+rr+'%' : ''; return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>${escHtmlUser(e.client||'(unnamed client)')}</span><span>net $${(Number(e.net)||0).toFixed(2)}${rtxt}</span></div>`; }).join('');
     return `<div style="background:var(--bg);border-radius:10px;padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--text-dark);">${r.month}
             <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${bg};color:${color};margin-left:6px;">${(r.status||'pending').replace('_',' ').toUpperCase()}</span>
           </div>
-          <div style="font-size:11px;color:var(--text-light);">Tier ${r.commissionPercent!=null?r.commissionPercent+'%':'—'} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
+          <div style="font-size:11px;color:var(--text-light);">Rate ${_rateLabel} · Month net $${monthNet.toFixed(2)}${r.payoutDate?' · Payout '+r.payoutDate:''}</div>
         </div>
         <div style="font-size:18px;font-weight:800;color:var(--text-dark);">$${commission.toFixed(2)}</div>
       </div>
