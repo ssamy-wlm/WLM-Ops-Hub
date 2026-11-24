@@ -2471,6 +2471,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
             <div style="width:34px;flex-shrink:0;"></div>
           </div>
           <div id="commEntriesRows" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <!-- Shared client suggestion list (2026-11-24): a datalist-backed
+               combobox so each entry row's Client field offers the active
+               tracker clients as a dropdown while still accepting a typed
+               name that isn't on the tracker. Populated by
+               renderCommissionEditor() from _taActiveClients(). -->
+          <datalist id="commClientDatalist"></datalist>
           <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="addCommissionEntryRow()">+ Add client</button>
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;">
             <div style="display:flex;gap:14px;flex-wrap:wrap;">
@@ -15410,6 +15416,12 @@ function renderCommissionEditor(){
   document.getElementById('comm-status').value = existing?.status || 'pending';
   const entries = (existing?.entries && existing.entries.length) ? existing.entries : [_commEmptyEntry()];
   document.getElementById('commEntriesRows').innerHTML = entries.map((e,i)=>_commEntryRowHtml(e,i)).join('');
+  // Populate the shared client combobox from the active tracker clients —
+  // a dropdown of real client names while a typed-in name that isn't on the
+  // tracker still saves exactly as before (free-text input, list is only a
+  // suggestion source).
+  const commClientDl = document.getElementById('commClientDatalist');
+  if(commClientDl) commClientDl.innerHTML = _taActiveClients().map(c=>`<option value="${escHtml(c.name||'')}"></option>`).join('');
   // Rate override: a stored record's commissionPercent counts as a manual
   // override only if it disagrees with what the $20k rule would have
   // picked for its own stored month net — an unmodified auto-filled record
@@ -15443,7 +15455,7 @@ function _commEntryRowHtml(e, i){
   // month.
   const netOverride = hasNet && netVal !== defaultNet;
   return `<div class="comm-entry-row" data-idx="${i}" data-net-override="${netOverride?'1':'0'}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <input type="text" class="form-select" placeholder="Client" value="${escHtml(e.client||'')}" style="flex:2;min-width:140px;font-size:13px;" oninput="_commRecalcTotals()">
+    <input type="text" class="form-select" list="commClientDatalist" placeholder="Client" value="${escHtml(e.client||'')}" style="flex:2;min-width:140px;font-size:13px;" oninput="_commRecalcTotals()">
     <input type="number" class="form-select comm-gross-input" placeholder="Gross" value="${gross}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commOnGrossAdSpendInput(this)">
     <input type="number" class="form-select comm-adspend-input" placeholder="Ad spend" value="${adSpend}" style="flex:1;min-width:90px;font-size:13px;" oninput="_commOnGrossAdSpendInput(this)">
     <input type="number" class="form-select comm-net-input" placeholder="Net" value="${netVal.toFixed(2)}" style="flex:1;min-width:90px;font-size:13px;text-align:right;" oninput="_commOnNetInput(this)">
