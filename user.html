@@ -3979,10 +3979,13 @@ async function submitForcedPasswordChange(){
 // members, asking them to review and update their service statuses. Pure
 // client-side, no data write; dismissal remembered per browser via
 // localStorage. Hand-duplicated from index.html (rule #3) with this
-// portal's own target list + navigation. Bump STATUS_PROMPT_ID to re-show.
-const STATUS_PROMPT_ID = 'statusUpdate-2026-11';
+// portal's own target list + navigation. The dismissal key is MONTH-scoped,
+// so the prompt reappears automatically at the start of each new calendar
+// month until that month is dismissed again (a recurring monthly nudge to
+// keep statuses current).
 const STATUS_PROMPT_TARGETS = ['u_1783268590854']; // Michael Eruzione
-function _statusPromptDismissKey(uid){ return 'wl_statusPrompt_'+STATUS_PROMPT_ID+'_'+uid; }
+function _statusPromptMonth(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function _statusPromptDismissKey(uid){ return 'wl_statusPrompt_'+_statusPromptMonth()+'_'+uid; }
 function _maybeShowStatusPrompt(){
   try{
     const uid = currentUser && currentUser.id;
@@ -4006,8 +4009,7 @@ function _showStatusPromptModal(uid){
   ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
   const card=document.createElement('div');
   card.style.cssText='background:#fff;max-width:440px;width:100%;border-radius:14px;padding:26px 24px;box-shadow:0 18px 50px rgba(0,0,0,.3);';
-  card.innerHTML='<div style="font-size:30px;line-height:1;margin-bottom:10px;">📋</div>'
-    +'<div style="font-size:18px;font-weight:700;color:#1f2937;margin-bottom:8px;">Please update your service statuses</div>'
+  card.innerHTML='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><span style="font-size:24px;line-height:1;flex:none;">📋</span><span style="font-size:18px;font-weight:700;color:#1f2937;">Please update your service statuses</span></div>'
     +'<div style="font-size:14px;color:#475569;line-height:1.55;margin-bottom:20px;">Hi '+esc(first)+' — please take a moment to review your assigned services and set each one to its correct status (Not started, In progress, Done, or Stuck). Keeping these current helps the whole team see where things really stand. Thank you!</div>'
     +'<div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">'
     +'<button id="statusPromptLater" style="padding:9px 16px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:8px;font-weight:600;cursor:pointer;">Later</button>'
