@@ -3974,11 +3974,57 @@ async function submitForcedPasswordChange(){
   showApp();
 }
 
+// ── One-time "update your service statuses" login prompt (2026-11-25) ──
+// Dismissible modal shown on login/restore to a short, targeted list of
+// members, asking them to review and update their service statuses. Pure
+// client-side, no data write; dismissal remembered per browser via
+// localStorage. Hand-duplicated from index.html (rule #3) with this
+// portal's own target list + navigation. Bump STATUS_PROMPT_ID to re-show.
+const STATUS_PROMPT_ID = 'statusUpdate-2026-11';
+const STATUS_PROMPT_TARGETS = ['u_1783268590854']; // Michael Eruzione
+function _statusPromptDismissKey(uid){ return 'wl_statusPrompt_'+STATUS_PROMPT_ID+'_'+uid; }
+function _maybeShowStatusPrompt(){
+  try{
+    const uid = currentUser && currentUser.id;
+    if(!uid || STATUS_PROMPT_TARGETS.indexOf(uid)===-1) return;
+    if(localStorage.getItem(_statusPromptDismissKey(uid))) return;
+    _showStatusPromptModal(uid);
+  }catch(e){}
+}
+function _dismissStatusPrompt(uid){
+  try{ localStorage.setItem(_statusPromptDismissKey(uid),'1'); }catch(e){}
+  const o=document.getElementById('statusPromptOverlay'); if(o) o.remove();
+}
+function _statusPromptNavigate(){
+  try{ const el=document.getElementById('nav-mywork'); showSection('mywork', el); }catch(e){}
+}
+function _showStatusPromptModal(uid){
+  if(document.getElementById('statusPromptOverlay')) return;
+  const first = String((currentUser&&currentUser.name)||'').trim().split(/\s+/)[0] || 'there';
+  const esc = s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ov=document.createElement('div'); ov.id='statusPromptOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const card=document.createElement('div');
+  card.style.cssText='background:#fff;max-width:440px;width:100%;border-radius:14px;padding:26px 24px;box-shadow:0 18px 50px rgba(0,0,0,.3);';
+  card.innerHTML='<div style="font-size:30px;line-height:1;margin-bottom:10px;">📋</div>'
+    +'<div style="font-size:18px;font-weight:700;color:#1f2937;margin-bottom:8px;">Please update your service statuses</div>'
+    +'<div style="font-size:14px;color:#475569;line-height:1.55;margin-bottom:20px;">Hi '+esc(first)+' — please take a moment to review your assigned services and set each one to its correct status (Not started, In progress, Done, or Stuck). Keeping these current helps the whole team see where things really stand. Thank you!</div>'
+    +'<div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">'
+    +'<button id="statusPromptLater" style="padding:9px 16px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:8px;font-weight:600;cursor:pointer;">Later</button>'
+    +'<button id="statusPromptGo" style="padding:9px 16px;border:none;background:#256DB5;color:#fff;border-radius:8px;font-weight:600;cursor:pointer;">Go to my services</button>'
+    +'</div>';
+  ov.appendChild(card); document.body.appendChild(ov);
+  const later=document.getElementById('statusPromptLater'); if(later) later.onclick=()=>_dismissStatusPrompt(uid);
+  const go=document.getElementById('statusPromptGo'); if(go) go.onclick=()=>{ _dismissStatusPrompt(uid); _statusPromptNavigate(); };
+  ov.onclick=(e)=>{ if(e.target===ov) _dismissStatusPrompt(uid); };
+}
+
 function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('changePasswordScreen').style.display='none';
   document.getElementById('userApp').classList.add('visible');
   initApp();
+  setTimeout(_maybeShowStatusPrompt, 1500);
 }
 
 function logout(){
