@@ -344,8 +344,25 @@ Don't relitigate them without an explicit decision from the user.
   (no longer double-counts with the new badge). See DECISIONS.md for the
   full investigation and the rationale for not folding the three signals
   together.
+- Time-off SUBMISSION emails no longer go to David (2026-11-25 — held for
+  preview approval, `lib/` path): at the owner's (Sarah's) request,
+  `'timeOffSubmitted'` was removed from `DAVID_EMAIL_ALLOWED_TYPES` in
+  `lib/resendClient.js`, so David no longer receives the per-request
+  "Time-off request submitted: <name>" email. `resolveTimeOffSubmittedRecipients()`
+  resolves exactly two recipients — the `primary-admin` sentinel (Sarah)
+  and the one owner-level admin (David) — so Sarah is now the SOLE email
+  recipient of that notice (live-verified: David is the only super/owner
+  admin row; Sarah is the sentinel, not a row). David's IN-APP bell
+  notification for the same event is untouched — this allowlist only ever
+  gates the email half. His other two allowed email types
+  (`weeklyTeamCompletion`, `biMonthlyPtoReport`) and the separately-added
+  `backlinksReminder` are unchanged. The 2026-09-25 overhaul entry below is
+  now superseded on this one point (David's email allowlist is 3 types, not
+  the 4 that entry implies after `backlinksReminder`, and no longer includes
+  `timeOffSubmitted`).
 - David email overhaul (2026-09-25, corrected same day — held for preview
-  approval, `api/` path): David now only receives three email types — a
+  approval, `api/` path) [**see 2026-11-25 update above: `timeOffSubmitted`
+  has since been removed from David's allowlist**]: David now only receives three email types — a
   time-off SUBMISSION notification (`timeOffSubmitted`, he's an
   approver), the new weekly team-completion report, and the new
   bi-monthly PTO report; every other email type (assignment, overdue/
