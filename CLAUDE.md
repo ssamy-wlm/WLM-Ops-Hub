@@ -360,6 +360,33 @@ Don't relitigate them without an explicit decision from the user.
   now superseded on this one point (David's email allowlist is 3 types, not
   the 4 that entry implies after `backlinksReminder`, and no longer includes
   `timeOffSubmitted`).
+- One-time "update your service statuses" login prompt (2026-11-25 — held
+  for preview approval, `index.html`+`user.html`, display-only, no data
+  write): a dismissible modal shown on login/restore to a short, hardcoded
+  target list, asking those people to review and set each of their service
+  statuses. Built because Assmaa's book of work moved to Sherine and
+  David's not-started services were bulk-set to in-progress, so several
+  people need to re-check their own statuses. Targets: `index.html` → Abby
+  Conklin (`adm_abby_conklin`) + Jacob Joslin (`adm_1786088048896`);
+  `user.html` → Michael Eruzione (`u_1783268590854`). Pure client-side —
+  `_maybeShowStatusPrompt()`/`_showStatusPromptModal()` build the overlay
+  in JS (no HTML markup added, div-balance delta unchanged), gate on the
+  signed-in id being in `STATUS_PROMPT_TARGETS` and not already dismissed
+  (`wl_statusPrompt_<STATUS_PROMPT_ID>_<uid>` in localStorage, per browser),
+  and are hand-duplicated per rule #3 with each portal's own target list +
+  navigation (admin → Tracker tab via `switchAdminTab`; member →
+  `showSection('mywork')`). Hooked at both the fresh-login entry
+  (`_enterAdminApp`/`showApp`) and the reload-restore path so it reaches a
+  target on their next login OR next reload. `STATUS_PROMPT_ID` is bumped
+  to re-show after a future ask. No email (Resend can't be sent from this
+  environment; the owner chose a pop-up only, no in-app bell either).
+  Verified with a 12-check Playwright suite against the real, live-served
+  files (target sees it + greeted by name; Go dismisses and navigates to
+  the right services view; dismissal persists; a non-target and the
+  primary admin never see it; zero page errors). `new Function()` parse
+  clean on every inline script in both files; div-balance delta unchanged
+  vs. `main` (index.html -2, user.html -1). No `api/*.js` touched. Held
+  per rule #10 — touches the login/init path in both portals.
 - David email overhaul (2026-09-25, corrected same day — held for preview
   approval, `api/` path) [**see 2026-11-25 update above: `timeOffSubmitted`
   has since been removed from David's allowlist**]: David now only receives three email types — a
