@@ -371,14 +371,21 @@ Don't relitigate them without an explicit decision from the user.
   `user.html` → Michael Eruzione (`u_1783268590854`). Pure client-side —
   `_maybeShowStatusPrompt()`/`_showStatusPromptModal()` build the overlay
   in JS (no HTML markup added, div-balance delta unchanged), gate on the
-  signed-in id being in `STATUS_PROMPT_TARGETS` and not already dismissed
-  (`wl_statusPrompt_<STATUS_PROMPT_ID>_<uid>` in localStorage, per browser),
+  signed-in id being in `STATUS_PROMPT_TARGETS` and not already dismissed,
   and are hand-duplicated per rule #3 with each portal's own target list +
   navigation (admin → Tracker tab via `switchAdminTab`; member →
   `showSection('mywork')`). Hooked at both the fresh-login entry
   (`_enterAdminApp`/`showApp`) and the reload-restore path so it reaches a
-  target on their next login OR next reload. `STATUS_PROMPT_ID` is bumped
-  to re-show after a future ask. No email (Resend can't be sent from this
+  target on their next login OR next reload. **Recurs monthly** (2026-11-25
+  follow-up): the dismissal key is month-scoped
+  (`wl_statusPrompt_<YYYY-MM>_<uid>` in localStorage, per browser, via
+  `_statusPromptMonth()`), so dismissing silences it only for the current
+  calendar month — it reappears automatically at the start of each new
+  month until that month is dismissed again (a recurring nudge to keep
+  statuses current; not gated on actual per-service update activity, since
+  there's no reliable "updated this month" signal per service today —
+  flagged, could be added later). The 📋 icon sits inline next to the title
+  (a flex header row), not stacked above it. No email (Resend can't be sent from this
   environment; the owner chose a pop-up only, no in-app bell either).
   Verified with a 12-check Playwright suite against the real, live-served
   files (target sees it + greeted by name; Go dismisses and navigates to
