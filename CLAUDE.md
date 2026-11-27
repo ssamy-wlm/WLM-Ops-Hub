@@ -360,6 +360,41 @@ Don't relitigate them without an explicit decision from the user.
   now superseded on this one point (David's email allowlist is 3 types, not
   the 4 that entry implies after `backlinksReminder`, and no longer includes
   `timeOffSubmitted`).
+- Admin "My Work" nav group + My Services page (2026-11-27 — held for
+  preview approval, `index.html`; data-path per rule #13): admins (super
+  view) had no equivalent of the member "My Services" list — they could
+  only mark their own services done client-by-client in the Tracker, which
+  is why David/Jacob/Abby got stuck. Added a **My Work** nav group under
+  Overview: **My Services** (NEW section `#admin-myServices`), **My Tasks**
+  and **Tasks Assigned** (both reuse the existing Task assignments subtabs
+  via `_adminGoMyTasks`/`_adminGoTasksAssigned` → `setTaSubtab('mytasks')`/
+  `('assigned')` — no new tasks view built). "Task assignments" moved out
+  of Operations into this group and relabeled "Tasks Assigned" (tab key
+  unchanged). My Services (`renderAdminMyServices`/`_adminMyServiceItems`)
+  lists the signed-in admin's assigned services across active clients
+  (top-level + franchise), overdue first via `_chSvcDueStatus`, matched by
+  `_wlSvcAssignedTo(myId, name)` — the same scoping the admin My Roadmap
+  already uses (so dual-role folks like Sherine match by name too).
+  `adminMyServiceMarkDone()` sets `lastDone`/`workStatus:'done'`, clears the
+  review flags, and rolls `due` via a hand-duplicated `_amwCalcNextDue()`
+  (per rule #3, reproduced from client.html's `calcNextDue`/
+  `adjustOffWeekend`; reuses index.html's existing `clampToWeekday` for the
+  no-weekend step), then persists via the established `_saveClientDB()` +
+  `cloudAutoSync()` pattern (same as `assignFromCatalogDefaults()`). This is
+  the only genuinely new write path; My Tasks/Tasks Assigned reuse the
+  existing, battle-tested Task-assignments writes. Verified with a 10-check
+  Playwright suite (nav group renders, old "Task assignments" item gone,
+  My Services lists overdue-first with Mark done, Mark done rolls the due
+  to a future weekday + sets workStatus done + clears the overdue badge,
+  My Tasks/Tasks Assigned select the right subtabs, zero page errors).
+  `new Function()` parse clean; div-balance delta unchanged vs. `main`
+  (-2). No `api/*.js` touched. **Approved design is phased** (owner's
+  call): this is Step 1 (promote My Work to the nav + My Services); a
+  broader left-panel category redesign and fully retiring the Tracker's own
+  My Work are a deliberate later Step 2. Held per rule #10 — service-write
+  from a new UI; per rule #13, needs a post-merge read-only integrity check
+  (a real Mark-done writes the expected `lastDone`/`due`/`workStatus` to
+  `ops_clients` and nothing else) before being considered fully closed.
 - One-time "update your service statuses" login prompt (2026-11-25 — held
   for preview approval, `index.html`+`user.html`, display-only, no data
   write): a dismissible modal shown on login/restore to a short, hardcoded
