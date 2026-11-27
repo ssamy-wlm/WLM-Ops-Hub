@@ -12776,13 +12776,34 @@ function _amwCalcNextDue(freq, from){
   return (typeof clampToWeekday==='function') ? clampToWeekday(iso) : iso;
 }
 
+// A dual-role person (admin + employee) has services assigned under EITHER
+// identity. The Tracker's own My Work resolves a single server-verified
+// viewerId; here in the admin portal we assemble the equivalent identity set
+// from what the server already handed us: the admin id, the linked employee
+// id (`_dualRoleEmployeeId`, set from the pull's `viewerEmployeeId`), and the
+// display name. Matching on only the admin id silently missed every service
+// assigned under the employee id — e.g. Sarah's Servpro services, whose
+// assigneeIds carry `sarah_ibrahim`, not her admin sentinel.
+function _amwMyIdentities(){
+  const ids=[]; const names=[];
+  const aid=_currentAdminId(); if(aid) ids.push(aid);
+  if(_dualRoleEmployeeId && !ids.includes(_dualRoleEmployeeId)) ids.push(_dualRoleEmployeeId);
+  const nm=currentAdminInfo?.name; if(nm) names.push(nm);
+  return {ids, names};
+}
+function _amwSvcIsMine(svc, ids, names){
+  const aids=_wlSvcAssigneeIds(svc);
+  if(aids.length) return aids.some(x=>ids.includes(x)||names.includes(x));
+  return ids.includes(svc.assigneeId)||names.includes(svc.assigneeId)
+      || names.includes(svc.assigneeName)||names.includes(svc.assignee)||ids.includes(svc.assignee);
+}
 function _adminMyServiceItems(){
-  const myId=_currentAdminId(); const myName=currentAdminInfo?.name||'';
+  const {ids, names}=_amwMyIdentities();
   const out=[];
-  if(!myId) return out;
+  if(!ids.length && !names.length) return out;
   _getClientDB().filter(c=>(c.status||'active')==='active').forEach(c=>{
-    (c.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _wlSvcAssignedTo(s,myId,myName)) out.push({client:c.name||'', clientId:c.id, locId:'', svc:s}); });
-    (c.locations||[]).forEach(loc=>{ (loc.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _wlSvcAssignedTo(s,myId,myName)) out.push({client:(c.name||'')+' — '+(loc.name||''), clientId:c.id, locId:loc.id, svc:s}); }); });
+    (c.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _amwSvcIsMine(s,ids,names)) out.push({client:c.name||'', clientId:c.id, locId:'', svc:s}); });
+    (c.locations||[]).forEach(loc=>{ (loc.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _amwSvcIsMine(s,ids,names)) out.push({client:(c.name||'')+' — '+(loc.name||''), clientId:c.id, locId:loc.id, svc:s}); }); });
   });
   const rank={overdue:0, soon:1, pending:2, ok:3};
   out.sort((a,b)=>{ const ra=rank[_chSvcDueStatus(a.svc)]??3, rb=rank[_chSvcDueStatus(b.svc)]??3; if(ra!==rb) return ra-rb; return (a.svc.due||'9999').localeCompare(b.svc.due||'9999'); });
