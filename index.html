@@ -1373,7 +1373,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="admin-nav-group-label">My Work</div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'myServices')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v2H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="6" width="14" height="15" rx="2"/><path d="M9 14l2 2 4-4"/></svg></span>My Services</div>
       <div class="admin-nav-item" onclick="_adminGoMyTasks(this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 12l3 3 5-5"/></svg></span>My Tasks</div>
-      <div class="admin-nav-item" onclick="_adminGoTasksAssigned(this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>Tasks Assigned</div>
+      <div class="admin-nav-item" id="navTasksAssigned" onclick="_adminGoTasksAssigned(this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>Tasks Assigned</div>
 
       <div class="admin-nav-group-label">Operations</div>
       <!-- Clients tab was merged into the Tracker's own "Client & production
@@ -1891,12 +1891,12 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
 
     <div id="admin-taskAssignments" class="page-section">
       <div style="margin-bottom:16px;">
-        <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
-        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Add a task manually and assign it to anyone on the team</div>
+        <div id="ta-page-title" style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
+        <div id="ta-page-sub" style="font-size:12px;color:var(--text-light);margin-top:2px;">Add a task manually and assign it to anyone on the team</div>
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);">
-        <div style="display:flex;gap:6px;">
+        <div id="ta-subtab-btnbar" style="display:flex;gap:6px;">
           <button class="btn btn-sm btn-outline btn-toggle-active" id="taSubtabMyTasksBtn" onclick="setTaSubtab('mytasks')" style="border-radius:8px 8px 0 0;">🙋 My Tasks<span class="admin-msg-nav-badge" id="ta-mytasks-new-badge" style="display:none;">0</span></button>
           <button class="btn btn-sm btn-outline" id="taSubtabAssignedBtn" onclick="setTaSubtab('assigned')" style="border-radius:8px 8px 0 0;">🗓 Assigned Tasks</button>
           <button class="btn btn-sm btn-outline" id="taSubtabPersonBtn" onclick="setTaSubtab('person')" style="border-radius:8px 8px 0 0;">👥 Team's Tasks</button>
@@ -6753,7 +6753,7 @@ const HELP_CONTENT = {
   myTeamsWork: { label: "My Team's Work", sel: '.admin-nav-item[onclick*="\'myTeamsWork\'"]',
     tip: "For admins who manage people — see your direct reports' workload in one place.",
     learnMore: "Shows the services assigned to the people you manage, with its own notification-preferences panel so you can tune what you're alerted about. Visible to any admin who manages team members." },
-  taskAssignments: { label: 'Task assignments', sel: '.admin-nav-item[onclick*="\'taskAssignments\'"]',
+  taskAssignments: { label: 'Tasks Assigned', sel: '#navTasksAssigned',
     tip: "Parse meeting transcripts into tasks, or manage everything assigned across the team.",
     learnMore: "Paste text into Add/Import — it's parsed into draft tasks you review and edit before committing, never auto-assigned. Track everything in Assigned Tasks (List, Day, Week, or Month view), drill into one person's load in Team's Tasks, and catch anything slipping through in Needs Attention (overdue, due today, blocked, or unassigned). Change a task's status right from the list, or delete it outright. A team member only ever sees tasks assigned to them or to someone who reports to them — you see everyone's." },
   users: { label: 'Users', sel: '#admin-drop-users',
@@ -8593,8 +8593,14 @@ function _renderOverviewUrgencyDonut(group, bucketTotals){
 // real nav DOM element, call switchAdminTab on it) rather than duplicating
 // switchAdminTab's own logic.
 function _ovOpenPersonDailyView(personId){
-  const navEl=document.querySelector('.admin-nav-item[onclick*="\'taskAssignments\'"]');
+  // #navTasksAssigned, not the old onclick-substring selector — the nav item
+  // now calls _adminGoTasksAssigned(this), so its onclick no longer contains
+  // 'taskAssignments' and the old query returned null (navigation silently
+  // did nothing). Enter the Tasks Assigned view, then let openPersonDailyView
+  // pick the By Person subtab (so _taSetBarMode must NOT force a subtab).
+  const navEl=document.getElementById('navTasksAssigned');
   if(navEl && typeof switchAdminTab==='function') switchAdminTab(navEl,'taskAssignments');
+  if(typeof _taSetBarMode==='function') _taSetBarMode('assigned');
   openPersonDailyView(personId);
 }
 // My Roadmap (admin, 2026-09-01) — per-admin, read-only. Same bucketing
@@ -10611,8 +10617,9 @@ function _routeAdminNotifClick(n){
   if(TASK_DETAIL_NOTIF_TYPES.includes(n.type) && ctx.taskId){
     document.getElementById('admin-notif-panel').style.display='none';
     closeModal('notifViewAllModal');
-    const taNavEl = document.querySelector('.admin-nav-item[onclick*="\'taskAssignments\'"]');
+    const taNavEl = document.getElementById('navTasksAssigned');
     if(taNavEl) switchAdminTab(taNavEl, 'taskAssignments');
+    if(typeof _taSetBarMode==='function') _taSetBarMode('assigned');
     openTaDetailPanel(ctx.taskId);
     return;
   }
@@ -11594,6 +11601,11 @@ function loadTaskAssignments(){
       return `<button class="ta-cat-pill${active?' active':''}" onclick="setTaActiveCategory(${c==='All'?'null':`'${c}'`})">${TA_CATEGORY_LABELS[c]||c}</button>`;
     }).join('');
   }
+  // Keep the subtab bar/title reflecting the current nav mode across every
+  // rebuild (tab entry, category-pill click, reload-restore) so the My Tasks
+  // vs. Tasks Assigned separation never reverts to the old mixed six-toggle
+  // bar. Default mode is 'assigned' (see _taNavMode) — the fuller view.
+  if(typeof _taSetBarMode==='function') _taSetBarMode(_taNavMode);
   renderTaskAssignments();
 }
 
@@ -12759,8 +12771,39 @@ function _taChangeStatus(id, newStatus, selectEl){
 // service mark-done + next-due rollover is hand-duplicated here from
 // client.html's markServiceDone()/calcNextDue()/adjustOffWeekend(). My
 // Tasks / Tasks Assigned reuse the existing Task assignments subtabs.
-function _adminGoMyTasks(el){ switchAdminTab(el,'taskAssignments'); setTaSubtab('mytasks'); }
-function _adminGoTasksAssigned(el){ switchAdminTab(el,'taskAssignments'); setTaSubtab('assigned'); }
+// Nav-mode for the Task Assignments section (2026-11-27). Two nav items now
+// open genuinely separate views of the same section rather than the same
+// six-toggle screen twice:
+//   'mytasks'  → the signed-in person's own tasks only; the subtab bar is
+//                hidden entirely (nothing to toggle to).
+//   'assigned' → everyone else's work: the My Tasks toggle is removed and the
+//                other five (Assigned / Team's / Needs Attention / Reported /
+//                Duplicates) are shown.
+// _taSetBarMode only drives the toolbar/title chrome — it never chooses a
+// subtab, so the two person/notification deep-link flows below can enter
+// 'assigned' mode and then select their own subtab/panel without a fight.
+let _taNavMode = 'assigned';
+function _taSetBarMode(mode){
+  _taNavMode = (mode==='mytasks') ? 'mytasks' : 'assigned';
+  const bar=document.getElementById('ta-subtab-btnbar');
+  const myBtn=document.getElementById('taSubtabMyTasksBtn');
+  const title=document.getElementById('ta-page-title');
+  const sub=document.getElementById('ta-page-sub');
+  const others=['taSubtabAssignedBtn','taSubtabPersonBtn','taSubtabAttentionBtn','taSubtabReportedBtn','taSubtabDupBtn'];
+  if(_taNavMode==='mytasks'){
+    if(bar) bar.style.display='none';
+    if(title) title.textContent='My Tasks';
+    if(sub) sub.textContent='Your own tasks';
+  } else {
+    if(bar) bar.style.display='';
+    if(myBtn) myBtn.style.display='none';
+    others.forEach(id=>{ const b=document.getElementById(id); if(b) b.style.display=''; });
+    if(title) title.textContent='Tasks Assigned';
+    if(sub) sub.textContent='Tasks assigned across the team';
+  }
+}
+function _adminGoMyTasks(el){ switchAdminTab(el,'taskAssignments'); _taSetBarMode('mytasks'); setTaSubtab('mytasks'); }
+function _adminGoTasksAssigned(el){ switchAdminTab(el,'taskAssignments'); _taSetBarMode('assigned'); setTaSubtab('assigned'); }
 
 function _amwCalcNextDue(freq, from){
   if(freq==='per-request'||freq==='one-time') return '';
