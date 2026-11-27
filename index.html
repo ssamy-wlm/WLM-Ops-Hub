@@ -1419,7 +1419,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <div class="admin-nav-dropdown-menu">
           <div class="admin-nav-item" onclick="switchAdminTab(this,'timeoff')">Time off</div>
           <div class="admin-nav-item" onclick="switchAdminTab(this,'ptoLedger')">Time off ledger</div>
-          <div class="admin-nav-item" onclick="switchAdminTab(this,'archive')">Archive</div>
         </div>
       </div>
       <div class="admin-nav-item" onclick="switchAdminTab(this,'payroll')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="6" y1="10" x2="6" y2="10.01"/><line x1="18" y1="14" x2="18" y2="14.01"/></svg></span>Payroll</div>
@@ -2139,6 +2138,25 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <!-- Users -->
     <div id="admin-users" class="page-section">
 
+      <!-- Active / Inactive toggle (2026-11-27): the old standalone Archive
+           nav item was folded in here. setUsersSubtab() shows the normal
+           Users page in 'active' mode and this archive card in 'archive'
+           mode by toggling every direct child of #admin-users except the
+           bar itself; keep both of these as DIRECT children so that works. -->
+      <div id="users-subtab-bar" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-outline btn-toggle-active" id="usersTabActiveBtn" onclick="setUsersSubtab('active')">Active <span id="usersActiveCount" style="opacity:.7;"></span></button>
+        <button class="btn btn-sm btn-outline" id="usersTabArchiveBtn" onclick="setUsersSubtab('archive')">Inactive &amp; Removed <span id="usersArchiveCount" style="opacity:.7;"></span></button>
+      </div>
+      <div id="users-archive-card" class="card" style="display:none;margin-bottom:18px;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Inactive &amp; Removed Users</div>
+            <div class="card-sub">Deactivated users live here. Reactivate them, or permanently delete an account with no work history (e.g. one added but never used).</div>
+          </div>
+        </div>
+        <div class="card-body" id="archiveUserList"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No inactive or removed users right now.</div></div>
+      </div>
+
       <!-- ── ADMINS SECTION ── -->
       <div class="card" style="margin-bottom:22px;">
         <div class="card-header">
@@ -2190,7 +2208,10 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="user-table-wrap">
         <div class="table-header">
           <div class="table-title">All Users</div>
-          <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">+ Add New User</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="userSearchInput" class="form-input" placeholder="Search users…" style="height:34px;font-size:13px;width:190px;" oninput="renderUserTable()">
+            <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">+ Add New User</button>
+          </div>
         </div>
         <table class="mobile-stack-tbl">
           <thead>
@@ -2778,18 +2799,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       </div>
     </div>
 
-    <!-- ══ ARCHIVE ══ -->
-    <div id="admin-archive" class="page-section">
-      <div class="card" style="margin-bottom:18px;">
-        <div class="card-header">
-          <div>
-            <div class="card-title">Inactive &amp; Removed Users</div>
-            <div class="card-sub">Deactivated users live here. Reactivate them, or permanently delete an account with no work history (e.g. one added but never used).</div>
-          </div>
-        </div>
-        <div class="card-body" id="archiveUserList"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No archived users.</div></div>
-      </div>
-    </div>
+    <!-- Archive folded into the Users page (2026-11-27) as the Inactive &
+         Removed toggle — see #admin-users / setUsersSubtab(). -->
 
     <!-- Business Setup -->
     <div id="admin-bizSettings" class="page-section">
@@ -4963,10 +4974,17 @@ function renderUserTable(){
   // email/account yet, and shouldn't appear in the Users list until an admin
   // connects them via "+ Add New User" (see addUser()'s seed-merge logic below).
   allUsers = allUsers.filter(u => u.seeded!==true);
+  // Consolidated Users page (2026-11-27): the Active tab lists only
+  // non-inactive members; inactive users live in the Inactive & Removed tab
+  // (the folded-in archive). Keep pending/awaiting-first-login users here.
+  allUsers = allUsers.filter(u => u.status!=='inactive');
+  const _uSearch=(document.getElementById('userSearchInput')?.value||'').trim().toLowerCase();
+  if(_uSearch){ allUsers = allUsers.filter(u => [u.name,u.email,u.title].some(v=>String(v||'').toLowerCase().includes(_uSearch))); }
   // Restrict to assigned users for limited admin roles
   if(_adminLevel && RESTRICTED_ADMIN_ROLES.includes(_adminLevel) && _adminAssignedUsers.length){
     allUsers = allUsers.filter(u => _adminAssignedUsers.includes(u.name) || _adminAssignedUsers.includes(u.id));
   }
+  if(typeof _updateUsersToggleCounts==='function') _updateUsersToggleCounts();
   const tbody = document.getElementById('userTableBody');
   if(!tbody) return;
   if(!allUsers.length){
@@ -9253,7 +9271,7 @@ function clearAnnouncement(){
 const _origSwitchAdminFinal = window.switchAdminTab;
 window.switchAdminTab = function(el, tab){
   _origSwitchAdminFinal(el, tab);
-  if(tab==='users') setTimeout(updateCloudStatusUI, 100);
+  if(tab==='users'){ setTimeout(updateCloudStatusUI, 100); if(typeof setUsersSubtab==='function') setUsersSubtab('active'); }
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -14175,6 +14193,45 @@ function _archiveUserCounts(u){
     out.services += svcs.filter(s=>s && (s.assigneeId===uid || (Array.isArray(s.assigneeIds)&&s.assigneeIds.includes(uid)))).length;
   });
   return out;
+}
+// Consolidated Users page: 'active' shows the normal Users page, 'archive'
+// shows the folded-in Inactive & Removed list. Toggles every DIRECT child of
+// #admin-users except the toolbar; the archive card is the one child shown
+// only in archive mode. Both the toolbar and the archive card are direct
+// children (see the markup) so this iteration manages them correctly.
+let _usersViewMode = 'active';
+function _updateUsersToggleCounts(){
+  const all=(dbGet(DB_KEYS.users)||[]).filter(u=>u.seeded!==true);
+  const act=all.filter(u=>u.status!=='inactive').length;
+  const ina=all.filter(u=>u.status==='inactive').length;
+  const a=document.getElementById('usersActiveCount'); if(a) a.textContent='('+act+')';
+  const r=document.getElementById('usersArchiveCount'); if(r) r.textContent='('+ina+')';
+}
+function setUsersSubtab(mode){
+  _usersViewMode = (mode==='archive') ? 'archive' : 'active';
+  const section=document.getElementById('admin-users');
+  if(section){
+    const toArchive = _usersViewMode==='archive';
+    [...section.children].forEach(ch=>{
+      if(ch.id==='users-subtab-bar') return;                 // toolbar always visible
+      if(ch.id==='users-archive-card'){ ch.style.display = toArchive ? '' : 'none'; return; }
+      // Remember each child's own display before hiding it, and restore exactly
+      // that on the way back — never a blanket '' that could force-show a card
+      // some role/visibility rule had hidden.
+      if(toArchive){
+        if('_prevDisp' in ch.dataset === false){ ch.dataset._prevDisp = ch.style.display||''; }
+        ch.style.display='none';
+      } else {
+        if('_prevDisp' in ch.dataset){ ch.style.display = ch.dataset._prevDisp; delete ch.dataset._prevDisp; }
+      }
+    });
+  }
+  const aBtn=document.getElementById('usersTabActiveBtn');
+  const rBtn=document.getElementById('usersTabArchiveBtn');
+  if(aBtn) aBtn.classList.toggle('btn-toggle-active', _usersViewMode==='active');
+  if(rBtn) rBtn.classList.toggle('btn-toggle-active', _usersViewMode==='archive');
+  if(_usersViewMode==='archive'){ refreshArchive(); } else { if(typeof renderUserTable==='function') renderUserTable(); }
+  _updateUsersToggleCounts();
 }
 function refreshArchive(){
   const userList = document.getElementById('archiveUserList');
