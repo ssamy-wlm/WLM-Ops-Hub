@@ -1370,6 +1370,11 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     <div class="admin-nav">
       <div class="admin-nav-item active" onclick="switchAdminTab(this,'overview')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Overview</div>
 
+      <div class="admin-nav-group-label">My Work</div>
+      <div class="admin-nav-item" onclick="switchAdminTab(this,'myServices')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v2H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="6" width="14" height="15" rx="2"/><path d="M9 14l2 2 4-4"/></svg></span>My Services</div>
+      <div class="admin-nav-item" onclick="_adminGoMyTasks(this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 12l3 3 5-5"/></svg></span>My Tasks</div>
+      <div class="admin-nav-item" onclick="_adminGoTasksAssigned(this)"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>Tasks Assigned</div>
+
       <div class="admin-nav-group-label">Operations</div>
       <!-- Clients tab was merged into the Tracker's own "Client & production
            tracker" view (client.html) once that view reached full feature
@@ -1383,7 +1388,6 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
            applyAdminRoleRestrictions(), independent of the level-based
            gating everything else on this nav uses. -->
       <div class="admin-nav-item" onclick="switchAdminTab(this,'myTeamsWork')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>My Team's Work</div>
-      <div class="admin-nav-item" onclick="switchAdminTab(this,'taskAssignments')"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>Task assignments</div>
 
       <!-- Sales — rebuilt 2026-09-11 (replaces both the earlier OR-based
            #364 design and the strict-both design). This is the 2ND nav
@@ -1877,6 +1881,14 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
     </div>
 
     <!-- ══ TASK ASSIGNMENTS (port of the WebLight Media Email Tracker) ══ -->
+    <div id="admin-myServices" class="page-section">
+      <div style="margin-bottom:16px;">
+        <div style="font-size:16px;font-weight:700;color:var(--text-dark);">My Services</div>
+        <div style="font-size:12px;color:var(--text-light);margin-top:2px;">Your assigned services across all clients — overdue first. Mark a cycle done to roll its next due date forward.</div>
+      </div>
+      <div id="admin-my-services-body"></div>
+    </div>
+
     <div id="admin-taskAssignments" class="page-section">
       <div style="margin-bottom:16px;">
         <div style="font-size:16px;font-weight:700;color:var(--text-dark);">Task assignments</div>
@@ -4407,6 +4419,7 @@ function switchAdminTab(el, tab){
     renderWorkloadDashboard();
     setTimeout(()=>_maybeShowTip('workload','#workload-tip-anchor','Click a person to see their assignments.'),50);
   }
+  if(tab==='myServices') renderAdminMyServices();
   if(tab==='myTeamsWork') renderMyTeamsWork();
   if(tab==='taskAssignments') loadTaskAssignments();
   if(tab==='commissions') initCommissions();
@@ -12739,6 +12752,82 @@ function _taChangeStatus(id, newStatus, selectEl){
   cloudAutoSync();
   showToast('Status updated ✓');
   renderTaskAssignments();
+}
+
+// ── My Work (2026-11-27): admin "My Services" + nav helpers ──
+// index.html shares no JS with user.html/client.html (rule #3), so the
+// service mark-done + next-due rollover is hand-duplicated here from
+// client.html's markServiceDone()/calcNextDue()/adjustOffWeekend(). My
+// Tasks / Tasks Assigned reuse the existing Task assignments subtabs.
+function _adminGoMyTasks(el){ switchAdminTab(el,'taskAssignments'); setTaSubtab('mytasks'); }
+function _adminGoTasksAssigned(el){ switchAdminTab(el,'taskAssignments'); setTaSubtab('assigned'); }
+
+function _amwCalcNextDue(freq, from){
+  if(freq==='per-request'||freq==='one-time') return '';
+  const base = from ? new Date(from) : new Date();
+  const now  = new Date(new Date().toISOString().slice(0,10));
+  let d = new Date(base);
+  if(freq==='monthly'){ d.setMonth(d.getMonth()+1); while(d<=now) d.setMonth(d.getMonth()+1); }
+  else if(freq==='quarterly'){ d.setMonth(d.getMonth()+3); while(d<=now) d.setMonth(d.getMonth()+3); }
+  else if(freq==='yearly'){ d.setFullYear(d.getFullYear()+1); while(d<=now) d.setFullYear(d.getFullYear()+1); }
+  else if(freq==='weekly'){ d.setDate(d.getDate()+7); while(d<=now) d.setDate(d.getDate()+7); }
+  else { return ''; }
+  const iso = d.toISOString().slice(0,10);
+  return (typeof clampToWeekday==='function') ? clampToWeekday(iso) : iso;
+}
+
+function _adminMyServiceItems(){
+  const myId=_currentAdminId(); const myName=currentAdminInfo?.name||'';
+  const out=[];
+  if(!myId) return out;
+  _getClientDB().filter(c=>(c.status||'active')==='active').forEach(c=>{
+    (c.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _wlSvcAssignedTo(s,myId,myName)) out.push({client:c.name||'', clientId:c.id, locId:'', svc:s}); });
+    (c.locations||[]).forEach(loc=>{ (loc.services||[]).forEach(s=>{ if(!_chIsInactiveService(s) && _wlSvcAssignedTo(s,myId,myName)) out.push({client:(c.name||'')+' — '+(loc.name||''), clientId:c.id, locId:loc.id, svc:s}); }); });
+  });
+  const rank={overdue:0, soon:1, pending:2, ok:3};
+  out.sort((a,b)=>{ const ra=rank[_chSvcDueStatus(a.svc)]??3, rb=rank[_chSvcDueStatus(b.svc)]??3; if(ra!==rb) return ra-rb; return (a.svc.due||'9999').localeCompare(b.svc.due||'9999'); });
+  return out;
+}
+
+function renderAdminMyServices(){
+  const body=document.getElementById('admin-my-services-body'); if(!body) return;
+  const items=_adminMyServiceItems();
+  if(!items.length){ body.innerHTML='<div style="padding:24px;text-align:center;color:var(--text-light);font-size:13px;">No services assigned to you right now.</div>'; return; }
+  const badge=st=>{ const m={overdue:['Overdue','#C0392B','#fdecea'], soon:['Due soon','#B9770A','#fff3e0'], pending:['This month','#1f6fb0','#eaf3fb'], ok:['On track','#1a9e63','#e8f8f0']}[st]||['','#555555','#eeeeee']; return '<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;color:'+m[1]+';background:'+m[2]+';">'+m[0]+'</span>'; };
+  const overdueCount=items.filter(it=>_chSvcDueStatus(it.svc)==='overdue').length;
+  const rows=items.map(it=>{
+    const s=it.svc; const st=_chSvcDueStatus(s); const done=_svcStatus(s)==='done';
+    const action=(s.freq==='per-request'||s.freq==='one-time')
+      ? '<span style="font-size:11px;color:var(--text-light);">—</span>'
+      : '<button class="btn btn-sm btn-primary" style="width:auto;padding:5px 12px;" onclick="adminMyServiceMarkDone(\''+it.clientId+'\',\''+s.id+'\',\''+it.locId+'\')">'+(done?'Done again':'Mark done')+'</button>';
+    return '<tr class="mobile-stack-tbl-row">'
+      +'<td data-label="">'+escHtmlAdmin(it.client)+'</td>'
+      +'<td data-label="Service">'+escHtmlAdmin(s.name||'')+'</td>'
+      +'<td data-label="Due">'+(s.due?escHtmlAdmin(s.due):'—')+'</td>'
+      +'<td data-label="Status">'+badge(st)+'</td>'
+      +'<td data-label="">'+action+'</td></tr>';
+  }).join('');
+  body.innerHTML=(overdueCount?'<div style="font-size:12px;color:var(--red);font-weight:700;margin-bottom:10px;">'+overdueCount+' overdue</div>':'')
+    +'<table class="mobile-stack-tbl" style="width:100%;border-collapse:collapse;font-size:13px;">'
+    +'<thead><tr style="text-align:left;color:var(--text-light);font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);">'
+    +'<th style="padding:8px 10px;">Client</th><th style="padding:8px 10px;">Service</th><th style="padding:8px 10px;">Due</th><th style="padding:8px 10px;">Status</th><th style="padding:8px 10px;"></th></tr></thead>'
+    +'<tbody>'+rows+'</tbody></table>';
+}
+
+function adminMyServiceMarkDone(clientId, svcId, locId){
+  const clients=_getClientDB(); const c=clients.find(x=>x.id===clientId); if(!c) return;
+  const loc = locId ? (c.locations||[]).find(l=>l.id===locId) : null;
+  const list = loc ? (loc.services||[]) : (c.services||[]);
+  const svc=list.find(s=>s.id===svcId); if(!svc) return;
+  const done=new Date().toISOString().slice(0,10);
+  svc.lastDone=done;
+  svc.due=_amwCalcNextDue(svc.freq, done);
+  svc.workStatus='done';
+  svc.reviewSubmittedAt=''; svc.reviewSubmittedBy=''; svc.reviewSubmittedByName='';
+  _saveClientDB(clients);
+  if(typeof cloudAutoSync==='function') cloudAutoSync();
+  renderAdminMyServices();
+  showToast('Marked "'+(svc.name||'service')+'" done ✓ — next due '+(svc.due||'TBD'));
 }
 
 // Hard delete — reuses the exact same tombstones.taskIds mechanism the
