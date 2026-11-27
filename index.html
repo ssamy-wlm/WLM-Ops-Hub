@@ -1464,7 +1464,7 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
         <button class="admin-sidebar-hamburger" onclick="document.getElementById('admin-sidebar').classList.toggle('open')" aria-label="Toggle navigation menu">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
         </button>
-        <div class="admin-topbar-title" id="admin-page-title">Overview</div>
+        <div class="admin-topbar-title" id="admin-page-title"></div>
       </div>
       <div class="admin-topbar-right" style="position:relative;">
         <span class="admin-level-badge" id="admin-level-badge"></span>
@@ -16761,8 +16761,16 @@ const ADMIN_TAB_TITLES = {
   const _origSwitch = window.switchAdminTab;
   window.switchAdminTab = function(el, tab){
     _origSwitch(el, tab);
+    // The thin top strip title duplicated each page's own in-page heading
+    // (the blue section title + subtitle) AND showed the raw camelCase tab
+    // key for any tab missing from ADMIN_TAB_TITLES (e.g. 'taskAssignments',
+    // 'myServices'). Per the owner (2026-11-27): show it ONLY on the pages
+    // that have no in-page heading of their own — Users and Payroll — where
+    // it's the page's only title; blank it everywhere else so it's never a
+    // duplicate or a raw key.
     const titleEl = document.getElementById('admin-page-title');
-    if(titleEl) titleEl.textContent = ADMIN_TAB_TITLES[tab] || tab;
+    const ADMIN_TOP_TITLE_ONLY = { users:true, payroll:true };
+    if(titleEl) titleEl.textContent = ADMIN_TOP_TITLE_ONLY[tab] ? (ADMIN_TAB_TITLES[tab] || tab) : '';
     // Close the mobile sidebar drawer after a nav click, same pattern as a
     // typical off-canvas menu — otherwise it stays open over the new page.
     const sidebar = document.getElementById('admin-sidebar');
