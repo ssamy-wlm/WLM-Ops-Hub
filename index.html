@@ -2783,8 +2783,8 @@ td .td-sub{font-size:11px;color:var(--text-light);margin-top:2px;}
       <div class="card" style="margin-bottom:18px;">
         <div class="card-header">
           <div>
-            <div class="card-title">Archived Users</div>
-            <div class="card-sub">Removed users and all their associated data — read only</div>
+            <div class="card-title">Inactive &amp; Removed Users</div>
+            <div class="card-sub">Deactivated users live here. Reactivate them, or permanently delete an account with no work history (e.g. one added but never used).</div>
           </div>
         </div>
         <div class="card-body" id="archiveUserList"><div style="font-size:13px;color:var(--text-light);padding:12px 0;">No archived users.</div></div>
@@ -14157,36 +14157,125 @@ window.switchAdminTab = function(el, tab){
 // ═══════════════════════════════════════════════════════════
 // ARCHIVE — render archived users & EODs
 // ═══════════════════════════════════════════════════════════
+const _archPalette=['linear-gradient(135deg,#2E5DA6,#5B84C4)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
+// Count a user's real work footprint from the loaded data (tasks they're the
+// assignee/assigner on; services assigned to them on any active-or-inactive
+// client). Used both to show context and to GATE permanent deletion: a user
+// with any history must never be purged, or those tasks/services would point
+// at a user id that no longer resolves (orphaned). Only truly empty accounts
+// — "added but never worked" — can be deleted.
+function _archiveUserCounts(u){
+  const out={tasks:0,services:0};
+  if(!u||!u.id) return out;
+  const uid=u.id;
+  const tasks=dbGet(DB_KEYS.tasks)||[];
+  out.tasks=tasks.filter(t=>t && (t.assigneeId===uid || t.assignedById===uid || (Array.isArray(t.assigneeIds)&&t.assigneeIds.includes(uid)))).length;
+  (_getClientDB()||[]).forEach(c=>{
+    const svcs=[...(c.services||[]), ...((c.locations||[]).flatMap(l=>l.services||[]))];
+    out.services += svcs.filter(s=>s && (s.assigneeId===uid || (Array.isArray(s.assigneeIds)&&s.assigneeIds.includes(uid)))).length;
+  });
+  return out;
+}
 function refreshArchive(){
-  const archives = dbGet('wl_archived_users')||[];
   const userList = document.getElementById('archiveUserList');
-  if(userList){
-    if(!archives.length){
-      userList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No archived users. Deleted users will appear here with all their data preserved.</div>';
-    } else {
-      const _archPalette=['linear-gradient(135deg,#2E5DA6,#5B84C4)','linear-gradient(135deg,#2e9e6e,#5cd8a0)','linear-gradient(135deg,#d97706,#f5b942)','linear-gradient(135deg,#e05555,#f08080)','linear-gradient(135deg,#7c3aed,#a78bfa)','linear-gradient(135deg,#0891b2,#67e8f9)'];
-      userList.innerHTML = archives.map((u,i)=>{
-        const arDate = u.archivedAt ? new Date(u.archivedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-        const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
-        const _ac=_archPalette[i%_archPalette.length];
-        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border);">
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div class="avatar" style="background:${_ac};">${escHtmlAdmin(initials)}</div>
-            <div>
-              <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(u.name||'Unknown')}</div>
-              <div style="font-size:12px;color:var(--text-light);">${escHtmlAdmin(u.email||'—')} · ${escHtmlAdmin(u.title||'')}</div>
-              <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Archived ${arDate} · ${u.eodCount||0} EODs on record</div>
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm btn-outline" onclick="viewArchivedUser('${u.id||u.email}')">View</button>
-            <button class="btn btn-sm btn-outline" style="color:#2e9e6e;border-color:#2e9e6e;" onclick="restoreArchivedUser('${u.id||u.email}')">Restore</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteArchivedUser('${u.id||u.email}')">Purge</button>
-          </div>
-        </div>`;
-      }).join('');
-    }
+  if(!userList) return;
+  const allUsers = dbGet(DB_KEYS.users)||[];
+  const inactive = allUsers.filter(u=>(u.status||'active')==='inactive');
+  const legacy = dbGet('wl_archived_users')||[];
+  if(!inactive.length && !legacy.length){
+    userList.innerHTML='<div style="font-size:13px;color:var(--text-light);padding:24px 0;text-align:center;">No inactive or removed users right now.</div>';
+    return;
   }
+  let html='';
+  if(inactive.length){
+    html += inactive.map((u,i)=>{
+      const counts=_archiveUserCounts(u);
+      const hasHist = counts.tasks>0 || counts.services>0;
+      const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+      const _ac=_archPalette[i%_archPalette.length];
+      const histLine = hasHist
+        ? `${counts.tasks} task${counts.tasks===1?'':'s'} · ${counts.services} service${counts.services===1?'':'s'} on record`
+        : `No tasks or services on record`;
+      const delCell = hasHist
+        ? `<span style="font-size:11px;color:var(--text-light);align-self:center;max-width:150px;text-align:right;">Has work history — reactivate only, can't be deleted</span>`
+        : `<button class="btn btn-sm btn-danger" onclick="archiveDeleteUser('${u.id}')">Delete permanently</button>`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border);gap:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="avatar" style="background:${_ac};">${escHtmlAdmin(initials)}</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(u.name||'Unknown')}</div>
+            <div style="font-size:12px;color:var(--text-light);">${escHtmlAdmin(u.email||'—')} · ${escHtmlAdmin(u.title||'')}</div>
+            <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Inactive · ${histLine}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-sm btn-outline" style="color:#2e9e6e;border-color:#2e9e6e;" onclick="archiveReactivateUser('${u.id}')">Reactivate</button>
+          ${delCell}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  if(legacy.length){
+    html += `<div style="font-size:12px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px;">Previously archived</div>`;
+    html += legacy.map((u,i)=>{
+      const arDate = u.archivedAt ? new Date(u.archivedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+      const initials=(u.name||'?').split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+      const _ac=_archPalette[i%_archPalette.length];
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="avatar" style="background:${_ac};">${escHtmlAdmin(initials)}</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text-dark);">${escHtmlAdmin(u.name||'Unknown')}</div>
+            <div style="font-size:12px;color:var(--text-light);">${escHtmlAdmin(u.email||'—')} · ${escHtmlAdmin(u.title||'')}</div>
+            <div style="font-size:11px;color:var(--text-light);margin-top:2px;">Archived ${arDate} · ${u.eodCount||0} EODs on record</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-sm btn-outline" onclick="viewArchivedUser('${u.id||u.email}')">View</button>
+          <button class="btn btn-sm btn-outline" style="color:#2e9e6e;border-color:#2e9e6e;" onclick="restoreArchivedUser('${u.id||u.email}')">Restore</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteArchivedUser('${u.id||u.email}')">Purge</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  userList.innerHTML=html;
+}
+// Reactivate an inactive user — reuses the careful, re-pull-before-write
+// activateUser() path (status->active), then refreshes this view.
+async function archiveReactivateUser(userId){
+  if(typeof activateUser==='function'){ await activateUser(null, userId); }
+  refreshArchive();
+}
+// Permanently delete an inactive, zero-history user. Re-pulls fresh first so
+// the history guard judges the CURRENT server truth (a just-assigned task
+// must still block), requires typing the exact name (destructive-op
+// confirmation, rule #6), then tombstones the id (ops_deleted_user_ids via
+// the existing cloudPushAll tombstones.users path) so cloud pulls never
+// restore them, and removes the local row. Never touches a user with history.
+async function archiveDeleteUser(userId){
+  const pre=(dbGet(DB_KEYS.users)||[]).find(x=>x.id===userId);
+  if(!pre){ showToast('User not found'); return; }
+  await cloudPullAll(true);
+  if(!_lastPullOk){ showToast('❌ Could not verify the current record from the server — try again.'); return; }
+  const u=(dbGet(DB_KEYS.users)||[]).find(x=>x.id===userId);
+  if(!u){ showToast('User not found'); refreshArchive(); return; }
+  const counts=_archiveUserCounts(u);
+  if(counts.tasks>0 || counts.services>0){
+    alert(`${u.name} has work history (${counts.tasks} task(s), ${counts.services} service(s)) and can't be permanently deleted — their data would be orphaned.\n\nReactivate them, or reassign their tasks/services first.`);
+    refreshArchive();
+    return;
+  }
+  const typed=prompt(`Permanently delete ${u.name}?\n\nThis removes the account for good and cannot be undone. Type the full name to confirm:`);
+  if(typed===null) return;
+  if(typed.trim()!==String(u.name||'').trim()){ showToast('Name did not match — nothing was deleted.'); return; }
+  const tombs=dbGet(DB_KEYS.deletedUserIds)||[];
+  if(!tombs.includes(u.id)){ tombs.push(u.id); dbSet(DB_KEYS.deletedUserIds, tombs); }
+  dbSet(DB_KEYS.users, (dbGet(DB_KEYS.users)||[]).filter(x=>x.id!==u.id));
+  if(typeof renderUserTable==='function') renderUserTable();
+  refreshArchive();
+  cloudAutoSync(true);
+  showToast(`${u.name} permanently deleted`);
+  if(typeof logActivity==='function') logActivity('admin','Admin','Permanently deleted user: '+u.name,'');
 }
 
 function viewArchivedUser(uid){
